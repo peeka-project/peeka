@@ -105,6 +105,10 @@ Examples:
 
 def cmd_attach(args):
     """Handle attach command"""
+    pid = args.pid
+    if not pid:
+        # 如果没有传 pid，从用户输入获取
+        pid = int(input("Enter the PID of the target process: ").strip())
     print(f"[Peeka] Attaching to process {args.pid}...")
 
     attacher = ProcessAttacher(args.pid)
