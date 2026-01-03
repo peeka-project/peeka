@@ -88,4 +88,4 @@ def add_log_to_function(function_id, replace_original=True):
     return wrapped
 
 
-add_log_to_function("tool.reverse_string")
+add_log_to_function("examples.simple_app.calculate_square")
