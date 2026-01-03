@@ -2,7 +2,7 @@
 Peeka Demo Application
 Demonstrates Peeka capabilities
 """
-
+import os
 import sys
 import time
 
@@ -83,6 +83,7 @@ def demo_loop():
     print("Running continuous loop. Press Ctrl+C to stop.")
     print("You can attach Peeka to this process while it runs.")
     print(f"Process PID: {sys.argv[0] if len(sys.argv) > 1 else 'N/A'}")
+    print(f"当前进程 PID: {os.getpid()}")
     print()
 
     calc = Calculator("loop-calc")

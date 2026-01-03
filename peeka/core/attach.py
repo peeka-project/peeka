@@ -8,6 +8,7 @@ import sys
 import tempfile
 import time
 import uuid
+from importlib import resources
 from pathlib import Path
 
 
@@ -50,10 +51,15 @@ class ProcessAttacher:
 
     def _attach_pep768(self) -> bool:
         """Attach using PEP 768 sys.remote_exec()"""
-        from peeka.core.agent import AGENT_CODE
+        # from peeka.core.agent import AGENT_CODE
+        agent_code = resources.files("peeka.core").joinpath("agent.py").read_text(encoding="utf-8")
 
         # Create agent script
-        self.agent_script = self._create_agent_script(AGENT_CODE)
+        self.agent_script = self._create_agent_script(agent_code)
+        if not os.path.exists(self.agent_script):
+            raise FileNotFoundError(f"Agent script not found: {self.agent_script}")
+        else:
+            print(f"[Peeka] Agent script created at {self.agent_script}")
 
         # Inject to target process
         sys.remote_exec(self.pid, self.agent_script)
@@ -72,7 +78,7 @@ class ProcessAttacher:
         print(f"[Peeka] Session ID: {self.session_id}")
 
         # Create ready marker
-        ready_file = Path(f"/tmp/Peeka_{self.session_id}.ready")
+        ready_file = Path(f"/tmp/peeka_{self.session_id}.ready")
         ready_file.touch()
 
         print(f"[Peeka] Agent simulation ready")
@@ -80,19 +86,20 @@ class ProcessAttacher:
 
     def _create_agent_script(self, agent_code: str) -> str:
         """Create temporary agent script file"""
-        agent_path = Path(tempfile.gettempdir()) / f"Peeka_agent_{self.session_id}.py"
+        agent_path = Path(tempfile.gettempdir()) / f"peeka_agent_{self.session_id}.py"
 
         # Inject session_id into agent code
         agent_code_injected = agent_code.replace("{{SESSION_ID}}", self.session_id)
 
         with open(agent_path, 'w') as f:
+            print(f"[Peeka] Creating agent script at {agent_path}")
             f.write(agent_code_injected)
 
         return str(agent_path)
 
     def _wait_for_agent_ready(self, timeout: int = 5) -> bool:
         """Wait for agent initialization"""
-        ready_file = Path(f"/tmp/Peeka_{self.session_id}.ready")
+        ready_file = Path(f"/tmp/peeka_{self.session_id}.ready")
 
         start_time = time.time()
         while time.time() - start_time < timeout:
@@ -104,14 +111,15 @@ class ProcessAttacher:
 
     def get_socket_path(self) -> str:
         """Get Unix domain socket path for communication"""
-        return f"/tmp/Peeka_{self.session_id}.sock"
+        return f"/tmp/peeka_{self.session_id}.sock"
 
     def cleanup(self):
+        return
         """Cleanup temporary files"""
         if self.agent_script and os.path.exists(self.agent_script):
             os.remove(self.agent_script)
 
-        ready_file = Path(f"/tmp/Peeka_{self.session_id}.ready")
+        ready_file = Path(f"/tmp/peeka_{self.session_id}.ready")
         if ready_file.exists():
             ready_file.unlink()
 
