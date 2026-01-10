@@ -82,7 +82,7 @@ class WatchCommand(BaseCommand):
 
         # Find the target function/method
         try:
-            print('_resolve_target')
+            # print('_resolve_target')
             target = self._resolve_target(pattern)
             if target is None:
                 return {
@@ -167,7 +167,7 @@ class WatchCommand(BaseCommand):
             The resolved object or None
         """
         print('here')
-        print(sys.modules)
+        # print(sys.modules)
         parts = pattern.split('.')
         if len(parts) < 2:
             return None
