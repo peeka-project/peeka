@@ -4,10 +4,10 @@ Provides command-line interface for Peeka
 """
 
 import argparse
-import os
 import sys
 
 from peeka.core.attach import ProcessAttacher
+from peeka.core.client import AgentClient
 
 
 def main():
@@ -38,9 +38,14 @@ Examples:
         help='Attach to a running Python process'
     )
     attach_parser.add_argument(
-        'pid',
+        '--pid', '-p',
         type=int,
         help='Process ID to attach to'
+    )
+    attach_parser.add_argument(
+        '--name',
+        type=str,
+        help='Process name to attach to'
     )
 
     # Watch command
@@ -49,9 +54,14 @@ Examples:
         help='Watch function calls in target process'
     )
     watch_parser.add_argument(
-        'pid',
+        '--pid', '-p',
         type=int,
         help='Process ID'
+    )
+    attach_parser.add_argument(
+        '--name',
+        type=str,
+        help='Process name to attach to'
     )
     watch_parser.add_argument(
         'pattern',
@@ -70,11 +80,7 @@ Examples:
         help='Number of times to capture (-1 for infinite, default: -1)'
     )
 
-    # Demo command
-    demo_parser = subparsers.add_parser(
-        'demo',
-        help='Run demonstration'
-    )
+
 
     args = parser.parse_args()
 
@@ -87,8 +93,6 @@ Examples:
             return cmd_attach(args)
         elif args.command == 'watch':
             return cmd_watch(args)
-        elif args.command == 'demo':
-            return cmd_demo(args)
         else:
             print(f"Unknown command: {args.command}", file=sys.stderr)
             return 1
@@ -133,70 +137,43 @@ def cmd_watch(args):
 
     attacher = ProcessAttacher(args.pid)
 
-    try:
-        if not attacher.attach():
-            print("[Peeka] Failed to attach to process", file=sys.stderr)
-            return 1
+    if not attacher.attach():
+        print("[Peeka] Failed to attach to process", file=sys.stderr)
+        attacher.cleanup()
+        return 1
 
-        # Send watch command
-        command = {
-            'type': 'watch',
-            'action': 'start',
-            'pattern': args.pattern,
-            'depth': args.depth,
-            'times': args.times
-        }
+    socket_path = attacher.get_socket_path()
+    client = AgentClient(socket_path)
 
-        print(f"[Peeka] Command: {command}")
-        print("[Peeka] Note: Full watch functionality requires agent communication")
-        print("[Peeka] This is a demonstration of the command structure")
+    command = {
+        'type': 'watch',
+        'action': 'start',
+        'pattern': args.pattern,
+        'depth': args.depth,
+        'times': args.times
+    }
 
+    print(f"[Peeka] Sending command to agent at {socket_path}...")
+    response = client.send_command(command)
+
+    status = response.get('status')
+    if status == 'success':
+        print("[Peeka] Watch started")
+        if 'message' in response:
+            print(f"[Peeka] {response['message']}")
+        if 'watch_id' in response:
+            print(f"[Peeka] Watch ID: {response['watch_id']}")
+        if 'note' in response:
+            print(f"[Peeka] Note: {response['note']}")
+        # Leave agent running for ongoing watch consumption; no cleanup here
         return 0
 
-    finally:
-        attacher.cleanup()
+    print(f"[Peeka] Agent error: {response.get('error', 'unknown error')}", file=sys.stderr)
+    if 'hint' in response:
+        print(f"[Peeka] Hint: {response['hint']}", file=sys.stderr)
+    attacher.cleanup()
+    return 1
 
-
-def cmd_demo(args):
-    """Run demonstration"""
-    print("[Peeka] Running demonstration...")
-    print()
-
-    # Get current process PID
-    pid = os.getpid()
-    print(f"[Peeka] Current process PID: {pid}")
-    print()
-
-    # Demonstrate attach
-    print("=== Demonstrating Attach ===")
-    attacher = ProcessAttacher(pid)
-
-    try:
-        if attacher.attach():
-            print(f"✓ Successfully attached to process {pid}")
-            print(f"✓ Session ID: {attacher.session_id}")
-            print(f"✓ Socket path: {attacher.get_socket_path()}")
-        else:
-            print("✗ Failed to attach")
-            return 1
-    finally:
-        print()
-        attacher.cleanup()
-
-    print("=== Demo Complete ===")
-    print()
-    print("Peeka is a Python diagnostic tool based on PEP 768.")
-    print("It allows you to attach to running Python processes and")
-    print("inspect their behavior without stopping them.")
-    print()
-    print("Key features:")
-    print("  • Process attachment via PEP 768 (Python 3.14+)")
-    print("  • Watch function calls and return values")
-    print("  • Non-invasive diagnostic commands")
-    print("  • Unix domain socket communication")
-    print()
-
-    return 0
 
 
 if __name__ == '__main__':
