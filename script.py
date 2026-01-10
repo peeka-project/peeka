@@ -26,10 +26,13 @@ def add_log_to_function(function_id, replace_original=True):
         # 如果传入的是字符串，格式应为"模块名.函数名"
         if '.' in function_id:
             module_name, func_name = function_id.rsplit('.', 1)
+            # print(sys.modules)
             module = sys.modules.get(module_name)
             if not module:
-                print('no module')
-                raise ValueError(f"模块 {module_name} 不存在")
+                module = getattr(sys.modules.get("__main__"), module_name, None)
+                # target_func = getattr(module, module_name, None)
+                # print('no module')
+                # raise ValueError(f"模块 {module_name} 不存在")
 
             target_func = getattr(module, func_name, None)
             print(target_func)
@@ -88,4 +91,4 @@ def add_log_to_function(function_id, replace_original=True):
     return wrapped
 
 
-add_log_to_function("examples.simple_app.calculate_square")
+add_log_to_function("Calculator.add")

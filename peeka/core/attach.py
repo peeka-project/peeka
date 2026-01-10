@@ -81,7 +81,17 @@ class ProcessAttacher:
         ready_file = Path(f"/tmp/peeka_{self.session_id}.ready")
         ready_file.touch()
 
-        print(f"[Peeka] Agent simulation ready")
+        # Also create a dummy socket path placeholder (no server)
+        sock_path = Path(self.get_socket_path())
+        try:
+            if sock_path.exists():
+                sock_path.unlink()
+            sock_path.touch()
+        except Exception:
+            # Non-fatal; just a placeholder so callers know where to look
+            pass
+
+        print(f"[Peeka] Agent simulation ready (no live socket) at {self.get_socket_path()}")
         return True
 
     def _create_agent_script(self, agent_code: str) -> str:
@@ -114,7 +124,6 @@ class ProcessAttacher:
         return f"/tmp/peeka_{self.session_id}.sock"
 
     def cleanup(self):
-        return
         """Cleanup temporary files"""
         if self.agent_script and os.path.exists(self.agent_script):
             os.remove(self.agent_script)

@@ -3,6 +3,8 @@ Watch Command - Monitor function calls and return values
 Similar to Arthas 'watch' command
 """
 
+import importlib
+import sys
 import time
 from typing import Dict, Any, Optional
 
@@ -80,6 +82,7 @@ class WatchCommand(BaseCommand):
 
         # Find the target function/method
         try:
+            print('_resolve_target')
             target = self._resolve_target(pattern)
             if target is None:
                 return {
@@ -163,30 +166,38 @@ class WatchCommand(BaseCommand):
         Returns:
             The resolved object or None
         """
+        print('here')
+        print(sys.modules)
         parts = pattern.split('.')
+        if len(parts) < 2:
+            return None
 
-        # Try to import module
-        obj = None
-        for i in range(len(parts), 0, -1):
+        # Try progressively shorter module prefixes so both
+        # "import pkg.mod" and "from pkg.mod import cls" shapes work.
+        for i in range(len(parts) - 1, 0, -1):
             module_name = '.'.join(parts[:i])
+            attrs = parts[i:]
+
             try:
-                obj = __import__(module_name, fromlist=[''])
-                remaining = parts[i:]
-                break
+
+                module = sys.modules.get(module_name)
+                if module is None:
+                    module = importlib.import_module(module_name)
             except (ImportError, ModuleNotFoundError):
                 continue
 
-        if obj is None:
-            return None
+            obj = module
+            for attr in attrs:
+                try:
+                    obj = getattr(obj, attr)
+                except AttributeError:
+                    obj = None
+                    break
 
-        # Traverse remaining parts
-        for part in remaining:
-            try:
-                obj = getattr(obj, part)
-            except AttributeError:
-                return None
+            if obj is not None:
+                return obj
 
-        return obj
+        return None
 
     def capture_call(self, watch_id: str, args: tuple, kwargs: dict, result: Any, duration: float):
         """
