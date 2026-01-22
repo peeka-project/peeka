@@ -2,16 +2,19 @@
 Agent Code - Runs inside target process
 This code is injected into the target process and handles command execution
 """
-import sys
-import socket
+
 import json
-import tempfile
+import socket
+import sys
 import threading
 import traceback
 from pathlib import Path
+from typing import Any, Dict, Optional
+
+from peeka.core.injector import DecoratorInjector
+from peeka.core.observer import ObservationManager
 
 
-# Peeka Agent - runs in target process
 class PeekaAgent:
     """Agent running inside target process"""
 
@@ -19,32 +22,33 @@ class PeekaAgent:
         self.session_id = session_id
         self.running = True
         self.sock_path = f"/tmp/peeka_{session_id}.sock"
-        self.server = None
-        self.command_handlers = {}
+        self.server: Optional[socket.socket] = None
+        self.command_handlers: Dict[str, Any] = {}
+        self._client_connections: list = []
+        self._connections_lock = threading.Lock()
+
+        self.observer = ObservationManager()
+        self.injector = DecoratorInjector(self)
+
         self._register_handlers()
 
-    def _register_handlers(self):
-        """Register command handlers"""
+    def _register_handlers(self) -> None:
         from peeka.commands.watch import WatchCommand
-        self.command_handlers['watch'] = WatchCommand()
 
-    def start(self):
-        """Start agent server"""
+        self.command_handlers["watch"] = WatchCommand(self)  # type: ignore[abstract]
+
+    def start(self) -> None:
         try:
-            # Create Unix domain socket
             self.server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 
-            # Remove old socket if exists
             if Path(self.sock_path).exists():
                 Path(self.sock_path).unlink()
 
             self.server.bind(self.sock_path)
-            self.server.listen(1)
+            self.server.listen(5)
 
-            # Mark as ready
             Path(f"/tmp/peeka_{self.session_id}.ready").touch()
 
-            # Run in background thread
             thread = threading.Thread(target=self._accept_loop, daemon=True)
             print("[peeka Agent] Started and listening for connections")
             thread.start()
@@ -54,49 +58,57 @@ class PeekaAgent:
             print(f"[peeka Agent] Start failed: {e}", file=sys.stderr)
             traceback.print_exc()
 
-    def _accept_loop(self):
-        """Accept client connections"""
+    def _accept_loop(self) -> None:
         while self.running:
             try:
+                if self.server is None:
+                    break
                 conn, _ = self.server.accept()
                 threading.Thread(
-                    target=self._handle_client,
-                    args=(conn,),
-                    daemon=True
+                    target=self._handle_client, args=(conn,), daemon=True
                 ).start()
             except Exception as e:
                 if self.running:
                     print(f"[peeka Agent] Accept error: {e}", file=sys.stderr)
 
-    def _handle_client(self, conn):
-        """Handle client requests"""
+    def _handle_client(self, conn: socket.socket) -> None:
+        with self._connections_lock:
+            self._client_connections.append(conn)
+
         try:
             while True:
-                # Receive command (length-prefixed JSON)
                 length_bytes = conn.recv(4)
                 if not length_bytes:
                     break
 
-                length = int.from_bytes(length_bytes, 'big')
-                data = conn.recv(length).decode('utf-8')
-                command = json.loads(data)
+                length = int.from_bytes(length_bytes, "big")
+                data = b""
+                while len(data) < length:
+                    chunk = conn.recv(min(length - len(data), 4096))
+                    if not chunk:
+                        break
+                    data += chunk
 
-                # Execute command
+                if len(data) < length:
+                    break
+
+                command = json.loads(data.decode("utf-8"))
                 result = self._execute_command(command)
 
-                # Send response
-                response = json.dumps(result).encode('utf-8')
-                conn.sendall(len(response).to_bytes(4, 'big'))
+                response = json.dumps(result).encode("utf-8")
+                conn.sendall(len(response).to_bytes(4, "big"))
                 conn.sendall(response)
 
         except Exception as e:
             print(f"[peeka Agent] Client error: {e}", file=sys.stderr)
         finally:
+            with self._connections_lock:
+                if conn in self._client_connections:
+                    self._client_connections.remove(conn)
             conn.close()
 
     def _execute_command(self, command: dict) -> dict:
-        """Execute diagnostic command"""
-        cmd_type = command.get('type')
+        cmd_type = command.get("type", "")
 
         handler = self.command_handlers.get(cmd_type)
         if handler:
@@ -104,33 +116,55 @@ class PeekaAgent:
                 return handler.execute(command)
             except Exception as e:
                 return {
-                    'status': 'error',
-                    'error': str(e),
-                    'traceback': traceback.format_exc()
+                    "status": "error",
+                    "error": str(e),
+                    "traceback": traceback.format_exc(),
                 }
         else:
-            return {
-                'status': 'error',
-                'error': f'Unknown command type: {cmd_type}'
-            }
+            return {"status": "error", "error": f"Unknown command type: {cmd_type}"}
 
-    def stop(self):
-        """Stop agent"""
+    def _send_observation(self, observation: Dict[str, Any]) -> None:
+        """Called by injector when a watched function is invoked."""
+        self.observer.add_observation(observation)
+
+        obs_json = json.dumps(observation).encode("utf-8")
+        message = b"OBS:" + len(obs_json).to_bytes(4, "big") + obs_json
+
+        with self._connections_lock:
+            dead_connections = []
+            for conn in self._client_connections:
+                try:
+                    conn.sendall(message)
+                except Exception:
+                    dead_connections.append(conn)
+
+            for conn in dead_connections:
+                self._client_connections.remove(conn)
+
+    def stop(self) -> None:
         self.running = False
+        self.injector.uninject_all()
         if self.server:
             self.server.close()
 
 
-# Initialize and start agent
-try:
-    agent = PeekaAgent("{{SESSION_ID}}")
-    agent.start()
+def _init_agent(session_id: str) -> None:
+    try:
+        agent = PeekaAgent(session_id)
+        agent.start()
 
-    # Store in global to prevent garbage collection
-    if not hasattr(sys, '_peeka_agents'):
-        sys._peeka_agents = {}
-    sys._peeka_agents["{{SESSION_ID}}"] = agent
+        if not hasattr(sys, "_peeka_agents"):
+            sys._peeka_agents = {}  # type: ignore[attr-defined]
+        sys._peeka_agents[session_id] = agent  # type: ignore[attr-defined]
 
-except Exception as e:
-    print(f"[peeka Agent] Initialization failed: {e}", file=sys.stderr)
-    traceback.print_exc()
+    except Exception as e:
+        print(f"[peeka Agent] Initialization failed: {e}", file=sys.stderr)
+        traceback.print_exc()
+
+
+# Auto-initialize when injected via sys.remote_exec()
+# {{SESSION_ID}} is replaced by ProcessAttacher before injection
+if __name__ != "__main__":
+    _session_id = "{{SESSION_ID}}"
+    if not _session_id.startswith("{{"):
+        _init_agent(_session_id)
