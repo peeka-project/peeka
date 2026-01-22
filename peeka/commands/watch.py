@@ -3,227 +3,106 @@ Watch Command - Monitor function calls and return values
 Similar to Arthas 'watch' command
 """
 
-import importlib
-import sys
-import time
-from typing import Dict, Any, Optional
+from typing import Any, Dict, TYPE_CHECKING
 
-from peeka.utils.formatters import format_value
-from ..commands.base import BaseCommand
+from peeka.commands.base import BaseCommand
+
+if TYPE_CHECKING:
+    from peeka.core.agent import PeekaAgent
 
 
 class WatchCommand(BaseCommand):
     """
     Watch command - monitors function execution
-    
+
     Usage:
-        watch <module.class.method> [-x depth] [-n times]
-    
+        watch <module.class.method> [-x depth] [-n times] [-c condition]
+
     Examples:
         watch mymodule.MyClass.my_method
         watch mymodule.my_function -x 2 -n 5
+        watch mymodule.func -c "params[0] > 100"
     """
 
-    def __init__(self):
+    def __init__(self, agent: "PeekaAgent"):
         super().__init__()
-        self.watches = {}
+        self.agent = agent
 
     def execute(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Execute watch command
-        
-        Args:
-            params: {
-                'pattern': 'module.class.method',  # What to watch
-                'depth': 2,                         # Output depth
-                'times': -1,                        # Number of times (-1 = infinite)
-                'action': 'start' | 'stop' | 'status'
-            }
-        
-        Returns:
-            Result dictionary with status and data
-        """
         try:
-            action = params.get('action', 'start')
+            action = params.get("action", "start")
 
-            if action == 'start':
+            if action == "start":
                 return self._start_watch(params)
-            elif action == 'stop':
+            elif action == "stop":
                 return self._stop_watch(params)
-            elif action == 'status':
+            elif action == "status":
                 return self._get_status(params)
             else:
-                return {
-                    'status': 'error',
-                    'error': f'Unknown action: {action}'
-                }
+                return {"status": "error", "error": f"Unknown action: {action}"}
 
         except Exception as e:
-            return {
-                'status': 'error',
-                'error': str(e)
-            }
+            return {"status": "error", "error": str(e)}
 
     def _start_watch(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Start watching a function"""
-        self.validate_params(params, ['pattern'])
+        self.validate_params(params, ["pattern"])
 
-        pattern = params['pattern']
-        depth = params.get('depth', 2)
-        times = params.get('times', -1)
+        pattern = params["pattern"]
+        watch_config = {
+            "depth": params.get("depth", 2),
+            "times": params.get("times", -1),
+            "condition": params.get("condition"),
+        }
 
-        # Parse pattern (e.g., "mymodule.MyClass.my_method")
-        parts = pattern.split('.')
-        if len(parts) < 2:
-            return {
-                'status': 'error',
-                'error': 'Pattern must be at least module.function'
-            }
-
-        # Find the target function/method
         try:
-            # print('_resolve_target')
-            target = self._resolve_target(pattern)
-            if target is None:
-                return {
-                    'status': 'error',
-                    'error': f'Cannot find target: {pattern}'
-                }
-
-            # Install watch
-            watch_id = f"watch_{len(self.watches)}"
-            self.watches[watch_id] = {
-                'pattern': pattern,
-                'target': target,
-                'depth': depth,
-                'times': times,
-                'count': 0,
-                'results': []
-            }
+            watch_id = self.agent.injector.inject(pattern, watch_config)
+            self.agent.observer.register_watch(watch_id, pattern, watch_config)
 
             return {
-                'status': 'success',
-                'watch_id': watch_id,
-                'message': f'Started watching {pattern}',
-                'note': 'Watch simulation - actual tracing requires sys.settrace or instrumentation'
+                "status": "success",
+                "watch_id": watch_id,
+                "pattern": pattern,
+                "config": watch_config,
             }
 
-        except Exception as e:
-            return {
-                'status': 'error',
-                'error': f'Failed to start watch: {str(e)}'
-            }
+        except ValueError as e:
+            return {"status": "error", "error": str(e)}
 
     def _stop_watch(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Stop watching"""
-        watch_id = params.get('watch_id')
+        watch_id = params.get("watch_id")
 
-        if watch_id and watch_id in self.watches:
-            watch_info = self.watches.pop(watch_id)
-            return {
-                'status': 'success',
-                'message': f'Stopped watch {watch_id}',
-                'count': watch_info['count']
-            }
-        elif watch_id:
-            return {
-                'status': 'error',
-                'error': f'Watch not found: {watch_id}'
-            }
+        if watch_id:
+            try:
+                result = self.agent.injector.uninject(watch_id)
+                stats = self.agent.observer.unregister_watch(watch_id)
+                return {
+                    "status": "success",
+                    "watch_id": watch_id,
+                    "observation_count": result.get("count", 0),
+                    "stats": stats,
+                }
+            except ValueError as e:
+                return {"status": "error", "error": str(e)}
         else:
-            # Stop all watches
-            count = len(self.watches)
-            self.watches.clear()
-            return {
-                'status': 'success',
-                'message': f'Stopped {count} watches'
-            }
+            count = self.agent.injector.uninject_all()
+            self.agent.observer.clear_all()
+            return {"status": "success", "stopped_count": count}
 
     def _get_status(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Get status of active watches"""
-        watches_info = []
-        for watch_id, info in self.watches.items():
-            watches_info.append({
-                'id': watch_id,
-                'pattern': info['pattern'],
-                'count': info['count'],
-                'times': info['times']
-            })
+        watch_id = params.get("watch_id")
+
+        if watch_id:
+            watch_info = self.agent.injector.get_watch_info(watch_id)
+            stats = self.agent.observer.get_watch_stats(watch_id)
+            if watch_info:
+                return {"status": "success", "watch": watch_info, "stats": stats}
+            return {"status": "error", "error": f"Watch not found: {watch_id}"}
+
+        watches = self.agent.injector.list_watches()
+        all_stats = self.agent.observer.get_all_stats()
 
         return {
-            'status': 'success',
-            'watches': watches_info,
-            'total': len(watches_info)
+            "status": "success",
+            "watches": watches,
+            "stats": all_stats,
         }
-
-    def _resolve_target(self, pattern: str) -> Optional[Any]:
-        """
-        Resolve pattern to actual Python object
-        
-        Args:
-            pattern: Dotted pattern like 'module.Class.method'
-            
-        Returns:
-            The resolved object or None
-        """
-        print('here')
-        # print(sys.modules)
-        parts = pattern.split('.')
-        if len(parts) < 2:
-            return None
-
-        # Try progressively shorter module prefixes so both
-        # "import pkg.mod" and "from pkg.mod import cls" shapes work.
-        for i in range(len(parts) - 1, 0, -1):
-            module_name = '.'.join(parts[:i])
-            attrs = parts[i:]
-
-            try:
-
-                module = sys.modules.get(module_name)
-                if module is None:
-                    module = importlib.import_module(module_name)
-            except (ImportError, ModuleNotFoundError):
-                continue
-
-            obj = module
-            for attr in attrs:
-                try:
-                    obj = getattr(obj, attr)
-                except AttributeError:
-                    obj = None
-                    break
-
-            if obj is not None:
-                return obj
-
-        return None
-
-    def capture_call(self, watch_id: str, args: tuple, kwargs: dict, result: Any, duration: float):
-        """
-        Capture a function call (would be called by instrumentation)
-        
-        This is a placeholder - actual implementation would use sys.settrace
-        or bytecode instrumentation
-        """
-        if watch_id not in self.watches:
-            return
-
-        watch_info = self.watches[watch_id]
-        depth = watch_info['depth']
-
-        # Format call information
-        call_info = {
-            'timestamp': time.time(),
-            'args': format_value(args, depth),
-            'kwargs': format_value(kwargs, depth),
-            'result': format_value(result, depth),
-            'duration': f'{duration:.6f}s'
-        }
-
-        watch_info['results'].append(call_info)
-        watch_info['count'] += 1
-
-        # Check if we should stop watching
-        if watch_info['times'] > 0 and watch_info['count'] >= watch_info['times']:
-            self.watches.pop(watch_id)
