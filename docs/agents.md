@@ -201,23 +201,22 @@ def _create_wrapper(self, func: Callable, watch_id: str, config: dict) -> Callab
     depth = config.get('depth', 2)
     condition = config.get('condition')
 
-    # 预编译条件表达式
-    compiled_condition = None
+    safe_evaluator = None
     if condition:
-        compiled_condition = compile(condition, '<condition>', 'eval')
+        safe_evaluator = SimpleEval(allowed_attrs=BASIC_ALLOWED_ATTRS)
+        safe_evaluator.parse(condition)
 
     @wraps(func)
     def wrapper(*args, **kwargs):
         start_time = time.perf_counter()
 
         try:
-            # 条件检查
-            if compiled_condition:
+            if safe_evaluator:
                 local_vars = {'params': args, 'kwargs': kwargs}
-                if not eval(compiled_condition, {}, local_vars):
+                safe_evaluator.names = local_vars
+                if not safe_evaluator.eval(condition):
                     return func(*args, **kwargs)
 
-            # 执行原始函数
             result = func(*args, **kwargs)
             success = True
             error = None
@@ -231,7 +230,6 @@ def _create_wrapper(self, func: Callable, watch_id: str, config: dict) -> Callab
         finally:
             duration_ms = (time.perf_counter() - start_time) * 1000
 
-        # 构造观测数据
         observation = {
             'watch_id': watch_id,
             'timestamp': time.time(),
