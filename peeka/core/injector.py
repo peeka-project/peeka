@@ -14,6 +14,8 @@ import uuid
 from functools import wraps
 from typing import Any, Callable, Dict, Optional, TYPE_CHECKING
 
+from peeka.core.safeeval.simpleeval import SimpleEval, BASIC_ALLOWED_ATTRS
+
 if TYPE_CHECKING:
     from peeka.core.agent import PeekaAgent
 
@@ -253,13 +255,24 @@ class DecoratorInjector:
         condition = config.get("condition")
         times_limit = config.get("times", -1)
 
-        # Pre-compile condition if provided
-        compiled_condition = None
+        safe_evaluator = None
         if condition:
             try:
-                compiled_condition = compile(condition, "<condition>", "eval")
+                safe_evaluator = SimpleEval(
+                    allowed_attrs=BASIC_ALLOWED_ATTRS,
+                    functions={
+                        "len": len,
+                        "str": str,
+                        "int": int,
+                        "float": float,
+                        "bool": bool,
+                    },
+                )
+                safe_evaluator.parse(condition)
             except SyntaxError as e:
                 raise ValueError(f"Invalid condition expression: {e}")
+            except Exception as e:
+                raise ValueError(f"Condition validation failed: {e}")
 
         # Reference to self for use in wrapper
         injector = self
@@ -277,15 +290,13 @@ class DecoratorInjector:
                     # Limit reached, call original without observation
                     return func(*args, **kwargs)
 
-            # Check condition
-            if compiled_condition:
+            if safe_evaluator:
                 try:
                     local_vars = {"params": args, "kwargs": kwargs}
-                    if not eval(compiled_condition, {"__builtins__": {}}, local_vars):
-                        # Condition not met, call original
+                    safe_evaluator.names = local_vars
+                    if not safe_evaluator.eval(condition):
                         return func(*args, **kwargs)
                 except Exception:
-                    # Condition evaluation failed, skip observation
                     return func(*args, **kwargs)
 
             # Capture timing

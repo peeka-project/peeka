@@ -11,6 +11,7 @@ import traceback
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from peeka.commands.base import BaseCommand
 from peeka.core.injector import DecoratorInjector
 from peeka.core.observer import ObservationManager
 
@@ -110,7 +111,7 @@ class PeekaAgent:
     def _execute_command(self, command: dict) -> dict:
         cmd_type = command.get("type", "")
 
-        handler = self.command_handlers.get(cmd_type)
+        handler: BaseCommand = self.command_handlers.get(cmd_type)
         if handler:
             try:
                 return handler.execute(command)
