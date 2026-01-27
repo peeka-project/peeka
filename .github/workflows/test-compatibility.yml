@@ -1,0 +1,76 @@
+name: Python Version Compatibility Test
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Test Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: [ '3.9', '3.10', '3.11', '3.12', '3.13', '3.14' ]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          allow-prereleases: true
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gdb
+          
+          # Install Python debug symbols for GDB fallback (Python < 3.14)
+          if [[ "${{ matrix.python-version }}" != "3.14" ]]; then
+            sudo apt-get install -y python${{ matrix.python-version }}-dbg || true
+          fi
+
+      - name: Configure ptrace permissions
+        run: |
+          echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope
+          cat /proc/sys/kernel/yama/ptrace_scope
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-timeout
+          pip install -e .
+
+      - name: Show environment info
+        run: |
+          echo "Python version:"
+          python --version
+          python -c "import sys; print(f'  Version info: {sys.version_info}')"
+          python -c "import sys; print(f'  Has remote_exec: {hasattr(sys, \"remote_exec\")}')"
+          echo ""
+          echo "GDB version:"
+          gdb --version | head -1
+          echo ""
+          echo "Peeka version:"
+          python -c "import peeka; print(f'  Peeka installed successfully')" || echo "  Failed to import peeka"
+
+      - name: Run simple compatibility tests
+        timeout-minutes: 5
+        run: |
+          python3 tests/simple_compat_test.py
+
+      - name: Run integration tests (if pytest available)
+        timeout-minutes: 5
+        continue-on-error: true
+        run: |
+          if command -v pytest &> /dev/null; then
+            pytest tests/test_integration.py -v --timeout=60 -k "test_agent_starts_and_accepts_connections or test_watch_command_integration"
+          else
+            echo "pytest not installed, skipping integration tests"
+          fi
