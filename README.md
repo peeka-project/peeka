@@ -70,6 +70,21 @@ Agent 架构能够方便地支持新的诊断命令和功能扩展，而不需�
 核心的 `sys.remote_exec(pid, script_path)` 函数是整个系统运作的关键，它封装了复杂的进程附加、代码注入和执行调度逻辑。通过这一函数，Peeka
 能够将 Agent 代码安全地注入到目标进程中，并启动监听服务准备接收诊断命令。
 
+**Python < 3.14 降级方案**：对于旧版本 Python，使用 GDB + ptrace 机制（参考 pyrasite）：
+
+1. GDB 通过 ptrace 附加到目标进程
+2. 调用 `PyGILState_Ensure()` 获取 GIL
+3. 调用 `PyRun_SimpleString()` 执行 Agent 代码
+4. 调用 `PyGILState_Release()` 释放 GIL
+5. GDB 分离，进程继续运行
+
+**要求**：
+
+- GDB 7.3+
+- Python 调试符号（python3-dbg 或 python3-debuginfo）
+- CAP_SYS_PTRACE 或相同 UID
+- ptrace_scope <= 1
+
 ### Unix Domain Socket
 
 采用 Unix Domain Socket 作为进程间通信的主要机制。相比网络套接字，Unix Domain Socket 具有：
@@ -216,11 +231,25 @@ peeka watch <pid> <pattern> [options]
 
 ### 进程附加权限
 
-- **Linux**: 需要 `CAP_SYS_PTRACE` 或相同 UID
-- **Docker**: 需要 `--cap-add=SYS_PTRACE`
+**Python 3.14+**:
 
-临时放宽 ptrace 限制（测试用）：
+- 使用 PEP 768 `sys.remote_exec()`
+- 需要相同 UID 或 CAP_SYS_PTRACE
 
+**Python < 3.14**:
+
+- 使用 GDB + ptrace 降级方案
+- 需要 GDB 和 Python 调试符号
+- 需要相同 UID 或 CAP_SYS_PTRACE
+- ptrace_scope 必须 <= 1
+
+**Docker 容器**:
+
+```bash
+docker run --cap-add=SYS_PTRACE your-image
+```
+
+**临时放宽 ptrace 限制**（测试用）:
 ```bash
 echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope
 ```
@@ -230,8 +259,18 @@ echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope
 ### 附加失败（权限不足）
 
 ```bash
-# Linux: 临时放宽 ptrace 限制
+# Python < 3.14 使用 GDB 需要额外安装调试符号
+# Debian/Ubuntu
+sudo apt-get install gdb python3-dbg
+
+# RHEL/Fedora
+sudo yum install gdb python3-debuginfo
+
+# 临时放宽 ptrace 限制
 echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope
+
+# SELinux 系统（Fedora/RHEL）
+sudo setsebool -P deny_ptrace=off
 ```
 
 ### 观测不到数据
