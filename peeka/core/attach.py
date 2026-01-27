@@ -4,10 +4,13 @@ Attach to running Python processes and inject agent code
 """
 
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import time
 import uuid
+import warnings
 from importlib import resources
 from pathlib import Path
 
@@ -77,29 +80,50 @@ class ProcessAttacher:
         return False
 
     def _attach_fallback(self) -> bool:
-        """Fallback mechanism for older Python versions"""
-        # For demonstration, create a local agent simulation
-        print(f"[Peeka] Creating simulated agent for PID {self.pid}")
-        print(f"[Peeka] Session ID: {self.session_id}")
+        """
+        Fallback mechanism for older Python versions using GDB + ptrace.
 
-        # Create ready marker
-        ready_file = Path(f"/tmp/peeka_{self.session_id}.ready")
-        ready_file.touch()
+        This uses the pyrasite approach:
+        1. Use GDB to attach to target process (via ptrace)
+        2. Call PyGILState_Ensure to acquire GIL
+        3. Call PyRun_SimpleString to execute agent bootstrap code
+        4. Call PyGILState_Release to release GIL
+        5. GDB detaches, process continues
 
-        # Also create a dummy socket path placeholder (no server)
-        sock_path = Path(self.get_socket_path())
-        try:
-            if sock_path.exists():
-                sock_path.unlink()
-            sock_path.touch()
-        except Exception:
-            # Non-fatal; just a placeholder so callers know where to look
-            pass
+        Requirements:
+        - GDB 7.3+
+        - CAP_SYS_PTRACE or same UID
+        - ptrace_scope <= 1
+        - Python debugging symbols
+        """
+        print(f"[Peeka] Using GDB injection for PID {self.pid} (Python <3.14)")
 
-        print(
-            f"[Peeka] Agent simulation ready (no live socket) at {self.get_socket_path()}"
+        self._check_gdb_available()
+        self._check_ptrace_permissions()
+
+        agent_code = (
+            resources.files("peeka.core")
+            .joinpath("agent.py")
+            .read_text(encoding="utf-8")
         )
-        return True
+
+        agent_script = self._create_agent_script(agent_code)
+
+        try:
+            self._inject_via_gdb(agent_script)
+
+            if self._wait_for_agent_ready():
+                print(f"[Peeka] Successfully attached to process {self.pid}")
+                return True
+            else:
+                raise RuntimeError("Agent failed to initialize")
+
+        except Exception as e:
+            print(f"[Peeka] GDB injection failed: {e}")
+            raise
+        finally:
+            if os.path.exists(agent_script):
+                os.remove(agent_script)
 
     def _create_agent_script(self, agent_code: str) -> str:
         agent_path = Path(tempfile.gettempdir()) / f"peeka_agent_{self.session_id}.py"
@@ -131,8 +155,112 @@ class ProcessAttacher:
         """Get Unix domain socket path for communication"""
         return f"/tmp/peeka_{self.session_id}.sock"
 
+    def _check_gdb_available(self):
+        """Check if GDB is available on the system"""
+        if not shutil.which("gdb"):
+            raise RuntimeError(
+                "GDB not found. Install with:\n"
+                "  Debian/Ubuntu: sudo apt-get install gdb python3-dbg\n"
+                "  RHEL/Fedora: sudo yum install gdb python3-debuginfo\n"
+                "  Arch: sudo pacman -S gdb"
+            )
+
+    def _check_ptrace_permissions(self):
+        """Check if ptrace is available and warn user if restricted"""
+        ptrace_scope_file = "/proc/sys/kernel/yama/ptrace_scope"
+
+        if os.path.exists(ptrace_scope_file):
+            try:
+                with open(ptrace_scope_file) as f:
+                    scope = int(f.read().strip())
+
+                if scope >= 2:
+                    raise PermissionError(
+                        f"ptrace_scope is {scope} (admin-only or disabled).\n"
+                        "To enable: echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope"
+                    )
+                elif scope == 1:
+                    warnings.warn(
+                        f"ptrace_scope is {scope} (restricted mode). "
+                        "Injection may fail if target is not a child process.\n"
+                        "To enable: echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope",
+                        RuntimeWarning,
+                    )
+            except (IOError, ValueError) as e:
+                warnings.warn(f"Could not read ptrace_scope: {e}", RuntimeWarning)
+
+        # Check if target process exists and we have permissions
+        try:
+            os.kill(self.pid, 0)  # Signal 0 checks process existence
+        except ProcessLookupError:
+            raise ProcessLookupError(f"Process {self.pid} does not exist")
+        except PermissionError:
+            raise PermissionError(
+                f"No permission to access process {self.pid}. "
+                "Requires same UID or CAP_SYS_PTRACE capability."
+            )
+
+    def _inject_via_gdb(self, agent_script: str):
+        """
+        Inject agent script using GDB.
+
+        Executes Python code in target process by calling Python C API functions:
+        - PyGILState_Ensure(): Acquire GIL
+        - PyRun_SimpleString(): Execute Python code
+        - PyGILState_Release(): Release GIL
+        """
+        escaped_script = agent_script.replace("\\", "\\\\").replace('"', '\\"')
+
+        gdb_commands = [
+            "PyGILState_Ensure()",
+            f'PyRun_SimpleString("exec(open(\\"{escaped_script}\\").read())")',
+            "PyGILState_Release($1)",
+        ]
+
+        cmd = ["gdb", "-p", str(self.pid), "-batch", "-q"]
+        for gdb_cmd in gdb_commands:
+            cmd.extend(["-eval-command", f"call (void*) {gdb_cmd}"])
+
+        print(f"[Peeka] Injecting agent via GDB...")
+
+        try:
+            result = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=30,
+                text=True,
+            )
+
+            stderr = result.stderr.lower()
+            if "permission denied" in stderr or "operation not permitted" in stderr:
+                raise PermissionError(
+                    "GDB attach failed: Permission denied.\n"
+                    "Check ptrace_scope and process ownership."
+                )
+            elif "no symbol" in stderr and "pygil" in stderr:
+                raise RuntimeError(
+                    "Python debugging symbols not found.\n"
+                    "Install python3-dbg (Debian/Ubuntu) or python3-debuginfo (RHEL/Fedora)"
+                )
+            elif result.returncode != 0:
+                raise RuntimeError(
+                    f"GDB injection failed (exit code {result.returncode}):\n"
+                    f"stderr: {result.stderr}\n"
+                    f"stdout: {result.stdout}"
+                )
+
+            print(f"[Peeka] GDB injection completed")
+
+        except subprocess.TimeoutExpired:
+            raise TimeoutError(
+                "GDB injection timed out after 30 seconds. "
+                "Process may be deadlocked or unresponsive."
+            )
+        except FileNotFoundError:
+            raise RuntimeError("GDB executable not found in PATH")
+
     def cleanup(self):
-        return
         """Cleanup temporary files"""
         if self.agent_script and os.path.exists(self.agent_script):
             os.remove(self.agent_script)
