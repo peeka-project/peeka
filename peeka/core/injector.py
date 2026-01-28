@@ -345,7 +345,7 @@ class DecoratorInjector:
                     safe_evaluator.names = local_vars
                     return bool(safe_evaluator.eval(condition_express))
                 except Exception:
-                    return True
+                    return False
 
             def send_observation(
                 location, result_val=None, error_msg=None, duration_ms: float = 0.0
