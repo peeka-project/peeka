@@ -279,3 +279,260 @@ class TestValueFormatting:
         long_bytes = b"x" * 200
         result = injector._format_value(long_bytes, 2)
         assert result.startswith("<bytes len=")
+
+
+class TestArthasCompatibility:
+    @pytest.fixture
+    def mock_agent(self):
+        return MockAgent()
+
+    @pytest.fixture
+    def injector(self, mock_agent):
+        from peeka.core.injector import DecoratorInjector
+
+        return DecoratorInjector(mock_agent)
+
+    def test_observe_before_flag(self, injector, mock_agent):
+        """Test -b flag: observe before function execution (AtEnter)"""
+
+        def sample_function(x):
+            return x * 2
+
+        test_module = type(sys)("test_module_before")
+        test_module.sample_function = sample_function
+        sys.modules["test_module_before"] = test_module
+
+        try:
+            watch_id = injector.inject(
+                "test_module_before.sample_function", {"before": True, "finish": False}
+            )
+
+            result = test_module.sample_function(5)
+            assert result == 10
+
+            assert len(mock_agent._observations) == 1
+            obs = mock_agent._observations[0]
+            assert obs["location"] == "AtEnter"
+            assert obs["params"] == [5]
+            assert obs["returnObj"] is None
+
+        finally:
+            del sys.modules["test_module_before"]
+
+    def test_observe_success_flag(self, injector, mock_agent):
+        """Test -s flag: observe only on successful execution (AtExit)"""
+
+        def sample_function(x):
+            if x < 0:
+                raise ValueError("negative value")
+            return x * 2
+
+        test_module = type(sys)("test_module_success")
+        test_module.sample_function = sample_function
+        sys.modules["test_module_success"] = test_module
+
+        try:
+            watch_id = injector.inject(
+                "test_module_success.sample_function",
+                {"success": True, "finish": False, "exception": False},
+            )
+
+            result = test_module.sample_function(5)
+            assert result == 10
+            assert len(mock_agent._observations) == 1
+            obs = mock_agent._observations[0]
+            assert obs["location"] == "AtExit"
+            assert obs["returnObj"] == 10
+            assert obs["success"] is True
+
+            with pytest.raises(ValueError, match="negative value"):
+                test_module.sample_function(-1)
+
+            assert len(mock_agent._observations) == 1
+
+        finally:
+            del sys.modules["test_module_success"]
+
+    def test_observe_exception_flag(self, injector, mock_agent):
+        """Test -e flag: observe only on exception (AtExceptionExit)"""
+
+        def sample_function(x):
+            if x < 0:
+                raise ValueError("negative value")
+            return x * 2
+
+        test_module = type(sys)("test_module_exception")
+        test_module.sample_function = sample_function
+        sys.modules["test_module_exception"] = test_module
+
+        try:
+            watch_id = injector.inject(
+                "test_module_exception.sample_function",
+                {"exception": True, "finish": False, "success": False},
+            )
+
+            result = test_module.sample_function(5)
+            assert result == 10
+            assert len(mock_agent._observations) == 0
+
+            with pytest.raises(ValueError, match="negative value"):
+                test_module.sample_function(-1)
+
+            assert len(mock_agent._observations) == 1
+            obs = mock_agent._observations[0]
+            assert obs["location"] == "AtExceptionExit"
+            assert obs["success"] is False
+            assert "ValueError: negative value" in obs["throwExp"]
+
+        finally:
+            del sys.modules["test_module_exception"]
+
+    def test_observe_finish_flag_default(self, injector, mock_agent):
+        """Test -f flag (default): observe both success and exception (AtExit/AtExceptionExit)"""
+
+        def sample_function(x):
+            if x < 0:
+                raise ValueError("negative value")
+            return x * 2
+
+        test_module = type(sys)("test_module_finish")
+        test_module.sample_function = sample_function
+        sys.modules["test_module_finish"] = test_module
+
+        try:
+            watch_id = injector.inject("test_module_finish.sample_function", {})
+
+            result = test_module.sample_function(5)
+            assert result == 10
+            assert len(mock_agent._observations) == 1
+            obs1 = mock_agent._observations[0]
+            assert obs1["location"] == "AtExit"
+            assert obs1["success"] is True
+
+            with pytest.raises(ValueError):
+                test_module.sample_function(-1)
+
+            assert len(mock_agent._observations) == 2
+            obs2 = mock_agent._observations[1]
+            assert obs2["location"] == "AtExceptionExit"
+            assert obs2["success"] is False
+
+        finally:
+            del sys.modules["test_module_finish"]
+
+    def test_condition_express_parameter(self, injector, mock_agent):
+        """Test condition_express parameter (renamed from condition for Arthas compatibility)"""
+
+        def sample_function(x):
+            return x * 2
+
+        test_module = type(sys)("test_module_cond_express")
+        test_module.sample_function = sample_function
+        sys.modules["test_module_cond_express"] = test_module
+
+        try:
+            watch_id = injector.inject(
+                "test_module_cond_express.sample_function",
+                {"condition_express": "params[0] > 10"},
+            )
+
+            test_module.sample_function(5)
+            assert len(mock_agent._observations) == 0
+
+            test_module.sample_function(15)
+            assert len(mock_agent._observations) == 1
+
+        finally:
+            del sys.modules["test_module_cond_express"]
+
+    def test_cost_variable_in_condition(self, injector, mock_agent):
+        """Test special cost variable in condition expression (like Arthas #cost)"""
+        import time
+
+        def slow_function(x):
+            time.sleep(0.01)
+            return x * 2
+
+        test_module = type(sys)("test_module_cost")
+        test_module.slow_function = slow_function
+        sys.modules["test_module_cost"] = test_module
+
+        try:
+            watch_id = injector.inject(
+                "test_module_cost.slow_function", {"condition_express": "cost > 5"}
+            )
+
+            result = test_module.slow_function(5)
+            assert result == 10
+
+            assert len(mock_agent._observations) == 1
+            obs = mock_agent._observations[0]
+            assert obs["cost"] >= 10
+
+        finally:
+            del sys.modules["test_module_cost"]
+
+    def test_arthas_field_names(self, injector, mock_agent):
+        """Test that output uses Arthas-compatible field names: params, returnObj, throwExp, cost"""
+
+        def sample_function(x, y, z=10):
+            return x + y + z
+
+        test_module = type(sys)("test_module_fields")
+        test_module.sample_function = sample_function
+        sys.modules["test_module_fields"] = test_module
+
+        try:
+            watch_id = injector.inject("test_module_fields.sample_function", {})
+
+            result = test_module.sample_function(1, 2, z=3)
+            assert result == 6
+
+            assert len(mock_agent._observations) == 1
+            obs = mock_agent._observations[0]
+
+            assert "params" in obs
+            assert "returnObj" in obs
+            assert "cost" in obs
+            assert "location" in obs
+            assert obs["params"] == [1, 2]
+            assert obs["kwargs"] == {"z": 3}
+            assert obs["returnObj"] == 6
+            assert obs["location"] == "AtExit"
+            assert isinstance(obs["cost"], float)
+            assert obs["cost"] >= 0
+
+        finally:
+            del sys.modules["test_module_fields"]
+
+    def test_target_self_capture(self, injector, mock_agent):
+        """Test that target (self) object is captured for instance methods"""
+
+        class TestClass:
+            def __init__(self, value):
+                self.value = value
+
+            def method(self, x):
+                return self.value + x
+
+        test_module = type(sys)("test_module_target")
+        test_module.TestClass = TestClass
+        sys.modules["test_module_target"] = test_module
+
+        try:
+            watch_id = injector.inject("test_module_target.TestClass.method", {})
+
+            obj = test_module.TestClass(10)
+            result = obj.method(5)
+            assert result == 15
+
+            assert len(mock_agent._observations) == 1
+            obs = mock_agent._observations[0]
+
+            assert "target" in obs
+            assert obs["target"] is not None
+            assert "__attrs__" in obs["target"]
+            assert obs["target"]["__attrs__"]["value"] == 10
+
+        finally:
+            del sys.modules["test_module_target"]

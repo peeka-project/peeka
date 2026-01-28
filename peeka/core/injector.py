@@ -56,8 +56,13 @@ class DecoratorInjector:
             pattern: Dotted path to target function (e.g., "mymodule.MyClass.method")
             watch_config: Configuration dict with keys:
                 - depth: int, output depth for nested objects (default: 2)
-                - condition: str, optional condition expression
+                - condition_express: str, optional condition expression (Arthas compatible)
                 - times: int, max observations (-1 for infinite)
+                - before: bool, observe before function execution (-b flag)
+                - exception: bool, observe on exception (-e flag)
+                - success: bool, observe on success return (-s flag)
+                - finish: bool, observe after function finish (-f flag, default True)
+                - express: str, custom observe expression (like Arthas)
 
         Returns:
             watch_id: Unique identifier for this observation
@@ -252,11 +257,19 @@ class DecoratorInjector:
             Wrapper function
         """
         depth = config.get("depth", 2)
-        condition = config.get("condition")
+        condition_express = config.get("condition_express") or config.get("condition")
         times_limit = config.get("times", -1)
 
+        before = config.get("before", False)
+        on_exception = config.get("exception", False)
+        on_success = config.get("success", False)
+        on_finish = config.get("finish", True)
+
+        if not (before or on_exception or on_success or on_finish):
+            on_finish = True
+
         safe_evaluator = None
-        if condition:
+        if condition_express:
             try:
                 safe_evaluator = SimpleEval(
                     allowed_attrs=BASIC_ALLOWED_ATTRS,
@@ -268,7 +281,7 @@ class DecoratorInjector:
                         "bool": bool,
                     },
                 )
-                safe_evaluator.parse(condition)
+                safe_evaluator.parse(condition_express)
             except SyntaxError as e:
                 raise ValueError(f"Invalid condition expression: {e}")
             except Exception as e:
@@ -279,72 +292,100 @@ class DecoratorInjector:
 
         @wraps(func)
         def wrapper(*args, **kwargs):
-            # Check times limit
             with injector._lock:
                 info = injector.instrumented.get(watch_id)
                 if info is None:
-                    # Watch was removed, call original
                     return func(*args, **kwargs)
 
                 if times_limit > 0 and info["count"] >= times_limit:
-                    # Limit reached, call original without observation
                     return func(*args, **kwargs)
 
-            if safe_evaluator:
+            target_self = args[0] if args and hasattr(func, "__self__") else None
+
+            def should_observe(duration_cost=None):
+                if not safe_evaluator:
+                    return True
                 try:
-                    local_vars = {"params": args, "kwargs": kwargs}
+                    local_vars = {
+                        "params": args,
+                        "kwargs": kwargs,
+                        "target": target_self,
+                    }
+                    if duration_cost is not None:
+                        local_vars["cost"] = duration_cost
                     safe_evaluator.names = local_vars
-                    if not safe_evaluator.eval(condition):
-                        return func(*args, **kwargs)
+                    return bool(safe_evaluator.eval(condition_express))
                 except Exception:
-                    return func(*args, **kwargs)
+                    return True
 
-            # Capture timing
-            start_time = time.perf_counter()
-
-            success = True
-            error_msg = None
-            result = None
-
-            try:
-                result = func(*args, **kwargs)
-            except Exception as e:
-                success = False
-                error_msg = f"{type(e).__name__}: {str(e)}"
-                raise
-            finally:
-                duration_ms = (time.perf_counter() - start_time) * 1000
-
-                # Update count
+            def send_observation(
+                    location, result_val=None, error_msg=None, duration_ms: float = 0.0
+            ):
                 with injector._lock:
                     info = injector.instrumented.get(watch_id)
                     if info:
                         info["count"] += 1
 
-                # Build observation
                 observation = {
                     "watch_id": watch_id,
                     "timestamp": time.time(),
+                    "location": location,
                     "func_name": f"{func.__module__}.{func.__qualname__}",
-                    "args": injector._format_value(args, depth),
+                    "params": injector._format_value(args, depth),
                     "kwargs": injector._format_value(kwargs, depth),
-                    "result": injector._format_value(result, depth)
-                    if success
+                    "target": injector._format_value(target_self, depth)
+                    if target_self
                     else None,
-                    "success": success,
-                    "error": error_msg,
-                    "duration_ms": round(duration_ms, 3),
+                    "returnObj": injector._format_value(result_val, depth)
+                    if result_val is not None
+                    else None,
+                    "success": error_msg is None,
+                    "throwExp": error_msg,
+                    "cost": round(duration_ms, 3),
                     "thread_id": threading.get_ident(),
                     "thread_name": threading.current_thread().name,
                 }
 
-                # Send to agent
                 try:
                     injector.agent._send_observation(observation)
                 except Exception:
-                    pass  # Don't let observation failure affect the function
+                    pass
 
-            return result
+            if before and should_observe():
+                send_observation("AtEnter")
+
+            start_time = time.perf_counter()
+            result = None
+            error = None
+
+            try:
+                result = func(*args, **kwargs)
+                duration_ms = (time.perf_counter() - start_time) * 1000
+
+                if on_success and should_observe(duration_ms):
+                    send_observation(
+                        "AtExit", result_val=result, duration_ms=duration_ms
+                    )
+                elif on_finish and not on_success and should_observe(duration_ms):
+                    send_observation(
+                        "AtExit", result_val=result, duration_ms=duration_ms
+                    )
+
+                return result
+            except Exception as e:
+                duration_ms = (time.perf_counter() - start_time) * 1000
+                error = f"{type(e).__name__}: {str(e)}"
+
+                if on_exception and should_observe(duration_ms):
+                    send_observation(
+                        "AtExceptionExit", error_msg=error, duration_ms=duration_ms
+                    )
+                elif on_finish and not on_exception and should_observe(duration_ms):
+                    send_observation(
+                        "AtExceptionExit", error_msg=error, duration_ms=duration_ms
+                    )
+
+                raise
 
         return wrapper
 
