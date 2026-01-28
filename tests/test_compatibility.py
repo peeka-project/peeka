@@ -9,8 +9,25 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any, Dict
 
 import pytest
+
+from peeka.core.injector import DecoratorInjector
+from peeka.core.observer import ObservationManager
+
+
+class MockAgent:
+    """Mock agent for testing WatchCommand without full agent initialization"""
+
+    def __init__(self):
+        self._observations: list = []
+        self.observer = ObservationManager()
+        self.injector = DecoratorInjector(self)
+
+    def _send_observation(self, obs: Dict[str, Any]) -> None:
+        self._observations.append(obs)
+        self.observer.add_observation(obs)
 
 
 class TestAttachCompatibility:
@@ -112,11 +129,10 @@ class TestWatchCompatibility:
 
     def test_watch_command_basic(self):
         """Test basic watch command without actual process attach"""
-        from peeka.core.commands.watch import WatchCommand
-        from peeka.core.observer import ObservationManager
+        from peeka.commands.watch import WatchCommand
 
-        observer = ObservationManager()
-        watch_cmd = WatchCommand(observer)
+        mock_agent = MockAgent()
+        watch_cmd = WatchCommand(mock_agent)
 
         def sample_function(x, y):
             return x + y
@@ -140,12 +156,12 @@ class TestWatchCompatibility:
 
             watch_id = result["watch_id"]
 
-            sample_function(1, 2)
-            sample_function(3, 4)
+            test_module.sample_function(1, 2)
+            test_module.sample_function(3, 4)
 
             time.sleep(0.1)
 
-            stats = observer.get_watch_stats(watch_id)
+            stats = mock_agent.observer.get_watch_stats(watch_id)
             assert stats is not None
             assert stats["count"] >= 2
 
@@ -157,11 +173,10 @@ class TestWatchCompatibility:
 
     def test_watch_with_condition(self):
         """Test watch with condition filtering"""
-        from peeka.core.commands.watch import WatchCommand
-        from peeka.core.observer import ObservationManager
+        from peeka.commands.watch import WatchCommand
 
-        observer = ObservationManager()
-        watch_cmd = WatchCommand(observer)
+        mock_agent = MockAgent()
+        watch_cmd = WatchCommand(mock_agent)
 
         def sample_function(value):
             return value * 2
@@ -184,14 +199,14 @@ class TestWatchCompatibility:
             assert result["status"] == "success"
             watch_id = result["watch_id"]
 
-            sample_function(10)
-            sample_function(30)
-            sample_function(100)
-            sample_function(5)
+            test_module.sample_function(10)
+            test_module.sample_function(30)
+            test_module.sample_function(100)
+            test_module.sample_function(5)
 
             time.sleep(0.1)
 
-            stats = observer.get_watch_stats(watch_id)
+            stats = mock_agent.observer.get_watch_stats(watch_id)
             assert stats is not None
             assert stats["count"] == 1, (
                 f"Expected 1 observation (only value>50), got {stats['count']}"
@@ -209,11 +224,10 @@ class TestSecurityCompatibility:
 
     def test_simpleeval_blocks_dangerous_code(self):
         """Test that simpleeval blocks code injection attempts"""
-        from peeka.core.commands.watch import WatchCommand
-        from peeka.core.observer import ObservationManager
+        from peeka.commands.watch import WatchCommand
 
-        observer = ObservationManager()
-        watch_cmd = WatchCommand(observer)
+        mock_agent = MockAgent()
+        watch_cmd = WatchCommand(mock_agent)
 
         def sample_function(x):
             return x
