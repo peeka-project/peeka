@@ -88,8 +88,24 @@ Examples:
         help="Number of times to capture (-1 for infinite)",
     )
     watch_parser.add_argument(
-        "-c",
-        "--condition",
+        "-b", "--before", action="store_true", help="Observe before function execution"
+    )
+    watch_parser.add_argument(
+        "-e", "--exception", action="store_true", help="Observe on exception"
+    )
+    watch_parser.add_argument(
+        "-s", "--success", action="store_true", help="Observe on success"
+    )
+    watch_parser.add_argument(
+        "-f",
+        "--finish",
+        action="store_true",
+        default=True,
+        help="Observe on finish (both success and exception) (default: True)",
+    )
+    watch_parser.add_argument(
+        "--condition-express",
+        dest="condition_express",
         type=str,
         help='Condition expression (e.g., "params[0] > 100")',
     )
@@ -179,10 +195,12 @@ def cmd_watch(args) -> int:
         "pattern": args.pattern,
         "depth": args.depth,
         "times": args.times,
+        "before": args.before,
+        "exception": args.exception,
+        "success": args.success,
+        "finish": args.finish,
+        "condition_express": args.condition_express,
     }
-
-    if args.condition:
-        command["condition"] = args.condition
 
     response = streaming_client.send_command(command)
 
