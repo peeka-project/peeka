@@ -45,9 +45,9 @@ class TestDecoratorInjector:
             obs = mock_agent._observations[0]
             assert obs["watch_id"] == watch_id
             assert obs["success"] is True
-            assert obs["args"] == [3, 5]
-            assert obs["result"] == 8
-            assert "duration_ms" in obs
+            assert obs["params"] == [3, 5]
+            assert obs["returnObj"] == 8
+            assert "cost" in obs
 
         finally:
             del sys.modules["test_module"]
@@ -71,7 +71,7 @@ class TestDecoratorInjector:
 
             test_module.sample_function(15)
             assert len(mock_agent._observations) == 1
-            assert mock_agent._observations[0]["args"] == [15]
+            assert mock_agent._observations[0]["params"] == [15]
 
         finally:
             del sys.modules["test_module_cond"]
@@ -187,7 +187,7 @@ class TestDecoratorInjector:
             assert len(mock_agent._observations) == 1
             obs = mock_agent._observations[0]
             assert obs["success"] is False
-            assert "ValueError: test error" in obs["error"]
+            assert "ValueError: test error" in obs["throwExp"]
 
         finally:
             del sys.modules["test_module_exc"]
