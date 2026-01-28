@@ -248,13 +248,26 @@ class DecoratorInjector:
         """
         Create a wrapper function that captures call information.
 
+        Observation Timing (Arthas-compatible):
+        - before (-b):    Observe at function entry (AtEnter)
+        - success (-s):   Observe only on successful return (AtExit)
+        - exception (-e): Observe only on exception (AtExceptionExit)
+        - finish (-f):    Observe both success and exception (default)
+
         Args:
             func: Original function to wrap
             watch_id: Unique watch identifier
-            config: Watch configuration
+            config: Watch configuration with keys:
+                - depth: Output depth for nested objects
+                - condition_express: Filter expression
+                - times: Observation limit (-1 for unlimited)
+                - before: Observe at function entry
+                - exception: Observe only on exception
+                - success: Observe only on success
+                - finish: Observe on both success and exception (default)
 
         Returns:
-            Wrapper function
+            Wrapper function that intercepts calls and sends observations
         """
         depth = config.get("depth", 2)
         condition_express = config.get("condition_express") or config.get("condition")
@@ -292,17 +305,26 @@ class DecoratorInjector:
 
         @wraps(func)
         def wrapper(*args, **kwargs):
+            # Stage 0: Check if observation is still active
             with injector._lock:
                 info = injector.instrumented.get(watch_id)
                 if info is None:
                     return func(*args, **kwargs)
 
+                # Check if we've reached the observation limit
                 if times_limit > 0 and info["count"] >= times_limit:
                     return func(*args, **kwargs)
 
+            # Extract self object for instance methods (Arthas 'target')
             target_self = args[0] if args and hasattr(func, "__self__") else None
 
             def should_observe(duration_cost=None):
+                """
+                Evaluate condition expression to determine if this call should be observed.
+
+                Args:
+                    duration_cost: Execution time in ms (only available after function completes)
+                """
                 if not safe_evaluator:
                     return True
                 try:
@@ -311,6 +333,7 @@ class DecoratorInjector:
                         "kwargs": kwargs,
                         "target": target_self,
                     }
+                    # cost variable only available at AtExit/AtExceptionExit
                     if duration_cost is not None:
                         local_vars["cost"] = duration_cost
                     safe_evaluator.names = local_vars
@@ -321,11 +344,21 @@ class DecoratorInjector:
             def send_observation(
                     location, result_val=None, error_msg=None, duration_ms: float = 0.0
             ):
+                """
+                Send observation data to agent.
+
+                Args:
+                    location: AtEnter/AtExit/AtExceptionExit
+                    result_val: Return value (only at AtExit)
+                    error_msg: Exception message (only at AtExceptionExit)
+                    duration_ms: Execution time in milliseconds
+                """
                 with injector._lock:
                     info = injector.instrumented.get(watch_id)
                     if info:
                         info["count"] += 1
 
+                # Build Arthas-compatible observation data
                 observation = {
                     "watch_id": watch_id,
                     "timestamp": time.time(),
@@ -351,22 +384,31 @@ class DecoratorInjector:
                 except Exception:
                     pass
 
+            # Stage 1: Observe at function entry (AtEnter) if -b flag enabled
+            # Available: params, kwargs, target
+            # Not available: returnObj (not executed yet), cost (not started)
             if before and should_observe():
                 send_observation("AtEnter")
 
+            # Stage 2: Execute the original function and measure time
             start_time = time.perf_counter()
             result = None
             error = None
 
             try:
+                # Call the original function
                 result = func(*args, **kwargs)
                 duration_ms = (time.perf_counter() - start_time) * 1000
 
+                # Stage 3a: Observe on successful return (AtExit)
+                # Available: params, kwargs, target, returnObj, cost
                 if on_success and should_observe(duration_ms):
+                    # User explicitly specified -s flag
                     send_observation(
                         "AtExit", result_val=result, duration_ms=duration_ms
                     )
                 elif on_finish and not on_success and should_observe(duration_ms):
+                    # Default -f flag (observe all exits)
                     send_observation(
                         "AtExit", result_val=result, duration_ms=duration_ms
                     )
@@ -376,15 +418,21 @@ class DecoratorInjector:
                 duration_ms = (time.perf_counter() - start_time) * 1000
                 error = f"{type(e).__name__}: {str(e)}"
 
+                # Stage 3b: Observe on exception (AtExceptionExit)
+                # Available: params, kwargs, target, throwExp, cost
+                # Not available: returnObj (exception occurred)
                 if on_exception and should_observe(duration_ms):
+                    # User explicitly specified -e flag
                     send_observation(
                         "AtExceptionExit", error_msg=error, duration_ms=duration_ms
                     )
                 elif on_finish and not on_exception and should_observe(duration_ms):
+                    # Default -f flag (observe all exits including exceptions)
                     send_observation(
                         "AtExceptionExit", error_msg=error, duration_ms=duration_ms
                     )
 
+                # Re-raise exception (don't suppress it)
                 raise
 
         return wrapper
