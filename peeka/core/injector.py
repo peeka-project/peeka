@@ -7,6 +7,7 @@ monitoring without modifying the original source code.
 """
 
 import importlib
+import inspect
 import sys
 import threading
 import time
@@ -79,6 +80,10 @@ class DecoratorInjector:
 
         # Generate watch ID
         watch_id = self._generate_watch_id()
+
+        # Detect if this is an instance method (parent is a class)
+        is_instance_method = inspect.isclass(parent_obj)
+        watch_config["_is_instance_method"] = is_instance_method
 
         # Create wrapper
         wrapper = self._create_wrapper(target_func, watch_id, watch_config)
@@ -243,7 +248,7 @@ class DecoratorInjector:
         return None
 
     def _create_wrapper(
-            self, func: Callable, watch_id: str, config: Dict[str, Any]
+        self, func: Callable, watch_id: str, config: Dict[str, Any]
     ) -> Callable:
         """
         Create a wrapper function that captures call information.
@@ -316,7 +321,8 @@ class DecoratorInjector:
                     return func(*args, **kwargs)
 
             # Extract self object for instance methods (Arthas 'target')
-            target_self = args[0] if args and hasattr(func, "__self__") else None
+            is_instance_method = config.get("_is_instance_method", False)
+            target_self = args[0] if args and is_instance_method else None
 
             def should_observe(duration_cost=None):
                 """
@@ -342,7 +348,7 @@ class DecoratorInjector:
                     return True
 
             def send_observation(
-                    location, result_val=None, error_msg=None, duration_ms: float = 0.0
+                location, result_val=None, error_msg=None, duration_ms: float = 0.0
             ):
                 """
                 Send observation data to agent.
@@ -438,7 +444,7 @@ class DecoratorInjector:
         return wrapper
 
     def _replace_function(
-            self, parent: Any, attr_name: str, new_func: Callable
+        self, parent: Any, attr_name: str, new_func: Callable
     ) -> None:
         """
         Replace a function/method on its parent object.
@@ -464,7 +470,7 @@ class DecoratorInjector:
         return self._format_value_recursive(value, depth, 0)
 
     def _format_value_recursive(
-            self, value: Any, max_depth: int, current_depth: int
+        self, value: Any, max_depth: int, current_depth: int
     ) -> Any:
         """
         Recursively format value for JSON serialization.
@@ -489,7 +495,7 @@ class DecoratorInjector:
             return value
         if isinstance(value, (int, float)):
             if isinstance(value, float) and (
-                    value != value or value == float("inf") or value == float("-inf")
+                value != value or value == float("inf") or value == float("-inf")
             ):
                 # Handle NaN, Inf
                 return str(value)
