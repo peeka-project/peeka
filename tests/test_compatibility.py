@@ -223,7 +223,8 @@ class TestSecurityCompatibility:
     """Test security features across Python versions"""
 
     def test_simpleeval_blocks_dangerous_code(self):
-        """Test that simpleeval blocks code injection attempts"""
+        """Test that simpleeval blocks code injection at evaluation time"""
+        import time
         from peeka.commands.watch import WatchCommand
 
         mock_agent = MockAgent()
@@ -245,18 +246,30 @@ class TestSecurityCompatibility:
 
         try:
             for condition in dangerous_conditions:
+                # Injection succeeds (dangerous code is just a string, not executed yet)
                 result = watch_cmd.execute(
                     {
                         "action": "start",
                         "pattern": "test_security.sample_function",
-                        "condition": condition,
+                        "condition_express": condition,
                     }
                 )
 
-                assert result["status"] == "error", (
-                    f"Should reject dangerous condition: {condition}"
+                assert result["status"] == "success", (
+                    f"Injection should succeed: {condition}"
                 )
-                print(f"✓ Blocked: {condition}")
+                watch_id = result["watch_id"]
+
+                # Call function through module (not local reference)
+                test_module.sample_function(100)
+                time.sleep(0.1)
+
+                # Verify NO observations captured (dangerous code blocked at eval time)
+                stats = mock_agent.observer.get_watch_stats(watch_id)
+                assert stats["count"] == 0, (
+                    f"Dangerous condition should produce 0 observations: {condition}"
+                )
+                print(f"✓ Blocked at eval time: {condition}")
 
         finally:
             if "test_security" in sys.modules:

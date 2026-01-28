@@ -351,3 +351,88 @@ def _send_observation(self, observation: Dict[str, Any]) -> None:
 - MockAgent now correctly integrates with observer
 - Function calls properly use module references
 - Indentation consistent throughout
+
+# Task 7: Fix test_simpleeval_blocks_dangerous_code Security Test
+
+## Problem
+The test was expecting injection to fail (`status == "error"`) when dangerous conditions were provided. However, the actual security model is:
+- **Injection time**: Succeeds (condition is just a string, not executed)
+- **Evaluation time**: Blocked by simpleeval (dangerous code raises exception)
+- **Result**: Dangerous conditions should NOT produce observations
+
+## Root Cause
+Two issues:
+1. **Test logic was wrong**: Expected injection failure instead of injection success + evaluation blocking
+2. **Implementation bug**: When simpleeval.eval() raised an exception, `should_observe()` returned `True` (line 347-348), causing dangerous conditions to produce observations
+
+## Solution
+
+### Part 1: Fixed Test Logic (lines 225-263 of test_compatibility.py)
+Changed from:
+```python
+# OLD - Expected injection failure
+assert result["status"] == "error"
+```
+
+To:
+```python
+# NEW - Injection succeeds, blocking happens at eval time
+assert result["status"] == "success"
+watch_id = result["watch_id"]
+
+# Call function through module (critical - bypassing module ref bypasses wrapper)
+test_module.sample_function(100)
+time.sleep(0.1)
+
+# Verify NO observations (dangerous code blocked at eval time)
+stats = mock_agent.observer.get_watch_stats(watch_id)
+assert stats["count"] == 0
+```
+
+Key changes:
+- Changed parameter from `"condition"` to `"condition_express"` (Arthas compatible)
+- Added `time.sleep(0.1)` to allow observation buffering
+- Verified observations are captured via observer stats (not manual list)
+- Must call through module reference: `test_module.sample_function()` not local var
+
+### Part 2: Fixed Implementation Bug (line 348 of injector.py)
+Changed:
+```python
+except Exception:
+    return True  # WRONG - causes dangerous conditions to be observed
+```
+
+To:
+```python
+except Exception:
+    return False  # CORRECT - skip observation if condition fails to evaluate
+```
+
+**Why this matters**: When simpleeval blocks dangerous operations like `__import__` or `__class__`, it raises an exception. This exception should prevent the observation from being sent.
+
+## Critical Insight: Module vs Local Reference
+The injector replaces the function on the module object: `test_module.sample_function = wrapper`
+
+If test calls via local reference: `sample_function(1)` → local var bypasses wrapper → 0 observations
+If test calls via module reference: `test_module.sample_function(1)` → goes through wrapper → observations captured
+
+**manual_test.py accidentally passed** because it called via local reference (lines 186-187), so the wrapper was never called.
+
+## Security Model (Now Correct)
+1. **Accept dangerous code at injection time** (just a string)
+2. **Block execution at evaluation time** (simpleeval raises exception)
+3. **Skip observation** (should_observe returns False on exception)
+4. **Safe**: No user code executes, malicious conditions blocked
+
+## Test Results
+✅ `test_simpleeval_blocks_dangerous_code` PASSES
+✅ All 54 tests pass (no regressions)
+✅ Verified dangerous conditions produce 0 observations:
+  - `__import__('os').system('ls')`
+  - `eval('1+1')`
+  - `compile('x=1', '<string>', 'exec')`
+  - `params.__class__.__subclasses__()`
+
+## Files Modified
+1. `tests/test_compatibility.py` - Test logic (lines 225-263)
+2. `peeka/core/injector.py` - Implementation fix (line 348)
