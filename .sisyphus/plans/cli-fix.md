@@ -40,9 +40,9 @@ Make the CLI functional with the current core API and ensure all tests pass.
 - Arthas-compatible CLI flags
 
 ### Definition of Done
-- [ ] `uv run pytest tests/` → 0 failures
-- [ ] `peeka watch --help` shows Arthas flags (-b, -e, -s, -f, -x, -n)
-- [ ] CLI can attach to a test process and stream observations
+- [x] `uv run pytest tests/` → 0 failures
+- [x] `peeka watch --help` shows Arthas flags (-b, -e, -s, -f, -x, -n)
+- [x] CLI can attach to a test process and stream observations
 
 ### Must Have
 - Fix CLI imports to use `ProcessAttacher`, `AgentClient`, `StreamingAgentClient`
@@ -165,7 +165,7 @@ Task 5 (Rewrite CLI) ───────────────────�
 
 ---
 
-- [ ] 3. Fix test_compatibility.py imports and API
+- [x] 3. Fix test_compatibility.py imports and API
 
   **What to do**:
   - Change `from peeka.core.commands.watch import WatchCommand` → `from peeka.commands.watch import WatchCommand`
@@ -191,8 +191,8 @@ Task 5 (Rewrite CLI) ───────────────────�
   - `peeka/commands/watch.py:39-41` - WatchCommand expects agent with `.injector` and `.observer`
 
   **Acceptance Criteria**:
-  - [ ] `uv run pytest tests/test_compatibility.py -v` → All tests pass or skip (attach tests may skip on CI)
-  - [ ] No import errors on module load
+  - [x] `uv run pytest tests/test_compatibility.py -v` → All tests pass or skip (attach tests may skip on CI)
+  - [x] No import errors on module load
 
   **Commit**: YES
   - Message: `test(compatibility): fix imports and use MockAgent pattern`
@@ -201,7 +201,7 @@ Task 5 (Rewrite CLI) ───────────────────�
 
 ---
 
-- [ ] 4. Fix manual_test.py API calls
+- [x] 4. Fix manual_test.py API calls
 
   **What to do**:
   - Create MockAgent class for injector initialization
@@ -225,8 +225,8 @@ Task 5 (Rewrite CLI) ───────────────────�
   - `peeka/core/injector.py:103-123` - `uninject(watch_id)` signature
 
   **Acceptance Criteria**:
-  - [ ] `python tests/manual_test.py` → All 4 tests pass
-  - [ ] Output shows: "4/4 tests passed" with checkmarks
+  - [x] `python tests/manual_test.py` → All 4 tests pass
+  - [x] Output shows: "4/4 tests passed" with checkmarks
 
   **Commit**: YES
   - Message: `test(manual): update API calls to match current injector`
@@ -235,7 +235,7 @@ Task 5 (Rewrite CLI) ───────────────────�
 
 ---
 
-- [ ] 5. Rewrite CLI to use current core API
+- [x] 5. Rewrite CLI to use current core API
 
   **What to do**:
   
@@ -294,9 +294,9 @@ Task 5 (Rewrite CLI) ───────────────────�
     ```
 
   **Acceptance Criteria**:
-  - [ ] `python -c "from peeka.cli import main"` → No import errors
-  - [ ] `python -m peeka.cli watch --help` → Shows -b, -e, -s, -f, -x, -n, --condition-express
-  - [ ] Manual test: Start `examples/demo.py`, attach with peeka, see JSONL output
+  - [x] `python -c "from peeka.cli import main"` → No import errors
+  - [x] `python -m peeka.cli watch --help` → Shows -b, -e, -s, -f, -x, -n, --condition-express
+  - [x] Manual test: Start `examples/demo.py`, attach with peeka, see JSONL output
 
   **Commit**: YES
   - Message: `fix(cli): rewrite to use ProcessAttacher and AgentClient`
@@ -305,7 +305,7 @@ Task 5 (Rewrite CLI) ───────────────────�
 
 ---
 
-- [ ] 6. Run full test suite and verify
+- [x] 6. Run full test suite and verify
 
   **What to do**:
   - Run `uv run pytest tests/ -v`
@@ -323,8 +323,8 @@ Task 5 (Rewrite CLI) ───────────────────�
   - `pyproject.toml` - pytest configuration
 
   **Acceptance Criteria**:
-  - [ ] `uv run pytest tests/ -v` → All tests pass (some may skip on CI due to attach permissions)
-  - [ ] `uv run pytest tests/test_injector.py -v` → 25 passed, 0 failed
+  - [x] `uv run pytest tests/ -v` → All tests pass (some may skip on CI due to attach permissions)
+  - [x] `uv run pytest tests/test_injector.py -v` → 25 passed, 0 failed
 
   **Commit**: NO (verification only)
 
@@ -357,8 +357,8 @@ python -m peeka.cli watch --help  # Expected: shows -b, -e, -s, -f, -x, -n
 ```
 
 ### Final Checklist
-- [ ] All "Must Have" present
-- [ ] All "Must NOT Have" absent
-- [ ] All 25+ tests pass
-- [ ] CLI imports resolve correctly
-- [ ] Arthas flags available in CLI help
+- [x] All "Must Have" present
+- [x] All "Must NOT Have" absent
+- [x] All 25+ tests pass
+- [x] CLI imports resolve correctly
+- [x] Arthas flags available in CLI help
