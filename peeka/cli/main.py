@@ -110,6 +110,118 @@ Examples:
         help='Condition expression (e.g., "params[0] > 100")',
     )
 
+    stack_parser = subparsers.add_parser(
+        "stack", help="Get stack trace of function calls"
+    )
+    stack_parser.add_argument("--pid", "-p", type=int, help="Process ID")
+    stack_parser.add_argument("--name", type=str, help="Process name to attach to")
+    stack_parser.add_argument(
+        "pattern", help='Function pattern (e.g., "mymodule.MyClass.method")'
+    )
+    stack_parser.add_argument(
+        "-n",
+        "--times",
+        type=int,
+        default=-1,
+        help="Number of times to capture (-1 for infinite)",
+    )
+    stack_parser.add_argument(
+        "--condition-express",
+        dest="condition_express",
+        type=str,
+        help='Condition expression (e.g., "params[0] > 100")',
+    )
+    stack_parser.add_argument(
+        "--depth",
+        type=int,
+        default=10,
+        help="Stack depth limit (default: 10)",
+    )
+
+    logger_parser = subparsers.add_parser("logger", help="Manage logger configuration")
+    logger_parser.add_argument("--pid", "-p", type=int, help="Process ID")
+    logger_parser.add_argument("--name", type=str, help="Process name to attach to")
+    logger_parser.add_argument(
+        "--action",
+        type=str,
+        choices=["list", "get", "set"],
+        default="list",
+        help="Logger action (default: list)",
+    )
+    logger_parser.add_argument(
+        "--logger",
+        type=str,
+        help="Logger name for get/set actions",
+    )
+    logger_parser.add_argument(
+        "--level",
+        type=str,
+        help="Log level for set action",
+    )
+    logger_parser.add_argument(
+        "--pattern",
+        type=str,
+        help="fnmatch pattern for list action",
+    )
+
+    monitor_parser = subparsers.add_parser(
+        "monitor", help="Monitor function calls at intervals"
+    )
+    monitor_parser.add_argument("--pid", "-p", type=int, help="Process ID")
+    monitor_parser.add_argument("--name", type=str, help="Process name to attach to")
+    monitor_parser.add_argument(
+        "pattern", help='Function pattern (e.g., "mymodule.MyClass.method")'
+    )
+    monitor_parser.add_argument(
+        "--interval",
+        type=int,
+        default=60,
+        help="Seconds between outputs (default: 60)",
+    )
+    monitor_parser.add_argument(
+        "-c",
+        "--cycles",
+        type=int,
+        default=-1,
+        help="Number of cycles (-1 for infinite)",
+    )
+
+    sc_parser = subparsers.add_parser("sc", help="Search classes in target process")
+    sc_parser.add_argument("--pid", "-p", type=int, help="Process ID")
+    sc_parser.add_argument("--name", type=str, help="Process name to attach to")
+    sc_parser.add_argument("pattern", help='Class pattern (e.g., "mymodule.*")')
+    sc_parser.add_argument(
+        "-d",
+        "--detail",
+        action="store_true",
+        help="Show detailed information",
+    )
+    sc_parser.add_argument(
+        "--limit",
+        type=int,
+        default=50,
+        help="Result limit (default: 50)",
+    )
+
+    sm_parser = subparsers.add_parser("sm", help="Search methods in target class")
+    sm_parser.add_argument("--pid", "-p", type=int, help="Process ID")
+    sm_parser.add_argument("--name", type=str, help="Process name to attach to")
+    sm_parser.add_argument(
+        "class_pattern", help='Class pattern (e.g., "mymodule.MyClass")'
+    )
+    sm_parser.add_argument(
+        "--method-pattern",
+        type=str,
+        default="*",
+        help="Method pattern (default: *)",
+    )
+    sm_parser.add_argument(
+        "-d",
+        "--detail",
+        action="store_true",
+        help="Show detailed information",
+    )
+
     args = parser.parse_args()
 
     if not args.command:
@@ -121,6 +233,16 @@ Examples:
             return cmd_attach(args)
         elif args.command == "watch":
             return cmd_watch(args)
+        elif args.command == "stack":
+            return cmd_stack(args)
+        elif args.command == "logger":
+            return cmd_logger(args)
+        elif args.command == "monitor":
+            return cmd_monitor(args)
+        elif args.command == "sc":
+            return cmd_sc(args)
+        elif args.command == "sm":
+            return cmd_sm(args)
         else:
             print(f"Unknown command: {args.command}", file=sys.stderr)
             return 1
@@ -233,6 +355,276 @@ def cmd_watch(args) -> int:
         cleanup_watch()
 
     return 0
+
+
+def cmd_stack(args) -> int:
+    target_pid = _resolve_pid(args)
+
+    attacher = ProcessAttacher(target_pid)
+
+    if not attacher.attach():
+        print('{"error": "Failed to attach to process"}', file=sys.stderr)
+        attacher.cleanup()
+        return 1
+
+    socket_path = attacher.get_socket_path()
+    streaming_client: Optional[StreamingAgentClient] = None
+    stack_id: Optional[str] = None
+
+    def cleanup_stack(signum=None, frame=None):
+        nonlocal streaming_client, stack_id
+        if streaming_client and stack_id:
+            try:
+                streaming_client.send_command(
+                    {"type": "stack", "action": "stop", "stack_id": stack_id}
+                )
+            except Exception:
+                pass
+            streaming_client.disconnect()
+        if signum is not None:
+            sys.exit(130)
+
+    signal.signal(signal.SIGINT, cleanup_stack)
+    signal.signal(signal.SIGTERM, cleanup_stack)
+
+    streaming_client = StreamingAgentClient(socket_path)
+    connect_result = streaming_client.connect()
+
+    if connect_result.get("status") != "success":
+        print(json.dumps({"error": connect_result.get("error", "Connection failed")}))
+        attacher.cleanup()
+        return 1
+
+    command = {
+        "type": "stack",
+        "action": "start",
+        "pattern": args.pattern,
+        "depth": args.depth,
+        "times": args.times,
+        "condition_express": args.condition_express,
+    }
+
+    response = streaming_client.send_command(command)
+
+    if response.get("status") != "success":
+        print(json.dumps({"error": response.get("error", "Stack start failed")}))
+        streaming_client.disconnect()
+        attacher.cleanup()
+        return 1
+
+    stack_id = response.get("stack_id")
+
+    print(
+        json.dumps(
+            {"event": "stack_started", "stack_id": stack_id, "pattern": args.pattern}
+        )
+    )
+    sys.stdout.flush()
+
+    try:
+        for observation in streaming_client.stream_observations():
+            print(json.dumps(observation))
+            sys.stdout.flush()
+
+            if args.times > 0:
+                count = observation.get("count", 0)
+                if count >= args.times:
+                    break
+
+    finally:
+        cleanup_stack()
+
+    return 0
+
+
+def cmd_logger(args) -> int:
+    target_pid = _resolve_pid(args)
+
+    attacher = ProcessAttacher(target_pid)
+
+    if not attacher.attach():
+        print('{"error": "Failed to attach to process"}', file=sys.stderr)
+        attacher.cleanup()
+        return 1
+
+    socket_path = attacher.get_socket_path()
+    streaming_client = StreamingAgentClient(socket_path)
+    connect_result = streaming_client.connect()
+
+    if connect_result.get("status") != "success":
+        print(json.dumps({"error": connect_result.get("error", "Connection failed")}))
+        attacher.cleanup()
+        return 1
+
+    command = {
+        "type": "logger",
+        "action": args.action,
+        "logger": args.logger,
+        "level": args.level,
+        "pattern": args.pattern,
+    }
+
+    response = streaming_client.send_command(command)
+    print(json.dumps(response))
+
+    streaming_client.disconnect()
+    attacher.cleanup()
+
+    return 0 if response.get("status") == "success" else 1
+
+
+def cmd_monitor(args) -> int:
+    target_pid = _resolve_pid(args)
+
+    attacher = ProcessAttacher(target_pid)
+
+    if not attacher.attach():
+        print('{"error": "Failed to attach to process"}', file=sys.stderr)
+        attacher.cleanup()
+        return 1
+
+    socket_path = attacher.get_socket_path()
+    streaming_client: Optional[StreamingAgentClient] = None
+    monitor_id: Optional[str] = None
+
+    def cleanup_monitor(signum=None, frame=None):
+        nonlocal streaming_client, monitor_id
+        if streaming_client and monitor_id:
+            try:
+                streaming_client.send_command(
+                    {"type": "monitor", "action": "stop", "monitor_id": monitor_id}
+                )
+            except Exception:
+                pass
+            streaming_client.disconnect()
+        if signum is not None:
+            sys.exit(130)
+
+    signal.signal(signal.SIGINT, cleanup_monitor)
+    signal.signal(signal.SIGTERM, cleanup_monitor)
+
+    streaming_client = StreamingAgentClient(socket_path)
+    connect_result = streaming_client.connect()
+
+    if connect_result.get("status") != "success":
+        print(json.dumps({"error": connect_result.get("error", "Connection failed")}))
+        attacher.cleanup()
+        return 1
+
+    command = {
+        "type": "monitor",
+        "action": "start",
+        "pattern": args.pattern,
+        "interval": args.interval,
+        "cycles": args.cycles,
+    }
+
+    response = streaming_client.send_command(command)
+
+    if response.get("status") != "success":
+        print(json.dumps({"error": response.get("error", "Monitor start failed")}))
+        streaming_client.disconnect()
+        attacher.cleanup()
+        return 1
+
+    monitor_id = response.get("monitor_id")
+
+    print(
+        json.dumps(
+            {
+                "event": "monitor_started",
+                "monitor_id": monitor_id,
+                "pattern": args.pattern,
+            }
+        )
+    )
+    sys.stdout.flush()
+
+    try:
+        cycles_count = 0
+        for observation in streaming_client.stream_observations():
+            print(json.dumps(observation))
+            sys.stdout.flush()
+
+            if args.cycles > 0:
+                cycles_count += 1
+                if cycles_count >= args.cycles:
+                    break
+
+    finally:
+        cleanup_monitor()
+
+    return 0
+
+
+def cmd_sc(args) -> int:
+    target_pid = _resolve_pid(args)
+
+    attacher = ProcessAttacher(target_pid)
+
+    if not attacher.attach():
+        print('{"error": "Failed to attach to process"}', file=sys.stderr)
+        attacher.cleanup()
+        return 1
+
+    socket_path = attacher.get_socket_path()
+    streaming_client = StreamingAgentClient(socket_path)
+    connect_result = streaming_client.connect()
+
+    if connect_result.get("status") != "success":
+        print(json.dumps({"error": connect_result.get("error", "Connection failed")}))
+        attacher.cleanup()
+        return 1
+
+    command = {
+        "type": "sc",
+        "pattern": args.pattern,
+        "detail": args.detail,
+        "limit": args.limit,
+    }
+
+    response = streaming_client.send_command(command)
+    print(json.dumps(response))
+
+    streaming_client.disconnect()
+    attacher.cleanup()
+
+    return 0 if response.get("status") == "success" else 1
+
+
+def cmd_sm(args) -> int:
+    target_pid = _resolve_pid(args)
+
+    attacher = ProcessAttacher(target_pid)
+
+    if not attacher.attach():
+        print('{"error": "Failed to attach to process"}', file=sys.stderr)
+        attacher.cleanup()
+        return 1
+
+    socket_path = attacher.get_socket_path()
+    streaming_client = StreamingAgentClient(socket_path)
+    connect_result = streaming_client.connect()
+
+    if connect_result.get("status") != "success":
+        print(json.dumps({"error": connect_result.get("error", "Connection failed")}))
+        attacher.cleanup()
+        return 1
+
+    command = {
+        "type": "sm",
+        "class_pattern": args.class_pattern,
+        "method_pattern": args.method_pattern,
+        "detail": args.detail,
+    }
+
+    response = streaming_client.send_command(command)
+    print(json.dumps(response))
+
+    streaming_client.disconnect()
+    attacher.cleanup()
+
+    return 0 if response.get("status") == "success" else 1
 
 
 if __name__ == "__main__":

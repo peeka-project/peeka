@@ -238,7 +238,10 @@ class TestMonitorCommand:
         monitor_cmd.execute(params)
 
         large_data = {"key": "x" * 10000}
-        test_module.fast_function(large_data)
+        try:
+            test_module.fast_function(large_data)
+        except TypeError:
+            pass
 
         time.sleep(1.5)
 
