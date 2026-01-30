@@ -364,7 +364,6 @@ class DecoratorInjector:
                     if info:
                         info["count"] += 1
 
-                # Build Arthas-compatible observation data
                 observation = {
                     "watch_id": watch_id,
                     "timestamp": time.time(),
@@ -384,6 +383,21 @@ class DecoratorInjector:
                     "thread_id": threading.get_ident(),
                     "thread_name": threading.current_thread().name,
                 }
+
+                stack_depth = config.get("stack_depth")
+                if stack_depth is not None and location == "AtEnter":
+                    stack_frames = inspect.stack()[2 : 2 + stack_depth]
+                    observation["stack"] = [
+                        {
+                            "filename": frame.filename,
+                            "lineno": frame.lineno,
+                            "function": frame.function,
+                            "code_context": frame.code_context[0].strip()
+                            if frame.code_context
+                            else None,
+                        }
+                        for frame in stack_frames
+                    ]
 
                 try:
                     injector.agent._send_observation(observation)
