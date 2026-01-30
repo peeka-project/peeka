@@ -5,6 +5,8 @@ import sys
 import threading
 from unittest.mock import patch
 from peeka.commands.stack import StackCommand
+from peeka.core.injector import DecoratorInjector
+from peeka.core.observer import ObservationManager
 
 
 class MockAgent:
@@ -13,10 +15,13 @@ class MockAgent:
     def __init__(self):
         self._observations = []
         self._lock = threading.Lock()
+        self.observer = ObservationManager()
+        self.injector = DecoratorInjector(self)
 
     def _send_observation(self, obs):
         with self._lock:
             self._observations.append(obs)
+        self.observer.add_observation(obs)
 
 
 @pytest.fixture
@@ -38,10 +43,10 @@ def test_module():
         return x * 2
 
     def middle_function(x):
-        return inner_function(x)
+        return module.inner_function(x)
 
     def outer_function(x):
-        return middle_function(x)
+        return module.middle_function(x)
 
     module.inner_function = inner_function
     module.middle_function = middle_function
@@ -199,7 +204,8 @@ class TestStackCommand:
 
         assert result["status"] == "success"
         assert "watches" in result
-        assert watch_id in result["watches"]
+        watch_ids = [w["watch_id"] for w in result["watches"]]
+        assert watch_id in watch_ids
 
     def test_stack_invalid_pattern(self, stack_cmd):
         """Invalid pattern should return error."""

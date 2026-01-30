@@ -35,8 +35,10 @@ class PeekaAgent:
 
     def _register_handlers(self) -> None:
         from peeka.commands.watch import WatchCommand
+        from peeka.commands.stack import StackCommand
 
         self.command_handlers["watch"] = WatchCommand(self)  # type: ignore[abstract]
+        self.command_handlers["stack"] = StackCommand(self)  # type: ignore[abstract]
 
     def start(self) -> None:
         try:
