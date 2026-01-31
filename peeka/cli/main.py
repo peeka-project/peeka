@@ -222,6 +222,44 @@ Examples:
         help="Show detailed information",
     )
 
+    memory_parser = subparsers.add_parser(
+        "memory", help="Memory analysis and diagnostics"
+    )
+    memory_parser.add_argument("--pid", "-p", type=int, help="Process ID")
+    memory_parser.add_argument("--name", type=str, help="Process name to attach to")
+    memory_parser.add_argument(
+        "--action",
+        type=str,
+        choices=["overview", "start", "stop", "top", "dump", "gc"],
+        default="overview",
+        help="Memory action (default: overview)",
+    )
+    memory_parser.add_argument(
+        "--nframe",
+        type=int,
+        default=25,
+        help="Tracemalloc frame depth (default: 25)",
+    )
+    memory_parser.add_argument(
+        "--group-by",
+        dest="group_by",
+        type=str,
+        choices=["lineno", "filename"],
+        default="lineno",
+        help="Group allocations by lineno or filename (default: lineno)",
+    )
+    memory_parser.add_argument(
+        "--limit",
+        type=int,
+        default=20,
+        help="Result limit for top/gc actions (default: 20)",
+    )
+    memory_parser.add_argument(
+        "--filename",
+        type=str,
+        help="Output filename for dump action",
+    )
+
     args = parser.parse_args()
 
     if not args.command:
@@ -243,6 +281,8 @@ Examples:
             return cmd_sc(args)
         elif args.command == "sm":
             return cmd_sm(args)
+        elif args.command == "memory":
+            return cmd_memory(args)
         else:
             print(f"Unknown command: {args.command}", file=sys.stderr)
             return 1
@@ -462,6 +502,43 @@ def cmd_logger(args) -> int:
         "logger": args.logger,
         "level": args.level,
         "pattern": args.pattern,
+    }
+
+    response = streaming_client.send_command(command)
+    print(json.dumps(response))
+
+    streaming_client.disconnect()
+    attacher.cleanup()
+
+    return 0 if response.get("status") == "success" else 1
+
+
+def cmd_memory(args) -> int:
+    target_pid = _resolve_pid(args)
+
+    attacher = ProcessAttacher(target_pid)
+
+    if not attacher.attach():
+        print('{"error": "Failed to attach to process"}', file=sys.stderr)
+        attacher.cleanup()
+        return 1
+
+    socket_path = attacher.get_socket_path()
+    streaming_client = StreamingAgentClient(socket_path)
+    connect_result = streaming_client.connect()
+
+    if connect_result.get("status") != "success":
+        print(json.dumps({"error": connect_result.get("error", "Connection failed")}))
+        attacher.cleanup()
+        return 1
+
+    command = {
+        "type": "memory",
+        "action": args.action,
+        "nframe": args.nframe,
+        "limit": args.limit,
+        "group_by": args.group_by,
+        "filename": args.filename,
     }
 
     response = streaming_client.send_command(command)
