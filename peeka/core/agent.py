@@ -39,6 +39,7 @@ class PeekaAgent:
         from peeka.commands.logger import LoggerCommand
         from peeka.commands.search import SearchClassCommand, SearchMethodCommand
         from peeka.commands.monitor import MonitorCommand
+        from peeka.commands.memory import MemoryCommand
 
         self.command_handlers["watch"] = WatchCommand(self)  # type: ignore[abstract]
         self.command_handlers["stack"] = StackCommand(self)  # type: ignore[abstract]
@@ -46,6 +47,7 @@ class PeekaAgent:
         self.command_handlers["sc"] = SearchClassCommand(self)  # type: ignore[abstract]
         self.command_handlers["sm"] = SearchMethodCommand(self)  # type: ignore[abstract]
         self.command_handlers["monitor"] = MonitorCommand(self)  # type: ignore[abstract]
+        self.command_handlers["memory"] = MemoryCommand(self)  # type: ignore[abstract]
 
     def start(self) -> None:
         try:

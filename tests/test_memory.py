@@ -56,7 +56,6 @@ def temp_dump_dir(tmp_path):
 class TestMemoryCommand:
     """Test memory command - memory analysis and tracing."""
 
-    @pytest.mark.skip(reason="Awaiting MemoryCommand implementation")
     def test_overview_returns_required_fields(self, memory_cmd):
         """Test overview action returns all required fields."""
         result = memory_cmd.execute({"action": "overview"})
@@ -83,7 +82,6 @@ class TestMemoryCommand:
         assert len(result["gc"]["counts"]) == 3
         assert isinstance(result["gc"]["stats"], list)
 
-    @pytest.mark.skip(reason="Awaiting MemoryCommand implementation")
     def test_start_enables_tracemalloc(self, memory_cmd):
         """Test start action enables tracemalloc."""
         result = memory_cmd.execute({"action": "start", "nframe": 10})
@@ -94,7 +92,6 @@ class TestMemoryCommand:
         assert result["nframe"] == 10
         assert tracemalloc.is_tracing()
 
-    @pytest.mark.skip(reason="Awaiting MemoryCommand implementation")
     def test_start_idempotent(self, memory_cmd):
         """Test start is idempotent when already running."""
         tracemalloc.start(5)
@@ -105,7 +102,6 @@ class TestMemoryCommand:
         assert result["action"] == "start"
         assert result["was_already_running"] is True
 
-    @pytest.mark.skip(reason="Awaiting MemoryCommand implementation")
     def test_stop_disables_tracemalloc(self, memory_cmd):
         """Test stop action disables tracemalloc."""
         tracemalloc.start()
@@ -117,7 +113,6 @@ class TestMemoryCommand:
         assert result["was_running"] is True
         assert not tracemalloc.is_tracing()
 
-    @pytest.mark.skip(reason="Awaiting MemoryCommand implementation")
     def test_stop_idempotent(self, memory_cmd):
         """Test stop is idempotent when not running."""
         tracemalloc.stop()
@@ -128,7 +123,6 @@ class TestMemoryCommand:
         assert result["action"] == "stop"
         assert result["was_running"] is False
 
-    @pytest.mark.skip(reason="Awaiting MemoryCommand implementation")
     def test_top_requires_tracemalloc(self, memory_cmd):
         """Test top errors when tracemalloc not running."""
         tracemalloc.stop()
@@ -139,7 +133,6 @@ class TestMemoryCommand:
         assert result["action"] == "top"
         assert "not running" in result["error"]
 
-    @pytest.mark.skip(reason="Awaiting MemoryCommand implementation")
     def test_top_returns_allocations(self, memory_cmd):
         """Test top returns allocation data with controlled allocation."""
         tracemalloc.start(25)
@@ -170,7 +163,6 @@ class TestMemoryCommand:
 
         del controlled_alloc
 
-    @pytest.mark.skip(reason="Awaiting MemoryCommand implementation")
     def test_top_respects_limit(self, memory_cmd):
         """Test top respects limit parameter."""
         tracemalloc.start()
@@ -183,7 +175,6 @@ class TestMemoryCommand:
         assert result["action"] == "top"
         assert len(result["allocations"]) <= 3
 
-    @pytest.mark.skip(reason="Awaiting MemoryCommand implementation")
     def test_gc_returns_object_census(self, memory_cmd):
         """Test gc returns object census (schema validation only)."""
         result = memory_cmd.execute({"action": "gc", "limit": 10})
@@ -207,7 +198,6 @@ class TestMemoryCommand:
         returned_sum = sum(e["count"] for e in result["objects_by_type"])
         assert result["total_objects"] >= returned_sum
 
-    @pytest.mark.skip(reason="Awaiting MemoryCommand implementation")
     def test_gc_respects_limit(self, memory_cmd):
         """Test gc respects limit parameter."""
         result = memory_cmd.execute({"action": "gc", "limit": 5})
@@ -216,7 +206,6 @@ class TestMemoryCommand:
         assert result["action"] == "gc"
         assert len(result["objects_by_type"]) <= 5
 
-    @pytest.mark.skip(reason="Awaiting MemoryCommand implementation")
     def test_dump_creates_file(self, memory_cmd, temp_dump_dir):
         """Test dump creates snapshot file."""
         tracemalloc.start()
@@ -235,7 +224,6 @@ class TestMemoryCommand:
         assert os.path.exists(result["file_path"])
         assert str(temp_dump_dir) in result["file_path"]
 
-    @pytest.mark.skip(reason="Awaiting MemoryCommand implementation")
     def test_dump_requires_tracemalloc(self, memory_cmd):
         """Test dump errors when tracemalloc not running."""
         tracemalloc.stop()
@@ -246,7 +234,6 @@ class TestMemoryCommand:
         assert result["action"] == "dump"
         assert "not running" in result["error"]
 
-    @pytest.mark.skip(reason="Awaiting MemoryCommand implementation")
     def test_dump_path_sanitization(self, memory_cmd, temp_dump_dir):
         """Test dump path sanitization blocks directory traversal."""
         tracemalloc.start()
