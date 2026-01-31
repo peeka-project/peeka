@@ -197,6 +197,21 @@ $ peeka watch 12345 "module.func" | \
 
 ## 命令参考
 
+Peeka 提供多个强大的诊断命令，每个命令都有详细的使用文档。
+
+### 命令概览
+
+| 命令 | 功能 | 文档链接 |
+|------|------|----------|
+| `attach` | 附加到目标进程 | 见下方 |
+| `watch` | 观测函数调用（参数、返回值、执行时间） | [详细文档](docs/watch.md) |
+| `stack` | 追踪函数调用栈 | [详细文档](docs/stack.md) |
+| `logger` | 动态调整日志级别 | [详细文档](docs/logger.md) |
+| `monitor` | 性能统计监控 | [详细文档](docs/monitor.md) |
+| `memory` | 内存分析 | [详细文档](docs/memory.md) |
+| `sc` | 搜索类 | [详细文档](docs/search.md) |
+| `sm` | 搜索方法 | [详细文档](docs/search.md) |
+
 ### attach - 附加到目标进程
 
 ```bash
@@ -216,8 +231,65 @@ peeka watch <pid> <pattern> [options]
 | `--depth, -x` | 输出深度           | 2   |
 | `--times, -n` | 观测次数 (-1 表示无限) | -1  |
 | `--condition` | 条件表达式          | 无   |
+| `-b` | 在函数入口观测 | - |
+| `-s` | 仅在成功时观测 | - |
+| `-e` | 仅在异常时观测 | - |
+| `-f` | 观测成功和异常（默认） | 是 |
 
 **pattern 格式**：`module.Class.method` 或 `module.function`
+
+**更多详情**：参见 [watch 命令详解](docs/watch.md)
+
+### stack - 追踪调用栈
+
+```bash
+peeka stack <pid> <pattern> [options]
+```
+
+捕获函数被调用时的完整调用栈，用于追踪调用来源。
+
+**更多详情**：参见 [stack 命令详解](docs/stack.md)
+
+### logger - 动态调整日志级别
+
+```bash
+peeka logger <pid> [--action {list,get,set}] [options]
+```
+
+运行时查看和修改 logger 的日志级别，无需重启进程。
+
+**更多详情**：参见 [logger 命令详解](docs/logger.md)
+
+### monitor - 性能统计
+
+```bash
+peeka monitor <pid> <pattern> [--interval SECONDS] [-c CYCLES]
+```
+
+定期输出函数性能统计（调用次数、成功率、响应时间）。
+
+**更多详情**：参见 [monitor 命令详解](docs/monitor.md)
+
+### memory - 内存分析
+
+```bash
+peeka memory <pid> [--action {overview,start,stop,top,dump,gc}] [options]
+```
+
+分析进程内存使用情况和内存分配。
+
+**更多详情**：参见 [memory 命令详解](docs/memory.md)
+
+### sc / sm - 搜索类和方法
+
+```bash
+peeka sc <pid> <pattern>  # 搜索类
+peeka sm <pid> <pattern>  # 搜索方法
+```
+
+在运行中的进程中搜索类和方法，用于代码探索。
+
+**更多详情**：参见 [search 命令详解](docs/search.md)
 
 ## 环境变量
 
