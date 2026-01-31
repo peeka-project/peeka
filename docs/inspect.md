@@ -1,4 +1,4 @@
-# vmtool 命令
+# inspect 命令
 
 ## 目录
 
@@ -19,13 +19,13 @@
 
 ## 命令简介
 
-`vmtool` 命令提供 **运行时对象检查** 功能，可以在不修改代码的情况下查看运行中 Python 进程的对象状态。支持三种操作：
+`inspect` 命令提供 **运行时对象检查** 功能，可以在不修改代码的情况下查看运行中 Python 进程的对象状态。支持三种操作：
 
-| 操作 | 功能 | 典型用途 |
-|------|------|----------|
-| **get** | 获取模块/类属性值 | 查看配置、常量、状态变量 |
-| **instances** | 查找类型实例 | 内存泄漏排查、对象追踪 |
-| **count** | 统计实例数量 | 快速评估对象数量 |
+| 操作            | 功能        | 典型用途         |
+|---------------|-----------|--------------|
+| **get**       | 获取模块/类属性值 | 查看配置、常量、状态变量 |
+| **instances** | 查找类型实例    | 内存泄漏排查、对象追踪  |
+| **count**     | 统计实例数量    | 快速评估对象数量     |
 
 **设计灵感**：借鉴 Java Arthas 的 `getstatic` 和 `vmtool` 命令，针对 Python 使用 `sys.modules` 和 `gc.get_objects()` 实现。
 
@@ -34,31 +34,35 @@
 ## 使用场景
 
 ### 1. 配置检查
+
 生产环境运行时查看配置值，无需重启进程：
 
 ```bash
-peeka vmtool -p <pid> --action get --target "app.config.DEBUG"
+peeka inspect -p <pid> --action get --target "app.config.DEBUG"
 ```
 
 ### 2. 内存泄漏排查
+
 找出特定类型的所有实例，检查是否有对象未释放：
 
 ```bash
-peeka vmtool -p <pid> --action instances --type myapp.User --limit 10
+peeka inspect -p <pid> --action instances --type myapp.User --limit 10
 ```
 
 ### 3. 对象统计
+
 快速统计某类型对象数量，评估内存使用：
 
 ```bash
-peeka vmtool -p <pid> --action count --type list
+peeka inspect -p <pid> --action count --type list
 ```
 
 ### 4. 状态诊断
+
 查看运行时状态变量，诊断应用行为：
 
 ```bash
-peeka vmtool -p <pid> --action get --target "sys.path"
+peeka inspect -p <pid> --action get --target "sys.path"
 ```
 
 ---
@@ -66,23 +70,23 @@ peeka vmtool -p <pid> --action get --target "sys.path"
 ## 命令格式
 
 ```bash
-peeka vmtool -p <pid> --action <action> [options]
+peeka inspect -p <pid> --action <action> [options]
 ```
 
 ### 基本参数
 
-| 参数 | 说明 | 必需 | 默认值 |
-|------|------|------|--------|
-| `-p, --pid` | 目标进程 PID | 是 | - |
-| `--action` | 操作类型 | 否 | `get` |
+| 参数          | 说明       | 必需 | 默认值   |
+|-------------|----------|----|-------|
+| `-p, --pid` | 目标进程 PID | 是  | -     |
+| `--action`  | 操作类型     | 否  | `get` |
 
 ### action 操作类型
 
-| Action | 说明 | 必需参数 |
-|--------|------|----------|
-| **get** | 获取属性值 | `--target` |
-| **instances** | 查找实例 | `--type` |
-| **count** | 统计实例数 | `--type` |
+| Action        | 说明    | 必需参数       |
+|---------------|-------|------------|
+| **get**       | 获取属性值 | `--target` |
+| **instances** | 查找实例  | `--type`   |
+| **count**     | 统计实例数 | `--type`   |
 
 ---
 
@@ -90,42 +94,45 @@ peeka vmtool -p <pid> --action <action> [options]
 
 ### get 操作参数
 
-| 参数 | 说明 | 示例 |
-|------|------|------|
+| 参数         | 说明        | 示例            |
+|------------|-----------|---------------|
 | `--target` | 目标路径（点分隔） | `sys.version` |
-| `--depth` | 输出嵌套深度 | `--depth 3` |
+| `--depth`  | 输出嵌套深度    | `--depth 3`   |
 
 **target 解析规则**：
+
 - 第一段必须是 `sys.modules` 中的模块
 - 后续段通过 `getattr()` 链式查找
 - **不支持**字典键查找（如 `config["debug"]`）
 
 示例：
+
 - `sys.version` → `getattr(sys.modules["sys"], "version")`
 - `myapp.Config.DEBUG` → `getattr(getattr(sys.modules["myapp"], "Config"), "DEBUG")`
 
 ### instances 操作参数
 
-| 参数 | 说明 | 默认值 | 范围 |
-|------|------|--------|------|
-| `--type` | 类型名称 | - | 必需 |
-| `--limit` | 结果数量限制 | `10` | 1-1000 |
-| `--depth` | 输出嵌套深度 | `2` | 0-10 |
-| `--filter-express` | 过滤表达式 | 无 | SimpleEval 语法 |
-| `--gc-first` | 扫描前执行 GC | `False` | - |
+| 参数                 | 说明       | 默认值     | 范围            |
+|--------------------|----------|---------|---------------|
+| `--type`           | 类型名称     | -       | 必需            |
+| `--limit`          | 结果数量限制   | `10`    | 1-1000        |
+| `--depth`          | 输出嵌套深度   | `2`     | 0-10          |
+| `--filter-express` | 过滤表达式    | 无       | SimpleEval 语法 |
+| `--gc-first`       | 扫描前执行 GC | `False` | -             |
 
 **type 解析规则**：
+
 - 内置类型：`str`, `int`, `list`, `dict`, `set`, `tuple`, `bytes`, `bool`, `float`
 - 自定义类型：`module.ClassName`（模块必须已加载）
 - **不支持**动态导入模块
 
 ### count 操作参数
 
-| 参数 | 说明 | 默认值 |
-|------|------|--------|
-| `--type` | 类型名称 | - |
-| `--filter-express` | 过滤表达式 | 无 |
-| `--gc-first` | 扫描前执行 GC | `False` |
+| 参数                 | 说明       | 默认值     |
+|--------------------|----------|---------|
+| `--type`           | 类型名称     | -       |
+| `--filter-express` | 过滤表达式    | 无       |
+| `--gc-first`       | 扫描前执行 GC | `False` |
 
 **特殊说明**：`count` 操作会**遍历所有**对象（无 limit 限制），仅统计计数不存储对象，内存开销极小。
 
@@ -133,20 +140,22 @@ peeka vmtool -p <pid> --action <action> [options]
 
 过滤表达式使用 **SimpleEval** 安全求值器，支持的语法：
 
-| 语法 | 说明 | 示例 |
-|------|------|------|
-| `obj.*` | 对象属性 | `obj.value` |
-| 比较运算 | `>`, `<`, `==`, `!=` | `obj.age > 18` |
-| 逻辑运算 | `and`, `or`, `not` | `obj.active and obj.age > 18` |
-| 算术运算 | `+`, `-`, `*`, `/` | `obj.score * 2 > 100` |
-| 函数调用 | `len()`, `str()`, `int()`, `bool()` | `len(obj.items) > 0` |
+| 语法      | 说明                                  | 示例                            |
+|---------|-------------------------------------|-------------------------------|
+| `obj.*` | 对象属性                                | `obj.value`                   |
+| 比较运算    | `>`, `<`, `==`, `!=`                | `obj.age > 18`                |
+| 逻辑运算    | `and`, `or`, `not`                  | `obj.active and obj.age > 18` |
+| 算术运算    | `+`, `-`, `*`, `/`                  | `obj.score * 2 > 100`         |
+| 函数调用    | `len()`, `str()`, `int()`, `bool()` | `len(obj.items) > 0`          |
 
 **安全限制**：
+
 - ❌ 禁止 `eval()`, `exec()`, `compile()`
 - ❌ 禁止 `__import__`, `open()`, `__class__`
 - ❌ 禁止访问私有属性（`__*__`）
 
 **错误处理**：
+
 - 语法错误：**整个命令失败**
 - 运行时错误（如属性不存在）：**跳过该对象**
 
@@ -166,13 +175,13 @@ peeka vmtool -p <pid> --action <action> [options]
 }
 ```
 
-| 字段 | 说明 |
-|------|------|
+| 字段       | 说明                     |
+|----------|------------------------|
 | `status` | 状态：`success` 或 `error` |
-| `action` | 操作类型 |
-| `target` | 查询的目标路径 |
-| `type` | 值的类型名称 |
-| `value` | 属性值（深度限制） |
+| `action` | 操作类型                   |
+| `target` | 查询的目标路径                |
+| `type`   | 值的类型名称                 |
+| `value`  | 属性值（深度限制）              |
 
 ### instances 响应
 
@@ -185,21 +194,35 @@ peeka vmtool -p <pid> --action <action> [options]
   "limit": 10,
   "truncated": false,
   "instances": [
-    {"type": "list", "value": [1, 2, 3]},
-    {"type": "list", "value": ["a", "b"]}
+    {
+      "type": "list",
+      "value": [
+        1,
+        2,
+        3
+      ]
+    },
+    {
+      "type": "list",
+      "value": [
+        "a",
+        "b"
+      ]
+    }
   ]
 }
 ```
 
-| 字段 | 说明 |
-|------|------|
-| `class_name` | 查询的类型 |
-| `count` | 返回的实例数量（`== len(instances)`） |
-| `limit` | 请求的限制数量 |
-| `truncated` | 是否有更多实例（`true`/`false`） |
-| `instances` | 实例数组（深度限制） |
+| 字段           | 说明                           |
+|--------------|------------------------------|
+| `class_name` | 查询的类型                        |
+| `count`      | 返回的实例数量（`== len(instances)`） |
+| `limit`      | 请求的限制数量                      |
+| `truncated`  | 是否有更多实例（`true`/`false`）      |
+| `instances`  | 实例数组（深度限制）                   |
 
 **truncated 语义**：
+
 - `true`：堆中还有更多匹配实例（数量未知）
 - `false`：已返回所有匹配的 GC 追踪对象
 
@@ -214,10 +237,10 @@ peeka vmtool -p <pid> --action <action> [options]
 }
 ```
 
-| 字段 | 说明 |
-|------|------|
-| `class_name` | 查询的类型 |
-| `count` | GC 追踪的实例总数 |
+| 字段           | 说明         |
+|--------------|------------|
+| `class_name` | 查询的类型      |
+| `count`      | GC 追踪的实例总数 |
 
 ### error 响应
 
@@ -237,13 +260,14 @@ peeka vmtool -p <pid> --action <action> [options]
 
 ```bash
 # 查看 Python 版本
-peeka vmtool -p 12345 --action get --target "sys.version"
+peeka inspect -p 12345 --action get --target "sys.version"
 
 # 查看 sys.path
-peeka vmtool -p 12345 --action get --target "sys.path" --depth 3
+peeka inspect -p 12345 --action get --target "sys.path" --depth 3
 ```
 
 **输出**：
+
 ```json
 {
   "status": "success",
@@ -262,28 +286,29 @@ peeka vmtool -p 12345 --action get --target "sys.path" --depth 3
 
 ```bash
 # 查看应用配置
-peeka vmtool -p 12345 --action get --target "myapp.config.DEBUG"
+peeka inspect -p 12345 --action get --target "myapp.config.DEBUG"
 
 # 查看类常量
-peeka vmtool -p 12345 --action get --target "myapp.Database.POOL_SIZE"
+peeka inspect -p 12345 --action get --target "myapp.Database.POOL_SIZE"
 ```
 
 ### 示例 3：内存泄漏排查
 
 ```bash
 # 查找所有 User 实例
-peeka vmtool -p 12345 --action instances --type myapp.User --limit 20
+peeka inspect -p 12345 --action instances --type myapp.User --limit 20
 
 # 过滤活跃用户
-peeka vmtool -p 12345 --action instances --type myapp.User \
+peeka inspect -p 12345 --action instances --type myapp.User \
   --filter-express "obj.active == True" --limit 10
 
 # 过滤大对象
-peeka vmtool -p 12345 --action instances --type list \
+peeka inspect -p 12345 --action instances --type list \
   --filter-express "len(obj) > 100" --limit 5
 ```
 
 **输出**：
+
 ```json
 {
   "status": "success",
@@ -305,17 +330,18 @@ peeka vmtool -p 12345 --action instances --type list \
 
 ```bash
 # 统计所有 list 实例
-peeka vmtool -p 12345 --action count --type list
+peeka inspect -p 12345 --action count --type list
 
 # 统计 dict 实例
-peeka vmtool -p 12345 --action count --type dict
+peeka inspect -p 12345 --action count --type dict
 
 # 统计特定条件的对象
-peeka vmtool -p 12345 --action count --type myapp.Connection \
+peeka inspect -p 12345 --action count --type myapp.Connection \
   --filter-express "obj.closed == False"
 ```
 
 **输出**：
+
 ```json
 {
   "status": "success",
@@ -329,13 +355,13 @@ peeka vmtool -p 12345 --action count --type myapp.Connection \
 
 ```bash
 # 提取 value 字段
-peeka vmtool -p 12345 --action get --target "sys.version" | jq -r '.value'
+peeka inspect -p 12345 --action get --target "sys.version" | jq -r '.value'
 
 # 统计实例数
-peeka vmtool -p 12345 --action count --type list | jq '.count'
+peeka inspect -p 12345 --action count --type list | jq '.count'
 
 # 美化输出
-peeka vmtool -p 12345 --action instances --type dict --limit 3 | jq .
+peeka inspect -p 12345 --action instances --type dict --limit 3 | jq .
 ```
 
 ---
@@ -350,11 +376,11 @@ peeka vmtool -p 12345 --action instances --type dict --limit 3 | jq .
 
 ```bash
 # 定期统计可疑类型
-peeka vmtool -p 12345 --action count --type myapp.Cache
+peeka inspect -p 12345 --action count --type myapp.Cache
 # 输出: {"count": 1500}
 
 # 5 分钟后再次统计
-peeka vmtool -p 12345 --action count --type myapp.Cache
+peeka inspect -p 12345 --action count --type myapp.Cache
 # 输出: {"count": 1800}  ← 持续增长!
 ```
 
@@ -362,10 +388,10 @@ peeka vmtool -p 12345 --action count --type myapp.Cache
 
 ```bash
 # 获取前 10 个实例
-peeka vmtool -p 12345 --action instances --type myapp.Cache --limit 10 | jq .
+peeka inspect -p 12345 --action instances --type myapp.Cache --limit 10 | jq .
 
 # 查看大对象
-peeka vmtool -p 12345 --action instances --type myapp.Cache \
+peeka inspect -p 12345 --action instances --type myapp.Cache \
   --filter-express "len(obj.data) > 1000" --limit 5
 ```
 
@@ -373,7 +399,7 @@ peeka vmtool -p 12345 --action instances --type myapp.Cache \
 
 ```bash
 # 查看缓存配置
-peeka vmtool -p 12345 --action get --target "myapp.cache_config.MAX_SIZE"
+peeka inspect -p 12345 --action get --target "myapp.cache_config.MAX_SIZE"
 # 发现 MAX_SIZE 未生效!
 ```
 
@@ -382,7 +408,7 @@ peeka vmtool -p 12345 --action get --target "myapp.cache_config.MAX_SIZE"
 修复代码后重新部署，再次统计：
 
 ```bash
-peeka vmtool -p 12345 --action count --type myapp.Cache
+peeka inspect -p 12345 --action count --type myapp.Cache
 # 输出: {"count": 100}  ← 恢复正常
 ```
 
@@ -394,13 +420,14 @@ peeka vmtool -p 12345 --action count --type myapp.Cache
 
 `gc.get_objects()` **仅返回 GC 追踪的对象**：
 
-| 类型 | 是否追踪 | instances/count 结果 |
-|------|----------|---------------------|
-| `list`, `dict`, `set`, `tuple` | ✅ 是 | 可靠 |
-| 自定义类实例 | ✅ 是 | 可靠 |
-| `str`, `int`, `float`, `bytes` | ❌ 否 | 可能为 0 或不完整 |
+| 类型                             | 是否追踪 | instances/count 结果 |
+|--------------------------------|------|--------------------|
+| `list`, `dict`, `set`, `tuple` | ✅ 是  | 可靠                 |
+| 自定义类实例                         | ✅ 是  | 可靠                 |
+| `str`, `int`, `float`, `bytes` | ❌ 否  | 可能为 0 或不完整         |
 
 **建议**：
+
 - 排查内存泄漏：优先使用 **容器类型** 或 **自定义类**
 - 统计字符串/整数：结果**不可靠**，仅供参考
 
@@ -410,10 +437,10 @@ peeka vmtool -p 12345 --action count --type myapp.Cache
 
 ```bash
 # ❌ 错误：不支持字典键语法
-peeka vmtool -p <pid> --action get --target 'config["debug"]'
+peeka inspect -p <pid> --action get --target 'config["debug"]'
 
 # ✅ 正确：先获取字典，手动查看
-peeka vmtool -p <pid> --action get --target "config" | jq '.value.debug'
+peeka inspect -p <pid> --action get --target "config" | jq '.value.debug'
 ```
 
 ### ⚠️ 模块加载限制
@@ -422,7 +449,7 @@ peeka vmtool -p <pid> --action get --target "config" | jq '.value.debug'
 
 ```bash
 # ❌ 错误：myapp 未加载时查询会失败
-peeka vmtool -p <pid> --action instances --type myapp.User
+peeka inspect -p <pid> --action instances --type myapp.User
 
 # ✅ 正确：确保目标进程已导入 myapp 模块
 # （在目标代码中必须有 import myapp）
@@ -430,13 +457,14 @@ peeka vmtool -p <pid> --action instances --type myapp.User
 
 ### ⚠️ 性能影响
 
-| 操作 | 堆遍历 | 性能影响 |
-|------|--------|----------|
-| `get` | ❌ 否 | 极低（< 1ms） |
+| 操作          | 堆遍历            | 性能影响         |
+|-------------|----------------|--------------|
+| `get`       | ❌ 否            | 极低（< 1ms）    |
 | `instances` | ✅ 部分（直到 limit） | 中等（10-100ms） |
-| `count` | ✅ 全部 | 较高（50-500ms） |
+| `count`     | ✅ 全部           | 较高（50-500ms） |
 
 **建议**：
+
 - `count` 操作在大内存进程中可能耗时较长
 - 生产环境使用时注意频率，避免影响性能
 
@@ -446,11 +474,11 @@ peeka vmtool -p <pid> --action instances --type myapp.User
 
 ```bash
 # ✅ 安全：SimpleEval 允许的操作
-peeka vmtool -p <pid> --action instances --type myapp.User \
+peeka inspect -p <pid> --action instances --type myapp.User \
   --filter-express "obj.age > 18 and obj.active"
 
 # ❌ 禁止：代码注入攻击
-peeka vmtool -p <pid> --action instances --type myapp.User \
+peeka inspect -p <pid> --action instances --type myapp.User \
   --filter-express "__import__('os').system('rm -rf /')"
 # 错误: Invalid filter expression: __import__ not allowed
 ```
@@ -466,22 +494,22 @@ peeka vmtool -p <pid> --action instances --type myapp.User \
 1. **对象未被 GC 追踪**（如 `str`, `int`）
    ```bash
    # str/int 可能不可靠
-   peeka vmtool -p <pid> --action count --type str  # 可能为 0
+   peeka inspect -p <pid> --action count --type str  # 可能为 0
    
    # 改用容器类型
-   peeka vmtool -p <pid> --action count --type list  # 可靠
+   peeka inspect -p <pid> --action count --type list  # 可靠
    ```
 
 2. **模块未加载**
    ```bash
    # 确认模块已导入
-   peeka vmtool -p <pid> --action get --target "sys.modules.keys()" | grep myapp
+   peeka inspect -p <pid> --action get --target "sys.modules.keys()" | grep myapp
    ```
 
 3. **filter-express 过滤掉了所有对象**
    ```bash
    # 先不用过滤器测试
-   peeka vmtool -p <pid> --action instances --type myapp.User --limit 5
+   peeka inspect -p <pid> --action instances --type myapp.User --limit 5
    ```
 
 ### Q2: target 查询失败 "Module not loaded"
@@ -489,9 +517,10 @@ peeka vmtool -p <pid> --action instances --type myapp.User \
 **A**: 目标模块未在进程中导入。
 
 **解决方法**：
+
 ```bash
 # 检查已加载模块
-peeka vmtool -p <pid> --action get --target "list(sys.modules.keys())" | grep myapp
+peeka inspect -p <pid> --action get --target "list(sys.modules.keys())" | grep myapp
 
 # 如果模块未加载，需要在目标代码中添加 import
 ```
@@ -501,6 +530,7 @@ peeka vmtool -p <pid> --action get --target "list(sys.modules.keys())" | grep my
 **A**: SimpleEval 仅支持有限的语法。
 
 **常见错误**：
+
 ```bash
 # ❌ 不支持列表推导
 --filter-express "[x for x in obj.items]"
@@ -520,9 +550,10 @@ peeka vmtool -p <pid> --action get --target "list(sys.modules.keys())" | grep my
 **A**: `count` 会遍历整个堆，对象数量多时较慢。
 
 **优化建议**：
+
 ```bash
 # 使用 instances 代替（有 limit）
-peeka vmtool -p <pid> --action instances --type list --limit 10
+peeka inspect -p <pid> --action instances --type list --limit 10
 
 # 或者在业务低峰期执行 count
 ```
@@ -532,12 +563,13 @@ peeka vmtool -p <pid> --action instances --type list --limit 10
 **A**: 说明匹配对象超过 `limit`。
 
 **解决方法**：
+
 ```bash
 # 增加 limit（最大 1000）
-peeka vmtool -p <pid> --action instances --type list --limit 1000
+peeka inspect -p <pid> --action instances --type list --limit 1000
 
 # 或使用过滤器缩小范围
-peeka vmtool -p <pid> --action instances --type list \
+peeka inspect -p <pid> --action instances --type list \
   --filter-express "len(obj) > 100" --limit 10
 ```
 
@@ -555,7 +587,7 @@ PID=12345
 TYPE="myapp.Connection"
 
 while true; do
-  COUNT=$(peeka vmtool -p $PID --action count --type $TYPE | jq '.count')
+  COUNT=$(peeka inspect -p $PID --action count --type $TYPE | jq '.count')
   echo "$(date): $TYPE count = $COUNT"
   sleep 60
 done
@@ -565,10 +597,10 @@ done
 
 ```bash
 # 先查询配置
-CONFIG=$(peeka vmtool -p 12345 --action get --target "myapp.config.MAX_CONNECTIONS" | jq '.value')
+CONFIG=$(peeka inspect -p 12345 --action get --target "myapp.config.MAX_CONNECTIONS" | jq '.value')
 
 # 再统计实际连接数
-ACTUAL=$(peeka vmtool -p 12345 --action count --type myapp.Connection | jq '.count')
+ACTUAL=$(peeka inspect -p 12345 --action count --type myapp.Connection | jq '.count')
 
 # 比较
 echo "配置: $CONFIG, 实际: $ACTUAL"
@@ -578,11 +610,11 @@ echo "配置: $CONFIG, 实际: $ACTUAL"
 
 ```bash
 # GC 前
-peeka vmtool -p 12345 --action count --type myapp.Cache
+peeka inspect -p 12345 --action count --type myapp.Cache
 # 输出: {"count": 1500}
 
 # 强制 GC 后
-peeka vmtool -p 12345 --action count --type myapp.Cache --gc-first
+peeka inspect -p 12345 --action count --type myapp.Cache --gc-first
 # 输出: {"count": 1200}  ← 清理了未引用对象
 ```
 
@@ -590,12 +622,12 @@ peeka vmtool -p 12345 --action count --type myapp.Cache --gc-first
 
 ```bash
 # 多条件过滤
-peeka vmtool -p 12345 --action instances --type myapp.User \
+peeka inspect -p 12345 --action instances --type myapp.User \
   --filter-express "obj.age > 18 and obj.active and len(obj.name) > 0" \
   --limit 10
 
 # 算术运算
-peeka vmtool -p 12345 --action instances --type myapp.Score \
+peeka inspect -p 12345 --action instances --type myapp.Score \
   --filter-express "obj.math + obj.english > 180" \
   --limit 5
 ```
@@ -604,7 +636,7 @@ peeka vmtool -p 12345 --action instances --type myapp.Score \
 
 ```bash
 # 导出 instances 到文件
-peeka vmtool -p 12345 --action instances --type myapp.User --limit 100 > users.json
+peeka inspect -p 12345 --action instances --type myapp.User --limit 100 > users.json
 
 # 离线分析
 jq '.instances | map(.value.age) | add / length' users.json  # 平均年龄
@@ -617,33 +649,35 @@ jq '.instances | map(select(.value.active == true)) | length' users.json  # 活�
 
 ### 功能对比
 
-| 功能 | Arthas (Java) | Peeka vmtool (Python) |
-|------|---------------|----------------------|
-| 获取静态字段 | `getstatic` | `vmtool --action get` |
-| 获取实例 | `vmtool --action getInstances` | `vmtool --action instances` |
-| 统计实例数 | 不支持 | `vmtool --action count` |
-| 堆遍历 | JVMTI 原生接口 | `gc.get_objects()` |
-| 过滤表达式 | OGNL | SimpleEval |
-| 性能影响 | 低（原生） | 中等（Python） |
+| 功能     | Arthas (Java)                   | Peeka inspect (Python)      |
+|--------|---------------------------------|-----------------------------|
+| 获取静态字段 | `getstatic`                     | `inspect --action get`      |
+| 获取实例   | `inspect --action getInstances` | `vmtool --action instances` |
+| 统计实例数  | 不支持                             | `inspect --action count`    |
+| 堆遍历    | JVMTI 原生接口                      | `gc.get_objects()`          |
+| 过滤表达式  | OGNL                            | SimpleEval                  |
+| 性能影响   | 低（原生）                           | 中等（Python）                  |
 
 ### 设计差异
 
 #### Arthas getstatic
+
 ```bash
 # Arthas: 获取静态字段（反射）
 getstatic java.lang.System out
 
 # Peeka: 获取模块属性（getattr）
-peeka vmtool -p <pid> --action get --target "sys.stdout"
+peeka inspect -p <pid> --action get --target "sys.stdout"
 ```
 
 #### Arthas vmtool
+
 ```bash
 # Arthas: 获取类实例（JVMTI）
 vmtool --action getInstances --className java.lang.String --limit 10
 
 # Peeka: 获取类实例（gc.get_objects）
-peeka vmtool -p <pid> --action instances --type str --limit 10
+peeka inspect -p <pid> --action instances --type str --limit 10
 ```
 
 ### Python 特有功能
@@ -652,7 +686,7 @@ Peeka 新增的 `count` 操作：
 
 ```bash
 # 快速统计（无需获取实例）
-peeka vmtool -p <pid> --action count --type list
+peeka inspect -p <pid> --action count --type list
 ```
 
 Arthas 需要先 getInstances 再统计，Peeka 优化为单独操作。
@@ -663,11 +697,11 @@ Arthas 需要先 getInstances 再统计，Peeka 优化为单独操作。
 
 ### 核心功能
 
-| 操作 | 用途 | 性能 | 堆遍历 |
-|------|------|------|--------|
-| **get** | 查看属性/配置 | 极快 | ❌ |
-| **instances** | 内存排查 | 中等 | 部分 |
-| **count** | 对象统计 | 较慢 | 全部 |
+| 操作            | 用途      | 性能 | 堆遍历 |
+|---------------|---------|----|-----|
+| **get**       | 查看属性/配置 | 极快 | ❌   |
+| **instances** | 内存排查    | 中等 | 部分  |
+| **count**     | 对象统计    | 较慢 | 全部  |
 
 ### 典型使用流程
 
@@ -679,12 +713,14 @@ Arthas 需要先 getInstances 再统计，Peeka 优化为单独操作。
 ### 最佳实践
 
 ✅ **推荐**：
+
 - 使用容器类型（list, dict）进行 instances/count
 - 组合使用 jq 处理 JSON 输出
 - 定期监控关键对象数量
 - 使用过滤表达式精确定位问题
 
 ❌ **避免**：
+
 - 频繁执行 count（性能影响）
 - 对 str/int 使用 instances（不可靠）
 - 在过滤表达式中使用复杂逻辑
