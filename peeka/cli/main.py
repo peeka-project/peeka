@@ -260,6 +260,54 @@ Examples:
         help="Output filename for dump action",
     )
 
+    vmtool_parser = subparsers.add_parser(
+        "vmtool", help="Virtual machine object inspection and analysis"
+    )
+    vmtool_parser.add_argument("--pid", "-p", type=int, help="Process ID")
+    vmtool_parser.add_argument("--name", type=str, help="Process name to attach to")
+    vmtool_parser.add_argument(
+        "--action",
+        type=str,
+        choices=["get", "instances", "count"],
+        default="get",
+        help="VMTool action (default: get)",
+    )
+    vmtool_parser.add_argument(
+        "--target",
+        type=str,
+        help="Target object path for get action (e.g., 'module.attr')",
+    )
+    vmtool_parser.add_argument(
+        "--type",
+        dest="class_name",
+        type=str,
+        help="Class name for instances/count actions (e.g., 'module.ClassName')",
+    )
+    vmtool_parser.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        help="Result limit for instances action (default: 10)",
+    )
+    vmtool_parser.add_argument(
+        "--depth",
+        type=int,
+        default=2,
+        help="Output depth for nested objects (default: 2)",
+    )
+    vmtool_parser.add_argument(
+        "--filter-express",
+        dest="filter_express",
+        type=str,
+        help='Filter expression (e.g., "obj.value > 0")',
+    )
+    vmtool_parser.add_argument(
+        "--gc-first",
+        dest="gc_first",
+        action="store_true",
+        help="Force garbage collection before scanning",
+    )
+
     args = parser.parse_args()
 
     if not args.command:
@@ -283,6 +331,8 @@ Examples:
             return cmd_sm(args)
         elif args.command == "memory":
             return cmd_memory(args)
+        elif args.command == "vmtool":
+            return cmd_vmtool(args)
         else:
             print(f"Unknown command: {args.command}", file=sys.stderr)
             return 1
@@ -539,6 +589,45 @@ def cmd_memory(args) -> int:
         "limit": args.limit,
         "group_by": args.group_by,
         "filename": args.filename,
+    }
+
+    response = streaming_client.send_command(command)
+    print(json.dumps(response))
+
+    streaming_client.disconnect()
+    attacher.cleanup()
+
+    return 0 if response.get("status") == "success" else 1
+
+
+def cmd_vmtool(args) -> int:
+    target_pid = _resolve_pid(args)
+
+    attacher = ProcessAttacher(target_pid)
+
+    if not attacher.attach():
+        print('{"error": "Failed to attach to process"}', file=sys.stderr)
+        attacher.cleanup()
+        return 1
+
+    socket_path = attacher.get_socket_path()
+    streaming_client = StreamingAgentClient(socket_path)
+    connect_result = streaming_client.connect()
+
+    if connect_result.get("status") != "success":
+        print(json.dumps({"error": connect_result.get("error", "Connection failed")}))
+        attacher.cleanup()
+        return 1
+
+    command = {
+        "type": "vmtool",
+        "action": args.action,
+        "target": args.target,
+        "class_name": args.class_name,
+        "limit": args.limit,
+        "depth": args.depth,
+        "filter_express": args.filter_express,
+        "gc_first": args.gc_first,
     }
 
     response = streaming_client.send_command(command)
