@@ -201,16 +201,17 @@ Peeka 提供多个强大的诊断命令，每个命令都有详细的使用文�
 
 ### 命令概览
 
-| 命令 | 功能 | 文档链接 |
-|------|------|----------|
-| `attach` | 附加到目标进程 | 见下方 |
-| `watch` | 观测函数调用（参数、返回值、执行时间） | [详细文档](docs/watch.md) |
-| `stack` | 追踪函数调用栈 | [详细文档](docs/stack.md) |
-| `logger` | 动态调整日志级别 | [详细文档](docs/logger.md) |
-| `monitor` | 性能统计监控 | [详细文档](docs/monitor.md) |
-| `memory` | 内存分析 | [详细文档](docs/memory.md) |
-| `sc` | 搜索类 | [详细文档](docs/search.md) |
-| `sm` | 搜索方法 | [详细文档](docs/search.md) |
+| 命令        | 功能                  | 文档链接                    |
+|-----------|---------------------|-------------------------|
+| `attach`  | 附加到目标进程             | 见下方                     |
+| `watch`   | 观测函数调用（参数、返回值、执行时间） | [详细文档](docs/watch.md)   |
+| `stack`   | 追踪函数调用栈             | [详细文档](docs/stack.md)   |
+| `logger`  | 动态调整日志级别            | [详细文档](docs/logger.md)  |
+| `monitor` | 性能统计监控              | [详细文档](docs/monitor.md) |
+| `memory`  | 内存分析                | [详细文档](docs/memory.md)  |
+| `inspect` | 运行时对象检查             | [详细文档](docs/inspect.md) |
+| `sc`      | 搜索类                 | [详细文档](docs/search.md)  |
+| `sm`      | 搜索方法                | [详细文档](docs/search.md)  |
 
 ### attach - 附加到目标进程
 
