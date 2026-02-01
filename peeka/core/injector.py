@@ -6,6 +6,7 @@ observation logic into target functions at runtime, enabling function call
 monitoring without modifying the original source code.
 """
 
+import fnmatch
 import importlib
 import inspect
 import sys
@@ -194,6 +195,83 @@ class DecoratorInjector:
                 }
                 for wid, info in self.instrumented.items()
             ]
+
+    def reset(self, pattern: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Reset (uninject) enhancements, optionally filtered by pattern.
+
+        Args:
+            pattern: Optional pattern to match against stored patterns. If None, resets all.
+                    Supports Unix shell-style wildcards (* and ?).
+
+        Returns:
+            Dict with status, action, affected watches, and count of successful resets
+        """
+        affected = []
+
+        # Collect watch_ids to reset
+        watch_ids_to_reset = []
+        with self._lock:
+            for watch_id, info in list(self.instrumented.items()):
+                if pattern is None or self._match_pattern(
+                        info.get("pattern", ""), pattern
+                ):
+                    watch_ids_to_reset.append(watch_id)
+
+        # Reset each
+        for watch_id in watch_ids_to_reset:
+            try:
+                result = self.uninject(watch_id)
+                affected.append(
+                    {"watch_id": watch_id, "pattern": result.get("pattern", "")}
+                )
+            except Exception as e:
+                affected.append({"watch_id": watch_id, "error": str(e)})
+
+        return {
+            "status": "success",
+            "action": "reset",
+            "affected": affected,
+            "count": len([a for a in affected if "error" not in a]),
+        }
+
+    def list_enhanced(self) -> Dict[str, Any]:
+        """
+        List all current enhancements.
+
+        Returns:
+            Dict with status, action, list of enhanced watches, and total count
+        """
+        enhanced = []
+        with self._lock:
+            for watch_id, info in self.instrumented.items():
+                enhanced.append(
+                    {
+                        "watch_id": watch_id,
+                        "pattern": info.get("pattern", "unknown"),
+                        "command": info.get("config", {}).get("command", "watch"),
+                        "count": info.get("count", 0),
+                    }
+                )
+        return {
+            "status": "success",
+            "action": "list",
+            "enhanced": enhanced,
+            "total": len(enhanced),
+        }
+
+    def _match_pattern(self, stored_pattern: str, filter_pattern: str) -> bool:
+        """
+        Match stored pattern against filter using fnmatch wildcards.
+
+        Args:
+            stored_pattern: The pattern stored in instrumented data
+            filter_pattern: The pattern to filter by (supports * and ?)
+
+        Returns:
+            True if patterns match, False otherwise
+        """
+        return fnmatch.fnmatch(stored_pattern, filter_pattern)
 
     def _generate_watch_id(self) -> str:
         """Generate unique watch ID."""
