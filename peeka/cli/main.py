@@ -308,6 +308,24 @@ Examples:
         help="Force garbage collection before scanning",
     )
 
+    reset_parser = subparsers.add_parser(
+        "reset", help="Reset enhancements and restore original functions"
+    )
+    reset_parser.add_argument("--pid", "-p", type=int, help="Process ID")
+    reset_parser.add_argument("--name", type=str, help="Process name to attach to")
+    reset_parser.add_argument(
+        "--list",
+        "-l",
+        action="store_true",
+        help="List current enhancements instead of resetting",
+    )
+    reset_parser.add_argument(
+        "pattern",
+        nargs="?",
+        default=None,
+        help="Optional pattern to filter enhancements (supports * and ?)",
+    )
+
     args = parser.parse_args()
 
     if not args.command:
@@ -333,6 +351,8 @@ Examples:
             return cmd_memory(args)
         elif args.command == "inspect":
             return cmd_vmtool(args)
+        elif args.command == "reset":
+            return cmd_reset(args)
         else:
             print(f"Unknown command: {args.command}", file=sys.stderr)
             return 1
@@ -628,6 +648,42 @@ def cmd_vmtool(args) -> int:
         "depth": args.depth,
         "filter_express": args.filter_express,
         "gc_first": args.gc_first,
+    }
+
+    response = streaming_client.send_command(command)
+    print(json.dumps(response))
+
+    streaming_client.disconnect()
+    attacher.cleanup()
+
+    return 0 if response.get("status") == "success" else 1
+
+
+def cmd_reset(args) -> int:
+    target_pid = _resolve_pid(args)
+
+    attacher = ProcessAttacher(target_pid)
+
+    if not attacher.attach():
+        print('{"error": "Failed to attach to process"}', file=sys.stderr)
+        attacher.cleanup()
+        return 1
+
+    socket_path = attacher.get_socket_path()
+    streaming_client = StreamingAgentClient(socket_path)
+    connect_result = streaming_client.connect()
+
+    if connect_result.get("status") != "success":
+        print(json.dumps({"error": connect_result.get("error", "Connection failed")}))
+        attacher.cleanup()
+        return 1
+
+    action = "list" if args.list else "reset"
+
+    command = {
+        "type": "reset",
+        "action": action,
+        "pattern": args.pattern,
     }
 
     response = streaming_client.send_command(command)

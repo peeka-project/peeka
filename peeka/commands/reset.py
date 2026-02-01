@@ -1,0 +1,59 @@
+"""
+Reset Command - Restore enhanced methods to original state
+Similar to Arthas 'reset' command
+"""
+
+from typing import Any, Dict, TYPE_CHECKING
+
+from peeka.commands.base import BaseCommand
+
+if TYPE_CHECKING:
+    from peeka.core.agent import PeekaAgent
+
+
+class ResetCommand(BaseCommand):
+    """
+    Reset command - removes instrumentation and restores original functions
+
+    Usage:
+        reset                 # Reset all enhancements
+        reset <pattern>       # Reset matching pattern (wildcards: *, ?)
+        reset --list          # List current enhancements
+
+    Actions:
+        reset: Remove instrumentation, restore original functions
+        list: Show all current enhancements
+
+    Examples:
+        reset                           # Reset all
+        reset myapp.service.*          # Reset myapp.service module
+        reset myapp.service.UserService.query  # Reset specific method
+        reset --list                    # List enhancements
+    """
+
+    def __init__(self, agent: "PeekaAgent"):
+        super().__init__()
+        self.agent = agent
+
+    def execute(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            action = params.get("action", "reset")
+
+            if action == "reset":
+                return self._reset(params)
+            elif action == "list":
+                return self._list_enhanced(params)
+            else:
+                return {"status": "error", "error": f"Unknown action: {action}"}
+
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
+
+    def _reset(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Reset enhancements, optionally filtered by pattern."""
+        pattern = params.get("pattern")  # None = reset all
+        return self.agent.injector.reset(pattern)
+
+    def _list_enhanced(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """List all current enhancements."""
+        return self.agent.injector.list_enhanced()
