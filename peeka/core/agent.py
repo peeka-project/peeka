@@ -19,8 +19,9 @@ from peeka.core.observer import ObservationManager
 class PeekaAgent:
     """Agent running inside target process"""
 
-    def __init__(self, session_id: str):
+    def __init__(self, session_id: str, attached_pid: Optional[int] = None):
         self.session_id = session_id
+        self.attached_pid = attached_pid
         self.running = True
         self.sock_path = f"/tmp/peeka_{session_id}.sock"
         self.server: Optional[socket.socket] = None
@@ -42,6 +43,7 @@ class PeekaAgent:
         from peeka.commands.search import SearchClassCommand, SearchMethodCommand
         from peeka.commands.monitor import MonitorCommand
         from peeka.commands.vmtool import VMToolCommand
+        from peeka.commands.detach import DetachCommand
 
         self.command_handlers["watch"] = WatchCommand(self)  # type: ignore[abstract]
         self.command_handlers["stack"] = StackCommand(self)  # type: ignore[abstract]
@@ -52,6 +54,7 @@ class PeekaAgent:
         self.command_handlers["memory"] = MemoryCommand(self)  # type: ignore[abstract]
         self.command_handlers["reset"] = ResetCommand(self)  # type: ignore[abstract]
         self.command_handlers["vmtool"] = VMToolCommand(self)  # type: ignore[abstract]
+        self.command_handlers["detach"] = DetachCommand(self)  # type: ignore[abstract]
 
     def start(self) -> None:
         try:
@@ -164,9 +167,9 @@ class PeekaAgent:
             self.server.close()
 
 
-def _init_agent(session_id: str) -> None:
+def _init_agent(session_id: str, attached_pid: Optional[int] = None) -> None:
     try:
-        agent = PeekaAgent(session_id)
+        agent = PeekaAgent(session_id, attached_pid)
         agent.start()
 
         if not hasattr(sys, "_peeka_agents"):
@@ -179,8 +182,10 @@ def _init_agent(session_id: str) -> None:
 
 
 # Auto-initialize when injected via sys.remote_exec()
-# {{SESSION_ID}} is replaced by ProcessAttacher before injection
+# {{SESSION_ID}} and {{ATTACHED_PID}} are replaced by ProcessAttacher before injection
 if __name__ != "__main__":
     _session_id = "{{SESSION_ID}}"
+    _attached_pid_str = "{{ATTACHED_PID}}"
+    _attached_pid = int(_attached_pid_str) if _attached_pid_str.isdigit() else None
     if not _session_id.startswith("{{"):
-        _init_agent(_session_id)
+        _init_agent(_session_id, _attached_pid)

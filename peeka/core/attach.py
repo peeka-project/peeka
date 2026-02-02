@@ -13,6 +13,7 @@ import uuid
 import warnings
 from importlib import resources
 from pathlib import Path
+from typing import Optional
 
 
 class ProcessAttacher:
@@ -27,6 +28,36 @@ class ProcessAttacher:
         self.pid = pid
         self.agent_script = None
         self.session_id = str(uuid.uuid4())
+        self._existing_session = None
+
+    def _check_existing_attachment(self) -> Optional[tuple]:
+        """
+        Check if there's already an active Peeka agent attached to any process.
+        Returns (session_id, pid) tuple if found, None otherwise.
+        """
+        socket_dir = Path("/tmp")
+        for sock_file in socket_dir.glob("peeka_*.sock"):
+            if sock_file.is_socket():
+                session_id = sock_file.stem.replace("peeka_", "")
+                pid_file = socket_dir / f"peeka_{session_id}.pid"
+
+                if pid_file.exists():
+                    try:
+                        attached_pid = int(pid_file.read_text().strip())
+                        try:
+                            os.kill(attached_pid, 0)
+                            return (session_id, attached_pid)
+                        except (ProcessLookupError, PermissionError):
+                            pid_file.unlink(missing_ok=True)
+                            sock_file.unlink(missing_ok=True)
+                    except (ValueError, OSError):
+                        continue
+        return None
+
+    def _save_attachment_state(self) -> None:
+        """Save the attached PID to a marker file for validation."""
+        pid_file = Path(f"/tmp/peeka_{self.session_id}.pid")
+        pid_file.write_text(str(self.pid))
 
     def attach(self) -> bool:
         """
@@ -36,15 +67,34 @@ class ProcessAttacher:
             bool: True if successful, False otherwise
         """
         try:
+            existing = self._check_existing_attachment()
+
+            if existing:
+                existing_session, existing_pid = existing
+                if existing_pid == self.pid:
+                    print(f"[Peeka] Already attached to process {self.pid}")
+                    print(f"[Peeka] Socket path: /tmp/peeka_{existing_session}.sock")
+                    self._existing_session = existing_session
+                    return True
+                else:
+                    raise RuntimeError(
+                        f"Already attached to process {existing_pid}. "
+                        f"Please detach first: peeka detach"
+                    )
+
             print(f"[Peeka] Attaching to process {self.pid}...")
 
-            # Check if PEP 768 is supported
             if hasattr(sys, "remote_exec"):
-                return self._attach_pep768()
+                result = self._attach_pep768()
             else:
                 print("[Peeka] Warning: PEP 768 not available (Python 3.14+ required)")
                 print("[Peeka] Using fallback mechanism for demonstration")
-                return self._attach_fallback()
+                result = self._attach_fallback()
+
+            if result:
+                self._save_attachment_state()
+
+            return result
 
         except Exception as e:
             print(f"[Peeka] Attach failed: {e}")
@@ -129,6 +179,9 @@ class ProcessAttacher:
         agent_path = Path(tempfile.gettempdir()) / f"peeka_agent_{self.session_id}.py"
 
         agent_code_injected = agent_code.replace("{{SESSION_ID}}", self.session_id)
+        agent_code_injected = agent_code_injected.replace(
+            "{{ATTACHED_PID}}", str(self.pid)
+        )
 
         peeka_root = str(Path(__file__).parent.parent.parent.resolve())
         path_bootstrap = f"import sys; sys.path.insert(0, {peeka_root!r}) if {peeka_root!r} not in sys.path else None\n"
@@ -153,6 +206,8 @@ class ProcessAttacher:
 
     def get_socket_path(self) -> str:
         """Get Unix domain socket path for communication"""
+        if self._existing_session:
+            return f"/tmp/peeka_{self._existing_session}.sock"
         return f"/tmp/peeka_{self.session_id}.sock"
 
     def _check_gdb_available(self):
@@ -272,3 +327,7 @@ class ProcessAttacher:
         sock_path = Path(self.get_socket_path())
         if sock_path.exists():
             sock_path.unlink()
+
+        pid_file = Path(f"/tmp/peeka_{self.session_id}.pid")
+        if pid_file.exists():
+            pid_file.unlink()

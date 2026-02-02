@@ -5,6 +5,7 @@ Provides command-line interface for Peeka
 
 import argparse
 import json
+import os
 import signal
 import sys
 from pathlib import Path
@@ -45,6 +46,48 @@ def _resolve_pid(args) -> int:
     raise ValueError("Either --pid or --name must be provided")
 
 
+def _find_active_session() -> Optional[str]:
+    """
+    Find the active Peeka session socket.
+    Returns socket path if an agent is attached, None otherwise.
+    """
+    socket_dir = Path("/tmp")
+    for sock_file in socket_dir.glob("peeka_*.sock"):
+        if sock_file.is_socket():
+            session_id = sock_file.stem.replace("peeka_", "")
+            pid_file = socket_dir / f"peeka_{session_id}.pid"
+
+            if pid_file.exists():
+                try:
+                    attached_pid = int(pid_file.read_text().strip())
+                    try:
+                        os.kill(attached_pid, 0)
+                        return str(sock_file)
+                    except (ProcessLookupError, PermissionError):
+                        pid_file.unlink(missing_ok=True)
+                        sock_file.unlink(missing_ok=True)
+                except (ValueError, OSError):
+                    continue
+    return None
+
+
+def _check_agent_attached() -> tuple[str, int]:
+    """
+    Check if agent is attached to any process.
+    Returns (socket_path, pid) tuple.
+    Raises ValueError with clear message if not attached.
+    """
+    socket_path = _find_active_session()
+    if socket_path is None:
+        raise ValueError("Not attached to any process.\nPlease run: peeka attach <pid>")
+
+    session_id = Path(socket_path).stem.replace("peeka_", "")
+    pid_file = Path(f"/tmp/peeka_{session_id}.pid")
+    attached_pid = int(pid_file.read_text().strip())
+
+    return (socket_path, attached_pid)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="peeka",
@@ -52,10 +95,11 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  peeka attach 12345                    # Attach to process 12345
-  peeka watch -p 12345 "mymodule.func"  # Watch function calls (streaming JSON)
-  peeka watch --name python "mod.func"  # Watch by process name
-  peeka version                         # Show version
+  peeka attach 12345                  # Attach to process 12345
+  peeka watch "mymodule.func"         # Watch function calls (must attach first)
+  peeka stack "mod.func"              # Stack trace (must attach first)
+  peeka detach                        # Detach from current process
+  peeka reset                         # Reset all enhancements
         """,
     )
 
@@ -66,14 +110,11 @@ Examples:
     attach_parser = subparsers.add_parser(
         "attach", help="Attach to a running Python process"
     )
-    attach_parser.add_argument("--pid", "-p", type=int, help="Process ID to attach to")
-    attach_parser.add_argument("--name", type=str, help="Process name to attach to")
+    attach_parser.add_argument("pid", type=int, help="Process ID to attach to")
 
     watch_parser = subparsers.add_parser(
-        "watch", help="Watch function calls in target process"
+        "watch", help="Watch function calls in target process (must attach first)"
     )
-    watch_parser.add_argument("--pid", "-p", type=int, help="Process ID")
-    watch_parser.add_argument("--name", type=str, help="Process name to attach to")
     watch_parser.add_argument(
         "pattern", help='Function pattern to watch (e.g., "mymodule.MyClass.method")'
     )
@@ -111,10 +152,8 @@ Examples:
     )
 
     stack_parser = subparsers.add_parser(
-        "stack", help="Get stack trace of function calls"
+        "stack", help="Get stack trace of function calls (must attach first)"
     )
-    stack_parser.add_argument("--pid", "-p", type=int, help="Process ID")
-    stack_parser.add_argument("--name", type=str, help="Process name to attach to")
     stack_parser.add_argument(
         "pattern", help='Function pattern (e.g., "mymodule.MyClass.method")'
     )
@@ -138,9 +177,9 @@ Examples:
         help="Stack depth limit (default: 10)",
     )
 
-    logger_parser = subparsers.add_parser("logger", help="Manage logger configuration")
-    logger_parser.add_argument("--pid", "-p", type=int, help="Process ID")
-    logger_parser.add_argument("--name", type=str, help="Process name to attach to")
+    logger_parser = subparsers.add_parser(
+        "logger", help="Manage logger configuration (must attach first)"
+    )
     logger_parser.add_argument(
         "--action",
         type=str,
@@ -165,10 +204,8 @@ Examples:
     )
 
     monitor_parser = subparsers.add_parser(
-        "monitor", help="Monitor function calls at intervals"
+        "monitor", help="Monitor function calls at intervals (must attach first)"
     )
-    monitor_parser.add_argument("--pid", "-p", type=int, help="Process ID")
-    monitor_parser.add_argument("--name", type=str, help="Process name to attach to")
     monitor_parser.add_argument(
         "pattern", help='Function pattern (e.g., "mymodule.MyClass.method")'
     )
@@ -186,9 +223,9 @@ Examples:
         help="Number of cycles (-1 for infinite)",
     )
 
-    sc_parser = subparsers.add_parser("sc", help="Search classes in target process")
-    sc_parser.add_argument("--pid", "-p", type=int, help="Process ID")
-    sc_parser.add_argument("--name", type=str, help="Process name to attach to")
+    sc_parser = subparsers.add_parser(
+        "sc", help="Search classes in target process (must attach first)"
+    )
     sc_parser.add_argument("pattern", help='Class pattern (e.g., "mymodule.*")')
     sc_parser.add_argument(
         "-d",
@@ -203,9 +240,9 @@ Examples:
         help="Result limit (default: 50)",
     )
 
-    sm_parser = subparsers.add_parser("sm", help="Search methods in target class")
-    sm_parser.add_argument("--pid", "-p", type=int, help="Process ID")
-    sm_parser.add_argument("--name", type=str, help="Process name to attach to")
+    sm_parser = subparsers.add_parser(
+        "sm", help="Search methods in target class (must attach first)"
+    )
     sm_parser.add_argument(
         "class_pattern", help='Class pattern (e.g., "mymodule.MyClass")'
     )
@@ -223,10 +260,8 @@ Examples:
     )
 
     memory_parser = subparsers.add_parser(
-        "memory", help="Memory analysis and diagnostics"
+        "memory", help="Memory analysis and diagnostics (must attach first)"
     )
-    memory_parser.add_argument("--pid", "-p", type=int, help="Process ID")
-    memory_parser.add_argument("--name", type=str, help="Process name to attach to")
     memory_parser.add_argument(
         "--action",
         type=str,
@@ -261,10 +296,8 @@ Examples:
     )
 
     inspect_parser = subparsers.add_parser(
-        "inspect", help="Runtime object inspection and analysis"
+        "inspect", help="Runtime object inspection and analysis (must attach first)"
     )
-    inspect_parser.add_argument("--pid", "-p", type=int, help="Process ID")
-    inspect_parser.add_argument("--name", type=str, help="Process name to attach to")
     inspect_parser.add_argument(
         "--action",
         type=str,
@@ -309,10 +342,9 @@ Examples:
     )
 
     reset_parser = subparsers.add_parser(
-        "reset", help="Reset enhancements and restore original functions"
+        "reset",
+        help="Reset enhancements and restore original functions (must attach first)",
     )
-    reset_parser.add_argument("--pid", "-p", type=int, help="Process ID")
-    reset_parser.add_argument("--name", type=str, help="Process name to attach to")
     reset_parser.add_argument(
         "--list",
         "-l",
@@ -326,6 +358,10 @@ Examples:
         help="Optional pattern to filter enhancements (supports * and ?)",
     )
 
+    detach_parser = subparsers.add_parser(
+        "detach", help="Detach from the target process"
+    )
+
     args = parser.parse_args()
 
     if not args.command:
@@ -335,6 +371,8 @@ Examples:
     try:
         if args.command == "attach":
             return cmd_attach(args)
+        elif args.command == "detach":
+            return cmd_detach(args)
         elif args.command == "watch":
             return cmd_watch(args)
         elif args.command == "stack":
@@ -366,7 +404,7 @@ Examples:
 
 
 def cmd_attach(args) -> int:
-    target_pid = _resolve_pid(args)
+    target_pid = args.pid
     print(f"[Peeka] Attaching to process {target_pid}...", file=sys.stderr)
 
     attacher = ProcessAttacher(target_pid)
@@ -383,26 +421,57 @@ def cmd_attach(args) -> int:
         attacher.cleanup()
 
 
-def cmd_watch(args) -> int:
-    target_pid = _resolve_pid(args)
-
-    attacher = ProcessAttacher(target_pid)
-
-    if not attacher.attach():
-        print('{"error": "Failed to attach to process"}', file=sys.stderr)
-        attacher.cleanup()
+def cmd_detach(args) -> int:
+    try:
+        socket_path, attached_pid = _check_agent_attached()
+    except ValueError as e:
+        print(json.dumps({"error": str(e)}), file=sys.stderr)
         return 1
 
-    socket_path = attacher.get_socket_path()
+    streaming_client = StreamingAgentClient(socket_path)
+    connect_result = streaming_client.connect()
+
+    if connect_result.get("status") != "success":
+        print(json.dumps({"error": connect_result.get("error", "Connection failed")}))
+        return 1
+
+    response = streaming_client.send_command({"type": "detach"})
+    print(json.dumps(response))
+
+    streaming_client.disconnect()
+
+    session_id = Path(socket_path).stem.replace("peeka_", "")
+    pid_file = Path(f"/tmp/peeka_{session_id}.pid")
+    ready_file = Path(f"/tmp/peeka_{session_id}.ready")
+    sock_file = Path(socket_path)
+
+    pid_file.unlink(missing_ok=True)
+    ready_file.unlink(missing_ok=True)
+    sock_file.unlink(missing_ok=True)
+
+    return 0 if response.get("status") == "success" else 1
+
+
+def cmd_watch(args) -> int:
+    try:
+        socket_path, attached_pid = _check_agent_attached()
+    except ValueError as e:
+        print(json.dumps({"error": str(e)}), file=sys.stderr)
+        return 1
+
     streaming_client: Optional[StreamingAgentClient] = None
     watch_id: Optional[str] = None
+    pattern: Optional[str] = None
 
     def cleanup_watch(signum=None, frame=None):
-        nonlocal streaming_client, watch_id
+        nonlocal streaming_client, watch_id, pattern
         if streaming_client and watch_id:
             try:
                 streaming_client.send_command(
                     {"type": "watch", "action": "stop", "watch_id": watch_id}
+                )
+                streaming_client.send_command(
+                    {"type": "reset", "action": "reset", "pattern": pattern}
                 )
             except Exception:
                 pass
@@ -418,13 +487,14 @@ def cmd_watch(args) -> int:
 
     if connect_result.get("status") != "success":
         print(json.dumps({"error": connect_result.get("error", "Connection failed")}))
-        attacher.cleanup()
         return 1
+
+    pattern = args.pattern
 
     command = {
         "type": "watch",
         "action": "start",
-        "pattern": args.pattern,
+        "pattern": pattern,
         "depth": args.depth,
         "times": args.times,
         "before": args.before,
@@ -439,15 +509,12 @@ def cmd_watch(args) -> int:
     if response.get("status") != "success":
         print(json.dumps({"error": response.get("error", "Watch start failed")}))
         streaming_client.disconnect()
-        attacher.cleanup()
         return 1
 
     watch_id = response.get("watch_id")
 
     print(
-        json.dumps(
-            {"event": "watch_started", "watch_id": watch_id, "pattern": args.pattern}
-        )
+        json.dumps({"event": "watch_started", "watch_id": watch_id, "pattern": pattern})
     )
     sys.stdout.flush()
 
@@ -468,25 +535,25 @@ def cmd_watch(args) -> int:
 
 
 def cmd_stack(args) -> int:
-    target_pid = _resolve_pid(args)
-
-    attacher = ProcessAttacher(target_pid)
-
-    if not attacher.attach():
-        print('{"error": "Failed to attach to process"}', file=sys.stderr)
-        attacher.cleanup()
+    try:
+        socket_path, attached_pid = _check_agent_attached()
+    except ValueError as e:
+        print(json.dumps({"error": str(e)}), file=sys.stderr)
         return 1
 
-    socket_path = attacher.get_socket_path()
     streaming_client: Optional[StreamingAgentClient] = None
     stack_id: Optional[str] = None
+    pattern: Optional[str] = None
 
     def cleanup_stack(signum=None, frame=None):
-        nonlocal streaming_client, stack_id
+        nonlocal streaming_client, stack_id, pattern
         if streaming_client and stack_id:
             try:
                 streaming_client.send_command(
                     {"type": "stack", "action": "stop", "stack_id": stack_id}
+                )
+                streaming_client.send_command(
+                    {"type": "reset", "action": "reset", "pattern": pattern}
                 )
             except Exception:
                 pass
@@ -502,13 +569,14 @@ def cmd_stack(args) -> int:
 
     if connect_result.get("status") != "success":
         print(json.dumps({"error": connect_result.get("error", "Connection failed")}))
-        attacher.cleanup()
         return 1
+
+    pattern = args.pattern
 
     command = {
         "type": "stack",
         "action": "start",
-        "pattern": args.pattern,
+        "pattern": pattern,
         "depth": args.depth,
         "times": args.times,
         "condition_express": args.condition_express,
@@ -519,15 +587,12 @@ def cmd_stack(args) -> int:
     if response.get("status") != "success":
         print(json.dumps({"error": response.get("error", "Stack start failed")}))
         streaming_client.disconnect()
-        attacher.cleanup()
         return 1
 
     stack_id = response.get("stack_id")
 
     print(
-        json.dumps(
-            {"event": "stack_started", "stack_id": stack_id, "pattern": args.pattern}
-        )
+        json.dumps({"event": "stack_started", "stack_id": stack_id, "pattern": pattern})
     )
     sys.stdout.flush()
 
@@ -548,22 +613,17 @@ def cmd_stack(args) -> int:
 
 
 def cmd_logger(args) -> int:
-    target_pid = _resolve_pid(args)
-
-    attacher = ProcessAttacher(target_pid)
-
-    if not attacher.attach():
-        print('{"error": "Failed to attach to process"}', file=sys.stderr)
-        attacher.cleanup()
+    try:
+        socket_path, attached_pid = _check_agent_attached()
+    except ValueError as e:
+        print(json.dumps({"error": str(e)}), file=sys.stderr)
         return 1
 
-    socket_path = attacher.get_socket_path()
     streaming_client = StreamingAgentClient(socket_path)
     connect_result = streaming_client.connect()
 
     if connect_result.get("status") != "success":
         print(json.dumps({"error": connect_result.get("error", "Connection failed")}))
-        attacher.cleanup()
         return 1
 
     command = {
@@ -578,28 +638,22 @@ def cmd_logger(args) -> int:
     print(json.dumps(response))
 
     streaming_client.disconnect()
-    attacher.cleanup()
 
     return 0 if response.get("status") == "success" else 1
 
 
 def cmd_memory(args) -> int:
-    target_pid = _resolve_pid(args)
-
-    attacher = ProcessAttacher(target_pid)
-
-    if not attacher.attach():
-        print('{"error": "Failed to attach to process"}', file=sys.stderr)
-        attacher.cleanup()
+    try:
+        socket_path, attached_pid = _check_agent_attached()
+    except ValueError as e:
+        print(json.dumps({"error": str(e)}), file=sys.stderr)
         return 1
 
-    socket_path = attacher.get_socket_path()
     streaming_client = StreamingAgentClient(socket_path)
     connect_result = streaming_client.connect()
 
     if connect_result.get("status") != "success":
         print(json.dumps({"error": connect_result.get("error", "Connection failed")}))
-        attacher.cleanup()
         return 1
 
     command = {
@@ -615,28 +669,22 @@ def cmd_memory(args) -> int:
     print(json.dumps(response))
 
     streaming_client.disconnect()
-    attacher.cleanup()
 
     return 0 if response.get("status") == "success" else 1
 
 
 def cmd_vmtool(args) -> int:
-    target_pid = _resolve_pid(args)
-
-    attacher = ProcessAttacher(target_pid)
-
-    if not attacher.attach():
-        print('{"error": "Failed to attach to process"}', file=sys.stderr)
-        attacher.cleanup()
+    try:
+        socket_path, attached_pid = _check_agent_attached()
+    except ValueError as e:
+        print(json.dumps({"error": str(e)}), file=sys.stderr)
         return 1
 
-    socket_path = attacher.get_socket_path()
     streaming_client = StreamingAgentClient(socket_path)
     connect_result = streaming_client.connect()
 
     if connect_result.get("status") != "success":
         print(json.dumps({"error": connect_result.get("error", "Connection failed")}))
-        attacher.cleanup()
         return 1
 
     command = {
@@ -654,28 +702,22 @@ def cmd_vmtool(args) -> int:
     print(json.dumps(response))
 
     streaming_client.disconnect()
-    attacher.cleanup()
 
     return 0 if response.get("status") == "success" else 1
 
 
 def cmd_reset(args) -> int:
-    target_pid = _resolve_pid(args)
-
-    attacher = ProcessAttacher(target_pid)
-
-    if not attacher.attach():
-        print('{"error": "Failed to attach to process"}', file=sys.stderr)
-        attacher.cleanup()
+    try:
+        socket_path, attached_pid = _check_agent_attached()
+    except ValueError as e:
+        print(json.dumps({"error": str(e)}), file=sys.stderr)
         return 1
 
-    socket_path = attacher.get_socket_path()
     streaming_client = StreamingAgentClient(socket_path)
     connect_result = streaming_client.connect()
 
     if connect_result.get("status") != "success":
         print(json.dumps({"error": connect_result.get("error", "Connection failed")}))
-        attacher.cleanup()
         return 1
 
     action = "list" if args.list else "reset"
@@ -690,31 +732,30 @@ def cmd_reset(args) -> int:
     print(json.dumps(response))
 
     streaming_client.disconnect()
-    attacher.cleanup()
 
     return 0 if response.get("status") == "success" else 1
 
 
 def cmd_monitor(args) -> int:
-    target_pid = _resolve_pid(args)
-
-    attacher = ProcessAttacher(target_pid)
-
-    if not attacher.attach():
-        print('{"error": "Failed to attach to process"}', file=sys.stderr)
-        attacher.cleanup()
+    try:
+        socket_path, attached_pid = _check_agent_attached()
+    except ValueError as e:
+        print(json.dumps({"error": str(e)}), file=sys.stderr)
         return 1
 
-    socket_path = attacher.get_socket_path()
     streaming_client: Optional[StreamingAgentClient] = None
     monitor_id: Optional[str] = None
+    pattern: Optional[str] = None
 
     def cleanup_monitor(signum=None, frame=None):
-        nonlocal streaming_client, monitor_id
+        nonlocal streaming_client, monitor_id, pattern
         if streaming_client and monitor_id:
             try:
                 streaming_client.send_command(
                     {"type": "monitor", "action": "stop", "monitor_id": monitor_id}
+                )
+                streaming_client.send_command(
+                    {"type": "reset", "action": "reset", "pattern": pattern}
                 )
             except Exception:
                 pass
@@ -730,13 +771,14 @@ def cmd_monitor(args) -> int:
 
     if connect_result.get("status") != "success":
         print(json.dumps({"error": connect_result.get("error", "Connection failed")}))
-        attacher.cleanup()
         return 1
+
+    pattern = args.pattern
 
     command = {
         "type": "monitor",
         "action": "start",
-        "pattern": args.pattern,
+        "pattern": pattern,
         "interval": args.interval,
         "cycles": args.cycles,
     }
@@ -746,7 +788,6 @@ def cmd_monitor(args) -> int:
     if response.get("status") != "success":
         print(json.dumps({"error": response.get("error", "Monitor start failed")}))
         streaming_client.disconnect()
-        attacher.cleanup()
         return 1
 
     monitor_id = response.get("monitor_id")
@@ -756,7 +797,7 @@ def cmd_monitor(args) -> int:
             {
                 "event": "monitor_started",
                 "monitor_id": monitor_id,
-                "pattern": args.pattern,
+                "pattern": pattern,
             }
         )
     )
@@ -780,22 +821,17 @@ def cmd_monitor(args) -> int:
 
 
 def cmd_sc(args) -> int:
-    target_pid = _resolve_pid(args)
-
-    attacher = ProcessAttacher(target_pid)
-
-    if not attacher.attach():
-        print('{"error": "Failed to attach to process"}', file=sys.stderr)
-        attacher.cleanup()
+    try:
+        socket_path, attached_pid = _check_agent_attached()
+    except ValueError as e:
+        print(json.dumps({"error": str(e)}), file=sys.stderr)
         return 1
 
-    socket_path = attacher.get_socket_path()
     streaming_client = StreamingAgentClient(socket_path)
     connect_result = streaming_client.connect()
 
     if connect_result.get("status") != "success":
         print(json.dumps({"error": connect_result.get("error", "Connection failed")}))
-        attacher.cleanup()
         return 1
 
     command = {
@@ -809,28 +845,22 @@ def cmd_sc(args) -> int:
     print(json.dumps(response))
 
     streaming_client.disconnect()
-    attacher.cleanup()
 
     return 0 if response.get("status") == "success" else 1
 
 
 def cmd_sm(args) -> int:
-    target_pid = _resolve_pid(args)
-
-    attacher = ProcessAttacher(target_pid)
-
-    if not attacher.attach():
-        print('{"error": "Failed to attach to process"}', file=sys.stderr)
-        attacher.cleanup()
+    try:
+        socket_path, attached_pid = _check_agent_attached()
+    except ValueError as e:
+        print(json.dumps({"error": str(e)}), file=sys.stderr)
         return 1
 
-    socket_path = attacher.get_socket_path()
     streaming_client = StreamingAgentClient(socket_path)
     connect_result = streaming_client.connect()
 
     if connect_result.get("status") != "success":
         print(json.dumps({"error": connect_result.get("error", "Connection failed")}))
-        attacher.cleanup()
         return 1
 
     command = {
@@ -844,7 +874,6 @@ def cmd_sm(args) -> int:
     print(json.dumps(response))
 
     streaming_client.disconnect()
-    attacher.cleanup()
 
     return 0 if response.get("status") == "success" else 1
 
