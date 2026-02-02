@@ -28,7 +28,7 @@ class TestAgentIntegration:
         try:
             from peeka.core.agent import PeekaAgent
 
-            agent = PeekaAgent(session_id)
+            agent = PeekaAgent(session_id, attached_pid=None)
             agent.start()
 
             for _ in range(50):
@@ -154,7 +154,7 @@ class TestStreamingClientIntegration:
 
             from peeka.core.agent import PeekaAgent
 
-            agent = PeekaAgent(session_id)
+            agent = PeekaAgent(session_id, attached_pid=None)
             agent.start()
 
             for _ in range(50):
@@ -235,7 +235,7 @@ class TestWatchCommandWithCondition:
 
             from peeka.core.agent import PeekaAgent
 
-            agent = PeekaAgent(session_id)
+            agent = PeekaAgent(session_id, attached_pid=None)
             agent.start()
 
             for _ in range(50):
