@@ -1,0 +1,252 @@
+/* Peeka TUI Styles */
+
+/* Global */
+Screen {
+    background: $surface;
+}
+
+/* Process Selector */
+#process-selector {
+    padding: 1 2;
+}
+
+#process-selector #title {
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#process-selector #filter {
+    margin-bottom: 1;
+}
+
+#process-table {
+    height: 100%;
+}
+
+/* Main Screen */
+#main-container {
+    padding: 0 1;
+}
+
+#pid-status {
+    text-style: bold;
+    color: $success;
+    padding: 0 1;
+}
+
+#main-tabs {
+    height: 100%;
+}
+
+/* Dashboard */
+#dashboard-container {
+    padding: 1;
+}
+
+#metrics-row, #activity-row {
+    height: auto;
+    margin-bottom: 1;
+}
+
+.dashboard-card {
+    border: solid $primary;
+    padding: 1;
+    margin: 0 1 0 0;
+    min-width: 30;
+}
+
+.section-title {
+    text-style: bold;
+    color: $primary;
+    margin-bottom: 1;
+}
+
+/* Watch View */
+#watch-container {
+    padding: 1;
+}
+
+#watch-controls {
+    height: auto;
+    margin-bottom: 1;
+}
+
+#watch-controls Input {
+    width: 1fr;
+    margin-right: 1;
+}
+
+#watch-controls Button {
+    margin-left: 1;
+}
+
+#watch-content {
+    height: 1fr;
+}
+
+#watch-list {
+    width: 40%;
+    margin-right: 1;
+}
+
+#observations-panel {
+    width: 60%;
+}
+
+#observations-log {
+    height: 100%;
+    border: solid $primary;
+}
+
+/* Stack View */
+#stack-container {
+    padding: 1;
+}
+
+#stack-controls {
+    height: auto;
+    margin-bottom: 1;
+}
+
+#stack-content {
+    height: 1fr;
+}
+
+#trace-list {
+    width: 40%;
+    margin-right: 1;
+}
+
+#stack-panel {
+    width: 60%;
+}
+
+#stack-tree {
+    height: 100%;
+    border: solid $primary;
+}
+
+/* Monitor View */
+#monitor-container {
+    padding: 1;
+}
+
+#monitor-controls {
+    height: auto;
+    margin-bottom: 1;
+}
+
+#monitor-controls Input {
+    margin-right: 1;
+}
+
+#stats-panel {
+    height: 1fr;
+}
+
+#stats-table {
+    height: 100%;
+}
+
+/* Memory View */
+#memory-container {
+    padding: 1;
+}
+
+#memory-controls {
+    height: auto;
+    margin-bottom: 1;
+}
+
+#memory-controls Button {
+    margin-right: 1;
+}
+
+#memory-content {
+    height: 1fr;
+}
+
+#mem-overview {
+    width: 40%;
+}
+
+#mem-objects {
+    width: 60%;
+}
+
+/* Logger View */
+#logger-container {
+    padding: 1;
+}
+
+#logger-controls {
+    height: auto;
+    margin-bottom: 1;
+}
+
+#logger-list {
+    height: 1fr;
+    margin-bottom: 1;
+}
+
+#logger-set-controls {
+    height: auto;
+}
+
+#logger-set-controls Input {
+    width: 1fr;
+    margin-right: 1;
+}
+
+/* Inspect View */
+#inspect-container {
+    padding: 1;
+}
+
+#inspect-controls {
+    height: auto;
+    margin-bottom: 1;
+}
+
+#inspect-content {
+    height: 1fr;
+}
+
+#inspect-tree-panel {
+    width: 40%;
+    margin-right: 1;
+}
+
+#inspect-details-panel {
+    width: 60%;
+}
+
+#inspect-tree, #inspect-details {
+    height: 100%;
+    border: solid $primary;
+}
+
+/* AutoComplete Widget */
+#ac-container {
+    height: auto;
+}
+
+#ac-dropdown {
+    max-height: 10;
+    border: solid $accent;
+    background: $surface;
+}
+
+/* Help Screen */
+#help-container {
+    width: 80%;
+    height: 80%;
+    border: solid $primary;
+    background: $surface;
+    padding: 2;
+}
+
+#help-content {
+    height: 100%;
+    overflow-y: auto;
+}
