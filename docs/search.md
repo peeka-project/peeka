@@ -47,7 +47,7 @@
 
 ```bash
 # 查看所有应用类（假设模块名为 myapp）
-peeka sc -p 12345 "myapp.*"
+peeka-cli sc -p 12345 "myapp.*"
 
 # 输出：
 # myapp.api.UserHandler
@@ -65,7 +65,7 @@ peeka sc -p 12345 "myapp.*"
 
 ```bash
 # 搜索所有以 Handler 结尾的类
-peeka sc -p 12345 "*Handler"
+peeka-cli sc -p 12345 "*Handler"
 
 # 输出：
 # myapp.api.UserHandler
@@ -79,10 +79,10 @@ peeka sc -p 12345 "*Handler"
 
 ```bash
 # 步骤 1：搜索类
-peeka sc -p 12345 "myapp.api.UserHandler"
+peeka-cli sc -p 12345 "myapp.api.UserHandler"
 
 # 步骤 2：搜索类的所有方法
-peeka sm -p 12345 "myapp.api.UserHandler.*"
+peeka-cli sm -p 12345 "myapp.api.UserHandler.*"
 
 # 输出：
 # get (self, user_id: int) -> dict
@@ -91,7 +91,7 @@ peeka sm -p 12345 "myapp.api.UserHandler.*"
 # delete (self, user_id: int) -> bool
 
 # 步骤 3：使用 watch 监控
-peeka watch -p 12345 "myapp.api.UserHandler.get"
+peeka-cli watch -p 12345 "myapp.api.UserHandler.get"
 ```
 
 ### 4. 验证模块是否加载
@@ -100,7 +100,7 @@ peeka watch -p 12345 "myapp.api.UserHandler.get"
 
 ```bash
 # 搜索目标模块的类
-peeka sc -p 12345 "myapp.plugins.payment.*"
+peeka-cli sc -p 12345 "myapp.plugins.payment.*"
 
 # 如果输出为空，说明模块未加载
 # 如果有输出，说明模块已加载
@@ -112,10 +112,10 @@ peeka sc -p 12345 "myapp.plugins.payment.*"
 
 ```bash
 # 查看 requests 模块的所有类
-peeka sc -p 12345 "requests.*" -d
+peeka-cli sc -p 12345 "requests.*" -d
 
 # 查看 Session 类的所有方法
-peeka sm -p 12345 "requests.Session.*"
+peeka-cli sm -p 12345 "requests.Session.*"
 
 # 输出：
 # get (self, url, **kwargs) -> Response
@@ -131,7 +131,7 @@ peeka sm -p 12345 "requests.Session.*"
 ### sc - 搜索类
 
 ```bash
-peeka sc [--pid PID | --name NAME] <pattern> [options]
+peeka-cli sc [--pid PID | --name NAME] <pattern> [options]
 ```
 
 **必需参数**：
@@ -146,7 +146,7 @@ peeka sc [--pid PID | --name NAME] <pattern> [options]
 ### sm - 搜索方法
 
 ```bash
-peeka sm [--pid PID | --name NAME] <class_pattern> [options]
+peeka-cli sm [--pid PID | --name NAME] <class_pattern> [options]
 ```
 
 **必需参数**：
@@ -166,16 +166,16 @@ peeka sm [--pid PID | --name NAME] <class_pattern> [options]
 
 ```bash
 # 搜索特定类
-peeka sc -p 12345 "myapp.User"
+peeka-cli sc -p 12345 "myapp.User"
 
 # 搜索模块下的所有类
-peeka sc -p 12345 "myapp.models.*"
+peeka-cli sc -p 12345 "myapp.models.*"
 
 # 搜索所有以 Handler 结尾的类
-peeka sc -p 12345 "*Handler"
+peeka-cli sc -p 12345 "*Handler"
 
 # 显示详细信息
-peeka sc -p 12345 "myapp.models.*" -d
+peeka-cli sc -p 12345 "myapp.models.*" -d
 ```
 
 ### 输出字段
@@ -228,19 +228,19 @@ peeka sc -p 12345 "myapp.models.*" -d
 
 ```bash
 # 搜索类的所有方法
-peeka sm -p 12345 "myapp.User.*"
+peeka-cli sm -p 12345 "myapp.User.*"
 
 # 等价写法（使用 --method-pattern）
-peeka sm -p 12345 "myapp.User" --method-pattern "*"
+peeka-cli sm -p 12345 "myapp.User" --method-pattern "*"
 
 # 搜索特定方法
-peeka sm -p 12345 "myapp.User.get"
+peeka-cli sm -p 12345 "myapp.User.get"
 
 # 搜索以 get_ 开头的方法
-peeka sm -p 12345 "myapp.User" --method-pattern "get_*"
+peeka-cli sm -p 12345 "myapp.User" --method-pattern "get_*"
 
 # 显示详细信息
-peeka sm -p 12345 "myapp.User.*" -d
+peeka-cli sm -p 12345 "myapp.User.*" -d
 ```
 
 ### 输出字段
@@ -311,41 +311,41 @@ peeka sm -p 12345 "myapp.User.*" -d
 
 ```bash
 # 精确匹配
-peeka sc -p 12345 "myapp.models.User"
-peeka sm -p 12345 "myapp.models.User.get"
+peeka-cli sc -p 12345 "myapp.models.User"
+peeka-cli sm -p 12345 "myapp.models.User.get"
 ```
 
 #### 2. 模块级通配符
 
 ```bash
 # 模块下的所有类
-peeka sc -p 12345 "myapp.models.*"
+peeka-cli sc -p 12345 "myapp.models.*"
 
 # 多级通配符
-peeka sc -p 12345 "myapp.*.User"  # myapp 下任意子模块的 User 类
+peeka-cli sc -p 12345 "myapp.*.User"  # myapp 下任意子模块的 User 类
 ```
 
 #### 3. 类名通配符
 
 ```bash
 # 前缀匹配
-peeka sc -p 12345 "*Handler"       # 所有 Handler 类
-peeka sc -p 12345 "myapp.*Handler" # myapp 下的所有 Handler 类
+peeka-cli sc -p 12345 "*Handler"       # 所有 Handler 类
+peeka-cli sc -p 12345 "myapp.*Handler" # myapp 下的所有 Handler 类
 
 # 后缀匹配
-peeka sc -p 12345 "User*"          # User, UserHandler, UserModel
+peeka-cli sc -p 12345 "User*"          # User, UserHandler, UserModel
 
 # 中间匹配
-peeka sc -p 12345 "*User*"         # UserHandler, AdminUser, User
+peeka-cli sc -p 12345 "*User*"         # UserHandler, AdminUser, User
 ```
 
 #### 4. 方法名通配符
 
 ```bash
 # sm 命令的方法模式
-peeka sm -p 12345 "myapp.User" --method-pattern "get*"
-peeka sm -p 12345 "myapp.User" --method-pattern "*_by_id"
-peeka sm -p 12345 "myapp.User" --method-pattern "is_*"
+peeka-cli sm -p 12345 "myapp.User" --method-pattern "get*"
+peeka-cli sm -p 12345 "myapp.User" --method-pattern "*_by_id"
+peeka-cli sm -p 12345 "myapp.User" --method-pattern "is_*"
 ```
 
 ---
@@ -435,7 +435,7 @@ peeka sm -p 12345 "myapp.User" --method-pattern "is_*"
 ### 示例 1：查找应用的所有模型类
 
 ```bash
-peeka sc -p 12345 "myapp.models.*" | jq -r '.classes[].name'
+peeka-cli sc -p 12345 "myapp.models.*" | jq -r '.classes[].name'
 ```
 
 **输出**：
@@ -449,7 +449,7 @@ myapp.models.Payment
 ### 示例 2：查找所有 Handler 类并获取详细信息
 
 ```bash
-peeka sc -p 12345 "*Handler" -d | jq .
+peeka-cli sc -p 12345 "*Handler" -d | jq .
 ```
 
 **输出**：
@@ -477,7 +477,7 @@ peeka sc -p 12345 "*Handler" -d | jq .
 ### 示例 3：查找类的所有方法
 
 ```bash
-peeka sm -p 12345 "myapp.User.*" | jq -r '.methods[] | "\(.name)\(.signature)"'
+peeka-cli sm -p 12345 "myapp.User.*" | jq -r '.methods[] | "\(.name)\(.signature)"'
 ```
 
 **输出**：
@@ -492,7 +492,7 @@ is_active(self) -> bool
 ### 示例 4：查找所有 get_ 开头的方法
 
 ```bash
-peeka sm -p 12345 "myapp.User" --method-pattern "get_*" | jq -r '.methods[].name'
+peeka-cli sm -p 12345 "myapp.User" --method-pattern "get_*" | jq -r '.methods[].name'
 ```
 
 **输出**：
@@ -507,7 +507,7 @@ get_active_users
 
 ```bash
 # 查看 requests 模块有哪些类
-peeka sc -p 12345 "requests.*" | jq -r '.classes[].name'
+peeka-cli sc -p 12345 "requests.*" | jq -r '.classes[].name'
 
 # 输出：
 # requests.Session
@@ -516,7 +516,7 @@ peeka sc -p 12345 "requests.*" | jq -r '.classes[].name'
 # requests.PreparedRequest
 
 # 查看 Session 类的方法
-peeka sm -p 12345 "requests.Session" --method-pattern "*" | \
+peeka-cli sm -p 12345 "requests.Session" --method-pattern "*" | \
   jq -r '.methods[] | "\(.name)\(.signature)"'
 
 # 输出：
@@ -531,7 +531,7 @@ peeka sm -p 12345 "requests.Session" --method-pattern "*" | \
 
 ```bash
 # 步骤 1：搜索所有处理订单的方法
-peeka sm -p 12345 "myapp.Order" --method-pattern "*process*"
+peeka-cli sm -p 12345 "myapp.Order" --method-pattern "*process*"
 
 # 输出：
 # process_payment
@@ -539,7 +539,7 @@ peeka sm -p 12345 "myapp.Order" --method-pattern "*process*"
 # process_shipment
 
 # 步骤 2：选择目标方法并监控
-peeka watch -p 12345 "myapp.Order.process_payment" -n 10
+peeka-cli watch -p 12345 "myapp.Order.process_payment" -n 10
 ```
 
 ---
@@ -552,7 +552,7 @@ peeka watch -p 12345 "myapp.Order.process_payment" -n 10
 
 ```bash
 # 步骤 1：列出所有应用模块的类
-peeka sc -p 12345 "myapp.*" > classes.json
+peeka-cli sc -p 12345 "myapp.*" > classes.json
 
 # 步骤 2：按模块分组统计
 jq -r '.classes[].name | split(".") | .[0:2] | join(".")' classes.json | \
@@ -565,7 +565,7 @@ jq -r '.classes[].name | split(".") | .[0:2] | join(".")' classes.json | \
 #   3 myapp.services
 
 # 步骤 3：查看每个模块的详细类
-peeka sc -p 12345 "myapp.api.*" -d | \
+peeka-cli sc -p 12345 "myapp.api.*" -d | \
   jq -r '.classes[] | "\(.name)\n  \(.docstring)\n"'
 ```
 
@@ -575,13 +575,13 @@ peeka sc -p 12345 "myapp.api.*" -d | \
 
 ```bash
 # 步骤 1：搜索所有与 payment 相关的类
-peeka sc -p 12345 "*payment*" -d
+peeka-cli sc -p 12345 "*payment*" -d
 
 # 步骤 2：找到目标类后，查看其方法
-peeka sm -p 12345 "myapp.payment.PaymentProcessor.*" -d
+peeka-cli sm -p 12345 "myapp.payment.PaymentProcessor.*" -d
 
 # 步骤 3：查看特定方法的详细信息
-peeka sm -p 12345 "myapp.payment.PaymentProcessor.charge" -d | \
+peeka-cli sm -p 12345 "myapp.payment.PaymentProcessor.charge" -d | \
   jq -r '.methods[0].docstring'
 ```
 
@@ -591,14 +591,14 @@ peeka sm -p 12345 "myapp.payment.PaymentProcessor.charge" -d | \
 
 ```bash
 # 步骤 1：搜索旧类（应该找不到）
-peeka sc -p 12345 "myapp.OldUserHandler"
+peeka-cli sc -p 12345 "myapp.OldUserHandler"
 # 输出：{"status":"success","classes":[],"count":0}
 
 # 步骤 2：搜索新类（应该能找到）
-peeka sc -p 12345 "myapp.NewUserHandler" -d
+peeka-cli sc -p 12345 "myapp.NewUserHandler" -d
 
 # 步骤 3：对比新旧类的方法
-peeka sm -p 12345 "myapp.NewUserHandler.*" > new_methods.json
+peeka-cli sm -p 12345 "myapp.NewUserHandler.*" > new_methods.json
 # 对比 old_methods.json 和 new_methods.json
 ```
 
@@ -608,7 +608,7 @@ peeka sm -p 12345 "myapp.NewUserHandler.*" > new_methods.json
 
 ```bash
 # 步骤 1：查看 Flask 有哪些类
-peeka sc -p 12345 "flask.*" | jq -r '.classes[].name'
+peeka-cli sc -p 12345 "flask.*" | jq -r '.classes[].name'
 
 # 输出：
 # flask.Flask
@@ -617,11 +617,11 @@ peeka sc -p 12345 "flask.*" | jq -r '.classes[].name'
 # flask.Response
 
 # 步骤 2：查看 Flask 类的所有方法
-peeka sm -p 12345 "flask.Flask.*" | \
+peeka-cli sm -p 12345 "flask.Flask.*" | \
   jq -r '.methods[] | "\(.name)\(.signature)"'
 
 # 步骤 3：查看特定方法的文档
-peeka sm -p 12345 "flask.Flask.route" -d | \
+peeka-cli sm -p 12345 "flask.Flask.route" -d | \
   jq -r '.methods[0].docstring'
 ```
 
@@ -635,7 +635,7 @@ peeka sm -p 12345 "flask.Flask.route" -d | \
 
 ```bash
 # 如果 myapp.plugin 模块未被导入，搜索不到
-peeka sc -p 12345 "myapp.plugin.*"
+peeka-cli sc -p 12345 "myapp.plugin.*"
 # 输出：{"classes": [], "count": 0}
 ```
 
@@ -649,7 +649,7 @@ peeka sc -p 12345 "myapp.plugin.*"
 
 ```bash
 # 不会显示 __init__, __str__, __repr__ 等
-peeka sm -p 12345 "myapp.User.*"
+peeka-cli sm -p 12345 "myapp.User.*"
 ```
 
 **原因**：魔法方法通常不是业务逻辑的入口，过滤掉可以减少噪音。
@@ -660,13 +660,13 @@ peeka sm -p 12345 "myapp.User.*"
 
 ```bash
 # 如果匹配超过 50 个，只返回前 50 个
-peeka sc -p 12345 "*" --limit 50
+peeka-cli sc -p 12345 "*" --limit 50
 ```
 
 **调整限制**：
 ```bash
 # 增加限制到 200
-peeka sc -p 12345 "*" --limit 200
+peeka-cli sc -p 12345 "*" --limit 200
 ```
 
 **注意**：
@@ -678,7 +678,7 @@ peeka sc -p 12345 "*" --limit 200
 **原因**：部分类（如内置类、C 扩展）没有对应的 Python 文件。
 
 ```bash
-peeka sc -p 12345 "builtins.dict" -d
+peeka-cli sc -p 12345 "builtins.dict" -d
 
 # 输出：
 # {"name": "builtins.dict", "file": null, ...}
@@ -689,7 +689,7 @@ peeka sc -p 12345 "builtins.dict" -d
 **原因**：部分方法（如 C 扩展、builtins）无法通过 `inspect.signature()` 获取签名。
 
 ```bash
-peeka sm -p 12345 "builtins.dict.get"
+peeka-cli sm -p 12345 "builtins.dict.get"
 
 # 输出：
 # {"name": "get", "signature": null}
@@ -723,10 +723,10 @@ peeka sm -p 12345 "builtins.dict.get"
 python3 -c "import sys; print('myapp.models' in sys.modules)"
 
 # 方法 2：使用更宽松的模式
-peeka sc -p 12345 "*User*"
+peeka-cli sc -p 12345 "*User*"
 
 # 方法 3：增加限制
-peeka sc -p 12345 "myapp.*" --limit 200
+peeka-cli sc -p 12345 "myapp.*" --limit 200
 ```
 
 ### Q2: 如何搜索所有模块的所有类？
@@ -734,7 +734,7 @@ peeka sc -p 12345 "myapp.*" --limit 200
 **答案**：使用 `*` 通配符。
 
 ```bash
-peeka sc -p 12345 "*" --limit 200
+peeka-cli sc -p 12345 "*" --limit 200
 ```
 
 **警告**：
@@ -760,7 +760,7 @@ peeka sc -p 12345 "*" --limit 200
 ```bash
 # 搜索所有 Handler 类的 handle 方法
 # 注意：需要知道具体的模块名
-peeka sm -p 12345 "myapp.api.*Handler" --method-pattern "handle"
+peeka-cli sm -p 12345 "myapp.api.*Handler" --method-pattern "handle"
 ```
 
 **限制**：`class_pattern` 必须包含模块名，不能单独使用 `*Handler`。
@@ -771,13 +771,13 @@ peeka sm -p 12345 "myapp.api.*Handler" --method-pattern "handle"
 
 ```bash
 # 导出所有类到文件
-peeka sc -p 12345 "myapp.*" > classes.json
+peeka-cli sc -p 12345 "myapp.*" > classes.json
 
 # 导出类名列表（纯文本）
-peeka sc -p 12345 "myapp.*" | jq -r '.classes[].name' > class_names.txt
+peeka-cli sc -p 12345 "myapp.*" | jq -r '.classes[].name' > class_names.txt
 
 # 导出方法签名表
-peeka sm -p 12345 "myapp.User.*" | \
+peeka-cli sm -p 12345 "myapp.User.*" | \
   jq -r '.methods[] | "\(.name)\(.signature)"' > user_methods.txt
 ```
 
@@ -787,13 +787,13 @@ peeka sm -p 12345 "myapp.User.*" | \
 
 ```bash
 # 搜索 json 模块的类
-peeka sc -p 12345 "json.*"
+peeka-cli sc -p 12345 "json.*"
 
 # 搜索 collections 模块的类
-peeka sc -p 12345 "collections.*"
+peeka-cli sc -p 12345 "collections.*"
 
 # 搜索 logging 模块的类
-peeka sc -p 12345 "logging.*"
+peeka-cli sc -p 12345 "logging.*"
 ```
 
 ---
@@ -815,21 +815,21 @@ echo "# API Documentation" > $OUTPUT
 echo "" >> $OUTPUT
 
 # 获取所有类
-classes=$(peeka sc -p $PID "myapp.*" | jq -r '.classes[].name')
+classes=$(peeka-cli sc -p $PID "myapp.*" | jq -r '.classes[].name')
 
 for class in $classes; do
   echo "## $class" >> $OUTPUT
   echo "" >> $OUTPUT
   
   # 获取类的详细信息
-  peeka sc -p $PID "$class" -d | \
+  peeka-cli sc -p $PID "$class" -d | \
     jq -r '.classes[0].docstring // "No description"' >> $OUTPUT
   echo "" >> $OUTPUT
   
   # 获取类的所有方法
   echo "### Methods" >> $OUTPUT
   echo "" >> $OUTPUT
-  peeka sm -p $PID "$class.*" -d | \
+  peeka-cli sm -p $PID "$class.*" -d | \
     jq -r '.methods[] | "- `\(.name)\(.signature)`\n  \(.docstring // "No description")\n"' >> $OUTPUT
   echo "" >> $OUTPUT
 done
@@ -850,11 +850,11 @@ OLD_CLASS="myapp.OldUserHandler"
 NEW_CLASS="myapp.NewUserHandler"
 
 # 获取旧类方法
-old_methods=$(peeka sm -p $PID "$OLD_CLASS.*" 2>/dev/null | \
+old_methods=$(peeka-cli sm -p $PID "$OLD_CLASS.*" 2>/dev/null | \
   jq -r '.methods[].name' | sort)
 
 # 获取新类方法
-new_methods=$(peeka sm -p $PID "$NEW_CLASS.*" | \
+new_methods=$(peeka-cli sm -p $PID "$NEW_CLASS.*" | \
   jq -r '.methods[].name' | sort)
 
 # 对比
@@ -881,16 +881,16 @@ PID=12345
 ABSTRACT_CLASS="myapp.BaseHandler"
 
 # 获取抽象类的所有方法
-abstract_methods=$(peeka sm -p $PID "$ABSTRACT_CLASS.*" | \
+abstract_methods=$(peeka-cli sm -p $PID "$ABSTRACT_CLASS.*" | \
   jq -r '.methods[].name' | sort)
 
 # 查找所有子类
-subclasses=$(peeka sc -p $PID "*Handler" | \
+subclasses=$(peeka-cli sc -p $PID "*Handler" | \
   jq -r '.classes[].name' | grep -v "$ABSTRACT_CLASS")
 
 for subclass in $subclasses; do
   # 获取子类的方法
-  impl_methods=$(peeka sm -p $PID "$subclass.*" | \
+  impl_methods=$(peeka-cli sm -p $PID "$subclass.*" | \
     jq -r '.methods[].name' | sort)
   
   # 检查是否实现了所有抽象方法
@@ -919,10 +919,10 @@ MODULE="myapp.plugins.experimental"
 
 # 等待模块加载（轮询）
 for i in {1..10}; do
-  classes=$(peeka sc -p $PID "$MODULE.*" | jq -r '.count')
+  classes=$(peeka-cli sc -p $PID "$MODULE.*" | jq -r '.count')
   if [ "$classes" -gt 0 ]; then
     echo "Module loaded successfully"
-    peeka sc -p $PID "$MODULE.*" -d
+    peeka-cli sc -p $PID "$MODULE.*" -d
     break
   fi
   echo "Waiting for module to load... ($i/10)"
@@ -941,10 +941,10 @@ done
 PID=12345
 
 # 生成 JSON 格式的自动补全数据
-peeka sc -p $PID "myapp.*" | \
+peeka-cli sc -p $PID "myapp.*" | \
   jq -r '.classes[] | .name' | \
   while read class; do
-    peeka sm -p $PID "$class.*" | \
+    peeka-cli sm -p $PID "$class.*" | \
       jq -r ".methods[] | {class: \"$class\", method: .name, signature: .signature}"
   done | jq -s . > autocomplete_data.json
 ```
@@ -961,13 +961,13 @@ PID=12345
 INTERVAL=5
 
 # 保存初始状态
-peeka sc -p $PID "*" | jq -r '.classes[].name' | sort > initial_classes.txt
+peeka-cli sc -p $PID "*" | jq -r '.classes[].name' | sort > initial_classes.txt
 
 while true; do
   sleep $INTERVAL
   
   # 获取当前类列表
-  peeka sc -p $PID "*" | jq -r '.classes[].name' | sort > current_classes.txt
+  peeka-cli sc -p $PID "*" | jq -r '.classes[].name' | sort > current_classes.txt
   
   # 找出新增的类
   new_classes=$(comm -13 initial_classes.txt current_classes.txt)
@@ -1015,13 +1015,13 @@ sc -d com.example.MyClass
 **Peeka (Python)**：
 ```bash
 # 搜索类
-peeka sc -p 12345 "myapp.*"
+peeka-cli sc -p 12345 "myapp.*"
 
 # 搜索方法
-peeka sm -p 12345 "myapp.MyClass.*"
+peeka-cli sm -p 12345 "myapp.MyClass.*"
 
 # 详细信息
-peeka sc -p 12345 "myapp.MyClass" -d
+peeka-cli sc -p 12345 "myapp.MyClass" -d
 ```
 
 ### 输出格式对比

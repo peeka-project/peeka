@@ -80,7 +80,9 @@ def _check_agent_attached() -> tuple[str, int]:
     """
     socket_path = _find_active_session()
     if socket_path is None:
-        raise ValueError("Not attached to any process.\nPlease run: peeka attach <pid>")
+        raise ValueError(
+            "Not attached to any process.\nPlease run: peeka-cli attach <pid>"
+        )
 
     session_id = Path(socket_path).stem.replace("peeka_", "")
     pid_file = Path(f"/tmp/peeka_{session_id}.pid")
@@ -91,16 +93,16 @@ def _check_agent_attached() -> tuple[str, int]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        prog="peeka",
+        prog="peeka-cli",
         description="Peeka - Python Diagnostic Tool based on PEP 768",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  peeka attach 12345                  # Attach to process 12345
-  peeka watch "mymodule.func"         # Watch function calls (must attach first)
-  peeka stack "mod.func"              # Stack trace (must attach first)
-  peeka detach                        # Detach from current process
-  peeka reset                         # Reset all enhancements
+  peeka-cli attach 12345                  # Attach to process 12345
+  peeka-cli watch "mymodule.func"         # Watch function calls (must attach first)
+  peeka-cli stack "mod.func"              # Stack trace (must attach first)
+  peeka-cli detach                        # Detach from current process
+  peeka-cli reset                         # Reset all enhancements
         """,
     )
 

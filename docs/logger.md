@@ -44,19 +44,19 @@
 
 ```bash
 # 步骤 1：查看当前日志级别
-peeka logger -p 12345 --action get --logger myapp.payment
+peeka-cli logger -p 12345 --action get --logger myapp.payment
 
 # 输出：
 # {"status": "success", "name": "myapp.payment", "level": "INFO", "level_num": 20}
 
 # 步骤 2：临时开启 DEBUG 级别
-peeka logger -p 12345 --action set --logger myapp.payment --level DEBUG
+peeka-cli logger -p 12345 --action set --logger myapp.payment --level DEBUG
 
 # 输出：
 # {"status": "success", "name": "myapp.payment", "old_level": "INFO", "new_level": "DEBUG"}
 
 # 步骤 3：排查完成后恢复原级别
-peeka logger -p 12345 --action set --logger myapp.payment --level INFO
+peeka-cli logger -p 12345 --action set --logger myapp.payment --level INFO
 ```
 
 **效果**：立即生效，无需重启进程，日志文件开始输出详细调试信息。
@@ -67,13 +67,13 @@ peeka logger -p 12345 --action set --logger myapp.payment --level INFO
 
 ```bash
 # 查看所有包含 "urllib3" 的 logger
-peeka logger -p 12345 --action list --pattern "urllib3*"
+peeka-cli logger -p 12345 --action list --pattern "urllib3*"
 
 # 关闭 urllib3 的调试日志
-peeka logger -p 12345 --action set --logger urllib3 --level WARNING
+peeka-cli logger -p 12345 --action set --logger urllib3 --level WARNING
 
 # 同样处理 boto3
-peeka logger -p 12345 --action set --logger botocore --level WARNING
+peeka-cli logger -p 12345 --action set --logger botocore --level WARNING
 ```
 
 **效果**：第三方库只输出 WARNING 及以上级别的日志，应用日志清晰可见。
@@ -84,16 +84,16 @@ peeka logger -p 12345 --action set --logger botocore --level WARNING
 
 ```bash
 # 步骤 1：检查 logger 是否存在
-peeka logger -p 12345 --action get --logger myapp.missing_logs
+peeka-cli logger -p 12345 --action get --logger myapp.missing_logs
 
 # 如果输出 "Logger not found"，说明该 logger 未被初始化
 # 如果输出 level 为 ERROR，说明日志级别设置过高
 
 # 步骤 2：查看所有 logger，找到可能相关的
-peeka logger -p 12345 --action list --pattern "myapp.*"
+peeka-cli logger -p 12345 --action list --pattern "myapp.*"
 
 # 步骤 3：降低级别或创建 logger（通过 set 动作会自动创建）
-peeka logger -p 12345 --action set --logger myapp.missing_logs --level DEBUG
+peeka-cli logger -p 12345 --action set --logger myapp.missing_logs --level DEBUG
 ```
 
 ### 4. 批量查看模块日志级别
@@ -102,7 +102,7 @@ peeka logger -p 12345 --action set --logger myapp.missing_logs --level DEBUG
 
 ```bash
 # 查看所有应用 logger（假设都以 "myapp" 开头）
-peeka logger -p 12345 --action list --pattern "myapp.*" | jq .
+peeka-cli logger -p 12345 --action list --pattern "myapp.*" | jq .
 
 # 输出格式化的 logger 列表，便于检查配置
 ```
@@ -113,9 +113,9 @@ peeka logger -p 12345 --action list --pattern "myapp.*" | jq .
 
 ```bash
 # 将所有非核心模块的日志级别提升到 WARNING
-peeka logger -p 12345 --action set --logger myapp.analytics --level WARNING
-peeka logger -p 12345 --action set --logger myapp.reporting --level WARNING
-peeka logger -p 12345 --action set --logger myapp.metrics --level WARNING
+peeka-cli logger -p 12345 --action set --logger myapp.analytics --level WARNING
+peeka-cli logger -p 12345 --action set --logger myapp.reporting --level WARNING
+peeka-cli logger -p 12345 --action set --logger myapp.metrics --level WARNING
 ```
 
 ---
@@ -123,7 +123,7 @@ peeka logger -p 12345 --action set --logger myapp.metrics --level WARNING
 ## 命令格式
 
 ```bash
-peeka logger [--pid PID | --name NAME] [--action ACTION] [options]
+peeka-cli logger [--pid PID | --name NAME] [--action ACTION] [options]
 ```
 
 **必需参数**：
@@ -146,7 +146,7 @@ peeka logger [--pid PID | --name NAME] [--action ACTION] [options]
 
 **语法**：
 ```bash
-peeka logger -p <pid> --action list [--pattern <pattern>]
+peeka-cli logger -p <pid> --action list [--pattern <pattern>]
 ```
 
 **参数**：
@@ -155,13 +155,13 @@ peeka logger -p <pid> --action list [--pattern <pattern>]
 **示例**：
 ```bash
 # 列出所有 logger
-peeka logger -p 12345 --action list
+peeka-cli logger -p 12345 --action list
 
 # 只列出 myapp 命名空间下的 logger
-peeka logger -p 12345 --action list --pattern "myapp.*"
+peeka-cli logger -p 12345 --action list --pattern "myapp.*"
 
 # 列出所有包含 "db" 的 logger
-peeka logger -p 12345 --action list --pattern "*db*"
+peeka-cli logger -p 12345 --action list --pattern "*db*"
 ```
 
 **输出**：
@@ -183,7 +183,7 @@ peeka logger -p 12345 --action list --pattern "*db*"
 
 **语法**：
 ```bash
-peeka logger -p <pid> --action get --logger <name>
+peeka-cli logger -p <pid> --action get --logger <name>
 ```
 
 **参数**：
@@ -191,7 +191,7 @@ peeka logger -p <pid> --action get --logger <name>
 
 **示例**：
 ```bash
-peeka logger -p 12345 --action get --logger myapp.payment
+peeka-cli logger -p 12345 --action get --logger myapp.payment
 ```
 
 **输出（成功）**：
@@ -218,7 +218,7 @@ peeka logger -p 12345 --action get --logger myapp.payment
 
 **语法**：
 ```bash
-peeka logger -p <pid> --action set --logger <name> --level <level>
+peeka-cli logger -p <pid> --action set --logger <name> --level <level>
 ```
 
 **参数**：
@@ -238,13 +238,13 @@ peeka logger -p <pid> --action set --logger <name> --level <level>
 **示例**：
 ```bash
 # 启用 DEBUG 日志
-peeka logger -p 12345 --action set --logger myapp.auth --level DEBUG
+peeka-cli logger -p 12345 --action set --logger myapp.auth --level DEBUG
 
 # 关闭 INFO 级别日志（只保留警告和错误）
-peeka logger -p 12345 --action set --logger myapp.reporting --level WARNING
+peeka-cli logger -p 12345 --action set --logger myapp.reporting --level WARNING
 
 # 恢复默认级别
-peeka logger -p 12345 --action set --logger myapp.auth --level INFO
+peeka-cli logger -p 12345 --action set --logger myapp.auth --level INFO
 ```
 
 **输出**：
@@ -290,13 +290,13 @@ peeka logger -p 12345 --action set --logger myapp.auth --level INFO
 **用法**：
 ```bash
 # 列出所有 myapp 命名空间下的 logger
-peeka logger -p 12345 --action list --pattern "myapp.*"
+peeka-cli logger -p 12345 --action list --pattern "myapp.*"
 
 # 列出所有与数据库相关的 logger
-peeka logger -p 12345 --action list --pattern "*db*"
+peeka-cli logger -p 12345 --action list --pattern "*db*"
 
 # 列出所有 API 版本的 logger
-peeka logger -p 12345 --action list --pattern "*.api.v?"
+peeka-cli logger -p 12345 --action list --pattern "*.api.v?"
 ```
 
 ### --logger - Logger 名称
@@ -311,10 +311,10 @@ peeka logger -p 12345 --action list --pattern "*.api.v?"
 **查找 logger 名称的方法**：
 ```bash
 # 方法 1：列出所有 logger，找到目标
-peeka logger -p 12345 --action list | jq -r '.loggers[].name'
+peeka-cli logger -p 12345 --action list | jq -r '.loggers[].name'
 
 # 方法 2：使用模式匹配缩小范围
-peeka logger -p 12345 --action list --pattern "myapp.payment*"
+peeka-cli logger -p 12345 --action list --pattern "myapp.payment*"
 
 # 方法 3：查看代码中的 getLogger 调用
 grep -r "getLogger" myapp/ | grep -v ".pyc"
@@ -423,7 +423,7 @@ root logger (默认 WARNING)
 ### 示例 1：查看所有 logger 配置
 
 ```bash
-peeka logger -p 12345 --action list | jq .
+peeka-cli logger -p 12345 --action list | jq .
 ```
 
 **输出**：
@@ -445,30 +445,30 @@ peeka logger -p 12345 --action list | jq .
 
 ```bash
 # 1. 查看当前级别
-peeka logger -p 12345 --action get --logger myapp.payment
+peeka-cli logger -p 12345 --action get --logger myapp.payment
 # 输出：{"status": "success", "name": "myapp.payment", "level": "INFO", ...}
 
 # 2. 开启 DEBUG
-peeka logger -p 12345 --action set --logger myapp.payment --level DEBUG
+peeka-cli logger -p 12345 --action set --logger myapp.payment --level DEBUG
 # 输出：{"status": "success", "old_level": "INFO", "new_level": "DEBUG"}
 
 # 3. 观察日志文件（另一个终端）
 tail -f /var/log/myapp.log | grep payment
 
 # 4. 排查完成后恢复
-peeka logger -p 12345 --action set --logger myapp.payment --level INFO
+peeka-cli logger -p 12345 --action set --logger myapp.payment --level INFO
 ```
 
 ### 示例 3：关闭第三方库的冗长日志
 
 ```bash
 # 查看所有第三方库 logger
-peeka logger -p 12345 --action list --pattern "*" | \
+peeka-cli logger -p 12345 --action list --pattern "*" | \
   jq -r '.loggers[] | select(.level == "DEBUG") | .name'
 
 # 批量关闭（只保留 WARNING 及以上）
 for logger in urllib3 botocore requests; do
-  peeka logger -p 12345 --action set --logger "$logger" --level WARNING
+  peeka-cli logger -p 12345 --action set --logger "$logger" --level WARNING
 done
 ```
 
@@ -476,12 +476,12 @@ done
 
 ```bash
 # 方法 1：使用 get 动作
-result=$(peeka logger -p 12345 --action get --logger myapp.missing 2>&1)
+result=$(peeka-cli logger -p 12345 --action get --logger myapp.missing 2>&1)
 echo "$result" | jq -r .status
 # 输出：error（如果不存在）
 
 # 方法 2：列出所有并搜索
-peeka logger -p 12345 --action list | \
+peeka-cli logger -p 12345 --action list | \
   jq -r '.loggers[] | select(.name == "myapp.missing")'
 # 无输出（如果不存在）
 ```
@@ -490,10 +490,10 @@ peeka logger -p 12345 --action list | \
 
 ```bash
 # set 动作会自动创建不存在的 logger
-peeka logger -p 12345 --action set --logger myapp.new_module --level DEBUG
+peeka-cli logger -p 12345 --action set --logger myapp.new_module --level DEBUG
 
 # 验证创建成功
-peeka logger -p 12345 --action get --logger myapp.new_module
+peeka-cli logger -p 12345 --action get --logger myapp.new_module
 # 输出：{"status": "success", "name": "myapp.new_module", "level": "DEBUG", ...}
 ```
 
@@ -501,7 +501,7 @@ peeka logger -p 12345 --action get --logger myapp.new_module
 
 ```bash
 # 查看所有 myapp.api 子模块的日志级别
-peeka logger -p 12345 --action list --pattern "myapp.api.*" | \
+peeka-cli logger -p 12345 --action list --pattern "myapp.api.*" | \
   jq -r '.loggers[] | "\(.name): \(.level)"'
 ```
 
@@ -522,11 +522,11 @@ myapp.api.auth: WARNING
 
 ```bash
 # 步骤 1：查看支付模块当前日志级别
-peeka logger -p 12345 --action get --logger myapp.payment
+peeka-cli logger -p 12345 --action get --logger myapp.payment
 # 输出：{"level": "INFO"}
 
 # 步骤 2：启用 DEBUG 日志
-peeka logger -p 12345 --action set --logger myapp.payment --level DEBUG
+peeka-cli logger -p 12345 --action set --logger myapp.payment --level DEBUG
 
 # 步骤 3：同时监控日志文件
 tail -f /var/log/myapp.log | grep -A 5 -B 5 "payment"
@@ -536,7 +536,7 @@ tail -f /var/log/myapp.log | grep -A 5 -B 5 "payment"
 # 步骤 5：查看调试日志，定位问题
 
 # 步骤 6：问题解决后恢复原级别
-peeka logger -p 12345 --action set --logger myapp.payment --level INFO
+peeka-cli logger -p 12345 --action set --logger myapp.payment --level INFO
 ```
 
 ### 流程 2：日志缺失诊断
@@ -545,15 +545,15 @@ peeka logger -p 12345 --action set --logger myapp.payment --level INFO
 
 ```bash
 # 步骤 1：检查 logger 是否存在
-peeka logger -p 12345 --action get --logger myapp.analytics
+peeka-cli logger -p 12345 --action get --logger myapp.analytics
 # 如果输出 "Logger not found"，说明未初始化
 
 # 步骤 2：查看父 logger 的级别
-peeka logger -p 12345 --action get --logger myapp
+peeka-cli logger -p 12345 --action get --logger myapp
 # 输出：{"level": "WARNING"}
 
 # 步骤 3：创建 logger 并设置为 DEBUG
-peeka logger -p 12345 --action set --logger myapp.analytics --level DEBUG
+peeka-cli logger -p 12345 --action set --logger myapp.analytics --level DEBUG
 
 # 步骤 4：验证日志开始输出
 tail -f /var/log/myapp.log | grep analytics
@@ -565,7 +565,7 @@ tail -f /var/log/myapp.log | grep analytics
 
 ```bash
 # 步骤 1：查看所有 DEBUG 级别的 logger
-peeka logger -p 12345 --action list | \
+peeka-cli logger -p 12345 --action list | \
   jq -r '.loggers[] | select(.level == "DEBUG") | .name'
 
 # 输出：
@@ -575,15 +575,15 @@ peeka logger -p 12345 --action list | \
 # myapp.reporting
 
 # 步骤 2：保留核心模块（api, db）的 DEBUG，关闭其他
-peeka logger -p 12345 --action set --logger myapp.cache --level WARNING
-peeka logger -p 12345 --action set --logger myapp.reporting --level WARNING
+peeka-cli logger -p 12345 --action set --logger myapp.cache --level WARNING
+peeka-cli logger -p 12345 --action set --logger myapp.reporting --level WARNING
 
 # 步骤 3：观察系统负载变化
 # （使用 top、htop 或监控系统）
 
 # 步骤 4：如果需要恢复
-peeka logger -p 12345 --action set --logger myapp.cache --level DEBUG
-peeka logger -p 12345 --action set --logger myapp.reporting --level DEBUG
+peeka-cli logger -p 12345 --action set --logger myapp.cache --level DEBUG
+peeka-cli logger -p 12345 --action set --logger myapp.reporting --level DEBUG
 ```
 
 ### 流程 4：批量调整第三方库日志
@@ -592,7 +592,7 @@ peeka logger -p 12345 --action set --logger myapp.reporting --level DEBUG
 
 ```bash
 # 步骤 1：列出所有非应用 logger（通常是第三方库）
-peeka logger -p 12345 --action list | \
+peeka-cli logger -p 12345 --action list | \
   jq -r '.loggers[] | select(.name | startswith("myapp") | not) | .name'
 
 # 输出：
@@ -604,13 +604,13 @@ peeka logger -p 12345 --action list | \
 # 步骤 2：批量设置为 WARNING
 cat <<'EOF' | bash
 for logger in urllib3 urllib3.connectionpool botocore requests; do
-  peeka logger -p 12345 --action set --logger "$logger" --level WARNING
+  peeka-cli logger -p 12345 --action set --logger "$logger" --level WARNING
   echo "Set $logger to WARNING"
 done
 EOF
 
 # 步骤 3：验证
-peeka logger -p 12345 --action list --pattern "*" | \
+peeka-cli logger -p 12345 --action list --pattern "*" | \
   jq -r '.loggers[] | select(.name | startswith("myapp") | not) | "\(.name): \(.level)"'
 ```
 
@@ -635,10 +635,10 @@ peeka logger -p 12345 --action list --pattern "*" | \
 **示例**：
 ```bash
 # 查看 root logger
-peeka logger -p 12345 --action get --logger root
+peeka-cli logger -p 12345 --action get --logger root
 
 # 全局开启 DEBUG（谨慎使用！）
-peeka logger -p 12345 --action set --logger root --level DEBUG
+peeka-cli logger -p 12345 --action set --logger root --level DEBUG
 ```
 
 **警告**：修改 root logger 可能导致日志爆炸，仅在必要时使用。
@@ -700,16 +700,16 @@ root (WARNING)
 **诊断方法**：
 ```bash
 # 1. 确认 logger 级别已修改
-peeka logger -p 12345 --action get --logger myapp.target
+peeka-cli logger -p 12345 --action get --logger myapp.target
 
 # 2. 检查父 logger 级别
-peeka logger -p 12345 --action get --logger myapp
+peeka-cli logger -p 12345 --action get --logger myapp
 
 # 3. 检查 root logger 级别
-peeka logger -p 12345 --action get --logger root
+peeka-cli logger -p 12345 --action get --logger root
 
 # 4. 查看所有 logger（确认名称正确）
-peeka logger -p 12345 --action list --pattern "myapp.*"
+peeka-cli logger -p 12345 --action list --pattern "myapp.*"
 ```
 
 ### Q2: 如何批量修改多个 logger？
@@ -717,7 +717,7 @@ peeka logger -p 12345 --action list --pattern "myapp.*"
 **方法 1**：使用 shell 循环
 ```bash
 for logger in myapp.auth myapp.db myapp.cache; do
-  peeka logger -p 12345 --action set --logger "$logger" --level DEBUG
+  peeka-cli logger -p 12345 --action set --logger "$logger" --level DEBUG
 done
 ```
 
@@ -729,17 +729,17 @@ done
 # myapp.cache
 
 while read logger; do
-  peeka logger -p 12345 --action set --logger "$logger" --level DEBUG
+  peeka-cli logger -p 12345 --action set --logger "$logger" --level DEBUG
 done < loggers.txt
 ```
 
 **方法 3**：动态查询后批量修改
 ```bash
 # 将所有 INFO 级别的 logger 改为 DEBUG
-peeka logger -p 12345 --action list | \
+peeka-cli logger -p 12345 --action list | \
   jq -r '.loggers[] | select(.level == "INFO") | .name' | \
   while read logger; do
-    peeka logger -p 12345 --action set --logger "$logger" --level DEBUG
+    peeka-cli logger -p 12345 --action set --logger "$logger" --level DEBUG
   done
 ```
 
@@ -762,12 +762,12 @@ peeka logger -p 12345 --action list | \
 **示例（记录原始级别）**：
 ```bash
 # 修改前保存当前配置
-peeka logger -p 12345 --action list > logger_backup.json
+peeka-cli logger -p 12345 --action list > logger_backup.json
 
 # 修改后恢复
 jq -r '.loggers[] | "\(.name) \(.level)"' logger_backup.json | \
   while read name level; do
-    peeka logger -p 12345 --action set --logger "$name" --level "$level"
+    peeka-cli logger -p 12345 --action set --logger "$name" --level "$level"
   done
 ```
 
@@ -781,12 +781,12 @@ jq -r '.loggers[] | "\(.name) \(.level)"' logger_backup.json | \
 **调试方法**：
 ```bash
 # 1. 列出所有 logger（不使用 pattern）
-peeka logger -p 12345 --action list | jq -r '.loggers[].name'
+peeka-cli logger -p 12345 --action list | jq -r '.loggers[].name'
 
 # 2. 确认目标 logger 的确切名称
 
 # 3. 使用正确的 pattern
-peeka logger -p 12345 --action list --pattern "myapp.*"
+peeka-cli logger -p 12345 --action list --pattern "myapp.*"
 ```
 
 ### Q6: 可以创建不存在的 logger 吗？
@@ -795,10 +795,10 @@ peeka logger -p 12345 --action list --pattern "myapp.*"
 
 ```bash
 # 创建新 logger 并设置级别
-peeka logger -p 12345 --action set --logger myapp.new_logger --level DEBUG
+peeka-cli logger -p 12345 --action set --logger myapp.new_logger --level DEBUG
 
 # 验证
-peeka logger -p 12345 --action get --logger myapp.new_logger
+peeka-cli logger -p 12345 --action get --logger myapp.new_logger
 # 输出：{"status": "success", "name": "myapp.new_logger", "level": "DEBUG"}
 ```
 
@@ -821,14 +821,14 @@ peeka logger -p 12345 --action get --logger myapp.new_logger
 PID=12345
 LOGGER="myapp.payment"
 
-current=$(peeka logger -p $PID --action get --logger $LOGGER | jq -r .level)
+current=$(peeka-cli logger -p $PID --action get --logger $LOGGER | jq -r .level)
 
 if [ "$current" == "DEBUG" ]; then
   echo "Disabling DEBUG..."
-  peeka logger -p $PID --action set --logger $LOGGER --level INFO
+  peeka-cli logger -p $PID --action set --logger $LOGGER --level INFO
 else
   echo "Enabling DEBUG..."
-  peeka logger -p $PID --action set --logger $LOGGER --level DEBUG
+  peeka-cli logger -p $PID --action set --logger $LOGGER --level DEBUG
 fi
 ```
 
@@ -842,7 +842,7 @@ fi
 
 PID=12345
 
-debug_loggers=$(peeka logger -p $PID --action list | \
+debug_loggers=$(peeka-cli logger -p $PID --action list | \
   jq -r '.loggers[] | select(.level == "DEBUG") | .name')
 
 if [ -n "$debug_loggers" ]; then
@@ -864,7 +864,7 @@ fi
 
 PID=12345
 
-peeka logger -p $PID --action list | \
+peeka-cli logger -p $PID --action list | \
   jq -r '.loggers[] | "logger_level{name=\"\(.name)\"} \(.level_num)"' \
   > /var/lib/node_exporter/textfile_collector/logger_levels.prom
 ```
@@ -889,7 +889,7 @@ ALERT ProductionDebugLogger
 **场景**：统计应用 logger 的级别分布。
 
 ```bash
-peeka logger -p 12345 --action list --pattern "myapp.*" | \
+peeka-cli logger -p 12345 --action list --pattern "myapp.*" | \
   jq -r '.loggers[] | .level' | sort | uniq -c
 ```
 
@@ -906,7 +906,7 @@ peeka logger -p 12345 --action list --pattern "myapp.*" | \
 
 ```bash
 # 1. 启用 DEBUG 日志
-peeka logger -p 12345 --action set --logger myapp.payment --level DEBUG
+peeka-cli logger -p 12345 --action set --logger myapp.payment --level DEBUG
 
 # 2. 在另一个终端监控日志
 tail -f /var/log/myapp.log | grep "payment" > payment_debug.log
@@ -916,7 +916,7 @@ tail -f /var/log/myapp.log | grep "payment" > payment_debug.log
 # 4. 停止监控（Ctrl+C）
 
 # 5. 恢复日志级别
-peeka logger -p 12345 --action set --logger myapp.payment --level INFO
+peeka-cli logger -p 12345 --action set --logger myapp.payment --level INFO
 ```
 
 ### 6. 自动恢复脚本
@@ -932,17 +932,17 @@ LOGGER=$2
 DURATION=${3:-300}  # 默认 5 分钟
 
 # 保存原始级别
-original=$(peeka logger -p $PID --action get --logger $LOGGER | jq -r .level)
+original=$(peeka-cli logger -p $PID --action get --logger $LOGGER | jq -r .level)
 echo "Original level: $original"
 
 # 启用 DEBUG
-peeka logger -p $PID --action set --logger $LOGGER --level DEBUG
+peeka-cli logger -p $PID --action set --logger $LOGGER --level DEBUG
 echo "DEBUG enabled. Will auto-restore in $DURATION seconds..."
 
 # 后台等待后恢复
 (
   sleep $DURATION
-  peeka logger -p $PID --action set --logger $LOGGER --level $original
+  peeka-cli logger -p $PID --action set --logger $LOGGER --level $original
   echo "Restored to $original"
 ) &
 ```
@@ -985,13 +985,13 @@ logger --name com.example.MyClass --level DEBUG
 **Peeka (Python)**：
 ```bash
 # 列出所有 logger
-peeka logger -p 12345 --action list
+peeka-cli logger -p 12345 --action list
 
 # 查询特定 logger
-peeka logger -p 12345 --action get --logger myapp.MyClass
+peeka-cli logger -p 12345 --action get --logger myapp.MyClass
 
 # 修改级别
-peeka logger -p 12345 --action set --logger myapp.MyClass --level DEBUG
+peeka-cli logger -p 12345 --action set --logger myapp.MyClass --level DEBUG
 ```
 
 ### 优势对比
