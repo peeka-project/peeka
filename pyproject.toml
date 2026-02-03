@@ -6,7 +6,7 @@ requires-python = ">=3.9"
 dependencies = []
 
 [project.scripts]
-peeka = "peeka.cli:main"
+peeka-cli = "peeka.cli:main"
 
 [tool.uv]
 dev-dependencies = [

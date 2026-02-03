@@ -103,18 +103,18 @@ def demo_loop():
     print()
     print("Try these Arthas-compatible watch commands:")
     print(f"  # Observe function entry (-b flag)")
-    print(f"  peeka watch {os.getpid()} 'demo.Calculator.add' -b")
+    print(f"  peeka-cli watch {os.getpid()} 'demo.Calculator.add' -b")
     print()
     print(f"  # Observe only exceptions (-e flag)")
-    print(f"  peeka watch {os.getpid()} 'demo.Calculator.divide' -e")
+    print(f"  peeka-cli watch {os.getpid()} 'demo.Calculator.divide' -e")
     print()
     print(f"  # Filter by execution time (cost variable)")
     print(
-        f"  peeka watch {os.getpid()} 'demo.slow_operation' --condition-express 'cost > 15'"
+        f"  peeka-cli watch {os.getpid()} 'demo.slow_operation' --condition-express 'cost > 15'"
     )
     print()
     print(f"  # Observe entry and exit (-b -s flags)")
-    print(f"  peeka watch {os.getpid()} 'demo.Calculator.multiply' -b -s")
+    print(f"  peeka-cli watch {os.getpid()} 'demo.Calculator.multiply' -b -s")
     print()
 
     calc = Calculator("loop-calc")
@@ -182,10 +182,10 @@ def main():
     print("Demo complete!")
     print()
     print("To attach Peeka to a running process:")
-    print("  $ peeka attach <PID>")
+    print("  $ peeka-cli attach <PID>")
     print()
     print("To watch function calls:")
-    print("  $ peeka watch <PID> 'demo.Calculator.add'")
+    print("  $ peeka-cli watch <PID> 'demo.Calculator.add'")
     print()
     print("Arthas-compatible observation flags:")
     print("  -b, --before     Observe at function entry (AtEnter)")
@@ -194,9 +194,9 @@ def main():
     print("  -f, --finish     Observe on both success and exception (default)")
     print()
     print("Examples:")
-    print("  $ peeka watch <PID> 'demo.Calculator.add' -b")
-    print("  $ peeka watch <PID> 'demo.Calculator.divide' -e")
-    print("  $ peeka watch <PID> 'demo.slow_operation' --condition-express 'cost > 15'")
+    print("  $ peeka-cli watch <PID> 'demo.Calculator.add' -b")
+    print("  $ peeka-cli watch <PID> 'demo.Calculator.divide' -e")
+    print("  $ peeka-cli watch <PID> 'demo.slow_operation' --condition-express 'cost > 15'")
     print()
 
 

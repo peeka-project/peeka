@@ -263,29 +263,29 @@ for observation in client.watch("module.func"):
 
 ```bash
 # 1. 附加到目标进程
-peeka attach 12345
+peeka-cli attach 12345
 
 # 2. 观测函数（限制 5 次）
-peeka watch 12345 "demo.Calculator.add" --times 5
+peeka-cli watch 12345 "demo.Calculator.add" --times 5
 
 # 3. 条件过滤
-peeka watch 12345 "demo.Calculator.multiply" --condition "params[0] > 100"
+peeka-cli watch 12345 "demo.Calculator.multiply" --condition "params[0] > 100"
 ```
 
 ### 数据处理
 
 ```bash
 # 使用 jq 提取字段
-peeka watch 12345 "demo.func" | jq '.result'
+peeka-cli watch 12345 "demo.func" | jq '.result'
 
 # 统计调用次数
-peeka watch 12345 "demo.func" | wc -l
+peeka-cli watch 12345 "demo.func" | wc -l
 
 # 保存到文件
-peeka watch 12345 "demo.func" > observations.jsonl
+peeka-cli watch 12345 "demo.func" > observations.jsonl
 
 # 筛选慢调用
-peeka watch 12345 "demo.func" | jq 'select(.duration_ms > 1)'
+peeka-cli watch 12345 "demo.func" | jq 'select(.duration_ms > 1)'
 ```
 
 ## 故障排除
@@ -305,7 +305,7 @@ echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope
 
 **目标进程行为异常**：
 
-- 停止观测：`peeka watch --action stop <watch_id>`
+- 停止观测：`peeka-cli watch --action stop <watch_id>`
 - 如果持续异常，重启目标进程
 
 ## 环境变量
