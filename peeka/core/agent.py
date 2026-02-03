@@ -144,6 +144,7 @@ class PeekaAgent:
 
     def _send_observation(self, observation: Dict[str, Any]) -> None:
         """Called by injector when a watched function is invoked."""
+        observation["type"] = "observation"
         self.observer.add_observation(observation)
 
         obs_json = json.dumps(observation).encode("utf-8")

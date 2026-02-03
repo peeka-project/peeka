@@ -13,6 +13,7 @@ from typing import Optional
 
 from peeka.core.attach import ProcessAttacher
 from peeka.core.client import StreamingAgentClient
+from peeka.core.output import OutputFormatter
 
 
 def _find_pid_by_name(name: str) -> int:
@@ -392,31 +393,37 @@ Examples:
         elif args.command == "reset":
             return cmd_reset(args)
         else:
-            print(f"Unknown command: {args.command}", file=sys.stderr)
+            OutputFormatter.error("peeka", error=f"Unknown command: {args.command}")
             return 1
 
     except KeyboardInterrupt:
         print("\n", file=sys.stderr)
         return 130
     except Exception as e:
-        print(f'{{"error": "{e}"}}', file=sys.stderr)
+        OutputFormatter.error("peeka", error=str(e))
         return 1
 
 
 def cmd_attach(args) -> int:
     target_pid = args.pid
-    print(f"[Peeka] Attaching to process {target_pid}...", file=sys.stderr)
+    OutputFormatter.status(f"Attaching to process {target_pid}")
 
     attacher = ProcessAttacher(target_pid)
 
     try:
         if attacher.attach():
-            print("[Peeka] Successfully attached!", file=sys.stderr)
-            print(f"[Peeka] Socket path: {attacher.get_socket_path()}", file=sys.stderr)
+            OutputFormatter.success(
+                "attach", data={"pid": target_pid, "socket": attacher.get_socket_path()}
+            )
             return 0
         else:
-            print("[Peeka] Failed to attach", file=sys.stderr)
+            OutputFormatter.error(
+                "attach", error="Failed to attach to process", pid=target_pid
+            )
             return 1
+    except Exception as e:
+        OutputFormatter.error("attach", error=str(e), pid=target_pid)
+        return 1
     finally:
         attacher.cleanup()
 
@@ -425,18 +432,32 @@ def cmd_detach(args) -> int:
     try:
         socket_path, attached_pid = _check_agent_attached()
     except ValueError as e:
-        print(json.dumps({"error": str(e)}), file=sys.stderr)
+        OutputFormatter.error("detach", error=str(e))
         return 1
 
     streaming_client = StreamingAgentClient(socket_path)
     connect_result = streaming_client.connect()
 
     if connect_result.get("status") != "success":
-        print(json.dumps({"error": connect_result.get("error", "Connection failed")}))
+        OutputFormatter.error(
+            "detach", error=connect_result.get("error", "Connection failed")
+        )
         return 1
 
     response = streaming_client.send_command({"type": "detach"})
-    print(json.dumps(response))
+
+    if response.get("status") == "success":
+        OutputFormatter.success(
+            "detach",
+            data={
+                "pid": attached_pid,
+                "message": response.get(
+                    "message", f"Detached from process {attached_pid}"
+                ),
+            },
+        )
+    else:
+        OutputFormatter.error("detach", error=response.get("error", "Detach failed"))
 
     streaming_client.disconnect()
 
@@ -456,7 +477,7 @@ def cmd_watch(args) -> int:
     try:
         socket_path, attached_pid = _check_agent_attached()
     except ValueError as e:
-        print(json.dumps({"error": str(e)}), file=sys.stderr)
+        OutputFormatter.error("watch", error=str(e))
         return 1
 
     streaming_client: Optional[StreamingAgentClient] = None
@@ -486,7 +507,9 @@ def cmd_watch(args) -> int:
     connect_result = streaming_client.connect()
 
     if connect_result.get("status") != "success":
-        print(json.dumps({"error": connect_result.get("error", "Connection failed")}))
+        OutputFormatter.error(
+            "watch", error=connect_result.get("error", "Connection failed")
+        )
         return 1
 
     pattern = args.pattern
@@ -507,19 +530,22 @@ def cmd_watch(args) -> int:
     response = streaming_client.send_command(command)
 
     if response.get("status") != "success":
-        print(json.dumps({"error": response.get("error", "Watch start failed")}))
+        OutputFormatter.error(
+            "watch", error=response.get("error", "Watch start failed")
+        )
         streaming_client.disconnect()
         return 1
 
     watch_id = response.get("watch_id")
 
-    print(
-        json.dumps({"event": "watch_started", "watch_id": watch_id, "pattern": pattern})
+    OutputFormatter.event(
+        "watch_started", data={"watch_id": watch_id, "pattern": pattern}
     )
     sys.stdout.flush()
 
     try:
         for observation in streaming_client.stream_observations():
+            # Observations already have type field added by agent._send_observation
             print(json.dumps(observation))
             sys.stdout.flush()
 
@@ -538,7 +564,7 @@ def cmd_stack(args) -> int:
     try:
         socket_path, attached_pid = _check_agent_attached()
     except ValueError as e:
-        print(json.dumps({"error": str(e)}), file=sys.stderr)
+        OutputFormatter.error("stack", error=str(e))
         return 1
 
     streaming_client: Optional[StreamingAgentClient] = None
@@ -568,7 +594,9 @@ def cmd_stack(args) -> int:
     connect_result = streaming_client.connect()
 
     if connect_result.get("status") != "success":
-        print(json.dumps({"error": connect_result.get("error", "Connection failed")}))
+        OutputFormatter.error(
+            "stack", error=connect_result.get("error", "Connection failed")
+        )
         return 1
 
     pattern = args.pattern
@@ -585,14 +613,16 @@ def cmd_stack(args) -> int:
     response = streaming_client.send_command(command)
 
     if response.get("status") != "success":
-        print(json.dumps({"error": response.get("error", "Stack start failed")}))
+        OutputFormatter.error(
+            "stack", error=response.get("error", "Stack start failed")
+        )
         streaming_client.disconnect()
         return 1
 
     stack_id = response.get("stack_id")
 
-    print(
-        json.dumps({"event": "stack_started", "stack_id": stack_id, "pattern": pattern})
+    OutputFormatter.event(
+        "stack_started", data={"stack_id": stack_id, "pattern": pattern}
     )
     sys.stdout.flush()
 
@@ -616,14 +646,16 @@ def cmd_logger(args) -> int:
     try:
         socket_path, attached_pid = _check_agent_attached()
     except ValueError as e:
-        print(json.dumps({"error": str(e)}), file=sys.stderr)
+        OutputFormatter.error("logger", error=str(e))
         return 1
 
     streaming_client = StreamingAgentClient(socket_path)
     connect_result = streaming_client.connect()
 
     if connect_result.get("status") != "success":
-        print(json.dumps({"error": connect_result.get("error", "Connection failed")}))
+        OutputFormatter.error(
+            "logger", error=connect_result.get("error", "Connection failed")
+        )
         return 1
 
     command = {
@@ -635,7 +667,13 @@ def cmd_logger(args) -> int:
     }
 
     response = streaming_client.send_command(command)
-    print(json.dumps(response))
+
+    if response.get("status") == "success":
+        OutputFormatter.result("logger", data=response)
+    else:
+        OutputFormatter.error(
+            "logger", error=response.get("error", "Logger command failed")
+        )
 
     streaming_client.disconnect()
 
@@ -646,14 +684,16 @@ def cmd_memory(args) -> int:
     try:
         socket_path, attached_pid = _check_agent_attached()
     except ValueError as e:
-        print(json.dumps({"error": str(e)}), file=sys.stderr)
+        OutputFormatter.error("memory", error=str(e))
         return 1
 
     streaming_client = StreamingAgentClient(socket_path)
     connect_result = streaming_client.connect()
 
     if connect_result.get("status") != "success":
-        print(json.dumps({"error": connect_result.get("error", "Connection failed")}))
+        OutputFormatter.error(
+            "memory", error=connect_result.get("error", "Connection failed")
+        )
         return 1
 
     command = {
@@ -666,7 +706,13 @@ def cmd_memory(args) -> int:
     }
 
     response = streaming_client.send_command(command)
-    print(json.dumps(response))
+
+    if response.get("status") == "success":
+        OutputFormatter.result("memory", data=response)
+    else:
+        OutputFormatter.error(
+            "memory", error=response.get("error", "Memory command failed")
+        )
 
     streaming_client.disconnect()
 
@@ -677,14 +723,16 @@ def cmd_vmtool(args) -> int:
     try:
         socket_path, attached_pid = _check_agent_attached()
     except ValueError as e:
-        print(json.dumps({"error": str(e)}), file=sys.stderr)
+        OutputFormatter.error("vmtool", error=str(e))
         return 1
 
     streaming_client = StreamingAgentClient(socket_path)
     connect_result = streaming_client.connect()
 
     if connect_result.get("status") != "success":
-        print(json.dumps({"error": connect_result.get("error", "Connection failed")}))
+        OutputFormatter.error(
+            "vmtool", error=connect_result.get("error", "Connection failed")
+        )
         return 1
 
     command = {
@@ -699,7 +747,13 @@ def cmd_vmtool(args) -> int:
     }
 
     response = streaming_client.send_command(command)
-    print(json.dumps(response))
+
+    if response.get("status") == "success":
+        OutputFormatter.result("vmtool", data=response)
+    else:
+        OutputFormatter.error(
+            "vmtool", error=response.get("error", "Vmtool command failed")
+        )
 
     streaming_client.disconnect()
 
@@ -710,14 +764,16 @@ def cmd_reset(args) -> int:
     try:
         socket_path, attached_pid = _check_agent_attached()
     except ValueError as e:
-        print(json.dumps({"error": str(e)}), file=sys.stderr)
+        OutputFormatter.error("reset", error=str(e))
         return 1
 
     streaming_client = StreamingAgentClient(socket_path)
     connect_result = streaming_client.connect()
 
     if connect_result.get("status") != "success":
-        print(json.dumps({"error": connect_result.get("error", "Connection failed")}))
+        OutputFormatter.error(
+            "reset", error=connect_result.get("error", "Connection failed")
+        )
         return 1
 
     action = "list" if args.list else "reset"
@@ -729,7 +785,13 @@ def cmd_reset(args) -> int:
     }
 
     response = streaming_client.send_command(command)
-    print(json.dumps(response))
+
+    if response.get("status") == "success":
+        OutputFormatter.result("reset", data=response)
+    else:
+        OutputFormatter.error(
+            "reset", error=response.get("error", "Reset command failed")
+        )
 
     streaming_client.disconnect()
 
@@ -740,7 +802,7 @@ def cmd_monitor(args) -> int:
     try:
         socket_path, attached_pid = _check_agent_attached()
     except ValueError as e:
-        print(json.dumps({"error": str(e)}), file=sys.stderr)
+        OutputFormatter.error("monitor", error=str(e))
         return 1
 
     streaming_client: Optional[StreamingAgentClient] = None
@@ -770,7 +832,9 @@ def cmd_monitor(args) -> int:
     connect_result = streaming_client.connect()
 
     if connect_result.get("status") != "success":
-        print(json.dumps({"error": connect_result.get("error", "Connection failed")}))
+        OutputFormatter.error(
+            "monitor", error=connect_result.get("error", "Connection failed")
+        )
         return 1
 
     pattern = args.pattern
@@ -786,20 +850,16 @@ def cmd_monitor(args) -> int:
     response = streaming_client.send_command(command)
 
     if response.get("status") != "success":
-        print(json.dumps({"error": response.get("error", "Monitor start failed")}))
+        OutputFormatter.error(
+            "monitor", error=response.get("error", "Monitor start failed")
+        )
         streaming_client.disconnect()
         return 1
 
     monitor_id = response.get("monitor_id")
 
-    print(
-        json.dumps(
-            {
-                "event": "monitor_started",
-                "monitor_id": monitor_id,
-                "pattern": pattern,
-            }
-        )
+    OutputFormatter.event(
+        "monitor_started", data={"monitor_id": monitor_id, "pattern": pattern}
     )
     sys.stdout.flush()
 
@@ -824,14 +884,16 @@ def cmd_sc(args) -> int:
     try:
         socket_path, attached_pid = _check_agent_attached()
     except ValueError as e:
-        print(json.dumps({"error": str(e)}), file=sys.stderr)
+        OutputFormatter.error("sc", error=str(e))
         return 1
 
     streaming_client = StreamingAgentClient(socket_path)
     connect_result = streaming_client.connect()
 
     if connect_result.get("status") != "success":
-        print(json.dumps({"error": connect_result.get("error", "Connection failed")}))
+        OutputFormatter.error(
+            "sc", error=connect_result.get("error", "Connection failed")
+        )
         return 1
 
     command = {
@@ -842,7 +904,13 @@ def cmd_sc(args) -> int:
     }
 
     response = streaming_client.send_command(command)
-    print(json.dumps(response))
+
+    if response.get("status") == "success":
+        OutputFormatter.result("sc", data=response)
+    else:
+        OutputFormatter.error(
+            "sc", error=response.get("error", "Search class command failed")
+        )
 
     streaming_client.disconnect()
 
@@ -853,14 +921,16 @@ def cmd_sm(args) -> int:
     try:
         socket_path, attached_pid = _check_agent_attached()
     except ValueError as e:
-        print(json.dumps({"error": str(e)}), file=sys.stderr)
+        OutputFormatter.error("sm", error=str(e))
         return 1
 
     streaming_client = StreamingAgentClient(socket_path)
     connect_result = streaming_client.connect()
 
     if connect_result.get("status") != "success":
-        print(json.dumps({"error": connect_result.get("error", "Connection failed")}))
+        OutputFormatter.error(
+            "sm", error=connect_result.get("error", "Connection failed")
+        )
         return 1
 
     command = {
@@ -871,7 +941,13 @@ def cmd_sm(args) -> int:
     }
 
     response = streaming_client.send_command(command)
-    print(json.dumps(response))
+
+    if response.get("status") == "success":
+        OutputFormatter.result("sm", data=response)
+    else:
+        OutputFormatter.error(
+            "sm", error=response.get("error", "Search method command failed")
+        )
 
     streaming_client.disconnect()
 
