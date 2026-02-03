@@ -35,6 +35,7 @@ class PeekaAgent:
         self._register_handlers()
 
     def _register_handlers(self) -> None:
+        from peeka.commands.complete import CompleteCommand
         from peeka.commands.watch import WatchCommand
         from peeka.commands.stack import StackCommand
         from peeka.commands.logger import LoggerCommand
@@ -45,6 +46,7 @@ class PeekaAgent:
         from peeka.commands.vmtool import VMToolCommand
         from peeka.commands.detach import DetachCommand
 
+        self.command_handlers["complete"] = CompleteCommand(self)  # type: ignore[abstract]
         self.command_handlers["watch"] = WatchCommand(self)  # type: ignore[abstract]
         self.command_handlers["stack"] = StackCommand(self)  # type: ignore[abstract]
         self.command_handlers["logger"] = LoggerCommand(self)  # type: ignore[abstract]

@@ -5,11 +5,23 @@ description = "A Python dynamic debugger inspired by Arthas, using Python 3.14's
 requires-python = ">=3.9"
 dependencies = []
 
+[project.optional-dependencies]
+tui = [
+    "textual>=7.5.0",
+]
+dev = [
+    "textual>=7.5.0",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+]
+
 [project.scripts]
 peeka-cli = "peeka.cli:main"
+peeka = "peeka.tui:main"
 
 [tool.uv]
 dev-dependencies = [
     "pytest>=8.0.0",
-    "pytest-asyncio>=0.23.0"
+    "pytest-asyncio>=0.23.0",
+    "textual>=7.5.0",
 ]
