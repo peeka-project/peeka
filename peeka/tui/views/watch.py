@@ -5,10 +5,9 @@ Watch View - Function observation interface.
 from textual.app import ComposeResult
 from textual.containers import Container, Vertical, Horizontal
 from textual.widgets import Static, DataTable, Input, Button, RichLog
-from textual.widget import Widget
 
 
-class WatchView(Widget):
+class WatchView(Container):
     """Watch view for observing function calls."""
 
     def __init__(self, pid: int) -> None:

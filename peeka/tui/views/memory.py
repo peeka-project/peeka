@@ -5,10 +5,9 @@ Memory View - Memory analysis interface.
 from textual.app import ComposeResult
 from textual.containers import Container, Vertical, Horizontal
 from textual.widgets import Static, DataTable, Button, ProgressBar
-from textual.widget import Widget
 
 
-class MemoryView(Widget):
+class MemoryView(Container):
     """Memory view for analyzing process memory."""
 
     def __init__(self, pid: int) -> None:

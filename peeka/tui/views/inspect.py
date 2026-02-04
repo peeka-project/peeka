@@ -5,10 +5,9 @@ Inspect View - Runtime object inspection interface.
 from textual.app import ComposeResult
 from textual.containers import Container, Vertical, Horizontal
 from textual.widgets import Static, Input, Button, Tree, Pretty
-from textual.widget import Widget
 
 
-class InspectView(Widget):
+class InspectView(Container):
     """Inspect view for examining runtime objects."""
 
     def __init__(self, pid: int) -> None:

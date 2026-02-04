@@ -19,6 +19,9 @@ dev = [
 peeka-cli = "peeka.cli:main"
 peeka = "peeka.tui:main"
 
+[tool.setuptools]
+packages = ["peeka"]
+
 [tool.uv]
 dev-dependencies = [
     "pytest>=8.0.0",
