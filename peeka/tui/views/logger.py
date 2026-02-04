@@ -5,10 +5,9 @@ Logger View - Dynamic logger configuration interface.
 from textual.app import ComposeResult
 from textual.containers import Container, Vertical, Horizontal
 from textual.widgets import Static, DataTable, Input, Button, Select
-from textual.widget import Widget
 
 
-class LoggerView(Widget):
+class LoggerView(Container):
     """Logger view for managing logger levels."""
 
     LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]

@@ -5,10 +5,9 @@ Dashboard View - Overview of attached process.
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Static, Sparkline
-from textual.widget import Widget
 
 
-class DashboardView(Widget):
+class DashboardView(Container):
     """Dashboard showing process overview and metrics."""
 
     def __init__(self, pid: int) -> None:

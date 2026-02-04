@@ -5,10 +5,9 @@ Monitor View - Performance statistics interface.
 from textual.app import ComposeResult
 from textual.containers import Container, Vertical, Horizontal
 from textual.widgets import Static, DataTable, Input, Button
-from textual.widget import Widget
 
 
-class MonitorView(Widget):
+class MonitorView(Container):
     """Monitor view for performance statistics."""
 
     def __init__(self, pid: int) -> None:

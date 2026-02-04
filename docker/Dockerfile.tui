@@ -1,0 +1,70 @@
+# Peeka TUI 测试镜像
+# 构建: docker build -f docker/Dockerfile.tui -t peeka-tui .
+# 运行: docker run -it --cap-add=SYS_PTRACE peeka-tui
+
+FROM python:3.12-slim
+
+LABEL maintainer="peeka"
+LABEL description="Peeka TUI testing environment"
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gdb \
+    procps \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV TERM=xterm-256color
+
+WORKDIR /app
+
+COPY pyproject.toml .
+COPY peeka/ ./peeka/
+COPY examples/ ./examples/
+
+RUN pip install --no-cache-dir -e ".[tui]"
+
+RUN cat > /app/test-tui.sh << 'EOF'
+#!/bin/bash
+set -e
+
+echo "=========================================="
+echo "  Peeka TUI 测试环境"
+echo "=========================================="
+echo ""
+echo "Python 版本: $(python --version)"
+echo "peeka 位置: $(which peeka)"
+echo "textual 版本: $(pip show textual | grep Version)"
+echo ""
+
+# 启动 demo 应用
+echo "[1] 启动 demo 应用 (后台)..."
+python examples/demo.py --mode loop > /tmp/demo.log 2>&1 &
+DEMO_PID=$!
+sleep 2
+
+echo "Demo PID: $DEMO_PID"
+echo ""
+echo "=========================================="
+echo "  TUI 快捷键"
+echo "=========================================="
+echo ""
+echo "  D - Dashboard (仪表盘)"
+echo "  W - Watch (函数观测)"
+echo "  S - Stack (调用栈)"
+echo "  M - Monitor (性能监控)"
+echo "  E - Memory (内存分析)"
+echo "  L - Logger (日志配置)"
+echo "  I - Inspect (对象检查)"
+echo "  ? - 帮助"
+echo "  Ctrl+Q - 退出"
+echo "  Escape - 返回进程选择"
+echo ""
+echo "=========================================="
+echo ""
+echo "按 Enter 启动 TUI..."
+read
+
+exec peeka
+EOF
+RUN chmod +x /app/test-tui.sh
+
+CMD ["/app/test-tui.sh"]

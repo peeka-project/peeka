@@ -19,7 +19,8 @@ class ProcessSelectorScreen(Screen):
     BINDINGS = [
         Binding("r", "refresh", "Refresh"),
         Binding("enter", "select", "Select"),
-        Binding("escape", "quit", "Quit"),
+        Binding("escape", "quit_app", "Quit", priority=True),
+        Binding("q", "quit_app", "Quit"),
     ]
 
     def compose(self) -> ComposeResult:
@@ -87,10 +88,11 @@ class ProcessSelectorScreen(Screen):
     def action_select(self) -> None:
         """Select the highlighted process."""
         table = self.query_one("#process-table", DataTable)
-        if table.cursor_row is not None:
-            row_key = table.get_row_at(table.cursor_row)
-            pid = row_key[0]
-            self._attach_to_process(int(pid))
+        if table.cursor_row is not None and len(table.rows) > 0:
+            row_key = table.coordinate_to_cell_key((table.cursor_row, 0)).row_key
+            row = table.get_row(row_key)
+            pid = int(row[0])
+            self._attach_to_process(pid)
 
     def _attach_to_process(self, pid: int) -> None:
         """Attach to the selected process and show main screen."""
@@ -103,3 +105,7 @@ class ProcessSelectorScreen(Screen):
         row = self.query_one("#process-table", DataTable).get_row(event.row_key)
         pid = int(row[0])
         self._attach_to_process(pid)
+
+    def action_quit_app(self) -> None:
+        """Quit the application."""
+        self.app.exit()

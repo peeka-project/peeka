@@ -28,7 +28,8 @@ class MainScreen(Screen):
         Binding("e", "switch_tab('memory')", "Memory"),
         Binding("l", "switch_tab('logger')", "Logger"),
         Binding("i", "switch_tab('inspect')", "Inspect"),
-        Binding("escape", "go_back", "Back"),
+        Binding("escape", "go_back", "Back", priority=True),
+        Binding("q", "go_back", "Back"),
     ]
 
     def __init__(self, pid: int) -> None:
@@ -38,20 +39,23 @@ class MainScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        yield Container(
-            Static(f"Attached to PID: {self.pid}", id="pid-status"),
-            TabbedContent(
-                TabPane("Dashboard", DashboardView(self.pid), id="dashboard"),
-                TabPane("Watch", WatchView(self.pid), id="watch"),
-                TabPane("Stack", StackView(self.pid), id="stack"),
-                TabPane("Monitor", MonitorView(self.pid), id="monitor"),
-                TabPane("Memory", MemoryView(self.pid), id="memory"),
-                TabPane("Logger", LoggerView(self.pid), id="logger"),
-                TabPane("Inspect", InspectView(self.pid), id="inspect"),
-                id="main-tabs",
-            ),
-            id="main-container",
-        )
+        with Container(id="main-container"):
+            yield Static(f"Attached to PID: {self.pid}", id="pid-status")
+            with TabbedContent(id="main-tabs"):
+                with TabPane("Dashboard", id="dashboard"):
+                    yield DashboardView(self.pid)
+                with TabPane("Watch", id="watch"):
+                    yield WatchView(self.pid)
+                with TabPane("Stack", id="stack"):
+                    yield StackView(self.pid)
+                with TabPane("Monitor", id="monitor"):
+                    yield MonitorView(self.pid)
+                with TabPane("Memory", id="memory"):
+                    yield MemoryView(self.pid)
+                with TabPane("Logger", id="logger"):
+                    yield LoggerView(self.pid)
+                with TabPane("Inspect", id="inspect"):
+                    yield InspectView(self.pid)
         yield Footer()
 
     async def on_mount(self) -> None:
