@@ -4,23 +4,27 @@ All diagnostic commands inherit from BaseCommand
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any
+from typing import Any, Dict, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from peeka.core.agent import PeekaAgent
 
 
 class BaseCommand(ABC):
     """Base class for all diagnostic commands"""
 
-    def __init__(self):
+    def __init__(self, agent: Optional["PeekaAgent"] = None):
         self.name = self.__class__.__name__
+        self.agent = agent
 
     @abstractmethod
     def execute(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
         Execute the command
-        
+
         Args:
             params: Command parameters
-            
+
         Returns:
             Dict containing execution results
         """
@@ -29,11 +33,11 @@ class BaseCommand(ABC):
     def validate_params(self, params: Dict[str, Any], required: list) -> None:
         """
         Validate required parameters
-        
+
         Args:
             params: Parameters to validate
             required: List of required parameter names
-            
+
         Raises:
             ValueError: If required parameters are missing
         """
