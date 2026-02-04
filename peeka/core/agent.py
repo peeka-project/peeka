@@ -184,11 +184,11 @@ def _init_agent(session_id: str, attached_pid: Optional[int] = None) -> None:
         traceback.print_exc()
 
 
-# Auto-initialize when injected via sys.remote_exec()
+# Auto-initialize when injected via sys.remote_exec() or GDB
 # {{SESSION_ID}} and {{ATTACHED_PID}} are replaced by ProcessAttacher before injection
-if __name__ != "__main__":
-    _session_id = "{{SESSION_ID}}"
-    _attached_pid_str = "{{ATTACHED_PID}}"
-    _attached_pid = int(_attached_pid_str) if _attached_pid_str.isdigit() else None
-    if not _session_id.startswith("{{"):
-        _init_agent(_session_id, _attached_pid)
+# This runs both when imported (PEP 768) and when exec'd (GDB fallback)
+_session_id = "{{SESSION_ID}}"
+_attached_pid_str = "{{ATTACHED_PID}}"
+_attached_pid = int(_attached_pid_str) if _attached_pid_str.isdigit() else None
+if not _session_id.startswith("{{"):
+    _init_agent(_session_id, _attached_pid)
