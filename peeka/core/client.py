@@ -6,6 +6,7 @@ Unix domain sockets using the length-prefixed JSON protocol defined in
 
 import json
 import socket
+import time
 from pathlib import Path
 from typing import Any, Dict, Generator, Optional
 
@@ -164,6 +165,7 @@ class StreamingAgentClient:
                     yield obs
 
             except socket.timeout:
+                time.sleep(0.1)  # Add 100ms delay to reduce CPU usage
                 continue
             except Exception:
                 break
@@ -180,7 +182,7 @@ class StreamingAgentClient:
         if len(self._buffer) < header_size:
             return None
 
-        length = int.from_bytes(self._buffer[self.PREFIX_LEN: header_size], "big")
+        length = int.from_bytes(self._buffer[self.PREFIX_LEN : header_size], "big")
         total_size = header_size + length
 
         if len(self._buffer) < total_size:
