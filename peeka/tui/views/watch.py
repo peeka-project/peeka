@@ -2,14 +2,18 @@
 Watch View - Function observation interface.
 """
 
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from textual.app import ComposeResult
 from textual.containers import Container, Vertical, Horizontal
 from textual.widgets import Static, DataTable, Input, Button, RichLog
+from textual.worker import Worker, get_current_worker
 
 from peeka.tui.completion import CompletionSource
 from peeka.tui.widgets.autocomplete_input import AutoCompleteInput
+
+if TYPE_CHECKING:
+    from peeka.core.client import StreamingAgentClient
 
 
 class WatchView(Container):
@@ -18,11 +22,15 @@ class WatchView(Container):
     def __init__(self, pid: int) -> None:
         super().__init__()
         self.pid = pid
-        self._active_watches: dict = {}
+        self._active_watches: dict[
+            str, dict
+        ] = {}  # watch_id -> {pattern, count, worker}
         self._completion_source: Optional[CompletionSource] = None
+        self._client: Optional["StreamingAgentClient"] = None
 
-    def set_client(self, client) -> None:
-        """Set agent client for completion."""
+    def set_client(self, client: "StreamingAgentClient") -> None:
+        """Set agent client for commands and completion."""
+        self._client = client
         self._completion_source = CompletionSource(client)
 
     def _get_pattern_completions(self, prefix: str):
@@ -44,7 +52,7 @@ class WatchView(Container):
                     id="watch-condition",
                 ),
                 Button("Watch", id="watch-btn", variant="primary"),
-                Button("Stop All", id="stop-btn", variant="error"),
+                Button("Stop", id="stop-btn", variant="error"),
                 id="watch-controls",
             ),
             Horizontal(
@@ -78,6 +86,10 @@ class WatchView(Container):
 
     async def _start_watch(self) -> None:
         """Start a new watch."""
+        if not self._client:
+            self.app.notify("Not connected to agent", severity="error")
+            return
+
         pattern_widget = self.query_one("#watch-pattern")
         if isinstance(pattern_widget, AutoCompleteInput):
             pattern = pattern_widget.value
@@ -90,8 +102,160 @@ class WatchView(Container):
             self.app.notify("Please enter a pattern", severity="warning")
             return
 
-        self.app.notify(f"Watching: {pattern}")
+        command = {
+            "type": "watch",
+            "action": "start",
+            "pattern": pattern,
+            "depth": 2,
+            "times": -1,
+            "before": False,
+            "exception": False,
+            "success": False,
+            "finish": True,
+            "condition_express": condition if condition else None,
+        }
+
+        response = self._client.send_command(command)
+
+        if response.get("status") != "success":
+            error_msg = response.get("error", "Watch start failed")
+            self.app.notify(f"Watch failed: {error_msg}", severity="error")
+            return
+
+        watch_id = response.get("watch_id")
+        if not watch_id:
+            self.app.notify("No watch_id returned", severity="error")
+            return
+
+        table = self.query_one("#watch-table", DataTable)
+        table.add_row(watch_id[:8], pattern, "0", "Active", key=watch_id)
+
+        self._active_watches[watch_id] = {
+            "pattern": pattern,
+            "count": 0,
+            "worker": None,
+        }
+
+        worker = self.run_worker(
+            self._stream_observations(watch_id, pattern),
+            thread=True,
+            exclusive=False,
+        )
+        self._active_watches[watch_id]["worker"] = worker
+
+        self.app.notify(f"Watching: {pattern}", severity="information")
+
+        pattern_widget.value = ""
+        self.query_one("#watch-condition", Input).value = ""
+
+    def _stream_observations(self, watch_id: str, pattern: str):
+        """Stream observations in background thread."""
+        if not self._client:
+            return
+
+        worker = get_current_worker()
+
+        for observation in self._client.stream_observations():
+            if worker.is_cancelled:
+                break
+
+            obs_watch_id = observation.get("watch_id")
+            if obs_watch_id and obs_watch_id != watch_id:
+                continue
+
+            count = observation.get("count", 0)
+
+            if watch_id in self._active_watches:
+                self._active_watches[watch_id]["count"] = count
+
+            func_name = observation.get("func_name", "unknown")
+            args = observation.get("args", [])
+            kwargs = observation.get("kwargs", {})
+            result = observation.get("result", None)
+            duration = observation.get("duration_ms", 0)
+            success = observation.get("success", True)
+
+            args_str = ", ".join(repr(a) for a in args[:3])
+            if len(args) > 3:
+                args_str += ", ..."
+            if kwargs:
+                kwargs_preview = ", ".join(f"{k}=..." for k in list(kwargs.keys())[:2])
+                if args_str:
+                    args_str += ", " + kwargs_preview
+                else:
+                    args_str = kwargs_preview
+
+            if success:
+                result_str = f"[green]→ {repr(result)[:50]}[/green]"
+            else:
+                result_str = f"[red]✗ {repr(result)[:50]}[/red]"
+
+            log_line = (
+                f"[cyan]#{count}[/cyan] "
+                f"[yellow]{func_name}[/yellow]({args_str}) "
+                f"{result_str} "
+                f"[dim][{duration:.2f}ms][/dim]"
+            )
+
+            self.app.call_from_thread(
+                self._update_observation, watch_id, count, log_line
+            )
+
+    def _update_observation(self, watch_id: str, count: int, log_line: str) -> None:
+        """Update UI with new observation (called from main thread)."""
+        log = self.query_one("#observations-log", RichLog)
+        log.write(log_line)
+
+        table = self.query_one("#watch-table", DataTable)
+        try:
+            row_key = table.get_row_index(watch_id)
+            table.update_cell_at((row_key, 2), str(count))
+        except Exception:
+            pass
 
     async def _stop_all_watches(self) -> None:
         """Stop all active watches."""
-        self.app.notify("Stopped all watches")
+        if not self._client:
+            self.app.notify("Not connected to agent", severity="error")
+            return
+
+        if not self._active_watches:
+            self.app.notify("No active watches", severity="information")
+            return
+
+        stopped_count = 0
+
+        for watch_id, watch_info in list(self._active_watches.items()):
+            worker = watch_info.get("worker")
+            if worker:
+                worker.cancel()
+
+            try:
+                self._client.send_command(
+                    {
+                        "type": "watch",
+                        "action": "stop",
+                        "watch_id": watch_id,
+                    }
+                )
+
+                pattern = watch_info.get("pattern")
+                if pattern:
+                    self._client.send_command(
+                        {
+                            "type": "reset",
+                            "action": "reset",
+                            "pattern": pattern,
+                        }
+                    )
+
+                stopped_count += 1
+            except Exception:
+                pass
+
+        self._active_watches.clear()
+
+        table = self.query_one("#watch-table", DataTable)
+        table.clear()
+
+        self.app.notify(f"Stopped {stopped_count} watch(es)", severity="information")

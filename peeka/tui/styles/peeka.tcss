@@ -79,6 +79,8 @@ Screen {
 
 #watch-controls Button {
     margin-left: 1;
+    min-width: 8;
+    max-width: 12;
 }
 
 #watch-content {
