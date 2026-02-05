@@ -2,13 +2,12 @@
 Process Selector Screen - List and select Python processes to attach.
 """
 
-import os
 import subprocess
 from typing import List, Tuple
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Vertical
+from textual.containers import Container
 from textual.screen import Screen
 from textual.widgets import DataTable, Header, Footer, Static, Input
 
@@ -96,9 +95,26 @@ class ProcessSelectorScreen(Screen):
 
     def _attach_to_process(self, pid: int) -> None:
         """Attach to the selected process and show main screen."""
+        from peeka.core.attach import ProcessAttacher
         from peeka.tui.screens.main import MainScreen
 
-        self.app.push_screen(MainScreen(pid))
+        attacher = ProcessAttacher(pid)
+
+        try:
+            self.notify(f"Attaching to process {pid}...", severity="information")
+
+            if attacher.attach():
+                session_id = attacher.session_id
+                socket_path = attacher.get_socket_path()
+
+                self.notify(f"Successfully attached to PID {pid}", severity="success")
+                self.app.push_screen(MainScreen(pid, session_id, socket_path))
+            else:
+                self.notify(f"Failed to attach to process {pid}", severity="error")
+        except Exception as e:
+            self.notify(f"Attach error: {e}", severity="error")
+        finally:
+            attacher.cleanup()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """Handle row selection with Enter key."""
