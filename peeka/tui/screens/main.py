@@ -32,9 +32,11 @@ class MainScreen(Screen):
         Binding("q", "go_back", "Back"),
     ]
 
-    def __init__(self, pid: int) -> None:
+    def __init__(self, pid: int, session_id: str, socket_path: str) -> None:
         super().__init__()
         self.pid = pid
+        self.session_id = session_id
+        self.socket_path = socket_path
         self._client = None
 
     def compose(self) -> ComposeResult:
@@ -71,10 +73,7 @@ class MainScreen(Screen):
         try:
             from peeka.core.client import StreamingAgentClient
 
-            # Construct socket path based on PID
-            socket_path = f"/tmp/peeka_{self.pid}.sock"
-
-            self._client = StreamingAgentClient(socket_path)
+            self._client = StreamingAgentClient(self.socket_path)
             result = self._client.connect()
 
             if result.get("status") != "success":
