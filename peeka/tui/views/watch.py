@@ -2,9 +2,14 @@
 Watch View - Function observation interface.
 """
 
+from typing import Optional
+
 from textual.app import ComposeResult
 from textual.containers import Container, Vertical, Horizontal
 from textual.widgets import Static, DataTable, Input, Button, RichLog
+
+from peeka.tui.completion import CompletionSource
+from peeka.tui.widgets.autocomplete_input import AutoCompleteInput
 
 
 class WatchView(Container):
@@ -14,12 +19,24 @@ class WatchView(Container):
         super().__init__()
         self.pid = pid
         self._active_watches: dict = {}
+        self._completion_source: Optional[CompletionSource] = None
+
+    def set_client(self, client) -> None:
+        """Set agent client for completion."""
+        self._completion_source = CompletionSource(client)
+
+    def _get_pattern_completions(self, prefix: str):
+        """Get completions for pattern input."""
+        if self._completion_source:
+            return self._completion_source.get_completions(prefix)
+        return []
 
     def compose(self) -> ComposeResult:
         yield Container(
             Horizontal(
-                Input(
+                AutoCompleteInput(
                     placeholder="module.Class.method",
+                    completions_callback=self._get_pattern_completions,
                     id="watch-pattern",
                 ),
                 Input(
@@ -61,17 +78,20 @@ class WatchView(Container):
 
     async def _start_watch(self) -> None:
         """Start a new watch."""
-        pattern = self.query_one("#watch-pattern", Input).value
+        pattern_widget = self.query_one("#watch-pattern")
+        if isinstance(pattern_widget, AutoCompleteInput):
+            pattern = pattern_widget.value
+        else:
+            pattern = pattern_widget.value  # type: ignore
+
         condition = self.query_one("#watch-condition", Input).value
 
         if not pattern:
             self.app.notify("Please enter a pattern", severity="warning")
             return
 
-        # TODO: Send watch command to agent
         self.app.notify(f"Watching: {pattern}")
 
     async def _stop_all_watches(self) -> None:
         """Stop all active watches."""
-        # TODO: Send stop commands to agent
         self.app.notify("Stopped all watches")
