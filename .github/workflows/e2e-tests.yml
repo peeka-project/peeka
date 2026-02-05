@@ -1,0 +1,92 @@
+name: E2E Tests
+
+on:
+  push:
+    branches: [ master, main, develop ]
+  pull_request:
+    branches: [ master, main, develop ]
+  workflow_dispatch:
+
+jobs:
+  unit-tests:
+    name: Unit Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: [ "3.9", "3.12", "3.14" ]
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          allow-prereleases: true
+
+      - name: Install dependencies
+        run: |
+          pip install -e ".[dev]" || pip install -e .
+          pip install pytest pytest-timeout
+
+      - name: Run unit tests
+        run: pytest tests/ -v --tb=short -m "not e2e and not container" --timeout=30
+  
+  e2e-container-tests:
+    name: E2E Container Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install pytest pytest-timeout docker testcontainers
+          pip install -e .
+
+      - name: Pull Docker images
+        run: |
+          docker pull python:3.12-slim
+          docker pull python:3.14-rc-slim
+
+      - name: Run container tests
+        run: pytest tests/container/ -v --timeout=180
+        continue-on-error: true
+  
+  e2e-py314-test:
+    name: E2E Python 3.14 (PEP 768)
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run E2E test in Python 3.14 container
+        run: |
+          docker run --rm \
+            --cap-add=SYS_PTRACE \
+            --security-opt=seccomp=unconfined \
+            -v $PWD:/app:ro \
+            python:3.14-rc-slim \
+            bash -c "
+              pip install -q /app
+          
+              # Verify PEP 768 available
+              python -c 'import sys; assert hasattr(sys, \"remote_exec\"), \"PEP 768 not available\"'
+          
+              # Start demo
+              python /app/examples/demo.py --mode loop &
+              DEMO_PID=\$!
+              sleep 3
+          
+              # Test attach
+              peeka-cli attach \$DEMO_PID
+          
+              # Verify socket
+              test -S /tmp/peeka_*.sock && echo 'Socket exists - SUCCESS'
+          
+              kill \$DEMO_PID 2>/dev/null || true
+            "

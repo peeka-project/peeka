@@ -316,18 +316,6 @@ class ProcessAttacher:
             raise RuntimeError("GDB executable not found in PATH")
 
     def cleanup(self):
-        """Cleanup temporary files"""
+        """Cleanup agent script only; socket and ready file persist for agent"""
         if self.agent_script and os.path.exists(self.agent_script):
             os.remove(self.agent_script)
-
-        ready_file = Path(f"/tmp/peeka_{self.session_id}.ready")
-        if ready_file.exists():
-            ready_file.unlink()
-
-        sock_path = Path(self.get_socket_path())
-        if sock_path.exists():
-            sock_path.unlink()
-
-        pid_file = Path(f"/tmp/peeka_{self.session_id}.pid")
-        if pid_file.exists():
-            pid_file.unlink()

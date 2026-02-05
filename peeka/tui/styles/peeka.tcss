@@ -71,7 +71,8 @@ Screen {
     margin-bottom: 1;
 }
 
-#watch-controls Input {
+#watch-controls Input,
+#watch-controls AutoCompleteInput {
     width: 1fr;
     margin-right: 1;
 }
@@ -227,11 +228,16 @@ Screen {
 }
 
 /* AutoComplete Widget */
-#ac-container {
+AutoCompleteInput {
+    width: 1fr;
     height: auto;
 }
 
-#ac-dropdown {
+AutoCompleteInput #ac-input {
+    width: 100%;
+}
+
+AutoCompleteInput #ac-dropdown {
     max-height: 10;
     border: solid $accent;
     background: $surface;

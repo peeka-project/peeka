@@ -2,14 +2,14 @@
 AutoComplete Input Widget - Input with fuzzy completion dropdown.
 """
 
-from typing import Callable, List, Optional
+from typing import Awaitable, Callable, List, Optional, Union
 
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.events import Key
 from textual.message import Message
+from textual.widget import Widget
 from textual.widgets import Input, OptionList
 from textual.widgets.option_list import Option
-from textual.widget import Widget
 
 try:
     from textual.fuzzy import Matcher
@@ -19,6 +19,26 @@ except ImportError:
 
 class AutoCompleteInput(Widget):
     """Input widget with auto-completion dropdown."""
+
+    DEFAULT_CSS = """
+    AutoCompleteInput {
+        width: 1fr;
+        height: 3;
+        layout: vertical;
+    }
+    
+    AutoCompleteInput > #ac-input {
+        width: 100%;
+        height: 3;
+    }
+    
+    AutoCompleteInput > #ac-dropdown {
+        max-height: 10;
+        border: solid $accent;
+        background: $surface;
+        display: none;
+    }
+    """
 
     class Selected(Message):
         """Emitted when a completion is selected."""
@@ -30,21 +50,20 @@ class AutoCompleteInput(Widget):
     def __init__(
         self,
         placeholder: str = "",
-        completions_callback: Optional[Callable[[str], List[str]]] = None,
+            completions_callback: Optional[
+                Callable[[str], Union[List[str], Awaitable[List[str]]]]
+            ] = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self.placeholder = placeholder
         self._completions_callback = completions_callback
         self._completions: List[str] = []
-        self._matcher = Matcher() if Matcher else None
+        self._matcher = Matcher if Matcher else None
 
     def compose(self) -> ComposeResult:
-        yield Vertical(
-            Input(placeholder=self.placeholder, id="ac-input"),
-            OptionList(id="ac-dropdown"),
-            id="ac-container",
-        )
+        yield Input(placeholder=self.placeholder, id="ac-input")
+        yield OptionList(id="ac-dropdown")
 
     def on_mount(self) -> None:
         """Hide dropdown initially."""
@@ -79,8 +98,8 @@ class AutoCompleteInput(Widget):
         if self._completions_callback:
             result = self._completions_callback(prefix)
             if hasattr(result, "__await__"):
-                return await result
-            return result
+                result = await result  # type: ignore
+            return result  # type: ignore
         return []
 
     def _filter_completions(self, query: str) -> List[str]:
@@ -89,16 +108,15 @@ class AutoCompleteInput(Widget):
             return []
 
         if self._matcher:
-            # Use Textual's fuzzy matcher
+            matcher = self._matcher(query, case_sensitive=False)
             matches = []
             for item in self._completions:
-                score = self._matcher.match(query, item)
+                score = matcher.match(item)
                 if score > 0:
                     matches.append((score, item))
             matches.sort(reverse=True, key=lambda x: x[0])
             return [m[1] for m in matches]
         else:
-            # Fallback: simple prefix matching
             query_lower = query.lower()
             return [c for c in self._completions if query_lower in c.lower()]
 
@@ -108,6 +126,25 @@ class AutoCompleteInput(Widget):
         self.query_one("#ac-input", Input).value = value
         self.query_one("#ac-dropdown").display = False
         self.post_message(self.Selected(value))
+
+    async def on_key(self, event: Key) -> None:
+        """Handle Tab key to accept completion."""
+        dropdown = self.query_one("#ac-dropdown", OptionList)
+
+        if event.key == "tab" and dropdown.display and dropdown.option_count > 0:
+            # Accept the highlighted option (or first if none highlighted)
+            highlighted = dropdown.highlighted
+            if highlighted is not None:
+                option = dropdown.get_option_at_index(highlighted)
+            else:
+                option = dropdown.get_option_at_index(0)
+
+            value = str(option.prompt)
+            self.query_one("#ac-input", Input).value = value
+            dropdown.display = False
+            self.post_message(self.Selected(value))
+            event.prevent_default()
+            event.stop()
 
     @property
     def value(self) -> str:
