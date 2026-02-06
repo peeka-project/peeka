@@ -10,10 +10,14 @@ Runtime diagnostic tool for Python 3.9-3.14+ using PEP 768 remote debugging.
 # Install
 pip install -e .                    # Development mode
 pip install -e ".[tui]"             # With TUI (textual)
+pip install -e ".[dev]"             # With dev dependencies (CI-style)
 uv pip install -e .                 # Using uv
 
 # Test - ALL tests
-pytest tests/
+pytest tests/ -v
+
+# Test - CI-safe (excludes e2e/container tests)
+pytest tests/ -v --tb=short -m "not e2e and not container" --timeout=30
 
 # Test - SINGLE file
 pytest tests/test_injector.py -v
@@ -24,8 +28,11 @@ pytest tests/test_injector.py::TestDecoratorInjector -v
 # Test - SINGLE function
 pytest tests/test_injector.py::TestDecoratorInjector::test_inject_function -v
 
-# Test - Quick compatibility (no pytest)
+# Test - Quick compatibility (no pytest required)
 python3 tests/simple_compat_test.py
+
+# Test - Container tests (requires Docker)
+pytest tests/container/ -v --timeout=180
 
 # Lint & Type check (optional, not enforced)
 ruff check peeka/
@@ -84,13 +91,33 @@ class DecoratorInjector:
 | Private           | `_prefix`   | `_send_observation()`, `_lock`  |
 | Constants         | UPPER_SNAKE | `BASIC_ALLOWED_ATTRS`           |
 
-### Docstrings: Minimal, only when needed
+### Docstrings: Required for public APIs
 
-- Public API classes/methods
+Use docstrings for:
+- Modules (brief description at top)
+- Public classes and methods
 - Security-critical code
 - Complex algorithms
 
-Skip for: private helpers, simple getters, tests.
+Format (Google/Sphinx-style):
+```python
+def inject(self, pattern: str, config: Dict[str, Any]) -> str:
+    """
+    Inject observation logic into a target function.
+    
+    Args:
+        pattern: Module.Class.method pattern
+        config: Configuration with depth, times, condition
+    
+    Returns:
+        Watch ID for the injected observation
+    
+    Raises:
+        ValueError: If target pattern not found
+    """
+```
+
+Skip docstrings for: private helpers (`_method`), simple getters, test functions.
 
 ### Error Handling
 
@@ -104,6 +131,24 @@ try:
     result = handler.execute(command)
 finally:
     conn.close()
+
+# Agent/CLI boundaries: structured error responses
+def execute(self, params: dict) -> dict:
+    try:
+        # ... command logic
+        return {"status": "success", "data": result}
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
+
+# Best-effort restoration (don't break target process)
+try:
+    self._restore_function(target)
+except Exception:
+    pass  # Log but don't propagate
 ```
 
 ## Architecture
@@ -240,10 +285,101 @@ def mock_module(self):
 | `PEEKA_TIMEOUT`     | `30`    | Command timeout (seconds)  |
 | `PEEKA_BUFFER_SIZE` | `10000` | Max observations in memory |
 
+## TUI-Specific Patterns (Textual Framework)
+
+### Thread-Safe UI Updates
+
+```python
+from textual.worker import Worker, get_current_worker
+
+# Background worker with threading
+worker = self.run_worker(
+    self._stream_observations(watch_id),
+    thread=True,        # Run in separate thread
+    exclusive=False     # Allow multiple workers
+)
+
+# Thread-safe UI updates from background thread
+def _stream_observations(self, watch_id: str):
+    worker = get_current_worker()
+    
+    for observation in blocking_generator():
+        if worker.is_cancelled:
+            break
+        
+        # MUST use call_from_thread for UI updates
+        self.app.call_from_thread(
+            self._update_ui, observation
+        )
+
+def _update_ui(self, data):
+    """Called from main thread - safe to update widgets."""
+    self.query_one("#log", RichLog).write(data)
+```
+
+### Worker Management
+
+- Use `thread=True` for blocking I/O operations
+- Store worker reference for cancellation: `self._workers[id] = worker`
+- Cancel workers in cleanup: `worker.cancel()`
+- Always use `call_from_thread()` to update UI from workers
+
+## Common Patterns
+
+### Thread Safety
+
+```python
+import threading
+
+class Manager:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._data = {}
+    
+    def update(self, key, value):
+        with self._lock:  # Context manager pattern
+            self._data[key] = value
+```
+
+### Observer Pattern
+
+```python
+def subscribe(self, callback: Callable) -> Callable:
+    """Subscribe returns unsubscribe function."""
+    self._subscribers.append(callback)
+    
+    def unsubscribe():
+        self._subscribers.remove(callback)
+    
+    return unsubscribe  # Convenient cleanup
+```
+
+### Deferred Imports (Avoid Circular Dependencies)
+
+```python
+# At module level - avoid circular import
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from peeka.core.agent import PeekaAgent
+
+class Command:
+    def __init__(self, agent: "PeekaAgent"):  # String literal
+        self.agent = agent
+
+# Or defer to method
+def _register_handlers(self):
+    from peeka.commands.watch import WatchCommand  # Import here
+    self.handlers["watch"] = WatchCommand(self)
+```
+
 ## Key Files to Know
 
-- `peeka/core/injector.py` - Function wrapping logic
-- `peeka/core/agent.py` - Command registration
-- `peeka/commands/base.py` - Command interface
-- `peeka/core/safeeval/simpleeval.py` - Expression security
-- `tests/test_injector.py` - Core test patterns
+- `peeka/core/injector.py` - Function wrapping logic, decorator pattern
+- `peeka/core/agent.py` - Command registration, main agent loop
+- `peeka/commands/base.py` - Command interface, validation pattern
+- `peeka/core/safeeval/simpleeval.py` - Expression security (NEVER use eval!)
+- `peeka/core/observer.py` - Observer pattern, thread-safe subscription
+- `peeka/core/client.py` - Client-side streaming, socket protocol
+- `peeka/tui/views/watch.py` - TUI worker threading, call_from_thread usage
+- `tests/test_injector.py` - Core test patterns, module mocking
