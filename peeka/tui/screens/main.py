@@ -76,6 +76,9 @@ class MainScreen(Screen):
             monitor_view = self.query_one(MonitorView)
             monitor_view.set_client(self._client)
 
+            memory_view = self.query_one(MemoryView)
+            memory_view.set_client(self._client)
+
     async def _connect(self) -> None:
         """Connect to the target process agent."""
         try:
