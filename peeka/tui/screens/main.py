@@ -64,6 +64,9 @@ class MainScreen(Screen):
         await self._connect()
 
         if self._client:
+            dashboard_view = self.query_one(DashboardView)
+            dashboard_view.set_client(self._client)
+
             watch_view = self.query_one(WatchView)
             watch_view.set_client(self._client)
 
