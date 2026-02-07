@@ -61,12 +61,14 @@ class MainScreen(Screen):
         yield Footer()
 
     async def on_mount(self) -> None:
-        """Initialize connection to target process."""
         await self._connect()
 
         if self._client:
             watch_view = self.query_one(WatchView)
             watch_view.set_client(self._client)
+
+            logger_view = self.query_one(LoggerView)
+            logger_view.set_client(self._client)
 
     async def _connect(self) -> None:
         """Connect to the target process agent."""
