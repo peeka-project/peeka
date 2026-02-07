@@ -136,7 +136,7 @@ class StackView(Container):
             row = table.get_row(watch_id)
             short_id = row[0]
             pattern = row[1]
-            table.update_cell(watch_id, "Captures", str(count))
+            table.update_cell_at((watch_id, 2), str(count))
         except Exception:
             return
 
