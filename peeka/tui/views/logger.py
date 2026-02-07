@@ -28,6 +28,7 @@ class LoggerView(Container):
     def compose(self) -> ComposeResult:
         yield Container(
             Horizontal(
+                Static("Filter:", classes="input-label"),
                 Input(placeholder="Filter loggers...", id="logger-filter"),
                 Button("Refresh", id="logger-refresh-btn", variant="primary"),
                 id="logger-controls",
@@ -38,6 +39,7 @@ class LoggerView(Container):
                 id="logger-list",
             ),
             Horizontal(
+                Static("Logger:", classes="input-label"),
                 Input(placeholder="Logger name", id="logger-name"),
                 Select(
                     [(level, level) for level in self.LEVELS],

@@ -28,10 +28,12 @@ class MonitorView(Container):
     def compose(self) -> ComposeResult:
         yield Container(
             Horizontal(
+                Static("Pattern:", classes="input-label"),
                 Input(
                     placeholder="module.Class.method",
                     id="monitor-pattern",
                 ),
+                Static("Interval:", classes="input-label"),
                 Input(
                     placeholder="interval (seconds)",
                     value="5",
