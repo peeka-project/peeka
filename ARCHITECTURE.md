@@ -266,26 +266,26 @@ for observation in client.watch("module.func"):
 peeka-cli attach 12345
 
 # 2. 观测函数（限制 5 次）
-peeka-cli watch 12345 "demo.Calculator.add" --times 5
+peeka-cli watch "demo.Calculator.add" --times 5
 
 # 3. 条件过滤
-peeka-cli watch 12345 "demo.Calculator.multiply" --condition "params[0] > 100"
+peeka-cli watch "demo.Calculator.multiply" --condition "params[0] > 100"
 ```
 
 ### 数据处理
 
 ```bash
 # 使用 jq 提取字段
-peeka-cli watch 12345 "demo.func" | jq '.result'
+peeka-cli watch "demo.func" | jq '.result'
 
 # 统计调用次数
-peeka-cli watch 12345 "demo.func" | wc -l
+peeka-cli watch "demo.func" | wc -l
 
 # 保存到文件
-peeka-cli watch 12345 "demo.func" > observations.jsonl
+peeka-cli watch "demo.func" > observations.jsonl
 
 # 筛选慢调用
-peeka-cli watch 12345 "demo.func" | jq 'select(.duration_ms > 1)'
+peeka-cli watch "demo.func" | jq 'select(.duration_ms > 1)'
 ```
 
 ## 故障排除

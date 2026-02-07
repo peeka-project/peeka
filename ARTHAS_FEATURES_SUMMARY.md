@@ -96,9 +96,9 @@ python3 examples/demo.py --mode loop
 
 Then in another terminal:
 ```bash
-peeka-cli watch <pid> "demo.Calculator.add" -b
-peeka-cli watch <pid> "demo.Calculator.divide" -e
-peeka-cli watch <pid> "demo.slow_operation" --condition-express 'cost > 15'
+peeka-cli watch "demo.Calculator.add" -b
+peeka-cli watch "demo.Calculator.divide" -e
+peeka-cli watch "demo.slow_operation" --condition-express 'cost > 15'
 ```
 
 ---
@@ -133,7 +133,7 @@ peeka-cli watch <pid> "demo.slow_operation" --condition-express 'cost > 15'
 
 ### Before Function Execution (-b flag)
 ```bash
-peeka-cli watch <pid> "module.Class.method" -b
+peeka-cli watch "module.Class.method" -b
 ```
 **Output**:
 ```json
@@ -149,7 +149,7 @@ peeka-cli watch <pid> "module.Class.method" -b
 
 ### Only on Success (-s flag)
 ```bash
-peeka-cli watch <pid> "module.Class.method" -s
+peeka-cli watch "module.Class.method" -s
 ```
 **Output** (only when function succeeds):
 ```json
@@ -164,7 +164,7 @@ peeka-cli watch <pid> "module.Class.method" -s
 
 ### Only on Exception (-e flag)
 ```bash
-peeka-cli watch <pid> "module.Class.method" -e
+peeka-cli watch "module.Class.method" -e
 ```
 **Output** (only when exception occurs):
 ```json
@@ -179,13 +179,13 @@ peeka-cli watch <pid> "module.Class.method" -e
 
 ### Cost Filtering
 ```bash
-peeka-cli watch <pid> "module.slow_func" --condition-express "cost > 50"
+peeka-cli watch "module.slow_func" --condition-express "cost > 50"
 ```
 Only observes calls taking more than 50ms.
 
 ### Combined Flags
 ```bash
-peeka-cli watch <pid> "module.func" -b -s
+peeka-cli watch "module.func" -b -s
 ```
 Observes both at entry (`AtEnter`) and on success (`AtExit`).
 
@@ -348,7 +348,7 @@ pytest tests/test_injector.py::TestArthasCompatibility -v
 # Run demo (manual testing)
 python3 examples/demo.py --mode loop
 # In another terminal:
-peeka-cli watch <pid> "demo.Calculator.add" -b
+peeka-cli watch "demo.Calculator.add" -b
 
 # Compile check
 python3 -m py_compile peeka/core/injector.py

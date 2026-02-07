@@ -19,14 +19,14 @@ Python 语言特性进行了深度优化。
 ## 命令格式
 
 ```bash
-peeka-cli watch <pid> <pattern> [options]
+peeka-cli attach <pid>    # 首先附加到目标进程
+peeka-cli watch <pattern> [options]
 ```
 
 ### 参数说明
 
 | 参数                    | 说明                         | 默认值     | 示例                                      |
 |-----------------------|----------------------------|---------|-----------------------------------------|
-| `pid`                 | 目标进程 ID                    | -       | `12345`                                 |
 | `pattern`             | 函数匹配模式                     | -       | `module.Class.method`                   |
 | `-x, --depth`         | 输出对象深度                     | `2`     | `-x 3`                                  |
 | `-n, --times`         | 观测次数（-1 表示无限）              | `-1`    | `-n 10`                                 |
@@ -66,8 +66,11 @@ peeka-cli watch <pid> <pattern> [options]
 ### 1. 观测函数调用
 
 ```bash
+# 首先附加到目标进程
+peeka-cli attach 12345
+
 # 观测 5 次调用
-peeka-cli watch 12345 "calculator.Calculator.add" -n 5
+peeka-cli watch "calculator.Calculator.add" -n 5
 ```
 
 **输出示例**：
@@ -119,10 +122,10 @@ peeka-cli watch 12345 "calculator.Calculator.add" -n 5
 
 ```bash
 # 深度为 1：只展示对象类型
-peeka-cli watch 12345 "service.UserService.get_user" -x 1
+peeka-cli watch "service.UserService.get_user" -x 1
 
 # 深度为 3：展示 3 层嵌套结构
-peeka-cli watch 12345 "service.UserService.get_user" -x 3
+peeka-cli watch "service.UserService.get_user" -x 3
 ```
 
 **深度对比**：
@@ -154,7 +157,7 @@ user = {
 
 ```bash
 # 持续观测，直到手动停止（Ctrl+C）
-peeka-cli watch 12345 "api.handler.process_request"
+peeka-cli watch "api.handler.process_request"
 ```
 
 适用于：
@@ -167,10 +170,10 @@ peeka-cli watch 12345 "api.handler.process_request"
 
 ```bash
 # 静态方法
-peeka-cli watch 12345 "utils.Helper.static_method"
+peeka-cli watch "utils.Helper.static_method"
 
 # 类方法
-peeka-cli watch 12345 "models.User.from_dict"
+peeka-cli watch "models.User.from_dict"
 ```
 
 ## 观测时机控制（Arthas 兼容）
@@ -194,7 +197,7 @@ Peeka 支持 Arthas 风格的观测时机控制，可以在函数执行的不同
 
 ```bash
 # 观测函数被调用时的参数
-peeka-cli watch 12345 "service.UserService.update_user" -b
+peeka-cli watch "service.UserService.update_user" -b
 ```
 
 **输出**：
@@ -220,7 +223,7 @@ peeka-cli watch 12345 "service.UserService.update_user" -b
 
 ```bash
 # 只观测成功的调用，忽略异常
-peeka-cli watch 12345 "api.handler.process" -s
+peeka-cli watch "api.handler.process" -s
 ```
 
 **输出**（仅成功时）：
@@ -245,7 +248,7 @@ peeka-cli watch 12345 "api.handler.process" -s
 
 ```bash
 # 只观测抛出异常的调用
-peeka-cli watch 12345 "database.query" -e
+peeka-cli watch "database.query" -e
 ```
 
 **输出**（仅异常时）：
@@ -270,7 +273,7 @@ peeka-cli watch 12345 "database.query" -e
 
 ```bash
 # 同时观测入口和成功返回
-peeka-cli watch 12345 "calculator.calculate" -b -s
+peeka-cli watch "calculator.calculate" -b -s
 ```
 
 **输出**（每次调用产生 2 条记录）：
@@ -308,7 +311,7 @@ peeka-cli watch 12345 "calculator.calculate" -b -s
 
 ```bash
 # 观测入口、成功、异常所有情况
-peeka-cli watch 12345 "service.critical_operation" -b -e -s
+peeka-cli watch "service.critical_operation" -b -e -s
 ```
 
 **输出**（根据执行结果产生 2 或 3 条记录）：
@@ -367,51 +370,51 @@ Peeka 使用 **simpleeval** 库实现安全的条件表达式评估，支持以�
 
 ```bash
 # 只观测第一个参数 > 100 的调用
-peeka-cli watch 12345 "calculator.multiply" --condition-express "params[0] > 100"
+peeka-cli watch "calculator.multiply" --condition-express "params[0] > 100"
 
 # 参数数量过滤
-peeka-cli watch 12345 "api.handler" --condition-express "len(params) > 3"
+peeka-cli watch "api.handler" --condition-express "len(params) > 3"
 
 # 多条件组合
-peeka-cli watch 12345 "service.query" --condition-express "params[0] > 10 and params[1] < 100"
+peeka-cli watch "service.query" --condition-express "params[0] > 10 and params[1] < 100"
 ```
 
 #### 2. 关键字参数过滤
 
 ```bash
 # 只观测带 debug 参数的调用
-peeka-cli watch 12345 "logger.log" --condition-express "kwargs.get('debug') == True"
+peeka-cli watch "logger.log" --condition-express "kwargs.get('debug') == True"
 
 # 检查参数是否存在
-peeka-cli watch 12345 "api.request" --condition-express "'user_id' in kwargs"
+peeka-cli watch "api.request" --condition-express "'user_id' in kwargs"
 ```
 
 #### 3. 字符串匹配
 
 ```bash
 # 参数以特定前缀开头
-peeka-cli watch 12345 "db.query" --condition-express "str(params[0]).startswith('SELECT')"
+peeka-cli watch "db.query" --condition-express "str(params[0]).startswith('SELECT')"
 
 # 参数包含特定子串
-peeka-cli watch 12345 "handler.process" --condition-express "'error' in str(params[0])"
+peeka-cli watch "handler.process" --condition-express "'error' in str(params[0])"
 ```
 
 #### 4. 类型检查
 
 ```bash
 # 参数类型过滤
-peeka-cli watch 12345 "converter.convert" --condition-express "isinstance(params[0], dict)"
+peeka-cli watch "converter.convert" --condition-express "isinstance(params[0], dict)"
 ```
 
 #### 5. 复杂条件
 
 ```bash
 # 组合多个条件
-peeka-cli watch 12345 "service.process" \
+peeka-cli watch "service.process" \
   --condition-express "len(params) > 2 and params[0] > 100 and 'debug' in kwargs"
 
 # 字符串操作
-peeka-cli watch 12345 "parser.parse" \
+peeka-cli watch "parser.parse" \
   --condition-express "len(str(params[0])) > 50 and str(params[0]).endswith('.json')"
 ```
 
@@ -419,13 +422,13 @@ peeka-cli watch 12345 "parser.parse" \
 
 ```bash
 # 只观测执行时间超过 100ms 的调用（类似 Arthas #cost）
-peeka-cli watch 12345 "database.query" --condition-express "cost > 100"
+peeka-cli watch "database.query" --condition-express "cost > 100"
 
 # 组合性能和参数条件
-peeka-cli watch 12345 "api.handler" --condition-express "cost > 50 and len(params) > 0"
+peeka-cli watch "api.handler" --condition-express "cost > 50 and len(params) > 0"
 
 # 观测慢调用的返回值
-peeka-cli watch 12345 "service.process" -s --condition-express "cost > 200"
+peeka-cli watch "service.process" -s --condition-express "cost > 200"
 ```
 
 **注意**：
@@ -439,7 +442,7 @@ peeka-cli watch 12345 "service.process" -s --condition-express "cost > 200"
 # 只观测特定对象状态的调用（仅实例方法）
 # 注意：当前版本 target 可用，但不支持属性导航（target.attr）
 # 可以在条件中检查 target 是否存在
-peeka-cli watch 12345 "service.UserService.update" --condition-express "params[0] > 0"
+peeka-cli watch "service.UserService.update" --condition-express "params[0] > 0"
 ```
 
 **限制**：
@@ -461,13 +464,13 @@ peeka-cli watch 12345 "service.UserService.update" --condition-express "params[0
 
 ```bash
 # 先不加条件，观测一次调用
-peeka-cli watch 12345 "mymodule.func" -n 1
+peeka-cli watch "mymodule.func" -n 1
 
 # 输出：
 # {"args": [100, "test"], "kwargs": {"debug": true}, ...}
 
 # 然后根据实际输出编写条件
-peeka-cli watch 12345 "mymodule.func" --condition-express "params[0] > 50"
+peeka-cli watch "mymodule.func" --condition-express "params[0] > 50"
 ```
 
 ## 输出格式
@@ -544,44 +547,44 @@ peeka-cli watch 12345 "mymodule.func" --condition-express "params[0] > 50"
 
 ```bash
 # 1. 提取返回值
-peeka-cli watch 12345 "calculator.add" | jq '.returnObj'
+peeka-cli watch "calculator.add" | jq '.returnObj'
 
 # 2. 提取耗时
-peeka-cli watch 12345 "api.handler" | jq '.cost'
+peeka-cli watch "api.handler" | jq '.cost'
 
 # 3. 过滤慢调用（耗时 > 100ms）
-peeka-cli watch 12345 "db.query" | jq 'select(.cost > 100)'
+peeka-cli watch "db.query" | jq 'select(.cost > 100)'
 
 # 4. 只显示失败的调用
-peeka-cli watch 12345 "service.process" | jq 'select(.success == false)'
+peeka-cli watch "service.process" | jq 'select(.success == false)'
 
 # 5. 格式化输出
-peeka-cli watch 12345 "func" | jq '{time: .timestamp, cost: .cost, result: .returnObj}'
+peeka-cli watch "func" | jq '{time: .timestamp, cost: .cost, result: .returnObj}'
 ```
 
 ### 统计分析
 
 ```bash
 # 统计调用次数
-peeka-cli watch 12345 "func" -n 100 | wc -l
+peeka-cli watch "func" -n 100 | wc -l
 
 # 计算平均耗时
-peeka-cli watch 12345 "func" -n 100 | jq '.duration_ms' | \
+peeka-cli watch "func" -n 100 | jq '.duration_ms' | \
   awk '{sum+=$1; count++} END {print "avg:", sum/count, "ms"}'
 
 # 计算成功率
-peeka-cli watch 12345 "func" -n 100 | jq '.success' | \
+peeka-cli watch "func" -n 100 | jq '.success' | \
   awk '{total++; if($1=="true") success++} END {print "success rate:", success/total*100, "%"}'
 
 # 找出最慢的调用
-peeka-cli watch 12345 "func" -n 100 | jq -s 'max_by(.duration_ms)'
+peeka-cli watch "func" -n 100 | jq -s 'max_by(.duration_ms)'
 ```
 
 ### 保存到文件
 
 ```bash
 # 保存为 JSONL 格式（每行一个 JSON）
-peeka-cli watch 12345 "func" > observations.jsonl
+peeka-cli watch "func" > observations.jsonl
 
 # 后续分析
 cat observations.jsonl | jq 'select(.duration_ms > 10)'
@@ -591,11 +594,11 @@ cat observations.jsonl | jq 'select(.duration_ms > 10)'
 
 ```bash
 # 实时监控错误率
-peeka-cli watch 12345 "api.handler" | \
+peeka-cli watch "api.handler" | \
   jq -r 'if .success then "✓" else "✗ " + .error end'
 
 # 实时监控耗时
-peeka-cli watch 12345 "db.query" | \
+peeka-cli watch "db.query" | \
   jq -r '"\(.timestamp | strftime("%H:%M:%S")) - \(.duration_ms)ms"'
 ```
 
@@ -616,17 +619,17 @@ peeka-cli watch 12345 "db.query" | \
    ```bash
    # 只捕获慢调用（实际上是捕获后再过滤，建议用其他方式）
    # 更好的方式是结合参数过滤
-   peeka-cli watch 12345 "func" --condition "params[0] > 1000" -n 100
+   peeka-cli watch "func" --condition "params[0] > 1000" -n 100
    ```
 
 2. **限制观测次数**：使用 `-n` 参数
    ```bash
-   peeka-cli watch 12345 "func" -n 50  # 只观测 50 次
+   peeka-cli watch "func" -n 50  # 只观测 50 次
    ```
 
 3. **降低输出深度**：对于复杂对象
    ```bash
-   peeka-cli watch 12345 "func" -x 1  # 只展示一层
+   peeka-cli watch "func" -x 1  # 只展示一层
    ```
 
 4. **避免高频函数**：不要观测每秒调用数千次的函数（如基础工具函数）
@@ -663,7 +666,7 @@ peeka-cli watch 12345 "db.query" | \
 python3 -c "import mymodule; print(mymodule.MyClass.my_method)"
 
 # 2. 去掉条件表达式，先观测一次
-peeka-cli watch 12345 "mymodule.func" -n 1
+peeka-cli watch "mymodule.func" -n 1
 
 # 3. 检查进程是否存在
 ps aux | grep 12345
@@ -697,10 +700,10 @@ ps aux | grep 12345
 
 ```bash
 # 问题：对象显示为 "{'key': {...}}"
-peeka-cli watch 12345 "func" -x 2
+peeka-cli watch "func" -x 2
 
 # 解决：增加深度
-peeka-cli watch 12345 "func" -x 3
+peeka-cli watch "func" -x 3
 ```
 
 **注意**：深度最大为 4，防止过深遍历导致性能问题。
@@ -849,7 +852,7 @@ watch MyClass * --exclude-class-pattern 'MyClass$Inner'
 
 ```bash
 # 只支持完整路径
-peeka-cli watch 12345 "demo.MathGame.primeFactors"
+peeka-cli watch "demo.MathGame.primeFactors"
 
 # ✗ 不支持通配符
 # ✗ 不支持正则表达式
@@ -877,11 +880,11 @@ watch demo.MathGame primeFactors 'target.illegalArgumentCount'
 ```python
 # ✅ 支持：输出包含 target 对象
 # 观测实例方法时，输出会包含 target 字段（self 对象）
-peeka-cli watch 12345 "obj.MyClass.method"
+peeka-cli watch "obj.MyClass.method"
 
 # ✅ 支持：target 变量在条件中可用
 # 可以检查 target 是否存在
-peeka-cli watch 12345 "obj.method" --condition-express "len(params) > 0"
+peeka-cli watch "obj.method" --condition-express "len(params) > 0"
 
 # ⏳ 限制：不支持属性导航
 # 无法在条件中使用 target.field_name
@@ -897,7 +900,7 @@ peeka-cli watch 12345 "obj.method" --condition-express "len(params) > 0"
 
 # 解决方案：观测返回值包含对象状态的函数
 
-peeka-cli watch 12345 "obj.get_state" -x 3
+peeka-cli watch "obj.get_state" -x 3
 
 ```
 
@@ -934,7 +937,8 @@ peeka-cli watch 12345 "obj.get_state" -x 3
 ```bash
 # 并行观测多个进程
 for pid in 12345 12346 12347; do
-  peeka-cli watch $pid "api.handler" > "logs/watch_$pid.jsonl" 2>&1 &
+  peeka-cli attach $pid
+  peeka-cli watch "api.handler" > "logs/watch_$pid.jsonl" 2>&1 &
 done
 ```
 
@@ -943,7 +947,7 @@ done
 ```bash
 # 每小时观测 100 次
 while true; do
-  peeka-cli watch 12345 "scheduler.task" -n 100 >> hourly_samples.jsonl
+  peeka-cli watch "scheduler.task" -n 100 >> hourly_samples.jsonl
   sleep 3600
 done
 ```
@@ -952,7 +956,7 @@ done
 
 ```bash
 # 监控错误率，超过阈值告警
-peeka-cli watch 12345 "api.handler" | \
+peeka-cli watch "api.handler" | \
   jq -r 'select(.success == false) | .error' | \
   while read error; do
     echo "Alert: $error" | mail -s "API Error" admin@example.com

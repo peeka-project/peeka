@@ -629,28 +629,6 @@ process_tree at /app/myapp/api/views.py:123
 
 ## 常见问题
 
-### Q1: 为什么 stack 字段为空数组？
-
-**原因**：
-- 目标函数的调用栈深度小于 `inspect.stack()` 的起始偏移量
-- 通常不会发生，除非目标函数是顶层调用
-
-**解决方法**：
-- 检查 pattern 是否正确
-- 尝试增加 `--depth` 参数
-- 确认目标函数确实被调用了
-
-### Q2: 如何追踪异步函数的调用栈？
-
-**答案**：
-- `stack` 命令支持异步函数（async def）
-- 调用栈会显示协程调度器的帧（如 `asyncio` 的内部调用）
-- 可能看到大量 `asyncio` 内部栈帧，使用 `jq` 过滤即可：
-  ```bash
-  peeka-cli stack -p 12345 "myapp.async_func" | \
-    jq '.stack |= map(select(.filename | contains("asyncio") | not))'
-  ```
-
 ### Q3: 如何停止正在运行的 stack 追踪？
 
 **方法 1**：使用 Ctrl+C 中断客户端（不影响目标进程）
@@ -658,10 +636,10 @@ process_tree at /app/myapp/api/views.py:123
 **方法 2**：使用 `watch` 命令的停止功能：
 ```bash
 # 查看当前所有追踪任务
-peeka-cli watch -p 12345 --action status
+peeka-cli watch --action status
 
 # 停止特定任务
-peeka-cli watch -p 12345 --action stop --watch-id watch_001
+peeka-cli watch --action stop --watch-id watch_001
 ```
 
 **注意**：
@@ -773,7 +751,7 @@ peeka-cli stack -p 12345 "myapp.views.index" --depth 20 | \
 
 ### 5. 跨进程调用链分析
 
-**场景**：微服务架构中，结合日志追踪跨进程调用链。
+**场景**：结合日志追踪跨进程调用链。
 
 **方法**：
 1. 在每个服务中启动 `stack` 追踪

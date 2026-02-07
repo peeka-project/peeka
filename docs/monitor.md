@@ -419,7 +419,7 @@ peeka-cli monitor -p 12345 "myapp.process" --interval 60 | \
 # 输出：{"cycle": 5, "rt_avg": 234.567, ...}
 
 # 步骤 2：使用 watch 查看详细调用信息
-peeka-cli watch -p 12345 "myapp.process" -n 10
+peeka-cli watch "myapp.process" -n 10
 # 分析参数、返回值、执行时间
 
 # 步骤 3：定位问题后停止监控
