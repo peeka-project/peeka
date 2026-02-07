@@ -114,7 +114,7 @@ class MonitorView(Container):
         table.add_row(pattern, "0", "0", "0", "0.0", "0.0", "0.0", "0.0", key=watch_id)
 
         worker = self.run_worker(
-            self._stream_stats(watch_id, pattern), thread=True, exclusive=False
+            lambda: self._stream_stats(watch_id, pattern), thread=True, exclusive=False
         )
         self._workers[watch_id] = worker
 
