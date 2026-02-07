@@ -121,26 +121,26 @@ peeka-cli attach <pid>
 
 ```bash
 # 观测 5 次调用
-peeka-cli watch <pid> "module.Class.method" --times 5
+peeka-cli watch "module.Class.method" --times 5
 
 # 条件过滤
-peeka-cli watch <pid> "module.Class.method" --condition "len(params) > 2"
+peeka-cli watch "module.Class.method" --condition "len(params) > 2"
 
 # 实时流式观测
-peeka-cli watch <pid> "module.Class.method"
+peeka-cli watch "module.Class.method"
 ```
 
 3. **数据处理**
 
 ```bash
 # 使用 jq 提取结果
-peeka-cli watch <pid> "module.func" | jq 'select(.type == "observation") | .data.result'
+peeka-cli watch "module.func" | jq 'select(.type == "observation") | .data.result'
 
 # 筛选慢调用
-peeka-cli watch <pid> "module.func" | jq 'select(.type == "observation" and .data.duration_ms > 1)'
+peeka-cli watch "module.func" | jq 'select(.type == "observation" and .data.duration_ms > 1)'
 
 # 保存到文件
-peeka-cli watch <pid> "module.func" > observations.jsonl
+peeka-cli watch "module.func" > observations.jsonl
 ```
 
 ## 输出格式规范
@@ -227,21 +227,21 @@ for line in proc.stdout:
 #### Bash + jq 解析
 ```bash
 # 只显示观测数据
-peeka-cli watch 12345 "module.func" | jq 'select(.type == "observation")'
+peeka-cli watch "module.func" | jq 'select(.type == "observation")'
 
 # 提取函数返回值
-peeka-cli watch 12345 "module.func" | jq 'select(.type == "observation") | .result'
+peeka-cli watch "module.func" | jq 'select(.type == "observation") | .result'
 
 # 过滤慢调用（>10ms）
-peeka-cli watch 12345 "module.func" | jq 'select(.type == "observation" and .duration_ms > 10)'
+peeka-cli watch "module.func" | jq 'select(.type == "observation" and .duration_ms > 10)'
 
 # 统计成功率
-peeka-cli watch 12345 "module.func" | \
+peeka-cli watch "module.func" | \
   jq -r 'select(.type == "observation") | if .success then "OK" else "ERROR" end' | \
   uniq -c
 
 # 只显示错误信息
-peeka-cli watch 12345 "module.func" | jq 'select(.type == "error")'
+peeka-cli watch "module.func" | jq 'select(.type == "error")'
 ```
 
 ## 使用示例
@@ -258,7 +258,7 @@ $ peeka-cli attach 12345
 {"type":"status","level":"info","message":"Attaching to process 12345"}
 {"type":"success","command":"attach","data":{"pid":12345,"socket":"/tmp/peeka_xxx.sock"}}
 
-$ peeka-cli watch 12345 "demo.Calculator.add" --times 5
+$ peeka-cli watch "demo.Calculator.add" --times 5
 {"type":"event","event":"watch_started","data":{"watch_id":"watch_001","pattern":"demo.Calculator.add"}}
 {"type":"observation","watch_id":"watch_001","timestamp":1705586200.123,"func_name":"demo.Calculator.add","args":[1,2],"result":3,"success":true,"duration_ms":0.123,"count":1}
 {"type":"observation","watch_id":"watch_001","timestamp":1705586200.456,"func_name":"demo.Calculator.add","args":[3,4],"result":7,"success":true,"duration_ms":0.087,"count":2}
@@ -269,7 +269,7 @@ $ peeka-cli watch 12345 "demo.Calculator.add" --times 5
 
 ```bash
 # 只观测第一个参数大于 100 的调用
-$ peeka-cli watch 12345 "demo.Calculator.multiply" --condition "params[0] > 100"
+$ peeka-cli watch "demo.Calculator.multiply" --condition "params[0] > 100"
 ```
 
 支持的条件语法：
@@ -286,15 +286,15 @@ params[0] == 'value'  # 索引访问
 
 ```bash
 # 统计调用次数（只计算观测数据）
-$ peeka-cli watch 12345 "module.func" | jq 'select(.type == "observation")' | wc -l
+$ peeka-cli watch "module.func" | jq 'select(.type == "observation")' | wc -l
 
 # 分析耗时分布
-$ peeka-cli watch 12345 "module.func" | \
+$ peeka-cli watch "module.func" | \
   jq 'select(.type == "observation") | .duration_ms' | \
   awk '{sum+=$1; count++} END {print "avg:", sum/count}'
 
 # 实时监控错误率
-$ peeka-cli watch 12345 "module.func" | \
+$ peeka-cli watch "module.func" | \
   jq -r 'select(.type == "observation") | if .success then "OK" else "ERROR" end' | \
   uniq -c
 ```
@@ -327,7 +327,7 @@ peeka-cli attach <pid>
 ### watch - 观测函数调用
 
 ```bash
-peeka-cli watch <pid> <pattern> [options]
+peeka-cli watch <pattern> [options]
 ```
 
 **参数**：
@@ -344,12 +344,14 @@ peeka-cli watch <pid> <pattern> [options]
 
 **pattern 格式**：`module.Class.method` 或 `module.function`
 
+**注意**：使用 watch 前，必须先用 `peeka-cli attach <pid>` 附加到目标进程。
+
 **更多详情**：参见 [watch 命令详解](docs/watch.md)
 
 ### stack - 追踪调用栈
 
 ```bash
-peeka-cli stack <pid> <pattern> [options]
+peeka-cli stack <pattern> [options]
 ```
 
 捕获函数被调用时的完整调用栈，用于追踪调用来源。
@@ -359,7 +361,7 @@ peeka-cli stack <pid> <pattern> [options]
 ### logger - 动态调整日志级别
 
 ```bash
-peeka-cli logger <pid> [--action {list,get,set}] [options]
+peeka-cli logger [--action {list,get,set}] [options]
 ```
 
 运行时查看和修改 logger 的日志级别，无需重启进程。
@@ -369,7 +371,7 @@ peeka-cli logger <pid> [--action {list,get,set}] [options]
 ### monitor - 性能统计
 
 ```bash
-peeka-cli monitor <pid> <pattern> [--interval SECONDS] [-c CYCLES]
+peeka-cli monitor <pattern> [--interval SECONDS] [-c CYCLES]
 ```
 
 定期输出函数性能统计（调用次数、成功率、响应时间）。
@@ -379,7 +381,7 @@ peeka-cli monitor <pid> <pattern> [--interval SECONDS] [-c CYCLES]
 ### memory - 内存分析
 
 ```bash
-peeka-cli memory <pid> [--action {overview,start,stop,top,dump,gc}] [options]
+peeka-cli memory [--action {overview,start,stop,top,dump,gc}] [options]
 ```
 
 分析进程内存使用情况和内存分配。
@@ -389,8 +391,8 @@ peeka-cli memory <pid> [--action {overview,start,stop,top,dump,gc}] [options]
 ### sc / sm - 搜索类和方法
 
 ```bash
-peeka-cli sc <pid> <pattern>  # 搜索类
-peeka-cli sm <pid> <pattern>  # 搜索方法
+peeka-cli sc <pattern>  # 搜索类
+peeka-cli sm <pattern>  # 搜索方法
 ```
 
 在运行中的进程中搜索类和方法，用于代码探索。

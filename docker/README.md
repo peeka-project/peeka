@@ -79,36 +79,36 @@ Python 3.14 引入了 PEP 768 (`sys.remote_exec`)，允许无需 GDB 即可附�
 容器启动后执行以下测试：
 
 ```bash
-# 1. 附加到进程
+# 1. 附加到进程（首先获取 demo.py 的 PID）
 peeka-cli attach <PID>
 
-# 2. 观测函数调用
-peeka-cli watch <PID> 'demo.Calculator.add' -n 5
+# 2. 观测函数调用（后续命令不需要 PID，因为已经 attach 了）
+peeka-cli watch 'demo.Calculator.add' -n 5
 
 # 3. 观测函数入口
-peeka-cli watch <PID> 'demo.Calculator.multiply' -b -n 3
+peeka-cli watch 'demo.Calculator.multiply' -b -n 3
 
 # 4. 只观测异常
-peeka-cli watch <PID> 'demo.Calculator.divide' -e -n 5
+peeka-cli watch 'demo.Calculator.divide' -e -n 5
 
 # 5. 条件过滤
-peeka-cli watch <PID> 'demo.Calculator.add' --condition 'params[0] > 5' -n 3
+peeka-cli watch 'demo.Calculator.add' --condition 'params[0] > 5' -n 3
 
 # 6. 追踪调用栈
-peeka-cli stack <PID> 'demo.Calculator.add' -n 2
+peeka-cli stack 'demo.Calculator.add' -n 2
 
 # 7. 性能监控
-peeka-cli monitor <PID> 'demo.Calculator.add' --interval 3 -c 2
+peeka-cli monitor 'demo.Calculator.add' --interval 3 -c 2
 
 # 8. 搜索类和方法
-peeka-cli sc <PID> 'Calculator'
-peeka-cli sm <PID> 'add'
+peeka-cli sc 'Calculator'
+peeka-cli sm 'add'
 
 # 9. 日志级别
-peeka-cli logger <PID> --action list
+peeka-cli logger --action list
 
 # 10. 内存分析
-peeka-cli memory <PID> --action overview
+peeka-cli memory --action overview
 ```
 
 ## TUI 测试清单

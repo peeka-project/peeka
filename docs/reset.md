@@ -289,7 +289,7 @@ peeka-cli reset -p 12345 --list | jq '.enhanced | sort_by(.count) | reverse'
 
 ```bash
 # 1. 开始诊断
-peeka-cli watch 12345 "myapp.service.query" -n 100
+peeka-cli watch "myapp.service.query" -n 100
 
 # 2. 查看观测数据（100 次后自动停止）
 # ... 分析数据 ...
@@ -306,23 +306,23 @@ peeka-cli reset -p 12345 --list
 
 ```bash
 # 1. 当前正在观测（深度为 2）
-peeka-cli watch 12345 "myapp.service.query" -x 2
+peeka-cli watch "myapp.service.query" -x 2
 
 # 2. 发现需要更深的输出（深度 3）
 # 先重置当前观测
 peeka-cli reset -p 12345 "myapp.service.query"
 
 # 3. 使用新参数重新观测
-peeka-cli watch 12345 "myapp.service.query" -x 3
+peeka-cli watch "myapp.service.query" -x 3
 ```
 
 ### 工作流程 3：多模块诊断
 
 ```bash
 # 1. 观测多个模块
-peeka-cli watch 12345 "myapp.service.*" &
-peeka-cli watch 12345 "myapp.handler.*" &
-peeka-cli watch 12345 "myapp.api.*" &
+peeka-cli watch "myapp.service.*" &
+peeka-cli watch "myapp.handler.*" &
+peeka-cli watch "myapp.api.*" &
 
 # 2. 诊断完 service 模块后，只清理 service
 peeka-cli reset -p 12345 "myapp.service.*"
@@ -374,7 +374,7 @@ peeka-cli monitor 12345 --action stop
 
 ```bash
 # 假设之前执行了：
-peeka-cli watch 12345 "myapp.service.UserService.query"
+peeka-cli watch "myapp.service.UserService.query"
 
 # ✅ 正确：匹配存储的模式
 peeka-cli reset -p 12345 "myapp.service.*"              # 匹配成功
@@ -391,7 +391,7 @@ peeka-cli reset -p 12345 "UserService.*"                # 不匹配
 ```bash
 # 重置后需要重新观测
 peeka-cli reset -p 12345 "myapp.service.query"
-peeka-cli watch 12345 "myapp.service.query" -n 100  # 重新开始观测
+peeka-cli watch "myapp.service.query" -n 100  # 重新开始观测
 ```
 
 ### ⚠️ 性能恢复
@@ -637,7 +637,7 @@ PID=$1
 PATTERN=${2:-"*"}  # 默认清理所有
 
 # 执行诊断
-peeka-cli watch $PID "$PATTERN" -n 100
+peeka-cli watch "$PATTERN" -n 100
 
 # 等待完成（100 次后自动停止）
 sleep 5
@@ -714,7 +714,7 @@ jq '.enhanced[] | {pattern, count}' enhancements_backup.json
 
 3. **诊断结束后立即清理**
    ```bash
-   peeka-cli watch 12345 "func" -n 100  # 观测 100 次
+   peeka-cli watch "func" -n 100  # 观测 100 次
    peeka-cli reset -p 12345             # 立即清理
    ```
 

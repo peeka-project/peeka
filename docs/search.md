@@ -91,7 +91,7 @@ peeka-cli sm -p 12345 "myapp.api.UserHandler.*"
 # delete (self, user_id: int) -> bool
 
 # 步骤 3：使用 watch 监控
-peeka-cli watch -p 12345 "myapp.api.UserHandler.get"
+peeka-cli watch "myapp.api.UserHandler.get"
 ```
 
 ### 4. 验证模块是否加载
@@ -539,7 +539,7 @@ peeka-cli sm -p 12345 "myapp.Order" --method-pattern "*process*"
 # process_shipment
 
 # 步骤 2：选择目标方法并监控
-peeka-cli watch -p 12345 "myapp.Order.process_payment" -n 10
+peeka-cli watch "myapp.Order.process_payment" -n 10
 ```
 
 ---
