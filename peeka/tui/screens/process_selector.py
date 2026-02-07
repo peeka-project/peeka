@@ -107,7 +107,9 @@ class ProcessSelectorScreen(Screen):
                 session_id = attacher.session_id
                 socket_path = attacher.get_socket_path()
 
-                self.notify(f"Successfully attached to PID {pid}", severity="success")
+                self.notify(
+                    f"Successfully attached to PID {pid}", severity="information"
+                )
                 self.app.push_screen(MainScreen(pid, session_id, socket_path))
             else:
                 self.notify(f"Failed to attach to process {pid}", severity="error")

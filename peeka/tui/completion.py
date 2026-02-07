@@ -2,43 +2,43 @@
 Completion Data Source - Fetches completions from agent.
 """
 
-import asyncio
+import time
 from typing import List
 
-from peeka.core.client import AgentClient
+from peeka.core.client import StreamingAgentClient
 
 
 class CompletionSource:
     """Fetches completions from the attached process agent."""
 
-    def __init__(self, client: AgentClient) -> None:
+    def __init__(self, client: StreamingAgentClient) -> None:
         self._client = client
         self._cache: dict = {}
         self._cache_ttl = 30.0  # seconds
 
-    async def get_completions(self, prefix: str) -> List[str]:
+    def get_completions(self, prefix: str) -> List[str]:
         """Get completions for a given prefix."""
         # Check cache first
         cache_key = prefix[: prefix.rfind(".") + 1] if "." in prefix else ""
         if cache_key in self._cache:
             cached_time, cached_items = self._cache[cache_key]
-            if asyncio.get_event_loop().time() - cached_time < self._cache_ttl:
+            if time.monotonic() - cached_time < self._cache_ttl:
                 return self._filter_by_prefix(cached_items, prefix)
 
         # Fetch from agent
         try:
-            response = await self._client.send_command(
-                "complete",
+            response = self._client.send_command(
                 {
+                    "type": "complete",
                     "prefix": prefix,
-                    "type": "all",  # modules, classes, functions
-                },
+                    "completion_type": "all",
+                }
             )
 
             if response.get("status") == "success":
                 items = response.get("data", {}).get("completions", [])
                 # Cache the results
-                self._cache[cache_key] = (asyncio.get_event_loop().time(), items)
+                self._cache[cache_key] = (time.monotonic(), items)
                 return items
         except Exception:
             pass
