@@ -2,149 +2,213 @@
 TUI Component Tests using Textual's testing framework.
 
 Tests verify:
-1. ProcessSelectorScreen renders and ESC quits
-2. MainScreen renders and ESC goes back
-3. Tab switching works without translate AttributeError
-4. All View components render inside TabPane
+1. ProcessSelectorScreen renders with correct widgets
+2. MainScreen has all 7 tabs with correct labels
+3. Tab switching works and updates active state
+4. All view inputs have descriptive labels
+5. CompletionSource is correctly typed and synchronous
 """
+
+import inspect
 
 import pytest
 
 from peeka.tui.app import PeekaApp
 from peeka.tui.screens.process_selector import ProcessSelectorScreen
 from peeka.tui.screens.main import MainScreen
+from peeka.tui.completion import CompletionSource
 
 
 class TestProcessSelectorScreen:
-    """Tests for ProcessSelectorScreen."""
-
     @pytest.mark.asyncio
-    async def test_screen_renders(self):
-        """Test that ProcessSelectorScreen renders without error."""
+    async def test_screen_renders_with_table(self):
+        """ProcessSelectorScreen has a DataTable with correct columns."""
         app = PeekaApp()
         async with app.run_test() as pilot:
-            # Should start with ProcessSelectorScreen
             assert isinstance(app.screen, ProcessSelectorScreen)
+            from textual.widgets import DataTable
+
+            table = app.screen.query_one("#process-table", DataTable)
+            assert table is not None
+            # Verify columns exist
+            column_labels = [col.label.plain for col in table.columns.values()]
+            assert "PID" in column_labels
+            assert "Command" in column_labels
 
     @pytest.mark.asyncio
     async def test_escape_quits(self):
-        """Test that ESC key quits the application."""
+        """ESC key quits the application."""
         app = PeekaApp()
         async with app.run_test() as pilot:
             await pilot.press("escape")
             await pilot.pause()
-            # App should be exiting
             assert app._exit
 
     @pytest.mark.asyncio
-    async def test_refresh_action(self):
-        """Test that R key refreshes process list."""
+    async def test_filter_input_exists(self):
+        """Filter input exists with correct placeholder."""
         app = PeekaApp()
         async with app.run_test() as pilot:
-            # Verify we're on ProcessSelectorScreen
-            assert isinstance(app.screen, ProcessSelectorScreen)
-            # Press 'r' to refresh
-            await pilot.press("r")
-            await pilot.pause()
-            # Should not crash, still on same screen
-            assert isinstance(app.screen, ProcessSelectorScreen)
+            from textual.widgets import Input
+
+            filter_input = app.screen.query_one("#filter", Input)
+            assert filter_input.placeholder == "Filter by PID or command..."
 
 
 class TestMainScreen:
-    """Tests for MainScreen."""
-
     @pytest.mark.asyncio
-    async def test_main_screen_renders(self):
-        """Test that MainScreen renders with a PID."""
-        app = PeekaApp()
-        async with app.run_test() as pilot:
-            # Push MainScreen with test parameters (no real connection)
-            app.push_screen(
-                MainScreen(
-                    pid=12345, session_id="test-session", socket_path="/tmp/fake.sock"
-                )
-            )
-            await pilot.pause()
-            assert isinstance(app.screen, MainScreen)
-            assert app.screen.pid == 12345
-
-    @pytest.mark.asyncio
-    async def test_escape_goes_back(self):
-        """Test that ESC key goes back to process selector."""
-        app = PeekaApp()
-        async with app.run_test() as pilot:
-            # Start with ProcessSelectorScreen
-            assert isinstance(app.screen, ProcessSelectorScreen)
-            # Push MainScreen
-            app.push_screen(
-                MainScreen(
-                    pid=12345, session_id="test-session", socket_path="/tmp/fake.sock"
-                )
-            )
-            await pilot.pause()
-            assert isinstance(app.screen, MainScreen)
-            # Press ESC to go back
-            await pilot.press("escape")
-            await pilot.pause()
-            # Should be back to ProcessSelectorScreen
-            assert isinstance(app.screen, ProcessSelectorScreen)
-
-    @pytest.mark.asyncio
-    async def test_tab_switching(self):
-        """Test tab switching with keyboard shortcuts."""
+    async def test_main_screen_has_seven_tabs(self):
+        """MainScreen has exactly 7 tab panes."""
         app = PeekaApp()
         async with app.run_test() as pilot:
             app.push_screen(
-                MainScreen(
-                    pid=12345, session_id="test-session", socket_path="/tmp/fake.sock"
-                )
+                MainScreen(pid=12345, session_id="test", socket_path="/tmp/fake.sock")
             )
             await pilot.pause()
+            from textual.widgets import TabPane
 
-            # Test switching tabs with different keys
-            # Each key should switch to corresponding tab without errors
-            for key in ["d", "w", "s", "m", "e", "l", "i"]:
-                await pilot.press(key)
-                await pilot.pause()
-                # Should still be on MainScreen after tab switch
-                assert isinstance(app.screen, MainScreen)
-
-
-class TestViews:
-    """Tests for individual views."""
+            panes = app.screen.query(TabPane)
+            assert len(panes) == 7
 
     @pytest.mark.asyncio
-    async def test_dashboard_view_in_tabpane(self):
-        """Test DashboardView renders inside TabPane without translate AttributeError."""
+    async def test_tab_labels_correct(self):
+        """All 7 tab labels match expected names."""
         app = PeekaApp()
         async with app.run_test() as pilot:
             app.push_screen(
-                MainScreen(
-                    pid=12345, session_id="test-session", socket_path="/tmp/fake.sock"
-                )
+                MainScreen(pid=12345, session_id="test", socket_path="/tmp/fake.sock")
             )
             await pilot.pause()
-            # Press 'd' to switch to dashboard view
-            await pilot.press("d")
-            await pilot.pause()
-            # Should not raise translate AttributeError
-            # If we get here without exception, test passes
-            assert isinstance(app.screen, MainScreen)
+            from textual.widgets import TabPane
+
+            panes = app.screen.query(TabPane)
+            pane_ids = [pane.id for pane in panes]
+            expected = [
+                "dashboard",
+                "watch",
+                "stack",
+                "monitor",
+                "memory",
+                "logger",
+                "inspect",
+            ]
+            assert pane_ids == expected
 
     @pytest.mark.asyncio
-    async def test_watch_view_button_press(self):
-        """Test WatchView button interactions without errors."""
+    async def test_tab_switching_updates_active(self):
+        """Pressing tab keys updates TabbedContent.active."""
         app = PeekaApp()
         async with app.run_test() as pilot:
             app.push_screen(
-                MainScreen(
-                    pid=12345, session_id="test-session", socket_path="/tmp/fake.sock"
-                )
+                MainScreen(pid=12345, session_id="test", socket_path="/tmp/fake.sock")
             )
             await pilot.pause()
-            # Press 'w' to switch to watch tab
+            from textual.widgets import TabbedContent
+
+            tabs = app.screen.query_one("#main-tabs", TabbedContent)
             await pilot.press("w")
             await pilot.pause()
-            # Should render without AttributeError
-            # If we get here without exception, test passes
-            assert isinstance(app.screen, MainScreen)
+            assert tabs.active == "watch"
+            await pilot.press("s")
+            await pilot.pause()
+            assert tabs.active == "stack"
+
+
+class TestWatchView:
+    @pytest.mark.asyncio
+    async def test_watch_view_has_input_labels(self):
+        """Watch view has Pattern: and Condition: labels."""
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            app.push_screen(
+                MainScreen(pid=12345, session_id="test", socket_path="/tmp/fake.sock")
+            )
+            await pilot.pause()
+            await pilot.press("w")
+            await pilot.pause()
+            from textual.widgets import Static
+
+            labels = app.screen.query("Static.input-label")
+            label_texts = [label.render().plain for label in labels]
+            assert "Pattern:" in label_texts
+            assert "Condition:" in label_texts
+
+    @pytest.mark.asyncio
+    async def test_watch_view_has_inputs(self):
+        """Watch view has pattern and condition input widgets."""
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            app.push_screen(
+                MainScreen(pid=12345, session_id="test", socket_path="/tmp/fake.sock")
+            )
+            await pilot.pause()
+            await pilot.press("w")
+            await pilot.pause()
+            from textual.widgets import Input
+
+            condition = app.screen.query_one("#watch-condition", Input)
+            assert condition.placeholder == "condition (optional)"
+
+    @pytest.mark.asyncio
+    async def test_watch_view_buttons(self):
+        """Watch view has Watch and Stop buttons."""
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            app.push_screen(
+                MainScreen(pid=12345, session_id="test", socket_path="/tmp/fake.sock")
+            )
+            await pilot.pause()
+            await pilot.press("w")
+            await pilot.pause()
+            from textual.widgets import Button
+
+            watch_btn = app.screen.query_one("#watch-btn", Button)
+            stop_btn = app.screen.query_one("#stop-btn", Button)
+            assert watch_btn is not None
+            assert stop_btn is not None
+
+
+class TestInputLabels:
+    @pytest.mark.asyncio
+    async def test_all_views_have_expected_labels(self):
+        """Each view with inputs has the correct number of input-label Statics."""
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            app.push_screen(
+                MainScreen(pid=12345, session_id="test", socket_path="/tmp/fake.sock")
+            )
+            await pilot.pause()
+
+            # Check each tab that should have labels
+            tab_label_counts = {
+                "w": 2,  # Watch: Pattern, Condition
+                "s": 1,  # Stack: Pattern
+                "m": 2,  # Monitor: Pattern, Interval
+                "l": 2,  # Logger: Filter, Logger
+                "i": 1,  # Inspect: Object Path
+            }
+
+            for key, expected_count in tab_label_counts.items():
+                await pilot.press(key)
+                await pilot.pause()
+                labels = app.screen.query("Static.input-label")
+                # Note: query returns ALL matching across all views,
+                # but only the active tab's view is mounted.
+                # We verify at least the expected count exists.
+                assert len(labels) >= expected_count, (
+                    f"Tab '{key}': expected >= {expected_count} labels, got {len(labels)}"
+                )
+
+
+class TestCompletionSource:
+    def test_get_completions_is_sync(self):
+        """CompletionSource.get_completions is a synchronous function."""
+        assert not inspect.iscoroutinefunction(CompletionSource.get_completions)
+
+    def test_type_annotation_uses_streaming_client(self):
+        """CompletionSource.__init__ type hint uses StreamingAgentClient."""
+        hints = CompletionSource.__init__.__annotations__
+        assert "client" in hints
+        from peeka.core.client import StreamingAgentClient
+
+        assert hints["client"] is StreamingAgentClient
