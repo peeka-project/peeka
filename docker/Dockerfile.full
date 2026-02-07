@@ -21,7 +21,7 @@ WORKDIR /app
 
 COPY . .
 
-RUN pip install --no-cache-dir -e ".[dev]"
+RUN pip install --no-cache-dir -e ".[dev]" -i https://mirrors.ustc.edu.cn/pypi/simple --trusted-host mirrors.ustc.edu.cn
 
 RUN cat > /app/test-all.sh << 'EOF'
 #!/bin/bash
