@@ -70,6 +70,9 @@ class MainScreen(Screen):
             logger_view = self.query_one(LoggerView)
             logger_view.set_client(self._client)
 
+            stack_view = self.query_one(StackView)
+            stack_view.set_client(self._client)
+
     async def _connect(self) -> None:
         """Connect to the target process agent."""
         try:
