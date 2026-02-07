@@ -89,7 +89,7 @@ class InspectView(Container):
         tree.clear()
 
         root = tree.root
-        root.set_label(f"{target} ({response.get('type', 'unknown')})")
+        root.label = f"{target} ({response.get('type', 'unknown')})"
 
         value = response.get("value")
         self._populate_tree(root, value)

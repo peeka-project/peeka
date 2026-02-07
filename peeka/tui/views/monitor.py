@@ -170,13 +170,13 @@ class MonitorView(Container):
         table = self.query_one("#stats-table", DataTable)
 
         try:
-            table.update_cell(watch_id, "Calls", str(total))
-            table.update_cell(watch_id, "Success", str(success))
-            table.update_cell(watch_id, "Fail", str(fail))
-            table.update_cell(watch_id, "Avg(ms)", f"{rt_avg:.2f}")
-            table.update_cell(watch_id, "Min(ms)", f"{rt_min:.2f}")
-            table.update_cell(watch_id, "Max(ms)", f"{rt_max:.2f}")
-            table.update_cell(watch_id, "P95(ms)", f"{rt_p95:.2f}")
+            table.update_cell_at((watch_id, 2), str(total))
+            table.update_cell_at((watch_id, 3), str(success))
+            table.update_cell_at((watch_id, 4), str(fail))
+            table.update_cell_at((watch_id, 5), f"{rt_avg:.2f}")
+            table.update_cell_at((watch_id, 6), f"{rt_min:.2f}")
+            table.update_cell_at((watch_id, 7), f"{rt_max:.2f}")
+            table.update_cell_at((watch_id, 8), f"{rt_p95:.2f}")
         except Exception:
             pass
 

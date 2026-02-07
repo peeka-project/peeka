@@ -113,7 +113,7 @@ class LoggerView(Container):
             self.app.notify("Please enter logger name", severity="warning")
             return
 
-        if level_select.value == Select.BLANK:
+        if level_select.value is Select.BLANK:
             self.app.notify("Please select log level", severity="warning")
             return
 
