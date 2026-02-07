@@ -5,65 +5,44 @@ Runtime diagnostic tool for Python 3.9-3.14+ using PEP 768 remote debugging.
 ## Build & Test Commands
 
 ```bash
-# Install
-pip install -e .                    # Development mode
-pip install -e ".[tui]"             # With TUI (textual)
-uv pip install -e .                 # Using uv (preferred)
+uv pip install -e .                 # Core only
+uv pip install -e ".[tui]"         # With TUI (textual)
+uv pip install -e ".[dev]"         # Dev (pytest, textual, testcontainers)
 
-# Test - Run ALL tests
-pytest tests/ -v
-
-# Test - CI-safe (excludes e2e/container)
-pytest tests/ -v -m "not e2e and not container"
-
-# Test - SINGLE file
-pytest tests/test_injector.py -v
-
-# Test - SINGLE test function
-pytest tests/test_injector.py::TestDecoratorInjector::test_inject_function -v
-
-# Test - E2E tests (requires ptrace permission)
-pytest tests/e2e/ -v
-
-# Test - TUI E2E tests (requires textual + ptrace)
-pytest tests/e2e/test_tui_e2e.py -v
-
-# Quick compatibility check (no pytest)
-python3 tests/simple_compat_test.py
-
-# Lint (optional, not enforced)
-ruff check peeka/
+pytest tests/ -v                                          # All tests
+pytest tests/ -v -m "not e2e and not container"           # CI-safe (no ptrace/docker)
+pytest tests/test_injector.py -v                          # Single file
+pytest tests/test_injector.py::TestDecoratorInjector::test_inject_function -v  # Single test
+pytest tests/e2e/ -v                                      # E2E (requires ptrace)
+ruff check peeka/                                         # Lint (no enforced config)
 ```
+
+Pytest config: `pytest.ini` (timeout=60s, filterwarnings ignores DeprecationWarning).
 
 ## Entry Points
 
-- `peeka-cli` → CLI interface (`peeka/cli/main.py`)
-- `peeka` → TUI interface (`peeka/tui/__init__.py`, requires textual)
+- `peeka-cli` → CLI (`peeka/cli/main.py`, argparse)
+- `peeka` → TUI (`peeka/tui/__init__.py`, requires textual)
 
 ## Code Style
 
-### Imports: stdlib → third-party → local (alphabetical within groups)
+### Imports: stdlib → third-party → local (blank line between groups, alphabetical within)
 
 ```python
 import json
 import threading
+from pathlib import Path
 from typing import Any, Dict, Optional, TYPE_CHECKING
 
-import pytest
+import textual  # third-party (when applicable)
 
 from peeka.commands.base import BaseCommand
 from peeka.core.agent import PeekaAgent
 ```
 
-### Type Hints: REQUIRED on all function signatures
+`typing` imports belong in the stdlib group. Third-party imports (e.g. `textual`, `pytest`) go between stdlib and local.
 
-```python
-def inject(self, pattern: str, config: Dict[str, Any]) -> str:
-    pass
-
-def _send_observation(self, observation: Dict[str, Any]) -> None:
-    pass
-```
+**Deferred imports**: Import inside methods to avoid circular deps (see `agent.py._register_handlers()`).
 
 ### TYPE_CHECKING for circular imports
 
@@ -73,130 +52,132 @@ if TYPE_CHECKING:
     from peeka.core.agent import PeekaAgent
 
 class Command:
-    def __init__(self, agent: "PeekaAgent"):  # String literal
+    def __init__(self, agent: "PeekaAgent"):  # String literal annotation
         self.agent = agent
 ```
 
-### Naming Conventions
+### Type Hints: REQUIRED on all function signatures
 
-| Type              | Pattern     | Example                         |
-|-------------------|-------------|---------------------------------|
-| Classes           | PascalCase  | `PeekaAgent`, `WatchCommand`    |
-| Functions/Methods | snake_case  | `inject()`, `_resolve_target()` |
-| Private           | `_prefix`   | `_send_observation()`, `_lock`  |
-| Constants         | UPPER_SNAKE | `BASIC_ALLOWED_ATTRS`           |
+Use `typing` module types (`Dict`, `Optional`, `Any`, `Callable`), not PEP 604 `X | None`.
 
-### Error Handling
+### Docstrings: Google style (Args, Returns, Raises) on public non-trivial methods
+
+### Naming: Classes=PascalCase, functions=snake_case, private=`_prefix`, constants=UPPER_SNAKE
+
+### Error Handling (layered pattern)
 
 ```python
-# Specific exceptions with context
+# Core modules: RAISE exceptions
 if target_info is None:
     raise ValueError(f"Cannot find target: {pattern}")
 
-# Agent/CLI: return structured error responses
+
+# Commands: CATCH and return structured dicts
 def execute(self, params: dict) -> dict:
     try:
         return {"status": "success", "data": result}
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
-# Best-effort restoration (don't break target process)
-try:
-    self._restore_function(target)
-except Exception:
-    pass  # Log but don't propagate
+# Agent: wraps command execution, adds traceback to error responses
+# Best-effort restoration: swallow exceptions to protect target process
 ```
+
+### Thread Safety
+
+Use `threading.Lock` for shared mutable state in agent/injector. Keep critical sections small.
+
+### Logging
+
+- **Injected agent code**: `print("[peeka Agent] ...")` — no logging module, minimal footprint
+- **CLI output**: `OutputFormatter` from `peeka/core/output.py` for structured JSONL
+- **Commands**: Python `logging` module where appropriate
 
 ## Architecture
 
 ```
 peeka/
-├── cli/main.py           # CLI entry point
-├── tui/                   # TUI (requires textual)
-│   ├── app.py            # PeekaApp main
-│   ├── screens/          # Process selector, main
-│   └── views/            # Dashboard, watch, stack, etc.
+├── cli/main.py              # CLI entry point (argparse)
+├── tui/
+│   ├── app.py               # PeekaApp main
+│   ├── completion.py         # CLI/TUI completion helper
+│   ├── screens/             # process_selector, main, help
+│   ├── views/               # dashboard, watch, stack, monitor, memory, logger, inspect
+│   └── widgets/             # autocomplete_input
 ├── core/
-│   ├── agent.py          # PeekaAgent coordinator
-│   ├── attach.py         # Process attachment (PEP 768 + GDB)
-│   ├── injector.py       # Function instrumentation
-│   ├── client.py         # AgentClient, StreamingAgentClient
-│   └── safeeval/         # Safe expression evaluation
-└── commands/             # BaseCommand subclasses
-    ├── base.py           # Abstract base
-    ├── watch.py          # Function observation
-    └── ...
+│   ├── agent.py             # PeekaAgent - injected into target, Unix socket server
+│   ├── attach.py            # Process attachment (PEP 768 + GDB fallback)
+│   ├── injector.py          # DecoratorInjector - runtime function wrapping
+│   ├── client.py            # AgentClient, StreamingAgentClient
+│   ├── observer.py          # ObservationManager
+│   ├── monitor.py           # Performance monitoring
+│   ├── output.py            # OutputFormatter (JSONL)
+│   └── safeeval/            # Safe expression evaluation (simpleeval)
+├── commands/                # BaseCommand subclasses
+│   ├── base.py              # ABC: execute() + validate_params()
+│   ├── watch.py, stack.py, monitor.py, memory.py
+│   ├── logger.py, search.py, reset.py, vmtool.py
+│   └── complete.py, detach.py
+└── utils/
+    ├── formatters.py        # Value formatting utilities
+    └── patterns.py          # Pattern matching (wildcards)
 ```
 
 ### Adding a New Command
 
 1. Create `peeka/commands/mycommand.py` extending `BaseCommand`
-2. Register in `peeka/core/agent.py` → `_register_handlers()`
-3. Add CLI in `peeka/cli/main.py`
-4. Write tests in `tests/test_mycommand.py`
+2. Implement `execute(self, params: Dict[str, Any]) -> Dict[str, Any]`
+3. Register in `peeka/core/agent.py` → `_register_handlers()` (import inside method)
+4. Add CLI subcommand in `peeka/cli/main.py`
+5. Write tests in `tests/test_mycommand.py`
 
-## Security - CRITICAL
+## Security — CRITICAL
 
-**NEVER use `eval()` on user input:**
+**NEVER use `eval()` on user input.** Use `peeka.core.safeeval.simpleeval.SimpleEval` instead.
 
-```python
-# GOOD - Safe evaluation
-from peeka.core.safeeval.simpleeval import SimpleEval
-evaluator = SimpleEval()
-result = evaluator.eval(condition_expr)
-
-# BAD - Code injection vulnerability
-result = eval(condition_expr)  # NEVER DO THIS
-```
-
-## TUI Patterns (Textual Framework)
-
-### Thread-Safe UI Updates
+## TUI Patterns (Textual)
 
 ```python
-# Background worker for blocking I/O
-worker = self.run_worker(
-    self._stream_observations(watch_id),
-    thread=True,
-    exclusive=False
-)
-
-# From background thread - MUST use call_from_thread
-self.app.call_from_thread(self._update_ui, data)
-```
-
-### Widget Queries
-
-```python
-# After push_screen, query from screen not app
-widget = app.screen.query_one("#widget-id", WidgetType)
-
-# Get text from Static widget
-text = widget.render().plain
+worker = self.run_worker(self._stream_observations(watch_id), thread=True, exclusive=False)
+self.app.call_from_thread(self._update_ui, data)  # From background thread
+widget = app.screen.query_one("#widget-id", WidgetType)  # After push_screen
 ```
 
 ## Testing Patterns
 
+Tests use **classes** with pytest fixtures. Custom `MockAgent` classes (not unittest.mock).
+
 ```python
+class MockAgent:
+    def __init__(self):
+        self._observations = []
+
+    def _send_observation(self, observation):
+        self._observations.append(observation)
+
+
 class TestMyFeature:
     @pytest.fixture
     def mock_agent(self):
         return MockAgent()
-
     def test_basic(self, mock_agent):
-        result = function_under_test()
-        assert result == expected
-
-    def test_error(self):
-        with pytest.raises(ValueError, match="expected"):
-            function_under_test(invalid)
+        assert function_under_test() == expected
 ```
+
+Dynamic test modules: insert into `sys.modules`, clean up in teardown.
 
 ### Test Markers
 
-- `@pytest.mark.e2e` - Requires process attachment
-- `@pytest.mark.tui` - Requires textual
-- `@pytest.mark.container` - Requires Docker
+| Marker        | Meaning                 |
+|---------------|-------------------------|
+| `unit`        | Fast, no external deps  |
+| `integration` | In-process agent/client |
+| `e2e`         | Requires ptrace         |
+| `container`   | Requires Docker         |
+| `tui`         | Requires textual        |
+| `slow`        | >10s runtime            |
+| `py314`       | Requires Python 3.14+   |
+| `gdb`         | Requires GDB            |
 
 ## Python Version Support
 
@@ -205,10 +186,37 @@ class TestMyFeature:
 | 3.14+    | PEP 768 `sys.remote_exec` | None                             |
 | 3.9-3.13 | GDB + ptrace fallback     | GDB, python3-dbg, CAP_SYS_PTRACE |
 
+## Docker Manual Testing
+
+Four images in `docker/` for manual testing. All require `--cap-add=SYS_PTRACE`.
+
+| Image | Dockerfile         | Python | Purpose                   |
+|-------|--------------------|--------|---------------------------|
+| cli   | `Dockerfile.cli`   | 3.12   | CLI commands (+ GDB)      |
+| tui   | `Dockerfile.tui`   | 3.12   | TUI interface (+ textual) |
+| py314 | `Dockerfile.py314` | 3.14   | PEP 768 native attach     |
+| full  | `Dockerfile.full`  | 3.12   | Full env (+ pytest)       |
+
+```bash
+# Build & run (from project root) — proxy required for network access
+docker build --network=host \
+  --build-arg http_proxy=http://127.0.0.1:7897 \
+  --build-arg https_proxy=http://127.0.0.1:7897 \
+  -f docker/Dockerfile.py314 -t peeka-py314 .
+docker run -it --cap-add=SYS_PTRACE --security-opt seccomp=unconfined peeka-py314
+
+# Or via docker-compose (from docker/)
+docker-compose build py314
+docker-compose run --rm py314
+```
+
+**Network note**: Clash proxy on `127.0.0.1:7897` requires `--network=host` + proxy build-args for Docker builds.
+Without these, pip/apt timeout on fake `198.18.x.x` DNS.
+
 ## Key Files
 
-- `peeka/core/injector.py` - Function wrapping, decorator pattern
-- `peeka/core/agent.py` - Command registration, main loop
-- `peeka/core/safeeval/simpleeval.py` - Expression security
-- `peeka/tui/views/watch.py` - Worker threading example
-- `tests/e2e/conftest.py` - E2E test fixtures
+- `peeka/core/injector.py` — Function wrapping, decorator injection, value formatting
+- `peeka/core/agent.py` — Command registration, Unix socket server, injected into target
+- `peeka/core/safeeval/simpleeval.py` — Expression security, safe AST evaluation
+- `peeka/core/output.py` — OutputFormatter for structured JSONL CLI output
+- `tests/e2e/conftest.py` — E2E fixtures (target process lifecycle, ptrace checks)

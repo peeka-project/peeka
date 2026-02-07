@@ -18,7 +18,7 @@ COPY pyproject.toml .
 COPY peeka/ ./peeka/
 COPY examples/ ./examples/
 
-RUN pip install --no-cache-dir -e . -i https://mirrors.ustc.edu.cn/pypi/simple --trusted-host mirrors.ustc.edu.cn
+RUN pip install --no-cache-dir -e .
 
 RUN cat > /app/test-cli.sh << 'EOF'
 #!/bin/bash
