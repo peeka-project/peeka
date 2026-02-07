@@ -26,6 +26,7 @@ class InspectView(Container):
     def compose(self) -> ComposeResult:
         yield Container(
             Horizontal(
+                Static("Object Path:", classes="input-label"),
                 Input(
                     placeholder="module.Class or module.variable",
                     id="inspect-path",

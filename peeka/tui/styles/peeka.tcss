@@ -38,6 +38,21 @@ Screen {
     height: 100%;
 }
 
+/* Tabs */
+Tab {
+    color: $text;
+}
+
+Tab:hover {
+    color: $text;
+    text-style: bold;
+}
+
+Tab.-active {
+    color: $text-primary;
+    text-style: bold;
+}
+
 /* Dashboard */
 #dashboard-container {
     padding: 1;
@@ -227,6 +242,14 @@ Screen {
 #inspect-tree, #inspect-details {
     height: 100%;
     border: solid $primary;
+}
+
+/* Input Labels */
+.input-label {
+    width: auto;
+    padding: 0 1;
+    content-align: center middle;
+    height: 3;
 }
 
 /* AutoComplete Widget */

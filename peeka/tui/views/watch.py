@@ -42,11 +42,13 @@ class WatchView(Container):
     def compose(self) -> ComposeResult:
         yield Container(
             Horizontal(
+                Static("Pattern:", classes="input-label"),
                 AutoCompleteInput(
                     placeholder="module.Class.method",
                     completions_callback=self._get_pattern_completions,
                     id="watch-pattern",
                 ),
+                Static("Condition:", classes="input-label"),
                 Input(
                     placeholder="condition (optional)",
                     id="watch-condition",

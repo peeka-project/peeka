@@ -29,6 +29,7 @@ class StackView(Container):
     def compose(self) -> ComposeResult:
         yield Container(
             Horizontal(
+                Static("Pattern:", classes="input-label"),
                 Input(
                     placeholder="module.Class.method",
                     id="stack-pattern",
