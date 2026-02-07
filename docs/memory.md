@@ -50,10 +50,10 @@ peeka-cli memory <pid> [options]
 
 ```bash
 # 查看内存概览（默认 action）
-peeka-cli memory --pid 12345
+peeka-cli memory --action overview
 
-# 或显式指定 action
-peeka-cli memory --pid 12345 --action overview
+# 或使用其他 action
+peeka-cli memory --action start
 ```
 
 **输出示例**：
@@ -110,10 +110,10 @@ peeka-cli memory --pid 12345 --action overview
 
 ```bash
 # 使用默认深度（25 层调用栈）
-peeka-cli memory --pid 12345 --action start
+peeka-cli memory --action start
 
 # 自定义调用栈深度（1-50）
-peeka-cli memory --pid 12345 --action start --nframe 50
+peeka-cli memory --action start --nframe 50
 ```
 
 **输出示例**：
@@ -156,7 +156,7 @@ peeka-cli memory --pid 12345 --action start --nframe 50
 关闭 `tracemalloc`，释放追踪开销。
 
 ```bash
-peeka-cli memory --pid 12345 --action stop
+peeka-cli memory --action stop
 ```
 
 **输出示例**：
@@ -178,8 +178,8 @@ peeka-cli memory --pid 12345 --action stop
 
 ```bash
 # 正确流程：先导出，再停止
-peeka-cli memory --pid 12345 --action dump --filename production_snapshot
-peeka-cli memory --pid 12345 --action stop
+peeka-cli memory --action dump --filename production_snapshot
+peeka-cli memory --action stop
 ```
 
 ### 4. 查看 Top N 内存分配（top）
@@ -188,13 +188,13 @@ peeka-cli memory --pid 12345 --action stop
 
 ```bash
 # 查看 top 20 分配（默认按行号分组）
-peeka-cli memory --pid 12345 --action top
+peeka-cli memory --action top
 
 # 查看 top 50 分配
-peeka-cli memory --pid 12345 --action top --limit 50
+peeka-cli memory --action top --limit 50
 
 # 按文件名分组（查看哪个模块占用多）
-peeka-cli memory --pid 12345 --action top --group-by filename --limit 30
+peeka-cli memory --action top --group-by filename --limit 30
 ```
 
 **输出示例**（按行号分组）：
@@ -246,7 +246,7 @@ peeka-cli memory --pid 12345 --action top --group-by filename --limit 30
 **示例**（按文件名分组）：
 
 ```bash
-peeka-cli memory --pid 12345 --action top --group-by filename --limit 10
+peeka-cli memory --action top --group-by filename --limit 10
 ```
 
 ```json
@@ -284,13 +284,13 @@ peeka-cli memory --pid 12345 --action top --group-by filename --limit 10
 
 ```bash
 # 自动生成文件名（时间戳）
-peeka-cli memory --pid 12345 --action dump
+peeka-cli memory --action dump
 
 # 指定文件名
-peeka-cli memory --pid 12345 --action dump --filename my_snapshot
+peeka-cli memory --action dump --filename my_snapshot
 
 # 带路径遍历保护（自动提取 basename）
-peeka-cli memory --pid 12345 --action dump --filename "../etc/passwd"
+peeka-cli memory --action dump --filename "../etc/passwd"
 # 实际保存为：/tmp/passwd.snapshot
 ```
 
@@ -360,10 +360,10 @@ for stat in diff[:10]:
 
 ```bash
 # 查看 top 20 对象类型（默认）
-peeka-cli memory --pid 12345 --action gc
+peeka-cli memory --action gc
 
 # 查看 top 50 对象类型
-peeka-cli memory --pid 12345 --action gc --limit 50
+peeka-cli memory --action gc --limit 50
 ```
 
 **输出示例**：
@@ -426,31 +426,31 @@ peeka-cli memory --pid 12345 --action gc --limit 50
 
 ```bash
 # 1. 查看当前内存状态
-peeka-cli memory --pid 12345 --action overview
+peeka-cli memory --action overview
 
 # 2. 启动追踪
-peeka-cli memory --pid 12345 --action start --nframe 50
+peeka-cli memory --action start --nframe 50
 
 # 3. 等待一段时间（让问题复现）
 sleep 300  # 5 分钟
 
 # 4. 导出第一个快照
-peeka-cli memory --pid 12345 --action dump --filename snapshot_before
+peeka-cli memory --action dump --filename snapshot_before
 
 # 5. 继续等待
 sleep 300
 
 # 6. 导出第二个快照
-peeka-cli memory --pid 12345 --action dump --filename snapshot_after
+peeka-cli memory --action dump --filename snapshot_after
 
 # 7. 查看 top 分配
-peeka-cli memory --pid 12345 --action top --limit 30
+peeka-cli memory --action top --limit 30
 
 # 8. 查看对象统计
-peeka-cli memory --pid 12345 --action gc --limit 50
+peeka-cli memory --action gc --limit 50
 
 # 9. 停止追踪
-peeka-cli memory --pid 12345 --action stop
+peeka-cli memory --action stop
 
 # 10. 离线对比快照（Python 脚本）
 python analyze_snapshots.py snapshot_before.snapshot snapshot_after.snapshot
@@ -460,19 +460,19 @@ python analyze_snapshots.py snapshot_before.snapshot snapshot_after.snapshot
 
 ```bash
 # 1. 启动追踪
-peeka-cli memory --pid 12345 --action start
+peeka-cli memory --action start
 
 # 2. 运行性能测试
 # ... 触发业务操作 ...
 
 # 3. 查看内存热点（按文件分组）
-peeka-cli memory --pid 12345 --action top --group-by filename --limit 20
+peeka-cli memory --action top --group-by filename --limit 20
 
 # 4. 查看具体代码行（按行号分组）
-peeka-cli memory --pid 12345 --action top --group-by lineno --limit 50
+peeka-cli memory --action top --group-by lineno --limit 50
 
 # 5. 停止追踪
-peeka-cli memory --pid 12345 --action stop
+peeka-cli memory --action stop
 ```
 
 ### 场景 3：定期监控
@@ -485,12 +485,12 @@ PID=12345
 SNAPSHOT_DIR="/data/memory_snapshots"
 
 # 启动追踪（首次）
-peeka-cli memory --pid $PID --action start
+peeka-cli memory --action start
 
 # 每小时导出快照
 while true; do
   timestamp=$(date +%Y%m%d_%H%M%S)
-  peeka-cli memory --pid $PID --action dump --filename "snapshot_$timestamp"
+  peeka-cli memory --action dump --filename "snapshot_$timestamp"
   sleep 3600
 done
 ```
@@ -534,36 +534,36 @@ done
 1. **按需启动**：
    ```bash
    # ❌ 错误：长期开启追踪
-   peeka-cli memory --pid 12345 --action start
+   peeka-cli memory --action start
    # ... 永久运行 ...
    
    # ✅ 正确：短时间启动，诊断后立即停止
-   peeka-cli memory --pid 12345 --action start
+   peeka-cli memory --action start
    sleep 300  # 5 分钟
-   peeka-cli memory --pid 12345 --action dump --filename snapshot
-   peeka-cli memory --pid 12345 --action stop
+   peeka-cli memory --action dump --filename snapshot
+   peeka-cli memory --action stop
    ```
 
 2. **选择合适的 nframe**：
    ```bash
    # 生产环境：使用默认值 25
-   peeka-cli memory --pid 12345 --action start
+   peeka-cli memory --action start
    
    # 开发调试：使用更深的调用栈
-   peeka-cli memory --pid 12345 --action start --nframe 50
+   peeka-cli memory --action start --nframe 50
    ```
 
 3. **低峰期使用 gc**：
    ```bash
    # gc 操作开销较大，建议在低峰期执行
-   peeka-cli memory --pid 12345 --action gc --limit 30
+   peeka-cli memory --action gc --limit 30
    ```
 
 4. **定期导出快照**：
    ```bash
    # 每 1 小时导出一次，用于趋势分析
    while true; do
-     peeka-cli memory --pid 12345 --action dump --filename "snapshot_$(date +%H)"
+     peeka-cli memory --action dump --filename "snapshot_$(date +%H)"
      sleep 3600
    done
    ```
@@ -579,7 +579,7 @@ done
 ```bash
 # 自定义快照目录
 export PEEKA_DUMP_DIR=/data/peeka_dumps
-peeka-cli memory --pid 12345 --action dump
+peeka-cli memory --action dump
 # 文件保存到：/data/peeka_dumps/peeka_dump_*.snapshot
 ```
 
@@ -593,10 +593,10 @@ peeka-cli memory --pid 12345 --action dump
 
 ```bash
 # 先启动追踪
-peeka-cli memory --pid 12345 --action start
+peeka-cli memory --action start
 
 # 再导出快照
-peeka-cli memory --pid 12345 --action dump
+peeka-cli memory --action dump
 ```
 
 ### 2. top 结果为空
@@ -610,9 +610,9 @@ peeka-cli memory --pid 12345 --action dump
 
 ```bash
 # 等待一段时间后再查看
-peeka-cli memory --pid 12345 --action start
+peeka-cli memory --action start
 sleep 60
-peeka-cli memory --pid 12345 --action top
+peeka-cli memory --action top
 ```
 
 ### 3. dump 文件过大
@@ -668,7 +668,7 @@ ls -lt /tmp/peeka_dump_*.snapshot | head -1
 
 # 自定义目录
 export PEEKA_DUMP_DIR=/data/dumps
-peeka-cli memory --pid 12345 --action dump
+peeka-cli memory --action dump
 ls -lt /data/dumps/
 ```
 
@@ -683,15 +683,15 @@ ls -lt /data/dumps/
 PID=$1
 ALERT_THRESHOLD=1000000000  # 1GB
 
-peeka-cli memory --pid $PID --action overview | \
+peeka-cli memory --action overview | \
   jq -r '.rss_bytes' | \
   while read rss; do
     if [ $rss -gt $ALERT_THRESHOLD ]; then
       echo "Alert: RSS > 1GB, capturing snapshot..."
-      peeka-cli memory --pid $PID --action start
+      peeka-cli memory --action start
       sleep 30
-      peeka-cli memory --pid $PID --action dump --filename "alert_$(date +%s)"
-      peeka-cli memory --pid $PID --action stop
+      peeka-cli memory --action dump --filename "alert_$(date +%s)"
+      peeka-cli memory --action stop
     fi
   done
 ```

@@ -43,7 +43,7 @@
 
 ```bash
 # 每 60 秒输出一次统计数据，持续运行
-peeka-cli monitor -p 12345 "myapp.api.handle_request" --interval 60
+peeka-cli monitor "myapp.api.handle_request" --interval 60
 ```
 
 **输出示例**：
@@ -73,7 +73,7 @@ peeka-cli monitor -p 12345 "myapp.api.handle_request" --interval 60
 
 ```bash
 # 每 30 秒输出一次，持续 10 次（5 分钟）
-peeka-cli monitor -p 12345 "myapp.payment.process" \
+peeka-cli monitor "myapp.payment.process" \
   --interval 30 -c 10 | \
   jq -r 'select(.fail_rate > 0.05) | "ALERT: Fail rate \(.fail_rate*100)%"'
 ```
@@ -86,7 +86,7 @@ peeka-cli monitor -p 12345 "myapp.payment.process" \
 
 ```bash
 # 监控 1 小时（60 次，每分钟一次）
-peeka-cli monitor -p 12345 "myapp.db.execute_query" \
+peeka-cli monitor "myapp.db.execute_query" \
   --interval 60 -c 60 > baseline.jsonl
 
 # 分析数据
@@ -112,10 +112,10 @@ jq -s '{
 
 ```bash
 # 终端 1：监控 API v1
-peeka-cli monitor -p 12345 "myapp.api.v1.handler" --interval 30 > api_v1.jsonl
+peeka-cli monitor "myapp.api.v1.handler" --interval 30 > api_v1.jsonl
 
 # 终端 2：监控 API v2
-peeka-cli monitor -p 12345 "myapp.api.v2.handler" --interval 30 > api_v2.jsonl
+peeka-cli monitor "myapp.api.v2.handler" --interval 30 > api_v2.jsonl
 
 # 终端 3：实时对比
 while true; do
@@ -132,7 +132,7 @@ done
 
 ```bash
 # 监控核心函数，每 10 秒输出一次
-peeka-cli monitor -p 12345 "myapp.process" --interval 10 | \
+peeka-cli monitor "myapp.process" --interval 10 | \
   jq -r '"\(.cycle): \(.total) calls, \(.rt_avg)ms avg, \(.fail_rate*100)% fail"'
 ```
 
@@ -194,10 +194,10 @@ peeka-cli monitor [--pid PID | --name NAME] <pattern> [options]
 **示例**：
 ```bash
 # 高频监控（每 10 秒）
-peeka-cli monitor -p 12345 "myapp.api.handler" --interval 10
+peeka-cli monitor "myapp.api.handler" --interval 10
 
 # 长期监控（每 5 分钟）
-peeka-cli monitor -p 12345 "myapp.batch.process" --interval 300
+peeka-cli monitor "myapp.batch.process" --interval 300
 ```
 
 **注意**：
@@ -219,13 +219,13 @@ peeka-cli monitor -p 12345 "myapp.batch.process" --interval 300
 **示例**：
 ```bash
 # 监控 1 次后停止（查看当前 1 分钟的统计）
-peeka-cli monitor -p 12345 "myapp.func" --interval 60 -c 1
+peeka-cli monitor "myapp.func" --interval 60 -c 1
 
 # 监控 10 分钟（10 次，每次 1 分钟）
-peeka-cli monitor -p 12345 "myapp.func" --interval 60 -c 10
+peeka-cli monitor "myapp.func" --interval 60 -c 10
 
 # 持续监控（直到手动停止）
-peeka-cli monitor -p 12345 "myapp.func" --interval 60
+peeka-cli monitor "myapp.func" --interval 60
 ```
 
 **计算总时长**：
@@ -327,7 +327,7 @@ total_cycle2 - total_cycle1 = 250 - 100 = 150
 **场景**：监控 API 入口函数，每分钟输出一次统计。
 
 ```bash
-peeka-cli monitor -p 12345 "myapp.api.handle_request" --interval 60
+peeka-cli monitor "myapp.api.handle_request" --interval 60
 ```
 
 **输出**：
@@ -343,7 +343,7 @@ peeka-cli monitor -p 12345 "myapp.api.handle_request" --interval 60
 **场景**：监控 5 分钟（5 次，每次 1 分钟）。
 
 ```bash
-peeka-cli monitor -p 12345 "myapp.payment.charge" --interval 60 -c 5
+peeka-cli monitor "myapp.payment.charge" --interval 60 -c 5
 ```
 
 **行为**：
@@ -356,7 +356,7 @@ peeka-cli monitor -p 12345 "myapp.payment.charge" --interval 60 -c 5
 **场景**：负载测试期间实时监控，每 10 秒输出一次。
 
 ```bash
-peeka-cli monitor -p 12345 "myapp.process" --interval 10 | \
+peeka-cli monitor "myapp.process" --interval 10 | \
   jq -r '"\(.cycle): \(.total) calls, \(.rt_avg)ms avg, \(.fail) fails"'
 ```
 
@@ -373,7 +373,7 @@ peeka-cli monitor -p 12345 "myapp.process" --interval 10 | \
 **场景**：监控失败率，超过 5% 时发出告警。
 
 ```bash
-peeka-cli monitor -p 12345 "myapp.critical_func" --interval 30 | \
+peeka-cli monitor "myapp.critical_func" --interval 30 | \
   jq -r 'if .fail_rate > 0.05 then
            "⚠️  ALERT: Fail rate \(.fail_rate * 100)% at cycle \(.cycle)"
          else
@@ -394,7 +394,7 @@ peeka-cli monitor -p 12345 "myapp.critical_func" --interval 30 | \
 
 ```bash
 # 监控 30 分钟（30 次，每次 1 分钟）
-peeka-cli monitor -p 12345 "myapp.db.query" --interval 60 -c 30 | \
+peeka-cli monitor "myapp.db.query" --interval 60 -c 30 | \
   jq -r '"\(.cycle) \(.rt_avg)"' > rt_trend.dat
 
 # 使用 gnuplot 绘制趋势图（需要安装 gnuplot）
@@ -414,7 +414,7 @@ EOF
 
 ```bash
 # 步骤 1：启动监控，发现响应时间异常
-peeka-cli monitor -p 12345 "myapp.process" --interval 60 | \
+peeka-cli monitor "myapp.process" --interval 60 | \
   jq -r 'select(.rt_avg > 100)'
 # 输出：{"cycle": 5, "rt_avg": 234.567, ...}
 
@@ -436,7 +436,7 @@ peeka-cli watch "myapp.process" -n 10
 
 ```bash
 # 步骤 1：监控核心函数 1 小时
-peeka-cli monitor -p 12345 "myapp.api.handle_request" \
+peeka-cli monitor "myapp.api.handle_request" \
   --interval 60 -c 60 > baseline_$(date +%Y%m%d).jsonl
 
 # 步骤 2：计算基线统计
@@ -473,7 +473,7 @@ baseline_rt=$(jq -r '.avg_rt' baseline_summary.json)
 echo "Baseline avg RT: ${baseline_rt}ms"
 
 # 步骤 2：实时监控并对比
-peeka-cli monitor -p 12345 "myapp.api.handle_request" --interval 60 | \
+peeka-cli monitor "myapp.api.handle_request" --interval 60 | \
   jq -r --arg baseline "$baseline_rt" '
     if .rt_avg > ($baseline | tonumber * 1.5) then
       "⚠️  DEGRADATION: \(.rt_avg)ms (baseline: \($baseline)ms)"
@@ -496,8 +496,8 @@ peeka-cli monitor -p 12345 "myapp.api.handle_request" --interval 60 | \
 
 ```bash
 # 步骤 1：同时监控两个函数
-peeka-cli monitor -p 12345 "myapp.api.v1.handler" --interval 30 > v1.jsonl &
-peeka-cli monitor -p 12345 "myapp.api.v2.handler" --interval 30 > v2.jsonl &
+peeka-cli monitor "myapp.api.v1.handler" --interval 30 > v1.jsonl &
+peeka-cli monitor "myapp.api.v2.handler" --interval 30 > v2.jsonl &
 
 # 步骤 2：等待收集数据（10 分钟）
 sleep 600
@@ -528,7 +528,7 @@ API v2:
 
 ```bash
 # 步骤 1：启动监控（高频，每 10 秒）
-peeka-cli monitor -p 12345 "myapp.process" --interval 10 > load_test.jsonl &
+peeka-cli monitor "myapp.process" --interval 10 > load_test.jsonl &
 
 # 步骤 2：启动负载测试（另一个终端）
 # ab -n 10000 -c 100 http://localhost:8000/api/endpoint
@@ -613,12 +613,12 @@ jq -s '[.[0].total] + [range(1; length) |
 
 **方法 1**：使用 `-c` 参数限制周期数（自动停止）
 ```bash
-peeka-cli monitor -p 12345 "myapp.func" --interval 60 -c 10
+peeka-cli monitor "myapp.func" --interval 60 -c 10
 ```
 
 **方法 2**：手动 Ctrl+C（不影响目标进程）
 ```bash
-peeka-cli monitor -p 12345 "myapp.func" --interval 60
+peeka-cli monitor "myapp.func" --interval 60
 # 按 Ctrl+C 停止
 ```
 
@@ -633,13 +633,13 @@ peeka-cli monitor -p 12345 "myapp.func" --interval 60
 
 ```bash
 # 终端 1：监控 API
-peeka-cli monitor -p 12345 "myapp.api.handler" --interval 60
+peeka-cli monitor "myapp.api.handler" --interval 60
 
 # 终端 2：监控数据库
-peeka-cli monitor -p 12345 "myapp.db.query" --interval 60
+peeka-cli monitor "myapp.db.query" --interval 60
 
 # 终端 3：监控缓存
-peeka-cli monitor -p 12345 "myapp.cache.get" --interval 60
+peeka-cli monitor "myapp.cache.get" --interval 60
 ```
 
 **注意**：
@@ -655,7 +655,7 @@ peeka-cli monitor -p 12345 "myapp.cache.get" --interval 60
 
 **方法 1**：使用 `status` 动作（如果 CLI 支持）
 ```bash
-peeka-cli monitor -p 12345 --action status
+peeka-cli monitor --action status
 ```
 
 **方法 2**：检查进程是否有对应的客户端连接
@@ -716,7 +716,7 @@ jq -r '"\(.cycle) \(.rt_min) \(.rt_avg) \(.rt_max)"' monitor.jsonl
 **答案**：`monitor` 命令支持异步函数（async def）。
 
 ```bash
-peeka-cli monitor -p 12345 "myapp.async_handler" --interval 60
+peeka-cli monitor "myapp.async_handler" --interval 60
 ```
 
 **注意**：
@@ -737,7 +737,7 @@ peeka-cli monitor -p 12345 "myapp.async_handler" --interval 60
 
 ```bash
 # 监控 json.dumps（可能调用频率极高）
-peeka-cli monitor -p 12345 "json.dumps" --interval 10 -c 6
+peeka-cli monitor "json.dumps" --interval 10 -c 6
 ```
 
 **警告**：
@@ -762,7 +762,7 @@ PATTERN="myapp.api.handler"
 LOG="monitor.jsonl"
 
 # 启动监控（后台）
-peeka-cli monitor -p $PID "$PATTERN" --interval 10 > $LOG &
+peeka-cli monitor "$PATTERN" --interval 10 > $LOG &
 MONITOR_PID=$!
 
 # 实时显示仪表盘
@@ -795,7 +795,7 @@ PID=12345
 PATTERN="myapp.api.handler"
 METRICS_FILE="/var/lib/node_exporter/textfile_collector/peeka.prom"
 
-peeka-cli monitor -p $PID "$PATTERN" --interval 60 | \
+peeka-cli monitor "$PATTERN" --interval 60 | \
   jq -r '
     "peeka_calls_total{\(pattern=\"\($PATTERN)\"} \(.total)",
     "peeka_success_total{\(pattern=\"\($PATTERN)\"} \(.success)",
@@ -832,7 +832,7 @@ BASELINE="baseline_rt.txt"
 baseline_rt=$(cat $BASELINE)
 
 # 监控 5 分钟
-current_rt=$(peeka-cli monitor -p $PID "$PATTERN" --interval 60 -c 5 | \
+current_rt=$(peeka-cli monitor "$PATTERN" --interval 60 -c 5 | \
   jq -s 'map(.rt_avg) | add / length')
 
 # 对比
@@ -851,9 +851,9 @@ fi
 
 ```bash
 # 监控 3 个函数（并行）
-peeka-cli monitor -p 12345 "myapp.api.v1" --interval 60 -c 10 > v1.jsonl &
-peeka-cli monitor -p 12345 "myapp.api.v2" --interval 60 -c 10 > v2.jsonl &
-peeka-cli monitor -p 12345 "myapp.api.v3" --interval 60 -c 10 > v3.jsonl &
+peeka-cli monitor "myapp.api.v1" --interval 60 -c 10 > v1.jsonl &
+peeka-cli monitor "myapp.api.v2" --interval 60 -c 10 > v2.jsonl &
+peeka-cli monitor "myapp.api.v3" --interval 60 -c 10 > v3.jsonl &
 
 # 等待完成
 wait
@@ -882,7 +882,7 @@ PATTERN="myapp.critical"
 THRESHOLD_RT=100      # 响应时间阈值（毫秒）
 THRESHOLD_FAIL=0.05   # 失败率阈值（5%）
 
-peeka-cli monitor -p $PID "$PATTERN" --interval 60 | \
+peeka-cli monitor "$PATTERN" --interval 60 | \
   jq -r --arg rt "$THRESHOLD_RT" --arg fail "$THRESHOLD_FAIL" '
     if .rt_avg > ($rt | tonumber) or .fail_rate > ($fail | tonumber) then
       "ALERT: cycle=\(.cycle), rt=\(.rt_avg)ms, fail=\(.fail_rate*100)%"
@@ -905,7 +905,7 @@ peeka-cli monitor -p $PID "$PATTERN" --interval 60 | \
 ```bash
 # 收集 1 周的监控数据
 for day in {1..7}; do
-  peeka-cli monitor -p 12345 "myapp.func" --interval 3600 -c 24 > \
+  peeka-cli monitor "myapp.func" --interval 3600 -c 24 > \
     monitor_day${day}.jsonl
   sleep 86400  # 1 天
 done
@@ -945,7 +945,7 @@ monitor com.example.MyClass myMethod -c 5 -n 10
 
 **Peeka (Python)**：
 ```bash
-peeka-cli monitor -p 12345 "myapp.MyClass.myMethod" --interval 5 -c 10
+peeka-cli monitor "myapp.MyClass.myMethod" --interval 5 -c 10
 ```
 
 ### 输出格式对比
