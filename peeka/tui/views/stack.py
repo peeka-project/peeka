@@ -103,7 +103,7 @@ class StackView(Container):
         self._trace_counts[watch_id] = 0
 
         worker = self.run_worker(
-            self._stream_traces(watch_id, pattern), thread=True, exclusive=False
+            lambda: self._stream_traces(watch_id, pattern), thread=True, exclusive=False
         )
         self._workers[watch_id] = worker
 

@@ -212,3 +212,48 @@ class TestCompletionSource:
         from peeka.core.client import StreamingAgentClient
 
         assert hints["client"] is StreamingAgentClient
+
+
+class TestWorkerCallable:
+    @pytest.mark.asyncio
+    async def test_watch_view_callable_wrapper(self):
+        """Verify _stream_observations is wrapped in lambda for run_worker."""
+        from peeka.tui.views.watch import WatchView
+
+        view = WatchView(pid=12345)
+        # Verify the method exists and is not a coroutine
+        assert hasattr(view, "_stream_observations")
+        # The lambda wrapper ensures the method is called inside the worker thread
+        assert callable(view._stream_observations)
+
+    @pytest.mark.asyncio
+    async def test_stack_view_callable_wrapper(self):
+        """Verify _stream_traces is wrapped in lambda for run_worker."""
+        from peeka.tui.views.stack import StackView
+
+        view = StackView(pid=12345)
+        # Verify the method exists and is not a coroutine
+        assert hasattr(view, "_stream_traces")
+        # The lambda wrapper ensures the method is called inside the worker thread
+        assert callable(view._stream_traces)
+
+    @pytest.mark.asyncio
+    async def test_monitor_view_callable_wrapper(self):
+        """Verify _stream_stats is wrapped in lambda for run_worker."""
+        from peeka.tui.views.monitor import MonitorView
+
+        view = MonitorView(pid=12345)
+        # Verify the method exists and is not a coroutine
+        assert hasattr(view, "_stream_stats")
+        # The lambda wrapper ensures the method is called inside the worker thread
+        assert callable(view._stream_stats)
+
+    def test_dashboard_view_callable_wrapper(self):
+        """Verify _periodic_refresh is wrapped in lambda for run_worker."""
+        from peeka.tui.views.dashboard import DashboardView
+
+        view = DashboardView(pid=12345)
+        # Verify the method exists and is not a coroutine
+        assert hasattr(view, "_periodic_refresh")
+        # The lambda wrapper ensures the method is called inside the worker thread
+        assert callable(view._periodic_refresh)

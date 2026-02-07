@@ -80,7 +80,7 @@ class DashboardView(Container):
             return
 
         self._refresh_worker = self.run_worker(
-            self._periodic_refresh(), thread=True, exclusive=False
+            lambda: self._periodic_refresh(), thread=True, exclusive=False
         )
 
     def _periodic_refresh(self):

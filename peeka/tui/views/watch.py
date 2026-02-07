@@ -139,7 +139,7 @@ class WatchView(Container):
         }
 
         worker = self.run_worker(
-            self._stream_observations(watch_id, pattern),
+            lambda: self._stream_observations(watch_id, pattern),
             thread=True,
             exclusive=False,
         )
