@@ -58,8 +58,12 @@ class TestMainScreen:
         """Test that MainScreen renders with a PID."""
         app = PeekaApp()
         async with app.run_test() as pilot:
-            # Push MainScreen with a test PID
-            app.push_screen(MainScreen(pid=12345))
+            # Push MainScreen with test parameters (no real connection)
+            app.push_screen(
+                MainScreen(
+                    pid=12345, session_id="test-session", socket_path="/tmp/fake.sock"
+                )
+            )
             await pilot.pause()
             assert isinstance(app.screen, MainScreen)
             assert app.screen.pid == 12345
@@ -72,7 +76,11 @@ class TestMainScreen:
             # Start with ProcessSelectorScreen
             assert isinstance(app.screen, ProcessSelectorScreen)
             # Push MainScreen
-            app.push_screen(MainScreen(pid=12345))
+            app.push_screen(
+                MainScreen(
+                    pid=12345, session_id="test-session", socket_path="/tmp/fake.sock"
+                )
+            )
             await pilot.pause()
             assert isinstance(app.screen, MainScreen)
             # Press ESC to go back
@@ -86,7 +94,11 @@ class TestMainScreen:
         """Test tab switching with keyboard shortcuts."""
         app = PeekaApp()
         async with app.run_test() as pilot:
-            app.push_screen(MainScreen(pid=12345))
+            app.push_screen(
+                MainScreen(
+                    pid=12345, session_id="test-session", socket_path="/tmp/fake.sock"
+                )
+            )
             await pilot.pause()
 
             # Test switching tabs with different keys
@@ -106,7 +118,11 @@ class TestViews:
         """Test DashboardView renders inside TabPane without translate AttributeError."""
         app = PeekaApp()
         async with app.run_test() as pilot:
-            app.push_screen(MainScreen(pid=12345))
+            app.push_screen(
+                MainScreen(
+                    pid=12345, session_id="test-session", socket_path="/tmp/fake.sock"
+                )
+            )
             await pilot.pause()
             # Press 'd' to switch to dashboard view
             await pilot.press("d")
@@ -120,7 +136,11 @@ class TestViews:
         """Test WatchView button interactions without errors."""
         app = PeekaApp()
         async with app.run_test() as pilot:
-            app.push_screen(MainScreen(pid=12345))
+            app.push_screen(
+                MainScreen(
+                    pid=12345, session_id="test-session", socket_path="/tmp/fake.sock"
+                )
+            )
             await pilot.pause()
             # Press 'w' to switch to watch tab
             await pilot.press("w")
