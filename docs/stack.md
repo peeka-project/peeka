@@ -41,7 +41,7 @@
 
 ```bash
 # 查看 process_order 函数是从哪里被调用的
-peeka-cli stack -p 12345 "myapp.orders.process_order"
+peeka-cli stack "myapp.orders.process_order"
 ```
 
 **输出示例**：
@@ -81,7 +81,7 @@ peeka-cli stack -p 12345 "myapp.orders.process_order"
 
 ```bash
 # 限制栈深度为 20 层，避免输出过长
-peeka-cli stack -p 12345 "myapp.utils.recursive_func" --depth 20
+peeka-cli stack "myapp.utils.recursive_func" --depth 20
 ```
 
 ### 3. 定位异常调用路径
@@ -90,7 +90,7 @@ peeka-cli stack -p 12345 "myapp.utils.recursive_func" --depth 20
 
 ```bash
 # 仅在 user_id 为 999 时捕获调用栈
-peeka-cli stack -p 12345 "myapp.auth.check_permission" \
+peeka-cli stack "myapp.auth.check_permission" \
   --condition-express "params[0] == 999"
 ```
 
@@ -100,7 +100,7 @@ peeka-cli stack -p 12345 "myapp.auth.check_permission" \
 
 ```bash
 # 捕获前 100 次调用，然后统计路径分布
-peeka-cli stack -p 12345 "myapp.db.execute_query" -n 100 | \
+peeka-cli stack "myapp.db.execute_query" -n 100 | \
   jq -r '.stack[0] | "\(.filename):\(.lineno)"' | \
   sort | uniq -c | sort -rn
 ```
@@ -111,7 +111,7 @@ peeka-cli stack -p 12345 "myapp.db.execute_query" -n 100 | \
 
 ```bash
 # 追踪 API 入口函数的调用链
-peeka-cli stack -p 12345 "myapp.api.handle_request"
+peeka-cli stack "myapp.api.handle_request"
 ```
 
 ---
@@ -164,10 +164,10 @@ peeka-cli stack [--pid PID | --name NAME] <pattern> [options]
 **示例**：
 ```bash
 # 只看第一次调用
-peeka-cli stack -p 12345 "myapp.func" -n 1
+peeka-cli stack "myapp.func" -n 1
 
 # 捕获 50 次样本
-peeka-cli stack -p 12345 "myapp.func" -n 50
+peeka-cli stack "myapp.func" -n 50
 ```
 
 ### --condition-express - 条件表达式
@@ -190,17 +190,17 @@ peeka-cli stack -p 12345 "myapp.func" -n 50
 **示例**：
 ```bash
 # 仅当第一个参数大于 100 时捕获
-peeka-cli stack -p 12345 "myapp.func" --condition-express "params[0] > 100"
+peeka-cli stack "myapp.func" --condition-express "params[0] > 100"
 
 # 仅当参数个数大于 2 时捕获
-peeka-cli stack -p 12345 "myapp.func" --condition-express "len(params) > 2"
+peeka-cli stack "myapp.func" --condition-express "len(params) > 2"
 
 # 仅当用户 ID 为指定值时捕获
-peeka-cli stack -p 12345 "myapp.check_permission" \
+peeka-cli stack "myapp.check_permission" \
   --condition-express "kwargs.get('user_id') == 999"
 
 # 复合条件
-peeka-cli stack -p 12345 "myapp.process" \
+peeka-cli stack "myapp.process" \
   --condition-express "params[0] > 10 and len(params) < 5"
 ```
 
@@ -229,10 +229,10 @@ peeka-cli stack -p 12345 "myapp.process" \
 **示例**：
 ```bash
 # 只看最近 3 层调用者
-peeka-cli stack -p 12345 "myapp.func" --depth 3
+peeka-cli stack "myapp.func" --depth 3
 
 # 深度递归分析（最多 30 层）
-peeka-cli stack -p 12345 "myapp.recursive_func" --depth 30
+peeka-cli stack "myapp.recursive_func" --depth 30
 ```
 
 ---
@@ -328,7 +328,7 @@ peeka-cli stack -p 12345 "myapp.recursive_func" --depth 30
 **场景**：查看 `calculate_price` 函数是从哪里被调用的。
 
 ```bash
-peeka-cli stack -p 12345 "myapp.pricing.calculate_price"
+peeka-cli stack "myapp.pricing.calculate_price"
 ```
 
 **输出**：
@@ -367,7 +367,7 @@ peeka-cli stack -p 12345 "myapp.pricing.calculate_price"
 **场景**：只追踪参数为负数的调用（可能是异常情况）。
 
 ```bash
-peeka-cli stack -p 12345 "myapp.utils.process_value" \
+peeka-cli stack "myapp.utils.process_value" \
   --condition-express "params[0] < 0" \
   -n 10
 ```
@@ -400,7 +400,7 @@ peeka-cli stack -p 12345 "myapp.utils.process_value" \
 **场景**：只关心最近的 3 层调用者。
 
 ```bash
-peeka-cli stack -p 12345 "myapp.db.execute_query" --depth 3
+peeka-cli stack "myapp.db.execute_query" --depth 3
 ```
 
 **输出**：
@@ -439,7 +439,7 @@ peeka-cli stack -p 12345 "myapp.db.execute_query" --depth 3
 **场景**：只需要看一次调用栈，确认调用路径即可。
 
 ```bash
-peeka-cli stack -p 12345 "myapp.cache.get" -n 1
+peeka-cli stack "myapp.cache.get" -n 1
 ```
 
 **行为**：捕获第一次调用后自动停止追踪，不会继续输出。
@@ -449,7 +449,7 @@ peeka-cli stack -p 12345 "myapp.cache.get" -n 1
 **场景**：提取所有调用来源，统计哪个文件最频繁地调用目标函数。
 
 ```bash
-peeka-cli stack -p 12345 "myapp.logger.log" -n 100 | \
+peeka-cli stack "myapp.logger.log" -n 100 | \
   jq -r '.stack[0] | "\(.filename):\(.lineno)"' | \
   sort | uniq -c | sort -rn | head -10
 ```
@@ -469,7 +469,7 @@ peeka-cli stack -p 12345 "myapp.logger.log" -n 100 | \
 **场景**：分析哪些线程调用了目标函数。
 
 ```bash
-peeka-cli stack -p 12345 "myapp.shared.resource.access" -n 50 | \
+peeka-cli stack "myapp.shared.resource.access" -n 50 | \
   jq -r '.thread_name' | sort | uniq -c
 ```
 
@@ -490,12 +490,12 @@ peeka-cli stack -p 12345 "myapp.shared.resource.access" -n 50 | \
 
 ```bash
 # 步骤 1：启动追踪（仅捕获异常参数的调用）
-peeka-cli stack -p 12345 "myapp.payment.charge" \
+peeka-cli stack "myapp.payment.charge" \
   --condition-express "params[0] <= 0" \
   -n 20
 
 # 步骤 2：等待问题复现（持续输出到文件）
-peeka-cli stack -p 12345 "myapp.payment.charge" \
+peeka-cli stack "myapp.payment.charge" \
   --condition-express "params[0] <= 0" > stack_trace.jsonl
 
 # 步骤 3：分析调用路径
@@ -520,7 +520,7 @@ jq -r '.stack[0] | "\(.filename):\(.lineno)"' stack_trace.jsonl | \
 
 ```bash
 # 步骤 1：捕获 200 次调用的调用栈
-peeka-cli stack -p 12345 "myapp.db.query" -n 200 > query_stacks.jsonl
+peeka-cli stack "myapp.db.query" -n 200 > query_stacks.jsonl
 
 # 步骤 2：统计调用路径分布
 jq -r '.stack[0:3] | map("\(.filename):\(.lineno)") | join(" -> ")' \
@@ -544,7 +544,7 @@ jq -r '.stack[0:3] | map("\(.filename):\(.lineno)") | join(" -> ")' \
 
 ```bash
 # 步骤 1：捕获深层调用栈（depth 设为 50）
-peeka-cli stack -p 12345 "myapp.tree.traverse" --depth 50 -n 10 > recursion.jsonl
+peeka-cli stack "myapp.tree.traverse" --depth 50 -n 10 > recursion.jsonl
 
 # 步骤 2：计算每次调用的栈深度
 jq '.stack | length' recursion.jsonl
@@ -605,7 +605,7 @@ process_tree at /app/myapp/api/views.py:123
 - 使用 `thread_id` 和 `thread_name` 字段区分线程
 - 可以用 `jq` 过滤特定线程：
   ```bash
-  peeka-cli stack -p 12345 "myapp.func" | \
+  peeka-cli stack "myapp.func" | \
     jq 'select(.thread_name == "WorkerThread-1")'
   ```
 
@@ -664,10 +664,10 @@ peeka-cli watch --action stop --watch-id watch_001
 **示例**：
 ```bash
 # 终端 1：追踪调用栈
-peeka-cli stack -p 12345 "myapp.func" > stack.jsonl
+peeka-cli stack "myapp.func" > stack.jsonl
 
 # 终端 2：观测参数和返回值
-peeka-cli watch -p 12345 "myapp.func" > watch.jsonl
+peeka-cli watch "myapp.func" > watch.jsonl
 ```
 
 **注意**：
@@ -681,10 +681,10 @@ peeka-cli watch -p 12345 "myapp.func" > watch.jsonl
 **示例**：
 ```bash
 # 追踪 json.dumps 的调用栈
-peeka-cli stack -p 12345 "json.dumps" --depth 5
+peeka-cli stack "json.dumps" --depth 5
 
 # 追踪 logging 模块的 info 方法
-peeka-cli stack -p 12345 "logging.Logger.info" --depth 3
+peeka-cli stack "logging.Logger.info" --depth 3
 ```
 
 **注意**：
@@ -700,7 +700,7 @@ peeka-cli stack -p 12345 "logging.Logger.info" --depth 3
 **场景**：统计所有不同的调用路径，按频率排序。
 
 ```bash
-peeka-cli stack -p 12345 "myapp.db.query" -n 500 | \
+peeka-cli stack "myapp.db.query" -n 500 | \
   jq -r '.stack[0:3] | map("\(.filename):\(.lineno)") | join(" -> ")' | \
   sort | uniq -c | sort -rn > call_paths.txt
 ```
@@ -718,7 +718,7 @@ peeka-cli stack -p 12345 "myapp.db.query" -n 500 | \
 
 ```bash
 # 步骤 1：提取调用关系
-peeka-cli stack -p 12345 "myapp.func" -n 100 | \
+peeka-cli stack "myapp.func" -n 100 | \
   jq -r '.stack[] | "\(.function) -> \(.filename):\(.lineno)"' > edges.txt
 
 # 步骤 2：使用 graphviz 生成图（需要自行编写脚本）
@@ -730,7 +730,7 @@ peeka-cli stack -p 12345 "myapp.func" -n 100 | \
 **场景**：实时显示每秒的调用次数。
 
 ```bash
-peeka-cli stack -p 12345 "myapp.api.handle_request" | \
+peeka-cli stack "myapp.api.handle_request" | \
   jq -r .timestamp | \
   awk '{
     sec = int($1)
@@ -745,7 +745,7 @@ peeka-cli stack -p 12345 "myapp.api.handle_request" | \
 **场景**：只关心应用代码，忽略第三方库（如 Django、Flask）。
 
 ```bash
-peeka-cli stack -p 12345 "myapp.views.index" --depth 20 | \
+peeka-cli stack "myapp.views.index" --depth 20 | \
   jq '.stack |= map(select(.filename | startswith("/app/myapp")))'
 ```
 
@@ -760,11 +760,11 @@ peeka-cli stack -p 12345 "myapp.views.index" --depth 20 | \
 
 ```bash
 # 服务 A
-peeka-cli stack -p 12345 "service_a.process" | \
+peeka-cli stack "service_a.process" | \
   jq --arg service "A" '. + {service: $service}' > trace_a.jsonl
 
 # 服务 B
-peeka-cli stack -p 67890 "service_b.handle" | \
+peeka-cli stack "service_b.handle" | \
   jq --arg service "B" '. + {service: $service}' > trace_b.jsonl
 
 # 合并分析
@@ -778,7 +778,7 @@ cat trace_a.jsonl trace_b.jsonl | \
 
 ```bash
 # 脚本示例（需要自行实现）
-peeka-cli stack -p 12345 "myapp.api.endpoint" -n 1000 | \
+peeka-cli stack "myapp.api.endpoint" -n 1000 | \
   jq -r '.stack[0] | "\(.filename):\(.lineno)"' | \
   sort | uniq -c | \
   awk '{print "call_path_count{path=\""$2"\"} "$1}' > metrics.prom
@@ -815,7 +815,7 @@ stack com.example.MyClass myMethod -n 10 '#cost>100'
 
 **Peeka (Python)**：
 ```bash
-peeka-cli stack -p 12345 "myapp.MyClass.myMethod" -n 10 \
+peeka-cli stack "myapp.MyClass.myMethod" -n 10 \
   --condition-express "cost > 100"
 ```
 

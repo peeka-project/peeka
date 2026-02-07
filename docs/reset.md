@@ -17,18 +17,17 @@
 ## 命令格式
 
 ```bash
-peeka-cli reset <pid> [pattern] [options]
+peeka-cli reset [pattern] [options]
 ```
+
+**使用前提**：需要先使用 `peeka-cli attach <pid>` 附加到目标进程
 
 ### 参数说明
 
-| 参数           | 说明                | 默认值 | 示例                  |
-|--------------|-------------------|-----|---------------------|
-| `pid`        | 目标进程 ID           | -   | `12345`             |
-| `pattern`    | 可选的匹配模式（支持通配符）    | 无   | `"myapp.service.*"` |
-| `-l, --list` | 列出当前增强而不是重置它们     | -   | `--list`            |
-| `-p, --pid`  | 指定目标进程 ID（替代位置参数） | -   | `-p 12345`          |
-| `--name`     | 通过进程名称查找（替代 PID）  | -   | `--name python3`    |
+| 参数           | 说明                    | 默认值 | 示例                  |
+|--------------|------------------------|-----|---------------------|
+| `pattern`    | 可选的匹配模式（支持通配符）      | 无   | `"myapp.service.*"` |
+| `-l, --list` | 列出当前增强而不是重置它们       | -   | `--list`            |
 
 ### 模式匹配规则
 
@@ -129,7 +128,7 @@ peeka-cli reset <pid> [pattern] [options]
 
 ```bash
 # 重置所有增强
-peeka-cli reset -p 12345
+peeka-cli reset
 ```
 
 **输出**：
@@ -157,13 +156,13 @@ peeka-cli reset -p 12345
 
 ```bash
 # 只重置 myapp.service 模块的增强
-peeka-cli reset -p 12345 "myapp.service.*"
+peeka-cli reset "myapp.service.*"
 
 # 重置特定类的所有方法
-peeka-cli reset -p 12345 "myapp.service.UserService.*"
+peeka-cli reset "myapp.service.UserService.*"
 
 # 重置特定方法
-peeka-cli reset -p 12345 "myapp.service.UserService.query"
+peeka-cli reset "myapp.service.UserService.query"
 ```
 
 **输出**（匹配 2 个增强）：
@@ -190,7 +189,7 @@ peeka-cli reset -p 12345 "myapp.service.UserService.query"
 
 ```bash
 # 模式不匹配任何增强
-peeka-cli reset -p 12345 "nonexistent.*"
+peeka-cli reset "nonexistent.*"
 ```
 
 **输出**：
@@ -208,7 +207,7 @@ peeka-cli reset -p 12345 "nonexistent.*"
 
 ```bash
 # 查看所有活跃的增强
-peeka-cli reset -p 12345 --list
+peeka-cli reset --list
 ```
 
 **输出**：
@@ -245,7 +244,7 @@ peeka-cli reset -p 12345 --list
 
 ```bash
 # 当没有活跃增强时
-peeka-cli reset -p 12345 --list
+peeka-cli reset --list
 ```
 
 **输出**：
@@ -263,24 +262,24 @@ peeka-cli reset -p 12345 --list
 
 ```bash
 # 提取重置计数
-peeka-cli reset -p 12345 | jq '.count'
+peeka-cli reset | jq '.count'
 # 输出: 3
 
 # 提取受影响的模式列表
-peeka-cli reset -p 12345 "myapp.*" | jq -r '.affected[].pattern'
+peeka-cli reset "myapp.*" | jq -r '.affected[].pattern'
 # 输出:
 # myapp.service.query
 # myapp.handler.process
 
 # 统计当前增强数量
-peeka-cli reset -p 12345 --list | jq '.total'
+peeka-cli reset --list | jq '.total'
 # 输出: 5
 
 # 查看特定命令的增强
-peeka-cli reset -p 12345 --list | jq '.enhanced[] | select(.command == "watch")'
+peeka-cli reset --list | jq '.enhanced[] | select(.command == "watch")'
 
 # 按观测次数排序
-peeka-cli reset -p 12345 --list | jq '.enhanced | sort_by(.count) | reverse'
+peeka-cli reset --list | jq '.enhanced | sort_by(.count) | reverse'
 ```
 
 ## 典型工作流程
@@ -295,10 +294,10 @@ peeka-cli watch "myapp.service.query" -n 100
 # ... 分析数据 ...
 
 # 3. 诊断结束，清理所有增强
-peeka-cli reset -p 12345
+peeka-cli reset
 
 # 验证
-peeka-cli reset -p 12345 --list
+peeka-cli reset --list
 # 输出: {"total": 0}
 ```
 
@@ -310,7 +309,7 @@ peeka-cli watch "myapp.service.query" -x 2
 
 # 2. 发现需要更深的输出（深度 3）
 # 先重置当前观测
-peeka-cli reset -p 12345 "myapp.service.query"
+peeka-cli reset "myapp.service.query"
 
 # 3. 使用新参数重新观测
 peeka-cli watch "myapp.service.query" -x 3
@@ -325,13 +324,13 @@ peeka-cli watch "myapp.handler.*" &
 peeka-cli watch "myapp.api.*" &
 
 # 2. 诊断完 service 模块后，只清理 service
-peeka-cli reset -p 12345 "myapp.service.*"
+peeka-cli reset "myapp.service.*"
 
 # 3. 继续观测其他模块
 # handler 和 api 的观测继续运行
 
 # 4. 全部结束后清理
-peeka-cli reset -p 12345
+peeka-cli reset
 ```
 
 ### 工作流程 4：定期检查状态
@@ -341,7 +340,7 @@ peeka-cli reset -p 12345
 # check_enhancements.sh - 定期检查增强状态
 
 while true; do
-  TOTAL=$(peeka-cli reset -p 12345 --list | jq '.total')
+  TOTAL=$(peeka-cli reset --list | jq '.total')
   echo "$(date): 活跃增强数量 = $TOTAL"
   
   if [ "$TOTAL" -gt 10 ]; then
@@ -362,7 +361,7 @@ done
 # monitor 不受影响
 peeka-cli monitor 12345 "myapp.service.query"  # 启动监控
 
-peeka-cli reset -p 12345                        # 重置不会停止 monitor
+peeka-cli reset                        # 重置不会停止 monitor
 
 # 需要单独停止 monitor
 peeka-cli monitor 12345 --action stop
@@ -377,11 +376,11 @@ peeka-cli monitor 12345 --action stop
 peeka-cli watch "myapp.service.UserService.query"
 
 # ✅ 正确：匹配存储的模式
-peeka-cli reset -p 12345 "myapp.service.*"              # 匹配成功
-peeka-cli reset -p 12345 "myapp.service.UserService.*"  # 匹配成功
+peeka-cli reset "myapp.service.*"              # 匹配成功
+peeka-cli reset "myapp.service.UserService.*"  # 匹配成功
 
 # ❌ 错误：尝试匹配类名（不会工作）
-peeka-cli reset -p 12345 "UserService.*"                # 不匹配
+peeka-cli reset "UserService.*"                # 不匹配
 ```
 
 ### ⚠️ 重置不可撤销
@@ -390,7 +389,7 @@ peeka-cli reset -p 12345 "UserService.*"                # 不匹配
 
 ```bash
 # 重置后需要重新观测
-peeka-cli reset -p 12345 "myapp.service.query"
+peeka-cli reset "myapp.service.query"
 peeka-cli watch "myapp.service.query" -n 100  # 重新开始观测
 ```
 
@@ -428,10 +427,10 @@ reset 命令是线程安全的，但在高并发场景下可能出现边缘情�
 
 ```bash
 # 方法 1：使用 reset（推荐）
-peeka-cli reset -p 12345 "myapp.service.*"
+peeka-cli reset "myapp.service.*"
 
 # 方法 2：逐个停止
-peeka-cli reset -p 12345 --list  # 获取 watch_id
+peeka-cli reset --list  # 获取 watch_id
 peeka-cli watch --action stop watch_a1b2c3d4
 peeka-cli watch --action stop watch_e5f6g7h8
 ```
@@ -442,11 +441,11 @@ peeka-cli watch --action stop watch_e5f6g7h8
 
 ```bash
 # 1. 查看 watch_id 对应的模式
-peeka-cli reset -p 12345 --list | jq '.enhanced[] | select(.watch_id == "watch_001")'
+peeka-cli reset --list | jq '.enhanced[] | select(.watch_id == "watch_001")'
 # 输出: {"watch_id": "watch_001", "pattern": "myapp.service.query", ...}
 
 # 2. 使用精确模式重置
-peeka-cli reset -p 12345 "myapp.service.query"
+peeka-cli reset "myapp.service.query"
 ```
 
 **或者直接使用 watch stop**：
@@ -474,7 +473,7 @@ peeka-cli watch --action stop watch_001
 **A**: 不是错误，返回 `count: 0`。
 
 ```bash
-peeka-cli reset -p 12345 "nonexistent.*"
+peeka-cli reset "nonexistent.*"
 # 输出: {"status": "success", "count": 0}
 ```
 
@@ -486,7 +485,7 @@ peeka-cli reset -p 12345 "nonexistent.*"
 
 ```bash
 # 如果 watch 和 stack 使用不同的模块
-peeka-cli reset -p 12345 "myapp.service.*"  # 假设只有 watch 观测这个模块
+peeka-cli reset "myapp.service.*"  # 假设只有 watch 观测这个模块
 ```
 
 **未来计划**：支持 `--command watch` 参数进行过滤。
@@ -497,13 +496,13 @@ peeka-cli reset -p 12345 "myapp.service.*"  # 假设只有 watch 观测这个模
 
 ```bash
 # 只看 watch 命令的增强
-peeka-cli reset -p 12345 --list | jq '.enhanced[] | select(.command == "watch")'
+peeka-cli reset --list | jq '.enhanced[] | select(.command == "watch")'
 
 # 只看特定模块的增强
-peeka-cli reset -p 12345 --list | jq '.enhanced[] | select(.pattern | startswith("myapp.service"))'
+peeka-cli reset --list | jq '.enhanced[] | select(.pattern | startswith("myapp.service"))'
 
 # 按观测次数排序
-peeka-cli reset -p 12345 --list | jq '.enhanced | sort_by(.count) | reverse'
+peeka-cli reset --list | jq '.enhanced | sort_by(.count) | reverse'
 ```
 
 ## 与 Arthas 对比
@@ -545,16 +544,16 @@ Affect(class count: 1, method count: 1) cost in 10 ms, listenerId: 1
 
 ```bash
 # 重置所有
-peeka-cli reset -p 12345
+peeka-cli reset
 
 # 重置特定模块/类
-peeka-cli reset -p 12345 "demo.MathGame"
+peeka-cli reset "demo.MathGame"
 
 # 重置特定方法
-peeka-cli reset -p 12345 "demo.MathGame.primeFactors"
+peeka-cli reset "demo.MathGame.primeFactors"
 
 # 列出增强（Arthas 不支持）
-peeka-cli reset -p 12345 --list
+peeka-cli reset --list
 ```
 
 **输出**（JSON 格式）：
@@ -575,7 +574,7 @@ peeka-cli reset -p 12345 --list
 **Peeka 扩展**：
 
 ```bash
-peeka-cli reset -p 12345 --list
+peeka-cli reset --list
 ```
 
 提供详细的增强信息：
@@ -592,7 +591,7 @@ peeka-cli reset -p 12345 --list
 **Peeka**（fnmatch）：
 
 ```bash
-peeka-cli reset -p 12345 "myapp.service.User?.query"  # ? 匹配单个字符
+peeka-cli reset "myapp.service.User?.query"  # ? 匹配单个字符
 ```
 
 **Arthas**（通配符）：
@@ -606,7 +605,7 @@ reset demo.Math*  # 只支持 *
 **Peeka**：结构化 JSON，便于自动化处理：
 
 ```bash
-COUNT=$(peeka-cli reset -p 12345 | jq '.count')
+COUNT=$(peeka-cli reset | jq '.count')
 ```
 
 **Arthas**：人类可读文本，需要解析：
@@ -643,7 +642,7 @@ peeka-cli watch "$PATTERN" -n 100
 sleep 5
 
 # 自动清理
-peeka-cli reset -p $PID "$PATTERN"
+peeka-cli reset "$PATTERN"
 echo "已清理 $PATTERN 的增强"
 ```
 
@@ -654,7 +653,7 @@ echo "已清理 $PATTERN 的增强"
 # monitor_enhancements.sh - 监控增强状态
 
 while true; do
-  LIST=$(peeka-cli reset -p 12345 --list)
+  LIST=$(peeka-cli reset --list)
   TOTAL=$(echo "$LIST" | jq '.total')
   
   echo "$(date): 活跃增强: $TOTAL"
@@ -673,7 +672,7 @@ done
 # 重置多个特定模块
 for module in service handler api; do
   echo "重置 myapp.$module"
-  peeka-cli reset -p 12345 "myapp.$module.*"
+  peeka-cli reset "myapp.$module.*"
 done
 ```
 
@@ -681,10 +680,10 @@ done
 
 ```bash
 # 只清理观测次数超过 1000 的增强
-peeka-cli reset -p 12345 --list | \
+peeka-cli reset --list | \
   jq -r '.enhanced[] | select(.count > 1000) | .pattern' | \
   while read pattern; do
-    peeka-cli reset -p 12345 "$pattern"
+    peeka-cli reset "$pattern"
   done
 ```
 
@@ -692,7 +691,7 @@ peeka-cli reset -p 12345 --list | \
 
 ```bash
 # 导出当前增强状态（用于恢复）
-peeka-cli reset -p 12345 --list > enhancements_backup.json
+peeka-cli reset --list > enhancements_backup.json
 
 # 分析历史数据
 jq '.enhanced[] | {pattern, count}' enhancements_backup.json
@@ -704,28 +703,28 @@ jq '.enhanced[] | {pattern, count}' enhancements_backup.json
 
 1. **诊断前记录状态**
    ```bash
-   peeka-cli reset -p 12345 --list > before.json
+   peeka-cli reset --list > before.json
    ```
 
 2. **使用模式匹配进行模块级清理**
    ```bash
-   peeka-cli reset -p 12345 "myapp.service.*"  # 清理整个模块
+   peeka-cli reset "myapp.service.*"  # 清理整个模块
    ```
 
 3. **诊断结束后立即清理**
    ```bash
    peeka-cli watch "func" -n 100  # 观测 100 次
-   peeka-cli reset -p 12345             # 立即清理
+   peeka-cli reset             # 立即清理
    ```
 
 4. **定期检查增强状态**
    ```bash
-   peeka-cli reset -p 12345 --list | jq '.total'
+   peeka-cli reset --list | jq '.total'
    ```
 
 5. **使用 jq 处理输出**
    ```bash
-   peeka-cli reset -p 12345 | jq -r '.affected[].pattern'
+   peeka-cli reset | jq -r '.affected[].pattern'
    ```
 
 ### ❌ 避免
@@ -738,7 +737,7 @@ jq '.enhanced[] | {pattern, count}' enhancements_backup.json
 2. **忘记重置 monitor**
    ```bash
    # ❌ reset 不会停止 monitor
-   peeka-cli reset -p 12345
+   peeka-cli reset
    
    # ✅ 需要单独停止
    peeka-cli monitor 12345 --action stop
@@ -747,20 +746,20 @@ jq '.enhanced[] | {pattern, count}' enhancements_backup.json
 3. **过度使用精确模式**
    ```bash
    # ❌ 逐个重置（效率低）
-   peeka-cli reset -p 12345 "myapp.service.func1"
-   peeka-cli reset -p 12345 "myapp.service.func2"
+   peeka-cli reset "myapp.service.func1"
+   peeka-cli reset "myapp.service.func2"
    
    # ✅ 使用通配符（效率高）
-   peeka-cli reset -p 12345 "myapp.service.*"
+   peeka-cli reset "myapp.service.*"
    ```
 
 4. **不检查重置结果**
    ```bash
    # ❌ 假设重置成功
-   peeka-cli reset -p 12345 "pattern"
+   peeka-cli reset "pattern"
    
    # ✅ 验证结果
-   RESULT=$(peeka-cli reset -p 12345 "pattern")
+   RESULT=$(peeka-cli reset "pattern")
    echo "$RESULT" | jq '.count'
    ```
 
