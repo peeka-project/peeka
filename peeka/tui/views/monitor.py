@@ -5,6 +5,7 @@ Monitor View - Performance statistics interface.
 from typing import Optional, Dict, TYPE_CHECKING
 
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Container, Vertical, Horizontal
 from textual.widgets import Static, DataTable, Input, Button
 from textual.worker import Worker, get_current_worker
@@ -15,6 +16,11 @@ if TYPE_CHECKING:
 
 class MonitorView(Container):
     """Monitor view for performance statistics."""
+
+    BINDINGS = [
+        Binding("enter", "start_monitor", "Monitor"),
+        Binding("delete", "stop_monitors", "Stop All"),
+    ]
 
     def __init__(self, pid: int) -> None:
         super().__init__()
@@ -44,9 +50,9 @@ class MonitorView(Container):
                 id="monitor-controls",
             ),
             Vertical(
-                Static("Performance Statistics", classes="section-title"),
                 DataTable(id="stats-table"),
                 id="stats-panel",
+                classes="panel",
             ),
             id="monitor-container",
         )
@@ -64,11 +70,22 @@ class MonitorView(Container):
             "P95(ms)",
         )
 
+        stats_panel = self.query_one("#stats-panel", Vertical)
+        stats_panel.border_title = "Performance Statistics"
+
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "monitor-btn":
             await self._start_monitor()
         elif event.button.id == "stop-monitor-btn":
             await self._stop_all_monitors()
+
+    def action_start_monitor(self) -> None:
+        """Start monitoring (triggered by Enter key)."""
+        self.app.call_later(self._start_monitor)
+
+    def action_stop_monitors(self) -> None:
+        """Stop all monitors (triggered by Delete key)."""
+        self.app.call_later(self._stop_all_monitors)
 
     async def _start_monitor(self) -> None:
         if not self._client:
@@ -172,13 +189,13 @@ class MonitorView(Container):
         table = self.query_one("#stats-table", DataTable)
 
         try:
-            table.update_cell_at((watch_id, 2), str(total))
-            table.update_cell_at((watch_id, 3), str(success))
-            table.update_cell_at((watch_id, 4), str(fail))
-            table.update_cell_at((watch_id, 5), f"{rt_avg:.2f}")
-            table.update_cell_at((watch_id, 6), f"{rt_min:.2f}")
-            table.update_cell_at((watch_id, 7), f"{rt_max:.2f}")
-            table.update_cell_at((watch_id, 8), f"{rt_p95:.2f}")
+            table.update_cell(watch_id, "Calls", str(total))
+            table.update_cell(watch_id, "Success", str(success))
+            table.update_cell(watch_id, "Fail", str(fail))
+            table.update_cell(watch_id, "Avg(ms)", f"{rt_avg:.2f}")
+            table.update_cell(watch_id, "Min(ms)", f"{rt_min:.2f}")
+            table.update_cell(watch_id, "Max(ms)", f"{rt_max:.2f}")
+            table.update_cell(watch_id, "P95(ms)", f"{rt_p95:.2f}")
         except Exception:
             pass
 
@@ -205,3 +222,10 @@ class MonitorView(Container):
         table.clear()
 
         self.app.notify("All monitors stopped", severity="information")
+
+    def on_unmount(self) -> None:
+        """Cancel all workers when view is unmounted."""
+        for worker in self._workers.values():
+            if worker:
+                worker.cancel()
+
