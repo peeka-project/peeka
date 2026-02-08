@@ -6,7 +6,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container
 from textual.screen import Screen
-from textual.widgets import Header, Footer, Static, TabbedContent, TabPane
+from textual.widgets import Header, Footer, Static, ContentSwitcher
 
 from peeka.tui.views.dashboard import DashboardView
 from peeka.tui.views.inspect import InspectView
@@ -43,21 +43,34 @@ class MainScreen(Screen):
         yield Header()
         with Container(id="main-container"):
             yield Static(f"Attached to PID: {self.pid}", id="pid-status")
-            with TabbedContent(id="main-tabs"):
-                with TabPane("Dashboard", id="dashboard"):
-                    yield DashboardView(self.pid)
-                with TabPane("Watch", id="watch"):
-                    yield WatchView(self.pid)
-                with TabPane("Stack", id="stack"):
-                    yield StackView(self.pid)
-                with TabPane("Monitor", id="monitor"):
-                    yield MonitorView(self.pid)
-                with TabPane("Memory", id="memory"):
-                    yield MemoryView(self.pid)
-                with TabPane("Logger", id="logger"):
-                    yield LoggerView(self.pid)
-                with TabPane("Inspect", id="inspect"):
-                    yield InspectView(self.pid)
+            with ContentSwitcher(initial="dashboard-view", id="main-content"):
+                dashboard = DashboardView(self.pid)
+                dashboard.id = "dashboard-view"
+                yield dashboard
+
+                watch = WatchView(self.pid)
+                watch.id = "watch-view"
+                yield watch
+
+                stack = StackView(self.pid)
+                stack.id = "stack-view"
+                yield stack
+
+                monitor = MonitorView(self.pid)
+                monitor.id = "monitor-view"
+                yield monitor
+
+                memory = MemoryView(self.pid)
+                memory.id = "memory-view"
+                yield memory
+
+                logger = LoggerView(self.pid)
+                logger.id = "logger-view"
+                yield logger
+
+                inspect = InspectView(self.pid)
+                inspect.id = "inspect-view"
+                yield inspect
         yield Footer()
 
     async def on_mount(self) -> None:
@@ -100,9 +113,9 @@ class MainScreen(Screen):
             self.notify(f"Failed to connect: {e}", severity="error")
 
     def action_switch_tab(self, tab_id: str) -> None:
-        """Switch to a specific tab."""
-        tabs = self.query_one("#main-tabs", TabbedContent)
-        tabs.active = tab_id
+        """Switch to a specific view."""
+        switcher = self.query_one("#main-content", ContentSwitcher)
+        switcher.current = f"{tab_id}-view"
 
     def action_go_back(self) -> None:
         """Go back to process selector."""
