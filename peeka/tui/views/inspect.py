@@ -5,6 +5,7 @@ Inspect View - Runtime object inspection interface.
 from typing import TYPE_CHECKING, Optional, Any, Dict
 
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Container, Vertical, Horizontal
 from textual.widgets import Static, Input, Button, Tree, Pretty
 from textual.widgets.tree import TreeNode
@@ -14,6 +15,10 @@ if TYPE_CHECKING:
 
 
 class InspectView(Container):
+    BINDINGS = [
+        Binding("enter", "inspect", "Inspect"),
+    ]
+
     def __init__(self, pid: int) -> None:
         super().__init__()
         self.pid = pid
@@ -36,19 +41,26 @@ class InspectView(Container):
             ),
             Horizontal(
                 Vertical(
-                    Static("Object Tree", classes="section-title"),
                     Tree("Object", id="inspect-tree"),
                     id="inspect-tree-panel",
+                    classes="panel",
                 ),
                 Vertical(
-                    Static("Details", classes="section-title"),
                     Pretty("Select an object to inspect", id="inspect-details"),
                     id="inspect-details-panel",
+                    classes="panel",
                 ),
                 id="inspect-content",
             ),
             id="inspect-container",
         )
+
+        # Set border titles after composition
+        tree_panel = self.query_one("#inspect-tree-panel", Vertical)
+        tree_panel.border_title = "Object Tree"
+
+        details_panel = self.query_one("#inspect-details-panel", Vertical)
+        details_panel.border_title = "Details"
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if not self._client:
@@ -61,6 +73,10 @@ class InspectView(Container):
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id == "inspect-path":
             await self._inspect_object()
+
+    def action_inspect(self) -> None:
+        """Inspect object (triggered by Enter key)."""
+        self._inspect_object()
 
     async def _inspect_object(self) -> None:
         if not self._client:
