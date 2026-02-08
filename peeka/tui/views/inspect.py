@@ -55,7 +55,7 @@ class InspectView(Container):
             id="inspect-container",
         )
 
-        # Set border titles after composition
+    def on_mount(self) -> None:
         tree_panel = self.query_one("#inspect-tree-panel", Vertical)
         tree_panel.border_title = "Object Tree"
 
@@ -76,7 +76,7 @@ class InspectView(Container):
 
     def action_inspect(self) -> None:
         """Inspect object (triggered by Enter key)."""
-        self._inspect_object()
+        self.app.call_later(self._inspect_object)
 
     async def _inspect_object(self) -> None:
         if not self._client:
