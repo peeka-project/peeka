@@ -1,17 +1,52 @@
-/* Peeka TUI Styles */
+/* Peeka TUI Styles - Lazygit/Lazydocker Inspired */
 
-/* Global */
+/* ============================================================================
+   GLOBAL STYLES
+   ============================================================================ */
+
 Screen {
     background: $surface;
 }
 
-/* Process Selector */
+/* ============================================================================
+   PANEL SYSTEM - Lazygit-style bordered panels
+   ============================================================================ */
+
+.panel {
+    border: solid $surface-lighten-2;
+    border-title-color: $text;
+    border-title-style: bold;
+    border-title-align: left;
+    padding: 1 2;
+    margin: 1 0;
+}
+
+.panel:focus-within {
+    border: solid $accent;
+}
+
+/* ============================================================================
+   EMPTY STATE - Placeholder text for empty views
+   ============================================================================ */
+
+.empty-state {
+    content-align: center middle;
+    color: $text-muted;
+    text-style: italic;
+    padding: 2;
+}
+
+/* ============================================================================
+   PROCESS SELECTOR SCREEN
+   ============================================================================ */
+
 #process-selector {
     padding: 1 2;
 }
 
 #process-selector #title {
     text-style: bold;
+    color: $primary;
     margin-bottom: 1;
 }
 
@@ -23,7 +58,10 @@ Screen {
     height: 100%;
 }
 
-/* Main Screen */
+/* ============================================================================
+   MAIN SCREEN
+   ============================================================================ */
+
 #main-container {
     padding: 0 1;
 }
@@ -34,28 +72,12 @@ Screen {
     padding: 0 1;
 }
 
-#main-tabs {
-    height: 100%;
-}
+/* ============================================================================
+   DASHBOARD VIEW
+   ============================================================================ */
 
-/* Tabs */
-Tab {
-    color: $text;
-}
-
-Tab:hover {
-    color: $text;
-    text-style: bold;
-}
-
-Tab.-active {
-    color: $text-primary;
-    text-style: bold;
-}
-
-/* Dashboard */
 #dashboard-container {
-    padding: 1;
+    padding: 1 2;
 }
 
 #metrics-row, #activity-row {
@@ -64,21 +86,36 @@ Tab.-active {
 }
 
 .dashboard-card {
-    border: solid $primary;
-    padding: 1;
+    border: solid $surface-lighten-2;
+    border-title-color: $text;
+    border-title-style: bold;
+    border-title-align: left;
+    padding: 1 2;
     margin: 0 1 0 0;
     min-width: 30;
 }
 
-.section-title {
-    text-style: bold;
-    color: $primary;
-    margin-bottom: 1;
+.dashboard-card:focus-within {
+    border: solid $accent;
 }
 
-/* Watch View */
+#process-info, #memory-section, #watch-section, #gc-section {
+    border-title-color: $text;
+}
+
+#pid-info, #python-version, #uptime,
+#mem-rss, #mem-traced, #mem-peak,
+#watch-count,
+#gc-gen0, #gc-gen1, #gc-gen2 {
+    margin: 1 0;
+}
+
+/* ============================================================================
+   WATCH VIEW
+   ============================================================================ */
+
 #watch-container {
-    padding: 1;
+    padding: 1 2;
 }
 
 #watch-controls {
@@ -105,25 +142,60 @@ Tab.-active {
 #watch-list {
     width: 40%;
     margin-right: 1;
+    border: solid $surface-lighten-2;
+    border-title-color: $text;
+    border-title-style: bold;
+    border-title-align: left;
+    padding: 1 2;
+}
+
+#watch-list:focus-within {
+    border: solid $accent;
 }
 
 #observations-panel {
     width: 60%;
+    border: solid $surface-lighten-2;
+    border-title-color: $text;
+    border-title-style: bold;
+    border-title-align: left;
+    padding: 1 2;
+}
+
+#observations-panel:focus-within {
+    border: solid $accent;
+}
+
+#watch-table {
+    height: 100%;
 }
 
 #observations-log {
     height: 100%;
-    border: solid $primary;
 }
 
-/* Stack View */
+/* ============================================================================
+   STACK VIEW
+   ============================================================================ */
+
 #stack-container {
-    padding: 1;
+    padding: 1 2;
 }
 
 #stack-controls {
     height: auto;
     margin-bottom: 1;
+}
+
+#stack-controls Input {
+    width: 1fr;
+    margin-right: 1;
+}
+
+#stack-controls Button {
+    margin-left: 1;
+    min-width: 8;
+    max-width: 12;
 }
 
 #stack-content {
@@ -133,20 +205,44 @@ Tab.-active {
 #trace-list {
     width: 40%;
     margin-right: 1;
+    border: solid $surface-lighten-2;
+    border-title-color: $text;
+    border-title-style: bold;
+    border-title-align: left;
+    padding: 1 2;
+}
+
+#trace-list:focus-within {
+    border: solid $accent;
 }
 
 #stack-panel {
     width: 60%;
+    border: solid $surface-lighten-2;
+    border-title-color: $text;
+    border-title-style: bold;
+    border-title-align: left;
+    padding: 1 2;
+}
+
+#stack-panel:focus-within {
+    border: solid $accent;
+}
+
+#trace-table {
+    height: 100%;
 }
 
 #stack-tree {
     height: 100%;
-    border: solid $primary;
 }
 
-/* Monitor View */
+/* ============================================================================
+   MONITOR VIEW
+   ============================================================================ */
+
 #monitor-container {
-    padding: 1;
+    padding: 1 2;
 }
 
 #monitor-controls {
@@ -155,20 +251,39 @@ Tab.-active {
 }
 
 #monitor-controls Input {
+    width: 1fr;
     margin-right: 1;
+}
+
+#monitor-controls Button {
+    margin-left: 1;
+    min-width: 10;
+    max-width: 14;
 }
 
 #stats-panel {
     height: 1fr;
+    border: solid $surface-lighten-2;
+    border-title-color: $text;
+    border-title-style: bold;
+    border-title-align: left;
+    padding: 1 2;
+}
+
+#stats-panel:focus-within {
+    border: solid $accent;
 }
 
 #stats-table {
     height: 100%;
 }
 
-/* Memory View */
+/* ============================================================================
+   MEMORY VIEW
+   ============================================================================ */
+
 #memory-container {
-    padding: 1;
+    padding: 1 2;
 }
 
 #memory-controls {
@@ -186,15 +301,45 @@ Tab.-active {
 
 #mem-overview {
     width: 40%;
+    margin-right: 1;
+    border: solid $surface-lighten-2;
+    border-title-color: $text;
+    border-title-style: bold;
+    border-title-align: left;
+    padding: 1 2;
+}
+
+#mem-overview:focus-within {
+    border: solid $accent;
 }
 
 #mem-objects {
     width: 60%;
+    border: solid $surface-lighten-2;
+    border-title-color: $text;
+    border-title-style: bold;
+    border-title-align: left;
+    padding: 1 2;
 }
 
-/* Logger View */
+#mem-objects:focus-within {
+    border: solid $accent;
+}
+
+#mem-total, #mem-rss, #mem-vms {
+    margin: 1 0;
+}
+
+#mem-objects-table {
+    height: 100%;
+}
+
+/* ============================================================================
+   LOGGER VIEW
+   ============================================================================ */
+
 #logger-container {
-    padding: 1;
+    padding: 1 2;
 }
 
 #logger-controls {
@@ -202,9 +347,31 @@ Tab.-active {
     margin-bottom: 1;
 }
 
+#logger-controls Input {
+    width: 1fr;
+    margin-right: 1;
+}
+
+#logger-controls Button {
+    margin-left: 1;
+}
+
 #logger-list {
     height: 1fr;
     margin-bottom: 1;
+    border: solid $surface-lighten-2;
+    border-title-color: $text;
+    border-title-style: bold;
+    border-title-align: left;
+    padding: 1 2;
+}
+
+#logger-list:focus-within {
+    border: solid $accent;
+}
+
+#logger-table {
+    height: 100%;
 }
 
 #logger-set-controls {
@@ -216,14 +383,30 @@ Tab.-active {
     margin-right: 1;
 }
 
-/* Inspect View */
+#logger-set-controls Button {
+    margin-left: 1;
+}
+
+/* ============================================================================
+   INSPECT VIEW
+   ============================================================================ */
+
 #inspect-container {
-    padding: 1;
+    padding: 1 2;
 }
 
 #inspect-controls {
     height: auto;
     margin-bottom: 1;
+}
+
+#inspect-controls Input {
+    width: 1fr;
+    margin-right: 1;
+}
+
+#inspect-controls Button {
+    margin-left: 1;
 }
 
 #inspect-content {
@@ -233,26 +416,54 @@ Tab.-active {
 #inspect-tree-panel {
     width: 40%;
     margin-right: 1;
+    border: solid $surface-lighten-2;
+    border-title-color: $text;
+    border-title-style: bold;
+    border-title-align: left;
+    padding: 1 2;
+}
+
+#inspect-tree-panel:focus-within {
+    border: solid $accent;
 }
 
 #inspect-details-panel {
     width: 60%;
+    border: solid $surface-lighten-2;
+    border-title-color: $text;
+    border-title-style: bold;
+    border-title-align: left;
+    padding: 1 2;
 }
 
-#inspect-tree, #inspect-details {
+#inspect-details-panel:focus-within {
+    border: solid $accent;
+}
+
+#inspect-tree {
     height: 100%;
-    border: solid $primary;
 }
 
-/* Input Labels */
+#inspect-details {
+    height: 100%;
+}
+
+/* ============================================================================
+   INPUT LABELS
+   ============================================================================ */
+
 .input-label {
     width: auto;
     padding: 0 1;
     content-align: center middle;
     height: 3;
+    color: $text-muted;
 }
 
-/* AutoComplete Widget */
+/* ============================================================================
+   AUTOCOMPLETE WIDGET
+   ============================================================================ */
+
 AutoCompleteInput {
     width: 1fr;
     height: auto;
@@ -266,13 +477,20 @@ AutoCompleteInput #ac-dropdown {
     max-height: 10;
     border: solid $accent;
     background: $surface;
+    padding: 1;
 }
 
-/* Help Screen */
+/* ============================================================================
+   HELP SCREEN
+   ============================================================================ */
+
 #help-container {
     width: 80%;
     height: 80%;
-    border: solid $primary;
+    border: solid $accent;
+    border-title-color: $text;
+    border-title-style: bold;
+    border-title-align: center;
     background: $surface;
     padding: 2;
 }
@@ -280,4 +498,42 @@ AutoCompleteInput #ac-dropdown {
 #help-content {
     height: 100%;
     overflow-y: auto;
+}
+
+/* ============================================================================
+   BUTTON STYLING - Consistent compact buttons
+   ============================================================================ */
+
+Button {
+    min-width: 8;
+    max-width: 14;
+}
+
+Button.success {
+    background: $success;
+}
+
+Button.error {
+    background: $error;
+}
+
+Button.warning {
+    background: $warning;
+}
+
+/* ============================================================================
+   DATA TABLE STYLING - Clean rows with subtle styling
+   ============================================================================ */
+
+DataTable {
+    background: $surface;
+}
+
+DataTable > .datatable--header {
+    background: $surface-lighten-1;
+    text-style: bold;
+}
+
+DataTable > .datatable--cursor {
+    background: $accent;
 }
