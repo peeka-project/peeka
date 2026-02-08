@@ -5,14 +5,21 @@ Memory View - Memory analysis interface.
 from typing import TYPE_CHECKING, Optional
 
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Container, Vertical, Horizontal
-from textual.widgets import Static, DataTable, Button, ProgressBar
+from textual.widgets import Static, DataTable, Button
 
 if TYPE_CHECKING:
     from peeka.core.client import StreamingAgentClient
 
 
 class MemoryView(Container):
+    BINDINGS = [
+        Binding("r", "refresh", "Refresh"),
+        Binding("t", "toggle_tracking", "Track"),
+        Binding("g", "gc_collect", "GC"),
+    ]
+
     def __init__(self, pid: int) -> None:
         super().__init__()
         self.pid = pid
@@ -22,7 +29,35 @@ class MemoryView(Container):
     def set_client(self, client: "StreamingAgentClient") -> None:
         self._client = client
 
+    def action_refresh(self) -> None:
+        """Refresh memory data (triggered by r key)."""
+        self._refresh_overview()
+
+    def action_toggle_tracking(self) -> None:
+        """Toggle memory tracking (triggered by t key)."""
+        self._toggle_tracking()
+
+    def action_gc_collect(self) -> None:
+        """Trigger garbage collection (triggered by g key)."""
+        self._gc_collect()
+
     def compose(self) -> ComposeResult:
+        mem_overview = Vertical(
+            Static("Total: calculating...", id="mem-total"),
+            Static("RSS: calculating...", id="mem-rss"),
+            Static("VMS: calculating...", id="mem-vms"),
+            id="mem-overview",
+            classes="panel dashboard-card",
+        )
+        mem_overview.border_title = "Memory Overview"
+
+        mem_objects = Vertical(
+            DataTable(id="mem-objects-table"),
+            id="mem-objects",
+            classes="panel dashboard-card",
+        )
+        mem_objects.border_title = "Top Objects by Size"
+
         yield Container(
             Horizontal(
                 Button("Refresh", id="mem-refresh-btn", variant="primary"),
@@ -32,21 +67,8 @@ class MemoryView(Container):
                 id="memory-controls",
             ),
             Horizontal(
-                Vertical(
-                    Static("Memory Overview", classes="section-title"),
-                    Static("Total: calculating...", id="mem-total"),
-                    Static("RSS: calculating...", id="mem-rss"),
-                    Static("VMS: calculating...", id="mem-vms"),
-                    ProgressBar(id="mem-bar", total=100),
-                    id="mem-overview",
-                    classes="dashboard-card",
-                ),
-                Vertical(
-                    Static("Top Objects by Size", classes="section-title"),
-                    DataTable(id="mem-objects-table"),
-                    id="mem-objects",
-                    classes="dashboard-card",
-                ),
+                mem_overview,
+                mem_objects,
                 id="memory-content",
             ),
             id="memory-container",
