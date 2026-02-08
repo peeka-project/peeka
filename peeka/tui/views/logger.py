@@ -5,6 +5,7 @@ Logger View - Dynamic logger configuration interface.
 from typing import Optional, TYPE_CHECKING
 
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Container, Vertical, Horizontal
 from textual.widgets import Static, DataTable, Input, Button, Select
 
@@ -14,6 +15,10 @@ if TYPE_CHECKING:
 
 class LoggerView(Container):
     """Logger view for managing logger levels."""
+
+    BINDINGS = [
+        Binding("r", "refresh", "Refresh"),
+    ]
 
     LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 
@@ -34,9 +39,9 @@ class LoggerView(Container):
                 id="logger-controls",
             ),
             Vertical(
-                Static("Loggers", classes="section-title"),
                 DataTable(id="logger-table"),
                 id="logger-list",
+                classes="panel",
             ),
             Horizontal(
                 Static("Logger:", classes="input-label"),
@@ -52,6 +57,10 @@ class LoggerView(Container):
             id="logger-container",
         )
 
+        # Set border_title after compose
+        logger_list = self.query_one("#logger-list", Vertical)
+        logger_list.border_title = "Loggers"
+
     def on_mount(self) -> None:
         table = self.query_one("#logger-table", DataTable)
         table.add_columns("Logger", "Level", "Handlers")
@@ -65,6 +74,10 @@ class LoggerView(Container):
             self._refresh_loggers()
         elif event.button.id == "set-level-btn":
             await self._set_logger_level()
+
+    def action_refresh(self) -> None:
+        """Refresh logger list (triggered by r key)."""
+        self._refresh_loggers()
 
     def _refresh_loggers(self) -> None:
         if not self._client:
