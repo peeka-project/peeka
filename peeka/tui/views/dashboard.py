@@ -6,6 +6,7 @@ import time
 from typing import TYPE_CHECKING, Optional
 
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Static
 from textual.worker import Worker, get_current_worker
@@ -15,6 +16,10 @@ if TYPE_CHECKING:
 
 
 class DashboardView(Container):
+    BINDINGS = [
+        Binding("r", "refresh", "Refresh"),
+    ]
+
     def __init__(self, pid: int) -> None:
         super().__init__()
         self.pid = pid
@@ -26,41 +31,49 @@ class DashboardView(Container):
         self._client = client
 
     def compose(self) -> ComposeResult:
+        process_info = Vertical(
+            Static(f"PID: {self.pid}", id="pid-info"),
+            Static("Python: detecting...", id="python-version"),
+            Static("Uptime: calculating...", id="uptime"),
+            id="process-info",
+            classes="panel",
+        )
+        process_info.border_title = "Process Info"
+
+        memory_section = Vertical(
+            Static("RSS: detecting...", id="mem-rss"),
+            Static("Traced: N/A", id="mem-traced"),
+            Static("Peak: N/A", id="mem-peak"),
+            id="memory-section",
+            classes="panel",
+        )
+        memory_section.border_title = "Memory Usage"
+
+        watch_section = Vertical(
+            Static("0", id="watch-count"),
+            id="watch-section",
+            classes="panel",
+        )
+        watch_section.border_title = "Active Watches"
+
+        gc_section = Vertical(
+            Static("Gen0: 0", id="gc-gen0"),
+            Static("Gen1: 0", id="gc-gen1"),
+            Static("Gen2: 0", id="gc-gen2"),
+            id="gc-section",
+            classes="panel",
+        )
+        gc_section.border_title = "GC Statistics"
+
         yield Container(
             Horizontal(
-                Vertical(
-                    Static("Process Info", classes="section-title"),
-                    Static(f"PID: {self.pid}", id="pid-info"),
-                    Static("Python: detecting...", id="python-version"),
-                    Static("Uptime: calculating...", id="uptime"),
-                    id="process-info",
-                    classes="dashboard-card",
-                ),
-                Vertical(
-                    Static("Memory Usage", classes="section-title"),
-                    Static("RSS: detecting...", id="mem-rss"),
-                    Static("Traced: N/A", id="mem-traced"),
-                    Static("Peak: N/A", id="mem-peak"),
-                    id="memory-section",
-                    classes="dashboard-card",
-                ),
+                process_info,
+                memory_section,
                 id="metrics-row",
             ),
             Horizontal(
-                Vertical(
-                    Static("Active Watches", classes="section-title"),
-                    Static("0", id="watch-count"),
-                    id="watch-section",
-                    classes="dashboard-card",
-                ),
-                Vertical(
-                    Static("GC Statistics", classes="section-title"),
-                    Static("Gen0: 0", id="gc-gen0"),
-                    Static("Gen1: 0", id="gc-gen1"),
-                    Static("Gen2: 0", id="gc-gen2"),
-                    id="gc-section",
-                    classes="dashboard-card",
-                ),
+                watch_section,
+                gc_section,
                 id="activity-row",
             ),
             id="dashboard-container",
@@ -74,6 +87,11 @@ class DashboardView(Container):
     def on_unmount(self) -> None:
         if self._refresh_worker:
             self._refresh_worker.cancel()
+
+    def action_refresh(self) -> None:
+        """Refresh dashboard data."""
+        if self._client:
+            self._refresh_dashboard_sync()
 
     def _start_refresh_worker(self) -> None:
         if not self._client or self._refresh_worker:
