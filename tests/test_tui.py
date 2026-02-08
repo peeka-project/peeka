@@ -65,10 +65,11 @@ class TestMainScreen:
                 MainScreen(pid=12345, session_id="test", socket_path="/tmp/fake.sock")
             )
             await pilot.pause()
-            from textual.widgets import TabPane
+            from textual.widgets import ContentSwitcher
 
-            panes = app.screen.query(TabPane)
-            assert len(panes) == 7
+            switcher = app.screen.query_one("#main-content", ContentSwitcher)
+            children = list(switcher.children)
+            assert len(children) == 7
 
     @pytest.mark.asyncio
     async def test_tab_labels_correct(self):
@@ -79,39 +80,40 @@ class TestMainScreen:
                 MainScreen(pid=12345, session_id="test", socket_path="/tmp/fake.sock")
             )
             await pilot.pause()
-            from textual.widgets import TabPane
+            from textual.widgets import ContentSwitcher
 
-            panes = app.screen.query(TabPane)
-            pane_ids = [pane.id for pane in panes]
+            switcher = app.screen.query_one("#main-content", ContentSwitcher)
+            children = list(switcher.children)
+            child_ids = [child.id for child in children]
             expected = [
-                "dashboard",
-                "watch",
-                "stack",
-                "monitor",
-                "memory",
-                "logger",
-                "inspect",
+                "dashboard-view",
+                "watch-view",
+                "stack-view",
+                "monitor-view",
+                "memory-view",
+                "logger-view",
+                "inspect-view",
             ]
-            assert pane_ids == expected
+            assert child_ids == expected
 
     @pytest.mark.asyncio
     async def test_tab_switching_updates_active(self):
-        """Pressing tab keys updates TabbedContent.active."""
+        """Pressing tab keys updates ContentSwitcher.current."""
         app = PeekaApp()
         async with app.run_test() as pilot:
             app.push_screen(
                 MainScreen(pid=12345, session_id="test", socket_path="/tmp/fake.sock")
             )
             await pilot.pause()
-            from textual.widgets import TabbedContent
+            from textual.widgets import ContentSwitcher
 
-            tabs = app.screen.query_one("#main-tabs", TabbedContent)
-            await pilot.press("w")
+            switcher = app.screen.query_one("#main-content", ContentSwitcher)
+            app.screen.action_switch_tab("watch")
             await pilot.pause()
-            assert tabs.active == "watch"
-            await pilot.press("s")
+            assert switcher.current == "watch-view"
+            app.screen.action_switch_tab("stack")
             await pilot.pause()
-            assert tabs.active == "stack"
+            assert switcher.current == "stack-view"
 
 
 class TestWatchView:

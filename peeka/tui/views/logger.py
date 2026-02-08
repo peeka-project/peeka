@@ -57,11 +57,10 @@ class LoggerView(Container):
             id="logger-container",
         )
 
-        # Set border_title after compose
+    def on_mount(self) -> None:
         logger_list = self.query_one("#logger-list", Vertical)
         logger_list.border_title = "Loggers"
 
-    def on_mount(self) -> None:
         table = self.query_one("#logger-table", DataTable)
         table.add_columns("Logger", "Level", "Handlers")
         table.cursor_type = "row"
