@@ -63,10 +63,13 @@ class HelpScreen(ModalScreen):
     ]
 
     def compose(self) -> ComposeResult:
-        yield Container(
+        help_container = Container(
             Markdown(HELP_TEXT, id="help-content"),
             id="help-container",
         )
+        help_container.border_title = "Help"
+        help_container.border_subtitle = "Press ESC to close"
+        yield help_container
 
     def action_dismiss(self) -> None:
         """Close the help screen."""
