@@ -5,6 +5,7 @@ Stack View - Call stack tracing interface.
 from typing import Optional, Dict, TYPE_CHECKING
 
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Container, Vertical, Horizontal
 from textual.widgets import Static, DataTable, Input, Button, Tree
 from textual.worker import Worker, get_current_worker
@@ -16,6 +17,11 @@ if TYPE_CHECKING:
 class StackView(Container):
     """Stack view for tracing function call stacks."""
 
+    BINDINGS = [
+        Binding("enter", "start_trace", "Trace"),
+        Binding("delete", "stop_traces", "Stop All"),
+    ]
+
     def __init__(self, pid: int) -> None:
         super().__init__()
         self.pid = pid
@@ -25,6 +31,14 @@ class StackView(Container):
 
     def set_client(self, client: "StreamingAgentClient") -> None:
         self._client = client
+
+    async def action_start_trace(self) -> None:
+        """Start tracing (triggered by Enter key)."""
+        await self._start_trace()
+
+    async def action_stop_traces(self) -> None:
+        """Stop all traces (triggered by Delete key)."""
+        await self._stop_all_traces()
 
     def compose(self) -> ComposeResult:
         yield Container(
@@ -40,14 +54,14 @@ class StackView(Container):
             ),
             Horizontal(
                 Vertical(
-                    Static("Active Traces", classes="section-title"),
                     DataTable(id="trace-table"),
                     id="trace-list",
+                    classes="panel",
                 ),
                 Vertical(
-                    Static("Call Stack", classes="section-title"),
                     Tree("Stack", id="stack-tree"),
                     id="stack-panel",
+                    classes="panel",
                 ),
                 id="stack-content",
             ),
@@ -58,6 +72,18 @@ class StackView(Container):
         table = self.query_one("#trace-table", DataTable)
         table.add_columns("ID", "Pattern", "Captures", "Status")
         table.cursor_type = "row"
+
+        trace_list = self.query_one("#trace-list", Vertical)
+        trace_list.border_title = "Active Traces"
+
+        stack_panel = self.query_one("#stack-panel", Vertical)
+        stack_panel.border_title = "Call Stack"
+
+    def on_unmount(self) -> None:
+        """Cancel all workers when view is unmounted."""
+        for worker in self._workers.values():
+            if worker:
+                worker.cancel()
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "trace-btn":
@@ -137,7 +163,7 @@ class StackView(Container):
             row = table.get_row(watch_id)
             short_id = row[0]
             pattern = row[1]
-            table.update_cell_at((watch_id, 2), str(count))
+            table.update_cell(watch_id, "Captures", str(count))
         except Exception:
             return
 
