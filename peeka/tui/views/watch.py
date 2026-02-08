@@ -5,6 +5,7 @@ Watch View - Function observation interface.
 from typing import TYPE_CHECKING, Optional
 
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Container, Vertical, Horizontal
 from textual.widgets import Static, DataTable, Input, Button, RichLog
 from textual.worker import Worker, get_current_worker
@@ -19,6 +20,11 @@ if TYPE_CHECKING:
 class WatchView(Container):
     """Watch view for observing function calls."""
 
+    BINDINGS = [
+        Binding("enter", "start_watch", "Watch"),
+        Binding("delete", "stop_watches", "Stop All"),
+    ]
+
     def __init__(self, pid: int) -> None:
         super().__init__()
         self.pid = pid
@@ -32,6 +38,14 @@ class WatchView(Container):
         """Set agent client for commands and completion."""
         self._client = client
         self._completion_source = CompletionSource(client)
+
+    def action_start_watch(self) -> None:
+        """Start watching (triggered by Enter key)."""
+        self._start_watch()
+
+    def action_stop_watches(self) -> None:
+        """Stop all watches (triggered by Delete key)."""
+        self._stop_all_watches()
 
     def _get_pattern_completions(self, prefix: str):
         """Get completions for pattern input."""
@@ -59,14 +73,14 @@ class WatchView(Container):
             ),
             Horizontal(
                 Vertical(
-                    Static("Active Watches", classes="section-title"),
                     DataTable(id="watch-table"),
                     id="watch-list",
+                    classes="panel",
                 ),
                 Vertical(
-                    Static("Observations", classes="section-title"),
                     RichLog(id="observations-log", highlight=True, markup=True),
                     id="observations-panel",
+                    classes="panel",
                 ),
                 id="watch-content",
             ),
@@ -78,6 +92,19 @@ class WatchView(Container):
         table = self.query_one("#watch-table", DataTable)
         table.add_columns("ID", "Pattern", "Count", "Status")
         table.cursor_type = "row"
+
+        watch_list = self.query_one("#watch-list", Vertical)
+        watch_list.border_title = "Active Watches"
+
+        observations_panel = self.query_one("#observations-panel", Vertical)
+        observations_panel.border_title = "Observations"
+
+    def on_unmount(self) -> None:
+        """Cancel all workers when view is unmounted."""
+        for watch_info in self._active_watches.values():
+            worker = watch_info.get("worker")
+            if worker:
+                worker.cancel()
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
