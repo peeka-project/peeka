@@ -9,7 +9,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container
 from textual.screen import Screen
-from textual.widgets import DataTable, Header, Footer, Static, Input
+from textual.widgets import DataTable, Header, Footer, Input
 
 
 class ProcessSelectorScreen(Screen):
@@ -24,12 +24,14 @@ class ProcessSelectorScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        yield Container(
-            Static("Select a Python process to attach:", id="title"),
+        selector = Container(
             Input(placeholder="Filter by PID or command...", id="filter"),
             DataTable(id="process-table"),
             id="process-selector",
+            classes="panel",
         )
+        selector.border_title = "Select Process"
+        yield selector
         yield Footer()
 
     def on_mount(self) -> None:
