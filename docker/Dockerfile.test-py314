@@ -1,0 +1,20 @@
+# Peeka Python 3.14 E2E Test Image (PEP 768)
+# Test-only image for container-based E2E testing
+# NOTE: 3.14-rc tag may change. Pin to specific version if reproducibility needed.
+
+FROM python:3.14-rc-slim
+
+LABEL maintainer="peeka"
+LABEL description="Peeka E2E testing with Python 3.14 (PEP 768)"
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    procps \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY . .
+
+RUN pip install --no-cache-dir -e ".[dev]"
+
+CMD ["sleep", "infinity"]

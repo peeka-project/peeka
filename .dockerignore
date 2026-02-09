@@ -1,0 +1,12 @@
+.git
+.sisyphus
+__pycache__
+*.pyc
+.pytest_cache
+*.egg-info
+.ruff_cache
+.mypy_cache
+docker/Dockerfile.cli
+docker/Dockerfile.tui
+docker/Dockerfile.py314
+docker/Dockerfile.full
