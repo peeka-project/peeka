@@ -7,9 +7,31 @@ import pytest
 class MockAgent:
     def __init__(self):
         self._observations = []
+        self.injector = None  # Will be set by fixtures
+        self.observer = MockObserver()
 
     def _send_observation(self, observation):
         self._observations.append(observation)
+
+
+class MockObserver:
+    def __init__(self):
+        self._watches = {}
+
+    def register_watch(self, watch_id, pattern, config):
+        self._watches[watch_id] = {"pattern": pattern, "config": config}
+
+    def unregister_watch(self, watch_id):
+        return self._watches.pop(watch_id, {})
+
+    def clear_all(self):
+        self._watches.clear()
+
+    def get_watch_stats(self, watch_id):
+        return {}
+
+    def get_all_stats(self):
+        return {}
 
 
 class TestTraceCommand:
@@ -21,10 +43,12 @@ class TestTraceCommand:
     def injector(self, mock_agent):
         from peeka.core.injector import DecoratorInjector
 
-        return DecoratorInjector(mock_agent)
+        injector = DecoratorInjector(mock_agent)
+        mock_agent.injector = injector  # Wire up the injector
+        return injector
 
     @pytest.fixture
-    def trace_command(self, mock_agent):
+    def trace_command(self, mock_agent, injector):
         from peeka.commands.trace import TraceCommand
 
         return TraceCommand(mock_agent)

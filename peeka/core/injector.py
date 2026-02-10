@@ -692,6 +692,9 @@ class DecoratorInjector:
 
             # Check condition with cost
             if not should_observe(total_duration):
+                # Return or raise based on whether there was an exception
+                if call_tree and "_exception" in call_tree[0]:
+                    raise call_tree[0]["_exception"]
                 return call_tree[0].get("_result") if call_tree else None
 
             # Count observation
@@ -718,12 +721,12 @@ class DecoratorInjector:
             except Exception:
                 pass
 
-            # Return the actual result
-            if call_tree and "_result" in call_tree[0]:
-                result = call_tree[0]["_result"]
+            # Return the actual result or raise exception
+            if call_tree:
                 if "_exception" in call_tree[0]:
                     raise call_tree[0]["_exception"]
-                return result
+                if "_result" in call_tree[0]:
+                    return call_tree[0]["_result"]
 
             return None
 
