@@ -14,9 +14,9 @@ import inspect
 import pytest
 
 from peeka.tui.app import PeekaApp
-from peeka.tui.screens.process_selector import ProcessSelectorScreen
-from peeka.tui.screens.main import MainScreen
 from peeka.tui.completion import CompletionSource
+from peeka.tui.screens.main import MainScreen
+from peeka.tui.screens.process_selector import ProcessSelectorScreen
 
 
 class TestProcessSelectorScreen:
@@ -65,56 +65,56 @@ class TestMainScreen:
                 MainScreen(pid=12345, session_id="test", socket_path="/tmp/fake.sock")
             )
             await pilot.pause()
-            from textual.widgets import ContentSwitcher
+            from textual.widgets import TabbedContent, TabPane
 
-            switcher = app.screen.query_one("#main-content", ContentSwitcher)
-            children = list(switcher.children)
-            assert len(children) == 8
+            tabbed = app.screen.query_one("#main-content", TabbedContent)
+            panes = list(tabbed.query(TabPane))
+            assert len(panes) == 8
 
     @pytest.mark.asyncio
     async def test_tab_labels_correct(self):
-        """All 8 tab labels match expected names."""
+        """All 8 tab pane IDs match expected names."""
         app = PeekaApp()
         async with app.run_test() as pilot:
             app.push_screen(
                 MainScreen(pid=12345, session_id="test", socket_path="/tmp/fake.sock")
             )
             await pilot.pause()
-            from textual.widgets import ContentSwitcher
+            from textual.widgets import TabbedContent, TabPane
 
-            switcher = app.screen.query_one("#main-content", ContentSwitcher)
-            children = list(switcher.children)
-            child_ids = [child.id for child in children]
+            tabbed = app.screen.query_one("#main-content", TabbedContent)
+            panes = list(tabbed.query(TabPane))
+            pane_ids = [pane.id for pane in panes]
             expected = [
-                "dashboard-view",
-                "watch-view",
-                "trace-view",
-                "stack-view",
-                "monitor-view",
-                "memory-view",
-                "logger-view",
-                "inspect-view",
+                "dashboard",
+                "watch",
+                "trace",
+                "stack",
+                "monitor",
+                "memory",
+                "logger",
+                "inspect",
             ]
-            assert child_ids == expected
+            assert pane_ids == expected
 
     @pytest.mark.asyncio
     async def test_tab_switching_updates_active(self):
-        """Pressing tab keys updates ContentSwitcher.current."""
+        """Pressing tab keys updates TabbedContent.active."""
         app = PeekaApp()
         async with app.run_test() as pilot:
             app.push_screen(
                 MainScreen(pid=12345, session_id="test", socket_path="/tmp/fake.sock")
             )
             await pilot.pause()
-            from textual.widgets import ContentSwitcher
+            from textual.widgets import TabbedContent
 
-            switcher = app.screen.query_one("#main-content", ContentSwitcher)
+            tabbed = app.screen.query_one("#main-content", TabbedContent)
             app.screen.action_switch_tab("watch")
             await pilot.pause()
-            assert switcher.current == "watch-view"
+            assert tabbed.active == "watch"
             app.screen.action_switch_tab("stack")
             await pilot.pause()
-            assert switcher.current == "stack-view"
+            assert tabbed.active == "stack"
 
 
 class TestWatchView:
@@ -129,7 +129,6 @@ class TestWatchView:
             await pilot.pause()
             await pilot.press("w")
             await pilot.pause()
-            from textual.widgets import Static
 
             labels = app.screen.query("Static.input-label")
             label_texts = [label.render().plain for label in labels]

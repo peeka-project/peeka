@@ -183,6 +183,7 @@ class WatchView(Container):
             return
 
         worker = get_current_worker()
+        local_count = 0
 
         for observation in self._client.stream_observations():
             if worker.is_cancelled:
@@ -192,16 +193,18 @@ class WatchView(Container):
             if obs_watch_id and obs_watch_id != watch_id:
                 continue
 
-            count = observation.get("count", 0)
+            local_count += 1
+            count = local_count
 
             if watch_id in self._active_watches:
                 self._active_watches[watch_id]["count"] = count
 
             func_name = observation.get("func_name", "unknown")
-            args = observation.get("args", [])
+            # Agent sends "params" (list), "returnObj", and "cost" (ms)
+            args = observation.get("params", [])
             kwargs = observation.get("kwargs", {})
-            result = observation.get("result", None)
-            duration = observation.get("duration_ms", 0)
+            result = observation.get("returnObj", None)
+            duration = observation.get("cost", 0)
             success = observation.get("success", True)
 
             args_str = ", ".join(repr(a) for a in args[:3])
