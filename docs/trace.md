@@ -221,362 +221,37 @@ peeka-cli trace "mymodule.func" --skip-builtin=false
 - Python 内置函数：`len()`, `str()`, `isinstance()`, `print()`
 - 标准库函数：`json.dumps()`, `os.path.join()`, `datetime.now()`
 
-## 实现方案
+## 实现技术
 
-Peeka 的 `trace` 命令支持多种实现方案，根据 Python 版本和性能要求自动选择最优策略。
+Peeka 的 `trace` 命令根据 Python 版本自动选择最优实现方案：
 
-### 方案对比
+### 支持的实现方案
 
-| 方案                          | Python 版本 | 性能开销   | 优点                | 缺点             |
-|-----------------------------|-----------|--------|-------------------|----------------|
-| **eBPF (推荐)**               | 3.9+      | < 1%   | 极低开销，系统级追踪        | 实现复杂，需要 Linux  |
-| **sys.monitoring (PEP 669)** | 3.12+     | < 5%   | 官方支持，性能优秀         | 仅 Python 3.12+ |
-| **Decorator + Local Trace** | 3.9+      | < 20%  | 兼容性好，实现简单         | 性能开销较高         |
-| **sys.settrace (不推荐)**      | 3.9+      | 1000%+ | 完整调用信息            | 极高开销，不适合生产环境   |
+| Python 版本 | 实现方案            | 性能开销  | 说明                |
+|-----------|-----------------|-------|-------------------|
+| 3.12+     | sys.monitoring  | < 5%  | 官方支持，推荐使用         |
+| 3.9-3.11  | Local Trace     | < 20% | 兼容性好，自动启用         |
 
-### eBPF 实现方案（推荐）
+**注意**：
+- Python 3.12+ 会自动使用 `sys.monitoring` 获得更好的性能
+- 较老版本使用局部 trace 实现，性能开销略高但完全可用
+- 所有方案都经过优化，仅在函数执行期间启用追踪
 
-#### 技术原理
+## 性能影响
 
-eBPF (extended Berkeley Packet Filter) 是 Linux 内核级别的追踪技术，通过 uprobes 在用户空间函数入口/出口插入探针。
+### 性能开销
 
-**架构图**：
+| 场景                  | 开销    | 说明            |
+|---------------------|-------|---------------|
+| **简单函数**            | < 5%  | Python 3.12+  |
+| **简单函数**            | < 20% | Python 3.9-3.11 |
+| **复杂调用树（深度 5）**    | 10-30%| 根据 Python 版本  |
+| **高频调用（>1000 QPS）** | 20-50%| 建议限制观测次数      |
 
-```
-┌─────────────────────────────────────┐
-│      Python Application             │
-│  ┌──────────────────────────────┐   │
-│  │  User Functions              │   │
-│  │  +----------------------+    │   │
-│  │  | PyObject_Call()      |◄───┼───┼─── eBPF Uprobe (Entry)
-│  │  +----------------------+    │   │
-│  │           ▼                  │   │
-│  │  +----------------------+    │   │
-│  │  | PyEval_EvalFrameEx() |    │   │
-│  │  +----------------------+    │   │
-│  │           ▼                  │   │
-│  │  +----------------------+    │   │
-│  │  | Function Return      |◄───┼───┼─── eBPF Uprobe (Exit)
-│  │  +----------------------+    │   │
-│  └──────────────────────────────┘   │
-└─────────────────────────────────────┘
-           ▲                 ▲
-           │                 │
-    ┌──────┴─────┐    ┌─────┴──────┐
-    │ BPF Maps   │    │  Perf Ring │
-    │ (Call Tree)│    │   Buffer   │
-    └──────┬─────┘    └─────┬──────┘
-           │                 │
-           ▼                 ▼
-┌─────────────────────────────────────┐
-│      Peeka Agent (eBPF Program)     │
-│  - Attach uprobes to Python funcs   │
-│  - Collect call tree and timing     │
-│  - Filter and format output         │
-└─────────────────────────────────────┘
-```
-
-#### 实现细节
-
-**1. 探针注入点**：
-
-```python
-# 使用 bcc (BPF Compiler Collection) 库
-from bcc import BPF
-
-# eBPF 程序（C 代码）
-bpf_text = """
-#include <uapi/linux/ptrace.h>
-
-// 调用栈存储结构
-struct call_data_t {
-    u64 pid;
-    u64 timestamp_ns;
-    u64 function_addr;
-    char function_name[64];
-};
-
-// 使用 BPF Map 存储调用栈
-BPF_HASH(call_stack, u32, struct call_data_t, 10240);
-BPF_PERF_OUTPUT(events);
-
-// 函数入口探针
-int trace_func_entry(struct pt_regs *ctx) {
-    u64 pid_tgid = bpf_get_current_pid_tgid();
-    u32 pid = pid_tgid >> 32;
-    u32 tid = pid_tgid & 0xFFFFFFFF;
-
-    struct call_data_t data = {};
-    data.pid = pid;
-    data.timestamp_ns = bpf_ktime_get_ns();
-    data.function_addr = PT_REGS_IP(ctx);
-
-    // 存储到调用栈
-    call_stack.update(&tid, &data);
-
-    return 0;
-}
-
-// 函数退出探针
-int trace_func_exit(struct pt_regs *ctx) {
-    u64 pid_tgid = bpf_get_current_pid_tgid();
-    u32 tid = pid_tgid & 0xFFFFFFFF;
-
-    struct call_data_t *entry_data = call_stack.lookup(&tid);
-    if (entry_data == NULL) {
-        return 0;
-    }
-
-    u64 duration_ns = bpf_ktime_get_ns() - entry_data->timestamp_ns;
-
-    // 发送事件到用户空间
-    struct call_data_t exit_data = *entry_data;
-    events.perf_submit(ctx, &exit_data, sizeof(exit_data));
-
-    call_stack.delete(&tid);
-    return 0;
-}
-"""
-
-# 加载 eBPF 程序
-b = BPF(text=bpf_text)
-
-# 附加 uprobe 到 Python 解释器
-b.attach_uprobe(name="/usr/bin/python3.12", sym="PyObject_Call", fn_name="trace_func_entry")
-b.attach_uretprobe(name="/usr/bin/python3.12", sym="PyObject_Call", fn_name="trace_func_exit")
-```
-
-**2. 数据收集和处理**：
-
-```python
-import ctypes as ct
-
-# 定义数据结构（与 C 结构对应）
-class CallData(ct.Structure):
-    _fields_ = [
-        ("pid", ct.c_uint64),
-        ("timestamp_ns", ct.c_uint64),
-        ("function_addr", ct.c_uint64),
-        ("function_name", ct.c_char * 64),
-    ]
-
-# 处理 eBPF 事件
-def process_event(cpu, data, size):
-    event = ct.cast(data, ct.POINTER(CallData)).contents
-    duration_ms = (event.timestamp_ns) / 1_000_000
-
-    # 构建调用树
-    call_tree_node = {
-        "function": event.function_name.decode('utf-8', 'replace'),
-        "duration_ms": duration_ms,
-        "timestamp": event.timestamp_ns,
-    }
-
-    # 发送观测数据
-    agent._send_observation({
-        "type": "observation",
-        "watch_id": watch_id,
-        "call_tree": [call_tree_node],
-    })
-
-# 注册回调
-b["events"].open_perf_buffer(process_event)
-
-# 轮询事件
-while True:
-    b.perf_buffer_poll()
-```
-
-#### 优势
-
-- ✅ **极低性能开销**（< 1%）：在内核态执行，不影响 Python 解释器
-- ✅ **无需修改代码**：通过 uprobe 动态注入，不修改 Python 字节码
-- ✅ **系统级视角**：可以追踪 C 扩展、Cython 代码
-- ✅ **高精度计时**：使用内核时间戳，纳秒级精度
-- ✅ **支持多进程**：可以同时追踪多个 Python 进程
-
-#### 限制
-
-- ❌ **仅支持 Linux**：eBPF 是 Linux 内核特性
-- ❌ **需要 root 权限或 CAP_BPF**：加载 eBPF 程序需要特权
-- ❌ **依赖项较多**：需要安装 bcc、内核头文件
-- ⚠️ **Python 函数名提取**：默认只能获取 C 函数名，获取 Python 函数名需要 USDT (User Statically-Defined Tracing) 支持
-- ⚠️ **内核版本要求**：需要 Linux 4.7+ (推荐 5.2+)
-
-#### 环境要求
-
-**操作系统**：
-- Linux 4.7+ (BPF uprobes 支持)
-- Linux 5.2+ (推荐，BPF 功能更完善)
-
-**依赖包**：
-```bash
-# Ubuntu/Debian
-sudo apt-get install -y bpfcc-tools linux-headers-$(uname -r) python3-bpfcc
-
-# RHEL/CentOS
-sudo yum install -y bcc-tools kernel-devel python3-bcc
-
-# Fedora
-sudo dnf install -y bcc-tools kernel-devel python3-bcc
-```
-
-**权限要求**：
-```bash
-# 方案 1：使用 root 运行（不推荐生产环境）
-sudo peeka-cli trace "module.func"
-
-# 方案 2：赋予 CAP_BPF 能力（推荐，Linux 5.8+）
-sudo setcap cap_bpf,cap_perfmon=ep $(which python3)
-peeka-cli trace "module.func"
-
-# 方案 3：临时放宽限制（测试用）
-echo 0 | sudo tee /proc/sys/kernel/unprivileged_bpf_disabled
-```
-
-**Docker 容器**：
-```bash
-# 需要特权模式或添加 BPF 能力
-docker run --privileged your-image
-# 或
-docker run --cap-add=SYS_BPF --cap-add=SYS_ADMIN your-image
-```
-
-#### Python USDT 探针
-
-为了获取更精确的 Python 函数信息，可以启用 Python USDT 探针：
-
-```bash
-# 使用 USDT 版本的 Python（需要编译时启用）
-./configure --with-dtrace
-make
-sudo make install
-
-# 验证 USDT 探针
-sudo bpftrace -l 'usdt:/usr/local/bin/python3*' | grep function
-```
-
-**USDT 探针示例**：
-- `python:function__entry` - 函数入口
-- `python:function__return` - 函数返回
-- `python:line` - 代码行执行
-- `python:gc__start` - GC 开始
-- `python:gc__done` - GC 完成
-
-### sys.monitoring 实现方案（Python 3.12+）
-
-对于 Python 3.12+，使用 PEP 669 引入的 `sys.monitoring` API：
-
-```python
-import sys
-
-def trace_callback(code, instruction_offset, *args):
-    """监控回调函数"""
-    if event == sys.monitoring.events.CALL:
-        # 函数调用事件
-        frame = sys._getframe(1)
-        start_time = time.perf_counter()
-
-    elif event == sys.monitoring.events.RETURN:
-        # 函数返回事件
-        duration = (time.perf_counter() - start_time) * 1000
-        # 记录调用树节点
-
-# 注册监控工具
-sys.monitoring.use_tool_id(0, "peeka-tracer")
-sys.monitoring.set_events(0, sys.monitoring.events.CALL | sys.monitoring.events.RETURN)
-sys.monitoring.register_callback(0, sys.monitoring.events.CALL, trace_callback)
-```
-
-**优势**：
-- ✅ 官方支持，API 稳定
-- ✅ 性能开销低（5-10%）
-- ✅ 跨平台支持（Windows/macOS/Linux）
-
-**限制**：
-- ❌ 仅支持 Python 3.12+
-
-### Decorator + Local Trace 实现方案（通用）
-
-兼容 Python 3.9-3.14+，基于 Peeka 现有的 `DecoratorInjector`：
-
-```python
-def _create_trace_wrapper(self, func, watch_id, config):
-    depth_limit = config.get("trace_depth", 3)
-
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        call_tree = []
-        current_depth = [0]
-
-        def local_trace(frame, event, arg):
-            """局部 trace 函数"""
-            if current_depth[0] >= depth_limit:
-                return None
-
-            if event == 'call':
-                current_depth[0] += 1
-                code = frame.f_code
-                start_time = time.perf_counter()
-
-                call_tree.append({
-                    'depth': current_depth[0],
-                    'function': f"{code.co_filename}:{code.co_name}",
-                    'lineno': frame.f_lineno,
-                    'start_time': start_time
-                })
-                return local_trace
-
-            elif event == 'return':
-                if call_tree and call_tree[-1]['depth'] == current_depth[0]:
-                    duration = (time.perf_counter() - call_tree[-1]['start_time']) * 1000
-                    call_tree[-1]['duration_ms'] = duration
-                current_depth[0] -= 1
-
-            return local_trace
-
-        # 仅在执行目标函数时启用 trace
-        sys.settrace(local_trace)
-        try:
-            result = func(*args, **kwargs)
-            return result
-        finally:
-            sys.settrace(None)
-
-            # 发送调用树
-            self.agent._send_observation({
-                'watch_id': watch_id,
-                'type': 'trace',
-                'call_tree': call_tree,
-            })
-
-    return wrapper
-```
-
-**优势**：
-- ✅ 兼容所有 Python 版本
-- ✅ 基于现有架构，实现简单
-- ✅ 局部启用，性能可控
-
-**限制**：
-- ⚠️ 性能开销较高（10-20%）
-- ⚠️ 深度受限（推荐 ≤ 5 层）
-
-## 性能分析
-
-### 性能对比
-
-| 场景                  | eBPF | sys.monitoring | Local Trace | sys.settrace |
-|---------------------|------|----------------|-------------|--------------|
-| 简单函数（10 次调用）       | < 1% | 5-10%          | 20-30%      | 1000%+       |
-| 复杂函数（100 次子调用）     | < 1% | 10-20%         | 50-100%     | 2000%+       |
-| 生产环境适用性             | ✅    | ✅              | ⚠️          | ❌            |
-
-**结论**：
-- ✅ **eBPF 是生产环境的最佳选择**（极低开销）
-- ✅ **sys.monitoring 适合 Python 3.12+ 的通用场景**
-- ⚠️ **Local Trace 适合短时间诊断**（< 1 分钟）
-- ❌ **sys.settrace 永远不应在生产环境使用**
+**说明**：
+- Python 3.12+ 使用 `sys.monitoring`，性能开销显著降低
+- 深度越深，性能开销越大
+- 建议生产环境使用条件过滤和次数限制
 
 ### 性能优化建议
 
@@ -780,62 +455,29 @@ json.dumps                                                      500        1000.
 
 ## 与 Arthas Trace 的对比
 
-| 特性           | Peeka (eBPF)            | Peeka (sys.monitoring) | Arthas (Java)      | 说明                    |
-|--------------|-------------------------|------------------------|--------------------|-----------------------|
-| **目标语言**     | Python                  | Python                 | Java               | 核心差异                  |
-| **实现技术**     | eBPF + uprobes          | PEP 669                | ASM 字节码增强          | Peeka 使用内核级追踪         |
-| **调用树展示**    | ✅ 树形结构                 | ✅ 树形结构                | ✅ 树形结构            | 功能一致                  |
-| **耗时统计**     | ✅ 纳秒级精度                | ✅ 毫秒级                 | ✅ 毫秒级             | eBPF 精度最高             |
-| **深度限制**     | ✅ 支持 (`-d`)            | ✅ 支持 (`-d`)          | ✅ 支持 (`-n`)       | 功能一致                  |
-| **跳过内置方法**   | ✅ 支持 (`--skip-builtin`) | ✅ 支持                  | ✅ 支持 (`--skipJDKMethod`) | 功能一致                  |
-| **条件过滤**     | ✅ `cost > 100`          | ✅ `cost > 100`         | ✅ `#cost>100` | 语法略有差异，功能一致           |
-| **性能开销**     | < 1%                    | 5-10%                  | < 5%               | eBPF 开销最低             |
-| **C 扩展追踪**   | ✅ 支持                    | ❌ 不支持                 | ✅ 支持（JNI）         | eBPF 可以追踪 C 代码        |
-| **跨平台支持**    | ❌ Linux only           | ✅ All platforms        | ✅ All platforms   | eBPF 受限于 Linux       |
-| **权限要求**     | ⚠️ CAP_BPF / root       | ✓ 普通权限                | ✓ 普通权限            | eBPF 需要特殊权限           |
-| **正则匹配**     | ⏳ 计划支持                 | ⏳ 计划支持                | ✅ 支持              | Arthas 支持通配符和正则       |
-| **动态开启/关闭**  | ✅ 支持                    | ✅ 支持                  | ✅ 支持              | 功能一致                  |
+| 特性        | Peeka          | Arthas (Java)    | 说明          |
+|-----------|----------------|------------------|-------------|
+| **目标语言**  | Python         | Java             | 核心差异        |
+| **调用树展示** | ✅ 树形结构        | ✅ 树形结构          | 功能一致        |
+| **耗时统计**  | ✅ 毫秒级精度       | ✅ 毫秒级           | 功能一致        |
+| **深度限制**  | ✅ 支持 (`-d`)   | ✅ 支持 (`-n`)     | 功能一致        |
+| **跳过内置**  | ✅ `--skip-builtin` | ✅ `--skipJDKMethod` | 功能一致        |
+| **条件过滤**  | ✅ `cost > 100` | ✅ `#cost>100`   | 语法略有差异，功能一致 |
+| **性能开销**  | 5-20%          | < 5%             | 取决于 Python 版本 |
+| **正则匹配**  | ⏳ 计划支持        | ✅ 支持             | Peeka 未来规划  |
 
-### 核心差异
+### 功能对比总结
 
-**1. 追踪粒度**
-- **Arthas**：基于字节码增强，追踪 Java 方法调用
-- **Peeka (eBPF)**：基于内核探针，追踪 C 函数（包括 Python 解释器内部）
-- **Peeka (sys.monitoring)**：基于解释器钩子，追踪 Python 函数
-
-**2. 性能特征**
-- **eBPF**：内核态执行，开销极低但需要特权
-- **sys.monitoring**：解释器钩子，开销低但仅 Python 3.12+
-- **Arthas**：字节码增强，开销低且无需特权
-
-**3. 使用场景**
-- **Peeka eBPF**：生产环境性能分析，需要极低开销
-- **Peeka sys.monitoring**：Python 3.12+ 通用场景
-- **Arthas**：Java 应用全方位诊断
+| 能力维度     | Peeka  | Arthas | 推荐场景         |
+|----------|--------|--------|--------------|
+| **易用性**  | ⭐⭐⭐⭐ | ⭐⭐⭐    | Peeka 命令更简洁  |
+| **性能开销** | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | Arthas 开销更低 |
+| **灵活性**  | ⭐⭐⭐  | ⭐⭐⭐⭐⭐ | Arthas 功能更丰富 |
+| **自动化集成** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐   | Peeka JSON 更易处理 |
 
 ## 常见问题
 
-### 1. eBPF 方案无法使用
-
-**问题**：`Operation not permitted` 或 `BPF program load failed`
-
-**解决方案**：
-
-```bash
-# 检查内核版本（需要 4.7+）
-uname -r
-
-# 检查 BPF 是否启用
-ls /sys/kernel/debug/tracing/events/syscalls/sys_enter_bpf
-
-# 赋予 CAP_BPF 能力（Linux 5.8+）
-sudo setcap cap_bpf,cap_perfmon=ep $(which python3)
-
-# 或使用 root 运行
-sudo peeka-cli trace "module.func"
-```
-
-### 2. 追踪深度不够
+### 1. 追踪深度不够
 
 **问题**：调用树只显示 3 层，但实际有更多层级
 
@@ -848,7 +490,7 @@ peeka-cli trace "module.func" -d 10
 # 注意：深度过大会增加性能开销
 ```
 
-### 3. 输出数据过多
+### 2. 输出数据过多
 
 **问题**：包含大量内置函数调用，输出难以阅读
 
@@ -865,65 +507,44 @@ peeka-cli trace "module.func" --min-duration 10
 peeka-cli trace "module.func" --condition-express "cost > 50"
 ```
 
-### 4. 性能开销过大
+### 3. 性能开销过大
 
 **问题**：启用 trace 后应用响应变慢
 
 **解决方案**：
 
 ```bash
-# 1. 使用 eBPF 方案（需要 Linux + root）
-# 2. 减少追踪深度
+# 1. 减少追踪深度
 peeka-cli trace "module.func" -d 2
 
-# 3. 限制观测次数
+# 2. 限制观测次数
 peeka-cli trace "module.func" -n 10
 
-# 4. 使用条件过滤
+# 3. 使用条件过滤，只追踪慢调用
 peeka-cli trace "module.func" --condition-express "cost > 100"
+
+# 4. 考虑升级到 Python 3.12+ 获得更好性能
 ```
 
-### 5. Docker 容器中无法使用 eBPF
+### 4. 无法观测到数据
 
-**问题**：容器内运行 eBPF 失败
+**可能原因**：
+- 函数没有被调用
+- 函数名拼写错误
+- 条件表达式过于严格
+- 已达到观测次数限制（-n 参数）
 
-**解决方案**：
+**排查步骤**：
 
 ```bash
-# 使用特权模式
-docker run --privileged your-image
+# 1. 确认函数名是否正确
+python3 -c "import mymodule; print(mymodule.MyClass.my_method)"
 
-# 或添加 BPF 能力
-docker run --cap-add=SYS_BPF --cap-add=SYS_ADMIN --cap-add=SYS_PTRACE your-image
+# 2. 去掉条件表达式，先观测一次
+peeka-cli trace "mymodule.func" -n 1
 
-# 挂载内核头文件
-docker run -v /usr/src:/usr/src:ro -v /lib/modules:/lib/modules:ro your-image
-```
-
-### 6. 无法获取 Python 函数名
-
-**问题**：eBPF 输出只显示 C 函数名（如 `PyObject_Call`）
-
-**解决方案**：
-
-**方案 1：使用 USDT 版本的 Python**
-```bash
-# 编译支持 USDT 的 Python
-./configure --with-dtrace
-make && sudo make install
-```
-
-**方案 2：使用 sys.monitoring 方案（Python 3.12+）**
-```bash
-# 自动选择 sys.monitoring 实现
-peeka-cli trace "module.func"
-```
-
-**方案 3：使用 Local Trace 方案**
-```bash
-# 通过配置强制使用 Local Trace
-export PEEKA_TRACE_METHOD=local
-peeka-cli trace "module.func"
+# 3. 检查进程是否存在
+ps aux | grep <pid>
 ```
 
 ## 高级技巧
@@ -1038,16 +659,13 @@ for line in proc.stdout:
 ## 参考资料
 
 - [Arthas Trace 文档](https://arthas.aliyun.com/en/doc/trace.html)
-- [eBPF 官方文档](https://ebpf.io/)
-- [BCC (BPF Compiler Collection)](https://github.com/iovisor/bcc)
 - [PEP 669: Low Impact Monitoring for CPython](https://peps.python.org/pep-0669/)
-- [Linux USDT (User Statically-Defined Tracing)](https://www.kernel.org/doc/html/latest/trace/uprobetracer.html)
-- [Python USDT Probes](https://docs.python.org/3/howto/instrumentation.html)
 - [Peeka 架构设计](../ARCHITECTURE.md)
 
 ## 更新日志
 
-| 版本    | 日期         | 更新内容                       |
-|-------|------------|----------------------------|
-| 0.2.0 | 2026-02    | 添加 trace 命令文档，重点介绍 eBPF 实现 |
-| 0.1.0 | 2025-01    | 初始版本                       |
+| 版本    | 日期      | 更新内容          |
+|-------|---------|---------------|
+| 0.2.0 | 2026-02 | 添加 trace 命令文档 |
+| 0.1.0 | 2025-01 | 初始版本          |
+
