@@ -26,6 +26,7 @@ HELP_TEXT = """
 |-----|-----|
 | `D` | Dashboard - Process overview |
 | `W` | Watch - Function observation |
+| `T` | Trace - Call tree tracing |
 | `S` | Stack - Call stack tracing |
 | `M` | Monitor - Performance stats |
 | `E` | Memory - Memory analysis |
@@ -45,6 +46,18 @@ HELP_TEXT = """
 - Enter a function pattern like `module.Class.method`
 - Optionally add a condition like `params[0] > 10`
 - Click Watch or press Enter to start
+
+## Trace View
+
+- Enter a function pattern like `module.Class.method`
+- Set trace depth (1-10, default: 3)
+- Optionally add a condition like `cost > 50`
+- View call tree with color-coded timing:
+  - 🟢 Green: < 10ms
+  - 🟡 Yellow: 10-100ms
+  - 🔴 Red: >= 100ms
+- Press `C` to clear tree
+- Press `Delete` to stop all traces
 
 ## Tips
 

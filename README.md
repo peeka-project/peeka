@@ -377,6 +377,15 @@ peeka-cli trace <pattern> [options]
     `---[15.7ms] calculator.Logger.info()
 ```
 
+**TUI 可视化**：
+
+在 TUI 模式下，trace 命令提供交互式可视化界面：
+- 按 `T` 键切换到 Trace 视图
+- 树形结构展示调用层次
+- 颜色编码的耗时信息（绿色 < 10ms，黄色 10-100ms，红色 >= 100ms）
+- 实时流式更新
+- 可展开/折叠的树节点
+
 **更多详情**：参见 [trace 命令详解](docs/trace.md)
 
 ### stack - 追踪调用栈
