@@ -29,6 +29,10 @@ class DashboardView(Container):
 
     def set_client(self, client: "StreamingAgentClient") -> None:
         self._client = client
+        # Trigger initial data load and periodic refresh.
+        # set_client is called after on_mount, so we must start here.
+        self._refresh_dashboard_sync()
+        self._start_refresh_worker()
 
     def compose(self) -> ComposeResult:
         process_info = Vertical(
@@ -80,9 +84,7 @@ class DashboardView(Container):
         )
 
     async def on_mount(self) -> None:
-        if self._client:
-            await self._refresh_dashboard()
-            self._start_refresh_worker()
+        pass
 
     def on_unmount(self) -> None:
         if self._refresh_worker:
@@ -105,7 +107,10 @@ class DashboardView(Container):
         worker = get_current_worker()
 
         while not worker.is_cancelled:
-            time.sleep(3)
+            for _ in range(30):
+                if worker.is_cancelled:
+                    return
+                time.sleep(0.1)
 
             if worker.is_cancelled:
                 break

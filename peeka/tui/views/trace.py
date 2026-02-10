@@ -221,6 +221,7 @@ class TraceView(Container):
             return
 
         worker = get_current_worker()
+        local_count = 0
 
         for observation in self._client.stream_observations():
             if worker.is_cancelled:
@@ -230,11 +231,12 @@ class TraceView(Container):
             if obs_watch_id and obs_watch_id != watch_id:
                 continue
 
-            # Check if this is a trace observation
+            # Skip non-trace observations (no call_tree)
             if "call_tree" not in observation:
                 continue
 
-            count = observation.get("count", 0)
+            local_count += 1
+            count = local_count
 
             if watch_id in self._active_traces:
                 self._active_traces[watch_id]["count"] = count

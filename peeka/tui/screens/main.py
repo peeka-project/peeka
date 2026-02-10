@@ -6,7 +6,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container
 from textual.screen import Screen
-from textual.widgets import Header, Footer, Static, ContentSwitcher
+from textual.widgets import Header, Footer, Static, TabbedContent, TabPane
 
 from peeka.tui.views.dashboard import DashboardView
 from peeka.tui.views.inspect import InspectView
@@ -22,14 +22,14 @@ class MainScreen(Screen):
     """Main screen with tabbed interface for different diagnostic views."""
 
     BINDINGS = [
-        Binding("d", "switch_tab('dashboard')", "Dashboard"),
-        Binding("w", "switch_tab('watch')", "Watch"),
-        Binding("t", "switch_tab('trace')", "Trace"),
-        Binding("s", "switch_tab('stack')", "Stack"),
-        Binding("m", "switch_tab('monitor')", "Monitor"),
-        Binding("e", "switch_tab('memory')", "Memory"),
-        Binding("l", "switch_tab('logger')", "Logger"),
-        Binding("i", "switch_tab('inspect')", "Inspect"),
+        Binding("d", "switch_tab('dashboard')", "Dashboard", priority=True),
+        Binding("w", "switch_tab('watch')", "Watch", priority=True),
+        Binding("t", "switch_tab('trace')", "Trace", priority=True),
+        Binding("s", "switch_tab('stack')", "Stack", priority=True),
+        Binding("m", "switch_tab('monitor')", "Monitor", priority=True),
+        Binding("e", "switch_tab('memory')", "Memory", priority=True),
+        Binding("l", "switch_tab('logger')", "Logger", priority=True),
+        Binding("i", "switch_tab('inspect')", "Inspect", priority=True),
         Binding("escape", "go_back", "Back", priority=True),
         Binding("q", "go_back", "Back"),
     ]
@@ -45,38 +45,26 @@ class MainScreen(Screen):
         yield Header()
         with Container(id="main-container"):
             yield Static(f"Attached to PID: {self.pid}", id="pid-status")
-            with ContentSwitcher(initial="dashboard-view", id="main-content"):
-                dashboard = DashboardView(self.pid)
-                dashboard.id = "dashboard-view"
-                yield dashboard
-
-                watch = WatchView(self.pid)
-                watch.id = "watch-view"
-                yield watch
-
-                trace = TraceView(self.pid)
-                trace.id = "trace-view"
-                yield trace
-
-                stack = StackView(self.pid)
-                stack.id = "stack-view"
-                yield stack
-
-                monitor = MonitorView(self.pid)
-                monitor.id = "monitor-view"
-                yield monitor
-
-                memory = MemoryView(self.pid)
-                memory.id = "memory-view"
-                yield memory
-
-                logger = LoggerView(self.pid)
-                logger.id = "logger-view"
-                yield logger
-
-                inspect = InspectView(self.pid)
-                inspect.id = "inspect-view"
-                yield inspect
+            with TabbedContent(
+                initial="dashboard",
+                id="main-content",
+            ):
+                with TabPane("Dashboard [d]", id="dashboard"):
+                    yield DashboardView(self.pid)
+                with TabPane("Watch [w]", id="watch"):
+                    yield WatchView(self.pid)
+                with TabPane("Trace [t]", id="trace"):
+                    yield TraceView(self.pid)
+                with TabPane("Stack [s]", id="stack"):
+                    yield StackView(self.pid)
+                with TabPane("Monitor [m]", id="monitor"):
+                    yield MonitorView(self.pid)
+                with TabPane("Memory [e]", id="memory"):
+                    yield MemoryView(self.pid)
+                with TabPane("Logger [l]", id="logger"):
+                    yield LoggerView(self.pid)
+                with TabPane("Inspect [i]", id="inspect"):
+                    yield InspectView(self.pid)
         yield Footer()
 
     async def on_mount(self) -> None:
@@ -123,8 +111,8 @@ class MainScreen(Screen):
 
     def action_switch_tab(self, tab_id: str) -> None:
         """Switch to a specific view."""
-        switcher = self.query_one("#main-content", ContentSwitcher)
-        switcher.current = f"{tab_id}-view"
+        tabbed = self.query_one("#main-content", TabbedContent)
+        tabbed.active = tab_id
 
     def action_go_back(self) -> None:
         """Go back to process selector."""

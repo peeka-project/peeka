@@ -98,8 +98,7 @@ class StreamingAgentClient:
 
         try:
             self._sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            if self.timeout:
-                self._sock.settimeout(self.timeout)
+            self._sock.settimeout(self.timeout if self.timeout else 1.0)
             self._sock.connect(self.socket_path)
             return {"status": "success"}
         except Exception as e:

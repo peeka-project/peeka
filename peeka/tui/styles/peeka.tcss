@@ -73,6 +73,41 @@ Screen {
 }
 
 /* ============================================================================
+   TABBED CONTENT - Tab bar visibility
+   ============================================================================ */
+
+TabbedContent {
+    height: 1fr;
+}
+
+Tabs {
+    dock: top;
+    background: $surface;
+    color: $text-muted;
+}
+
+Tab {
+    padding: 0 2;
+    color: $text-muted;
+    background: $surface;
+}
+
+Tab:hover {
+    color: $text;
+    background: $surface-lighten-1;
+}
+
+Tab.-active {
+    color: $text;
+    background: $surface-lighten-2;
+    text-style: bold;
+}
+
+TabPane {
+    padding: 0;
+}
+
+/* ============================================================================
    DASHBOARD VIEW
    ============================================================================ */
 

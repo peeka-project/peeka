@@ -36,65 +36,64 @@ class TestTUIInContainer:
                 MainScreen(pid=12345, session_id="test", socket_path="/tmp/fake.sock")
             )
             await pilot.pause()
-            from textual.widgets import ContentSwitcher
+            from textual.widgets import TabbedContent, TabPane
 
-            switcher = app.screen.query_one("#main-content", ContentSwitcher)
-            children = list(switcher.children)
-            assert len(children) == 8
+            tabbed = app.screen.query_one("#main-content", TabbedContent)
+            panes = list(tabbed.query(TabPane))
+            assert len(panes) == 8
 
     async def test_tab_ids_correct(self):
-        """Verify all 8 tab view IDs match expected names."""
+        """Verify all 8 tab pane IDs match expected names."""
         app = PeekaApp()
         async with app.run_test() as pilot:
             app.push_screen(
                 MainScreen(pid=12345, session_id="test", socket_path="/tmp/fake.sock")
             )
             await pilot.pause()
-            from textual.widgets import ContentSwitcher
+            from textual.widgets import TabbedContent, TabPane
 
-            switcher = app.screen.query_one("#main-content", ContentSwitcher)
-            children = list(switcher.children)
-            child_ids = [child.id for child in children]
+            tabbed = app.screen.query_one("#main-content", TabbedContent)
+            panes = list(tabbed.query(TabPane))
+            pane_ids = [pane.id for pane in panes]
             expected = [
-                "dashboard-view",
-                "watch-view",
-                "trace-view",
-                "stack-view",
-                "monitor-view",
-                "memory-view",
-                "logger-view",
-                "inspect-view",
+                "dashboard",
+                "watch",
+                "trace",
+                "stack",
+                "monitor",
+                "memory",
+                "logger",
+                "inspect",
             ]
-            assert child_ids == expected
+            assert pane_ids == expected
 
     async def test_tab_switching(self):
-        """Verify tab switching updates ContentSwitcher.current."""
+        """Verify tab switching updates TabbedContent.active."""
         app = PeekaApp()
         async with app.run_test() as pilot:
             app.push_screen(
                 MainScreen(pid=12345, session_id="test", socket_path="/tmp/fake.sock")
             )
             await pilot.pause()
-            from textual.widgets import ContentSwitcher
+            from textual.widgets import TabbedContent
 
-            switcher = app.screen.query_one("#main-content", ContentSwitcher)
+            tabbed = app.screen.query_one("#main-content", TabbedContent)
 
-            # Test switching to each tab
-            tab_keys = {
-                "watch": "watch-view",
-                "trace": "trace-view",
-                "stack": "stack-view",
-                "monitor": "monitor-view",
-                "memory": "memory-view",
-                "logger": "logger-view",
-                "inspect": "inspect-view",
-                "dashboard": "dashboard-view",
-            }
-            for tab_name, expected_id in tab_keys.items():
+            tab_names = [
+                "watch",
+                "trace",
+                "stack",
+                "monitor",
+                "memory",
+                "logger",
+                "inspect",
+                "dashboard",
+            ]
+            for tab_name in tab_names:
                 app.screen.action_switch_tab(tab_name)
                 await pilot.pause()
-                assert switcher.current == expected_id, (
-                    f"Tab '{tab_name}': expected '{expected_id}', got '{switcher.current}'"
+                assert tabbed.active == tab_name, (
+                    f"Tab '{tab_name}': expected active='{tab_name}', got '{tabbed.active}'"
                 )
 
     async def test_trace_view_labels(self):
@@ -107,7 +106,6 @@ class TestTUIInContainer:
             await pilot.pause()
             app.screen.action_switch_tab("trace")
             await pilot.pause()
-            from textual.widgets import Static
 
             labels = app.screen.query("Static.input-label")
             label_texts = [label.render().plain for label in labels]
@@ -159,7 +157,6 @@ class TestTUIInContainer:
             await pilot.pause()
             app.screen.action_switch_tab("watch")
             await pilot.pause()
-            from textual.widgets import Static
 
             labels = app.screen.query("Static.input-label")
             label_texts = [label.render().plain for label in labels]
