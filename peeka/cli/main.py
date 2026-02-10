@@ -154,6 +154,47 @@ Examples:
         help='Condition expression (e.g., "params[0] > 100")',
     )
 
+    trace_parser = subparsers.add_parser(
+        "trace", help="Trace function call tree and timing (must attach first)"
+    )
+    trace_parser.add_argument(
+        "pattern", help='Function pattern to trace (e.g., "mymodule.MyClass.method")'
+    )
+    trace_parser.add_argument(
+        "-d",
+        "--depth",
+        type=int,
+        default=3,
+        help="Trace depth (max call levels, default: 3)",
+    )
+    trace_parser.add_argument(
+        "-n",
+        "--times",
+        type=int,
+        default=-1,
+        help="Number of times to capture (-1 for infinite)",
+    )
+    trace_parser.add_argument(
+        "--condition-express",
+        dest="condition_express",
+        type=str,
+        help='Condition expression (e.g., "cost > 50")',
+    )
+    trace_parser.add_argument(
+        "--skip-builtin",
+        dest="skip_builtin",
+        type=lambda x: x.lower() in ('true', '1', 'yes'),
+        default=True,
+        help="Skip built-in functions (default: True)",
+    )
+    trace_parser.add_argument(
+        "--min-duration",
+        dest="min_duration",
+        type=float,
+        default=0,
+        help="Minimum duration in ms to record (default: 0)",
+    )
+
     stack_parser = subparsers.add_parser(
         "stack", help="Get stack trace of function calls (must attach first)"
     )
@@ -378,6 +419,8 @@ Examples:
             return cmd_detach(args)
         elif args.command == "watch":
             return cmd_watch(args)
+        elif args.command == "trace":
+            return cmd_trace(args)
         elif args.command == "stack":
             return cmd_stack(args)
         elif args.command == "logger":
@@ -558,6 +601,91 @@ def cmd_watch(args) -> int:
 
     finally:
         cleanup_watch()
+
+    return 0
+
+
+def cmd_trace(args) -> int:
+    try:
+        socket_path, attached_pid = _check_agent_attached()
+    except ValueError as e:
+        OutputFormatter.error("trace", error=str(e))
+        return 1
+
+    streaming_client: Optional[StreamingAgentClient] = None
+    trace_id: Optional[str] = None
+    pattern: Optional[str] = None
+
+    def cleanup_trace(signum=None, frame=None):
+        nonlocal streaming_client, trace_id, pattern
+        if streaming_client and trace_id:
+            try:
+                streaming_client.send_command(
+                    {"type": "trace", "action": "stop", "watch_id": trace_id}
+                )
+                streaming_client.send_command(
+                    {"type": "reset", "action": "reset", "pattern": pattern}
+                )
+            except Exception:
+                pass
+            streaming_client.disconnect()
+        if signum is not None:
+            sys.exit(130)
+
+    signal.signal(signal.SIGINT, cleanup_trace)
+    signal.signal(signal.SIGTERM, cleanup_trace)
+
+    streaming_client = StreamingAgentClient(socket_path)
+    connect_result = streaming_client.connect()
+
+    if connect_result.get("status") != "success":
+        OutputFormatter.error(
+            "trace", error=connect_result.get("error", "Connection failed")
+        )
+        return 1
+
+    pattern = args.pattern
+
+    command = {
+        "type": "trace",
+        "action": "start",
+        "pattern": pattern,
+        "depth": args.depth,
+        "times": args.times,
+        "condition_express": args.condition_express,
+        "skip_builtin": args.skip_builtin,
+        "min_duration": args.min_duration,
+    }
+
+    response = streaming_client.send_command(command)
+
+    if response.get("status") != "success":
+        OutputFormatter.error(
+            "trace", error=response.get("error", "Trace start failed")
+        )
+        streaming_client.disconnect()
+        return 1
+
+    trace_id = response.get("watch_id")
+
+    OutputFormatter.event(
+        "trace_started", data={"trace_id": trace_id, "pattern": pattern}
+    )
+    sys.stdout.flush()
+
+    try:
+        for observation in streaming_client.stream_observations():
+            # Observations already have type field added by agent._send_observation
+            print(json.dumps(observation))
+            sys.stdout.flush()
+
+            if args.times > 0:
+                count = observation.get("count", 0)
+                if count >= args.times:
+                    break
+
+    finally:
+        cleanup_trace()
 
     return 0
 
