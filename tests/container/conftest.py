@@ -9,6 +9,10 @@ import time
 from typing import Dict, Tuple
 
 import pytest
+
+# Conditionally import testcontainers - skip collection if not available
+pytest.importorskip("testcontainers")
+
 from testcontainers.core.container import DockerContainer
 from testcontainers.core.image import DockerImage
 
