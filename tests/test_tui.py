@@ -3,7 +3,7 @@ TUI Component Tests using Textual's testing framework.
 
 Tests verify:
 1. ProcessSelectorScreen renders with correct widgets
-2. MainScreen has all 7 tabs with correct labels
+2. MainScreen has all 8 tabs with correct labels
 3. Tab switching works and updates active state
 4. All view inputs have descriptive labels
 5. CompletionSource is correctly typed and synchronous
@@ -57,8 +57,8 @@ class TestProcessSelectorScreen:
 
 class TestMainScreen:
     @pytest.mark.asyncio
-    async def test_main_screen_has_seven_tabs(self):
-        """MainScreen has exactly 7 tab panes."""
+    async def test_main_screen_has_eight_tabs(self):
+        """MainScreen has exactly 8 tab panes."""
         app = PeekaApp()
         async with app.run_test() as pilot:
             app.push_screen(
@@ -69,11 +69,11 @@ class TestMainScreen:
 
             switcher = app.screen.query_one("#main-content", ContentSwitcher)
             children = list(switcher.children)
-            assert len(children) == 7
+            assert len(children) == 8
 
     @pytest.mark.asyncio
     async def test_tab_labels_correct(self):
-        """All 7 tab labels match expected names."""
+        """All 8 tab labels match expected names."""
         app = PeekaApp()
         async with app.run_test() as pilot:
             app.push_screen(
@@ -88,6 +88,7 @@ class TestMainScreen:
             expected = [
                 "dashboard-view",
                 "watch-view",
+                "trace-view",
                 "stack-view",
                 "monitor-view",
                 "memory-view",
@@ -184,6 +185,7 @@ class TestInputLabels:
             # Check each tab that should have labels
             tab_label_counts = {
                 "w": 2,  # Watch: Pattern, Condition
+                "t": 3,  # Trace: Pattern, Depth, Condition
                 "s": 1,  # Stack: Pattern
                 "m": 2,  # Monitor: Pattern, Interval
                 "l": 2,  # Logger: Filter, Logger
@@ -238,6 +240,17 @@ class TestWorkerCallable:
         assert hasattr(view, "_stream_traces")
         # The lambda wrapper ensures the method is called inside the worker thread
         assert callable(view._stream_traces)
+
+    @pytest.mark.asyncio
+    async def test_trace_view_callable_wrapper(self):
+        """Verify _stream_trace_observations is wrapped in lambda for run_worker."""
+        from peeka.tui.views.trace import TraceView
+
+        view = TraceView(pid=12345)
+        # Verify the method exists and is not a coroutine
+        assert hasattr(view, "_stream_trace_observations")
+        # The lambda wrapper ensures the method is called inside the worker thread
+        assert callable(view._stream_trace_observations)
 
     @pytest.mark.asyncio
     async def test_monitor_view_callable_wrapper(self):

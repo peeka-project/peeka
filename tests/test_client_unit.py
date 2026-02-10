@@ -84,8 +84,11 @@ class TestAgentClientRecvExact:
 
             def send_response():
                 conn, _ = server.accept()
-                # Read the request
-                conn.recv(4096)
+                # Read the request (length-prefixed protocol)
+                length_bytes = conn.recv(4)
+                if length_bytes:
+                    length = int.from_bytes(length_bytes, "big")
+                    conn.recv(length)  # Read the payload
                 # Send response
                 response = json.dumps({"status": "ok"}).encode()
                 conn.sendall(len(response).to_bytes(4, "big"))
