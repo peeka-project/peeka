@@ -14,6 +14,7 @@ from peeka.tui.views.logger import LoggerView
 from peeka.tui.views.memory import MemoryView
 from peeka.tui.views.monitor import MonitorView
 from peeka.tui.views.stack import StackView
+from peeka.tui.views.trace import TraceView
 from peeka.tui.views.watch import WatchView
 
 
@@ -23,6 +24,7 @@ class MainScreen(Screen):
     BINDINGS = [
         Binding("d", "switch_tab('dashboard')", "Dashboard"),
         Binding("w", "switch_tab('watch')", "Watch"),
+        Binding("t", "switch_tab('trace')", "Trace"),
         Binding("s", "switch_tab('stack')", "Stack"),
         Binding("m", "switch_tab('monitor')", "Monitor"),
         Binding("e", "switch_tab('memory')", "Memory"),
@@ -51,6 +53,10 @@ class MainScreen(Screen):
                 watch = WatchView(self.pid)
                 watch.id = "watch-view"
                 yield watch
+
+                trace = TraceView(self.pid)
+                trace.id = "trace-view"
+                yield trace
 
                 stack = StackView(self.pid)
                 stack.id = "stack-view"
@@ -82,6 +88,9 @@ class MainScreen(Screen):
 
             watch_view = self.query_one(WatchView)
             watch_view.set_client(self._client)
+
+            trace_view = self.query_one(TraceView)
+            trace_view.set_client(self._client)
 
             logger_view = self.query_one(LoggerView)
             logger_view.set_client(self._client)

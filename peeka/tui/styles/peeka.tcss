@@ -175,6 +175,78 @@ Screen {
 }
 
 /* ============================================================================
+   TRACE VIEW
+   ============================================================================ */
+
+#trace-container {
+    padding: 1 2;
+}
+
+#trace-controls {
+    height: auto;
+    margin-bottom: 1;
+}
+
+#trace-controls Input,
+#trace-controls AutoCompleteInput {
+    width: 1fr;
+    margin-right: 1;
+}
+
+#trace-controls Button {
+    margin-left: 1;
+    min-width: 8;
+    max-width: 12;
+}
+
+#trace-content {
+    height: 1fr;
+}
+
+#trace-list {
+    width: 35%;
+    margin-right: 1;
+    border: solid $surface-lighten-2;
+    border-title-color: $text;
+    border-title-style: bold;
+    border-title-align: left;
+    padding: 1 2;
+}
+
+#trace-list:focus-within {
+    border: solid $accent;
+}
+
+#trace-tree-panel {
+    width: 65%;
+    border: solid $surface-lighten-2;
+    border-title-color: $text;
+    border-title-style: bold;
+    border-title-align: left;
+    padding: 1 2;
+}
+
+#trace-tree-panel:focus-within {
+    border: solid $accent;
+}
+
+#trace-table {
+    height: 100%;
+}
+
+#call-tree {
+    height: 1fr;
+    margin-bottom: 1;
+}
+
+#trace-stats {
+    height: auto;
+    padding: 1;
+    border: solid $surface-lighten-1;
+    border-title-color: $text-muted;
+}
+
+/* ============================================================================
    STACK VIEW
    ============================================================================ */
 
