@@ -347,3 +347,79 @@ class TestCLIWorkflowE2E:
         # Cleanup
         run_cli_command(container, ["detach"])
         verify_no_socket_files(container)
+
+    def test_workflow_attach_trace_detach(self, container_target):
+        """Complete workflow: attach, trace 2 times, detach, verify cleanup."""
+        container = container_target["container"]
+        pid = container_target["pid"]
+
+        attach_result = run_cli_command(container, ["attach", pid])
+        assert attach_result["exit_code"] == 0, (
+            f"Attach failed: {attach_result['raw_output']}"
+        )
+        assert attach_result["success_msg"] is not None, "No success message"
+
+        trace_result = run_cli_command(
+            container,
+            ["trace", "__main__.Calculator.add", "-n", "2", "-d", "2"],
+            timeout=25,
+        )
+        assert trace_result["exit_code"] in [0, 124], (
+            f"Trace failed: {trace_result['raw_output']}"
+        )
+
+        trace_messages = trace_result["messages"]
+        event_msgs = [m for m in trace_messages if m.get("type") == "event"]
+        observation_msgs = [m for m in trace_messages if m.get("type") == "observation"]
+
+        assert len(event_msgs) >= 1 or len(observation_msgs) >= 1, (
+            f"No trace events or observations. Got: {trace_result['raw_output']}"
+        )
+
+        for obs in observation_msgs:
+            if "call_tree" in obs:
+                assert isinstance(obs["call_tree"], list), "call_tree should be a list"
+                assert "total_duration_ms" in obs, "Missing total_duration_ms"
+
+        detach_result = run_cli_command(container, ["detach"])
+        assert detach_result["exit_code"] == 0, (
+            f"Detach failed: {detach_result['raw_output']}"
+        )
+        assert verify_no_socket_files(container), "Socket files remain after detach"
+
+    def test_workflow_trace_then_watch(self, container_target):
+        """Workflow: attach, trace, watch, detach."""
+        container = container_target["container"]
+        pid = container_target["pid"]
+
+        attach_result = run_cli_command(container, ["attach", pid])
+        assert attach_result["exit_code"] == 0, "Attach failed"
+
+        trace_result = run_cli_command(
+            container,
+            ["trace", "__main__.Calculator.multiply", "-n", "1", "-d", "2"],
+            timeout=20,
+        )
+        assert trace_result["exit_code"] in [0, 124], (
+            f"Trace failed: {trace_result['raw_output']}"
+        )
+        trace_observations = [
+            m for m in trace_result["messages"] if m.get("type") == "observation"
+        ]
+
+        watch_result = run_cli_command(
+            container,
+            ["watch", "__main__.Calculator.add", "-n", "1"],
+            timeout=15,
+        )
+        assert watch_result["exit_code"] in [0, 124], (
+            f"Watch failed: {watch_result['raw_output']}"
+        )
+        watch_observations = [
+            m for m in watch_result["messages"] if m.get("type") == "observation"
+        ]
+        assert len(watch_observations) >= 1, "No watch observations"
+
+        detach_result = run_cli_command(container, ["detach"])
+        assert detach_result["exit_code"] == 0, "Detach failed"
+        assert verify_no_socket_files(container), "Socket files remain"
