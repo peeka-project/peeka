@@ -470,3 +470,103 @@ class TestDiagnosticCommands:
         assert exit_code == 0 or "multiply" in output_lower, (
             f"Search method with wildcard failed:\n{output}"
         )
+
+    def test_trace_basic(self, container_target):
+        """Verify trace command captures function call tree."""
+        container = container_target["container"]
+        pid = container_target["pid"]
+
+        exit_code, attach_output = exec_in_container(
+            container, f"python -m peeka.cli.main attach {pid}", timeout=30
+        )
+        assert exit_code == 0, f"Attach failed:\n{attach_output}"
+
+        exit_code, output = exec_in_container(
+            container,
+            "python -m peeka.cli.main trace '__main__.Calculator.add' -n 1",
+            timeout=30,
+        )
+
+        lines = [
+            l for l in output.strip().split("\n") if l.strip() and l.startswith("{")
+        ]
+
+        has_trace_data = False
+        for line in lines:
+            try:
+                data = json.loads(line)
+                if data.get("type") == "observation" and "call_tree" in data:
+                    has_trace_data = True
+                    assert isinstance(data["call_tree"], list), (
+                        f"call_tree should be a list: {data['call_tree']}"
+                    )
+                    assert "total_duration_ms" in data, (
+                        f"Missing total_duration_ms: {data}"
+                    )
+                    assert isinstance(data["total_duration_ms"], (int, float)), (
+                        f"total_duration_ms should be numeric: {data['total_duration_ms']}"
+                    )
+                    assert "node_count" in data, f"Missing node_count: {data}"
+                    assert (
+                        isinstance(data["node_count"], int) and data["node_count"] > 0
+                    ), f"node_count should be positive int: {data['node_count']}"
+                    break
+            except json.JSONDecodeError:
+                continue
+
+        assert has_trace_data, f"No trace observation with call_tree found:\n{output}"
+
+    def test_trace_with_depth_limit(self, container_target):
+        """Verify trace respects depth limit parameter."""
+        container = container_target["container"]
+        pid = container_target["pid"]
+
+        exit_code, attach_output = exec_in_container(
+            container, f"python -m peeka.cli.main attach {pid}", timeout=30
+        )
+        assert exit_code == 0, f"Attach failed:\n{attach_output}"
+
+        exit_code, output = exec_in_container(
+            container,
+            "python -m peeka.cli.main trace '__main__.Calculator.add' -d 1 -n 1",
+            timeout=30,
+        )
+
+        assert exit_code == 0, f"Trace command failed:\n{output}"
+
+        lines = [
+            l for l in output.strip().split("\n") if l.strip() and l.startswith("{")
+        ]
+
+        for line in lines:
+            try:
+                data = json.loads(line)
+                if data.get("type") == "observation" and "call_tree" in data:
+                    for node in data["call_tree"]:
+                        if "depth" in node:
+                            assert node["depth"] <= 1, (
+                                f"Node depth {node['depth']} exceeds limit 1: {node}"
+                            )
+            except json.JSONDecodeError:
+                continue
+
+    def test_trace_with_condition(self, container_target):
+        """Verify trace with condition filter runs without error."""
+        container = container_target["container"]
+        pid = container_target["pid"]
+
+        exit_code, attach_output = exec_in_container(
+            container, f"python -m peeka.cli.main attach {pid}", timeout=30
+        )
+        assert exit_code == 0, f"Attach failed:\n{attach_output}"
+
+        exit_code, output = exec_in_container(
+            container,
+            "python -m peeka.cli.main trace '__main__.Calculator.add' --condition-express \"cost >= 0\" -n 1",
+            timeout=30,
+        )
+
+        assert exit_code == 0, f"Trace with condition failed:\n{output}"
+        assert "traceback" not in output.lower(), (
+            f"Unexpected traceback in output:\n{output}"
+        )
