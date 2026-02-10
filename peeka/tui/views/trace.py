@@ -162,8 +162,8 @@ class TraceView(Container):
         # Parse depth, default to 3
         try:
             depth = int(depth_input) if depth_input else 3
-            if depth < 1 or depth > 10:
-                self.app.notify("Depth must be between 1 and 10", severity="warning")
+            if depth < 1 or depth > 5:
+                self.app.notify("Depth must be between 1 and 5", severity="warning")
                 return
         except ValueError:
             self.app.notify("Invalid depth value", severity="warning")

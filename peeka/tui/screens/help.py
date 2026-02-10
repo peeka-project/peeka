@@ -50,7 +50,7 @@ HELP_TEXT = """
 ## Trace View
 
 - Enter a function pattern like `module.Class.method`
-- Set trace depth (1-10, default: 3)
+- Set trace depth (1-5, default: 3)
 - Optionally add a condition like `cost > 50`
 - View call tree with color-coded timing:
   - 🟢 Green: < 10ms
