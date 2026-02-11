@@ -335,6 +335,13 @@ class DecoratorInjector:
         """
         Resolve pattern to (function, parent_object, attr_name).
 
+        When the target process runs a script as ``python script.py``, the
+        module is loaded as ``__main__`` rather than its filename-based name.
+        This method detects that situation and transparently redirects
+        resolution to ``__main__`` so that users can use the natural
+        ``demo.Calculator.add`` pattern without needing to know about
+        ``__main__``.
+
         Args:
             pattern: Dotted path like 'module.Class.method' or 'module.function'
 
@@ -359,6 +366,32 @@ class DecoratorInjector:
                     module = importlib.import_module(module_name)
                 except (ImportError, ModuleNotFoundError):
                     continue
+
+            # When a script runs as ``python script.py``, its module lives
+            # under ``__main__`` in sys.modules.  If we resolved the module
+            # via import (or from sys.modules under a non-__main__ name),
+            # the classes/functions we patch there will be *different objects*
+            # from the ones the running code actually uses.  Detect this by
+            # comparing __file__ paths and prefer __main__ when they match.
+            main_module = sys.modules.get("__main__")
+            if (
+                main_module is not None
+                and module is not main_module
+                and hasattr(module, "__file__")
+                and hasattr(main_module, "__file__")
+                and module.__file__
+                and main_module.__file__
+            ):
+                try:
+                    from pathlib import Path
+
+                    if (
+                        Path(module.__file__).resolve()
+                        == Path(main_module.__file__).resolve()
+                    ):
+                        module = main_module
+                except (OSError, TypeError):
+                    pass
 
             # Navigate to the target
             obj = module
