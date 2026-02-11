@@ -1,39 +1,44 @@
-/* Peeka TUI Styles - Lazygit/Lazydocker Inspired */
+/* Peeka TUI Styles — Modern Textual (Lazygit / Posting inspired) */
 
 /* ============================================================================
-   GLOBAL STYLES
+   GLOBAL
    ============================================================================ */
 
 Screen {
     background: $surface;
+    scrollbar-size: 1 1;
+    scrollbar-color: $surface-lighten-2;
+    scrollbar-color-hover: $primary 60%;
+    scrollbar-color-active: $primary;
+    scrollbar-background: $surface;
 }
 
 /* ============================================================================
-   PANEL SYSTEM - Lazygit-style bordered panels
+   PANEL SYSTEM — round borders, tight spacing, focus glow
    ============================================================================ */
 
 .panel {
-    border: solid $surface-lighten-2;
+    border: round $surface-lighten-1;
     border-title-color: $text;
     border-title-style: bold;
     border-title-align: left;
-    padding: 1 2;
-    margin: 1 0;
+    padding: 0 1;
+    margin: 0;
 }
 
 .panel:focus-within {
-    border: solid $accent;
+    border: round $accent;
 }
 
 /* ============================================================================
-   EMPTY STATE - Placeholder text for empty views
+   EMPTY STATE
    ============================================================================ */
 
 .empty-state {
     content-align: center middle;
     color: $text-muted;
     text-style: italic;
-    padding: 2;
+    padding: 1;
 }
 
 /* ============================================================================
@@ -41,7 +46,7 @@ Screen {
    ============================================================================ */
 
 #process-selector {
-    padding: 1 2;
+    padding: 0 1;
 }
 
 #process-selector #title {
@@ -73,7 +78,7 @@ Screen {
 }
 
 /* ============================================================================
-   TABBED CONTENT - Tab bar visibility
+   TABBED CONTENT — active tab uses $primary
    ============================================================================ */
 
 TabbedContent {
@@ -99,7 +104,7 @@ Tab:hover {
 
 Tab.-active {
     color: $text;
-    background: $surface-lighten-2;
+    background: $primary;
     text-style: bold;
 }
 
@@ -108,12 +113,23 @@ TabPane {
 }
 
 /* ============================================================================
-   DASHBOARD VIEW
+   VIEW CONTAINERS — tight padding
    ============================================================================ */
 
-#dashboard-container {
-    padding: 1 2;
+#dashboard-container,
+#watch-container,
+#trace-container,
+#stack-container,
+#monitor-container,
+#memory-container,
+#logger-container,
+#inspect-container {
+    padding: 0 1;
 }
+
+/* ============================================================================
+   DASHBOARD VIEW
+   ============================================================================ */
 
 #metrics-row, #activity-row {
     height: auto;
@@ -121,21 +137,17 @@ TabPane {
 }
 
 .dashboard-card {
-    border: solid $surface-lighten-2;
+    border: round $surface-lighten-1;
     border-title-color: $text;
     border-title-style: bold;
     border-title-align: left;
-    padding: 1 2;
+    padding: 0 1;
     margin: 0 1 0 0;
     min-width: 30;
 }
 
 .dashboard-card:focus-within {
-    border: solid $accent;
-}
-
-#process-info, #memory-section, #watch-section, #gc-section {
-    border-title-color: $text;
+    border: round $accent;
 }
 
 #pid-info, #python-version, #uptime,
@@ -146,59 +158,65 @@ TabPane {
 }
 
 /* ============================================================================
-   WATCH VIEW
+   CONTROLS — shared pattern across Watch, Trace, Stack, Monitor, Logger, Inspect
    ============================================================================ */
 
-#watch-container {
-    padding: 1 2;
-}
-
-#watch-controls {
+#watch-controls,
+#trace-controls,
+#stack-controls,
+#monitor-controls,
+#logger-controls,
+#inspect-controls {
     height: auto;
     margin-bottom: 1;
 }
 
 #watch-controls Input,
-#watch-controls AutoCompleteInput {
+#watch-controls AutoCompleteInput,
+#trace-controls Input,
+#trace-controls AutoCompleteInput,
+#stack-controls Input,
+#monitor-controls Input,
+#logger-controls Input,
+#inspect-controls Input {
     width: 1fr;
     margin-right: 1;
 }
 
-#watch-controls Button {
+#watch-controls Button,
+#trace-controls Button,
+#stack-controls Button,
+#monitor-controls Button,
+#logger-controls Button,
+#inspect-controls Button {
     margin-left: 1;
     min-width: 8;
-    max-width: 12;
+    max-width: 14;
 }
 
-#watch-content {
+/* ============================================================================
+   SPLIT-PANE CONTENT AREAS
+   ============================================================================ */
+
+#watch-content,
+#trace-content,
+#stack-content,
+#memory-content,
+#inspect-content {
     height: 1fr;
 }
+
+/* ============================================================================
+   WATCH VIEW — panel-specific sizing
+   ============================================================================ */
 
 #watch-list {
     width: 40%;
     margin-right: 1;
-    border: solid $surface-lighten-2;
-    border-title-color: $text;
-    border-title-style: bold;
-    border-title-align: left;
-    padding: 1 2;
-}
-
-#watch-list:focus-within {
-    border: solid $accent;
 }
 
 #observations-panel {
     width: 60%;
-    border: solid $surface-lighten-2;
-    border-title-color: $text;
-    border-title-style: bold;
-    border-title-align: left;
-    padding: 1 2;
-}
-
-#observations-panel:focus-within {
-    border: solid $accent;
 }
 
 #watch-table {
@@ -210,59 +228,16 @@ TabPane {
 }
 
 /* ============================================================================
-   TRACE VIEW
+   TRACE VIEW — panel-specific sizing
    ============================================================================ */
-
-#trace-container {
-    padding: 1 2;
-}
-
-#trace-controls {
-    height: auto;
-    margin-bottom: 1;
-}
-
-#trace-controls Input,
-#trace-controls AutoCompleteInput {
-    width: 1fr;
-    margin-right: 1;
-}
-
-#trace-controls Button {
-    margin-left: 1;
-    min-width: 8;
-    max-width: 12;
-}
-
-#trace-content {
-    height: 1fr;
-}
 
 #trace-list {
     width: 35%;
     margin-right: 1;
-    border: solid $surface-lighten-2;
-    border-title-color: $text;
-    border-title-style: bold;
-    border-title-align: left;
-    padding: 1 2;
-}
-
-#trace-list:focus-within {
-    border: solid $accent;
 }
 
 #trace-tree-panel {
     width: 65%;
-    border: solid $surface-lighten-2;
-    border-title-color: $text;
-    border-title-style: bold;
-    border-title-align: left;
-    padding: 1 2;
-}
-
-#trace-tree-panel:focus-within {
-    border: solid $accent;
 }
 
 #trace-table {
@@ -276,68 +251,17 @@ TabPane {
 
 #trace-stats {
     height: auto;
-    padding: 1;
-    border: solid $surface-lighten-1;
+    padding: 0 1;
+    border: round $surface-lighten-1;
     border-title-color: $text-muted;
 }
 
 /* ============================================================================
-   STACK VIEW
+   STACK VIEW — panel-specific sizing
    ============================================================================ */
-
-#stack-container {
-    padding: 1 2;
-}
-
-#stack-controls {
-    height: auto;
-    margin-bottom: 1;
-}
-
-#stack-controls Input {
-    width: 1fr;
-    margin-right: 1;
-}
-
-#stack-controls Button {
-    margin-left: 1;
-    min-width: 8;
-    max-width: 12;
-}
-
-#stack-content {
-    height: 1fr;
-}
-
-#trace-list {
-    width: 40%;
-    margin-right: 1;
-    border: solid $surface-lighten-2;
-    border-title-color: $text;
-    border-title-style: bold;
-    border-title-align: left;
-    padding: 1 2;
-}
-
-#trace-list:focus-within {
-    border: solid $accent;
-}
 
 #stack-panel {
     width: 60%;
-    border: solid $surface-lighten-2;
-    border-title-color: $text;
-    border-title-style: bold;
-    border-title-align: left;
-    padding: 1 2;
-}
-
-#stack-panel:focus-within {
-    border: solid $accent;
-}
-
-#trace-table {
-    height: 100%;
 }
 
 #stack-tree {
@@ -345,40 +269,11 @@ TabPane {
 }
 
 /* ============================================================================
-   MONITOR VIEW
+   MONITOR VIEW — panel-specific sizing
    ============================================================================ */
-
-#monitor-container {
-    padding: 1 2;
-}
-
-#monitor-controls {
-    height: auto;
-    margin-bottom: 1;
-}
-
-#monitor-controls Input {
-    width: 1fr;
-    margin-right: 1;
-}
-
-#monitor-controls Button {
-    margin-left: 1;
-    min-width: 10;
-    max-width: 14;
-}
 
 #stats-panel {
     height: 1fr;
-    border: solid $surface-lighten-2;
-    border-title-color: $text;
-    border-title-style: bold;
-    border-title-align: left;
-    padding: 1 2;
-}
-
-#stats-panel:focus-within {
-    border: solid $accent;
 }
 
 #stats-table {
@@ -386,12 +281,8 @@ TabPane {
 }
 
 /* ============================================================================
-   MEMORY VIEW
+   MEMORY VIEW — panel-specific sizing
    ============================================================================ */
-
-#memory-container {
-    padding: 1 2;
-}
 
 #memory-controls {
     height: auto;
@@ -402,35 +293,13 @@ TabPane {
     margin-right: 1;
 }
 
-#memory-content {
-    height: 1fr;
-}
-
 #mem-overview {
     width: 40%;
     margin-right: 1;
-    border: solid $surface-lighten-2;
-    border-title-color: $text;
-    border-title-style: bold;
-    border-title-align: left;
-    padding: 1 2;
-}
-
-#mem-overview:focus-within {
-    border: solid $accent;
 }
 
 #mem-objects {
     width: 60%;
-    border: solid $surface-lighten-2;
-    border-title-color: $text;
-    border-title-style: bold;
-    border-title-align: left;
-    padding: 1 2;
-}
-
-#mem-objects:focus-within {
-    border: solid $accent;
 }
 
 #mem-total, #mem-rss, #mem-vms {
@@ -442,39 +311,12 @@ TabPane {
 }
 
 /* ============================================================================
-   LOGGER VIEW
+   LOGGER VIEW — panel-specific sizing
    ============================================================================ */
-
-#logger-container {
-    padding: 1 2;
-}
-
-#logger-controls {
-    height: auto;
-    margin-bottom: 1;
-}
-
-#logger-controls Input {
-    width: 1fr;
-    margin-right: 1;
-}
-
-#logger-controls Button {
-    margin-left: 1;
-}
 
 #logger-list {
     height: 1fr;
     margin-bottom: 1;
-    border: solid $surface-lighten-2;
-    border-title-color: $text;
-    border-title-style: bold;
-    border-title-align: left;
-    padding: 1 2;
-}
-
-#logger-list:focus-within {
-    border: solid $accent;
 }
 
 #logger-table {
@@ -495,56 +337,16 @@ TabPane {
 }
 
 /* ============================================================================
-   INSPECT VIEW
+   INSPECT VIEW — panel-specific sizing
    ============================================================================ */
-
-#inspect-container {
-    padding: 1 2;
-}
-
-#inspect-controls {
-    height: auto;
-    margin-bottom: 1;
-}
-
-#inspect-controls Input {
-    width: 1fr;
-    margin-right: 1;
-}
-
-#inspect-controls Button {
-    margin-left: 1;
-}
-
-#inspect-content {
-    height: 1fr;
-}
 
 #inspect-tree-panel {
     width: 40%;
     margin-right: 1;
-    border: solid $surface-lighten-2;
-    border-title-color: $text;
-    border-title-style: bold;
-    border-title-align: left;
-    padding: 1 2;
-}
-
-#inspect-tree-panel:focus-within {
-    border: solid $accent;
 }
 
 #inspect-details-panel {
     width: 60%;
-    border: solid $surface-lighten-2;
-    border-title-color: $text;
-    border-title-style: bold;
-    border-title-align: left;
-    padding: 1 2;
-}
-
-#inspect-details-panel:focus-within {
-    border: solid $accent;
 }
 
 #inspect-tree {
@@ -582,9 +384,9 @@ AutoCompleteInput #ac-input {
 
 AutoCompleteInput #ac-dropdown {
     max-height: 10;
-    border: solid $accent;
+    border: round $accent;
     background: $surface;
-    padding: 1;
+    padding: 0 1;
 }
 
 /* ============================================================================
@@ -594,12 +396,12 @@ AutoCompleteInput #ac-dropdown {
 #help-container {
     width: 80%;
     height: 80%;
-    border: solid $accent;
+    border: round $accent;
     border-title-color: $text;
     border-title-style: bold;
     border-title-align: center;
     background: $surface;
-    padding: 2;
+    padding: 1;
 }
 
 #help-content {
@@ -608,7 +410,7 @@ AutoCompleteInput #ac-dropdown {
 }
 
 /* ============================================================================
-   BUTTON STYLING - Consistent compact buttons
+   BUTTONS — compact, consistent
    ============================================================================ */
 
 Button {
@@ -629,7 +431,7 @@ Button.warning {
 }
 
 /* ============================================================================
-   DATA TABLE STYLING - Clean rows with subtle styling
+   DATA TABLE — zebra striping, primary header, bold cursor
    ============================================================================ */
 
 DataTable {
@@ -637,10 +439,17 @@ DataTable {
 }
 
 DataTable > .datatable--header {
-    background: $surface-lighten-1;
+    background: $primary 20%;
     text-style: bold;
+    color: $text;
 }
 
 DataTable > .datatable--cursor {
-    background: $accent;
+    background: $primary;
+    color: $text;
+    text-style: bold;
+}
+
+DataTable > .datatable--even-row {
+    background: $surface-lighten-1 30%;
 }

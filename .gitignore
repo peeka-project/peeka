@@ -1,7 +1,39 @@
-dist
-.venv
-__pycache__
-*.egg-info
+# Build / dist
+dist/
+build/
+*.egg-info/
+*.egg
 
-# Sisyphus (OhMyOpenCode) working files
+# Virtual environments
+.venv/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Testing / coverage
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Linters / formatters
+.ruff_cache/
+.mypy_cache/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# AI agent working files
 .sisyphus/
+.agents/
+.claude/
