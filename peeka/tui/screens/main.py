@@ -40,6 +40,7 @@ class MainScreen(Screen):
         self.session_id = session_id
         self.socket_path = socket_path
         self._client = None
+        self._stream_client = None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -76,18 +77,26 @@ class MainScreen(Screen):
 
             watch_view = self.query_one(WatchView)
             watch_view.set_client(self._client)
+            if self._stream_client:
+                watch_view.set_stream_client(self._stream_client)
 
             trace_view = self.query_one(TraceView)
             trace_view.set_client(self._client)
+            if self._stream_client:
+                trace_view.set_stream_client(self._stream_client)
 
             logger_view = self.query_one(LoggerView)
             logger_view.set_client(self._client)
 
             stack_view = self.query_one(StackView)
             stack_view.set_client(self._client)
+            if self._stream_client:
+                stack_view.set_stream_client(self._stream_client)
 
             monitor_view = self.query_one(MonitorView)
             monitor_view.set_client(self._client)
+            if self._stream_client:
+                monitor_view.set_stream_client(self._stream_client)
 
             memory_view = self.query_one(MemoryView)
             memory_view.set_client(self._client)
@@ -96,7 +105,7 @@ class MainScreen(Screen):
             inspect_view.set_client(self._client)
 
     async def _connect(self) -> None:
-        """Connect to the target process agent."""
+        """Connect to the target process agent with separate command and streaming sockets."""
         try:
             from peeka.core.client import StreamingAgentClient
 
@@ -106,6 +115,17 @@ class MainScreen(Screen):
             if result.get("status") != "success":
                 error_msg = result.get("error", "Unknown connection error")
                 self.notify(f"Failed to connect: {error_msg}", severity="error")
+                return
+
+            self._stream_client = StreamingAgentClient(self.socket_path)
+            stream_result = self._stream_client.connect()
+
+            if stream_result.get("status") != "success":
+                error_msg = stream_result.get("error", "Unknown connection error")
+                self.notify(
+                    f"Stream connection failed: {error_msg}", severity="warning"
+                )
+                self._stream_client = None
         except Exception as e:
             self.notify(f"Failed to connect: {e}", severity="error")
 

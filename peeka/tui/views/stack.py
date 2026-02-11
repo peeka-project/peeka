@@ -26,11 +26,15 @@ class StackView(Container):
         super().__init__()
         self.pid = pid
         self._client: Optional["StreamingAgentClient"] = None
+        self._stream_client: Optional["StreamingAgentClient"] = None
         self._workers: Dict[str, Worker] = {}
         self._trace_counts: Dict[str, int] = {}
 
     def set_client(self, client: "StreamingAgentClient") -> None:
         self._client = client
+
+    def set_stream_client(self, client: "StreamingAgentClient") -> None:
+        self._stream_client = client
 
     async def action_start_trace(self) -> None:
         """Start tracing (triggered by Enter key)."""
@@ -136,12 +140,13 @@ class StackView(Container):
         self.app.notify(f"Trace started: {pattern}", severity="information")
 
     def _stream_traces(self, watch_id: str, pattern: str):
-        if not self._client:
+        stream = self._stream_client or self._client
+        if not stream:
             return
 
         worker = get_current_worker()
 
-        for observation in self._client.stream_observations():
+        for observation in stream.stream_observations():
             if worker.is_cancelled:
                 break
 
