@@ -33,11 +33,15 @@ class WatchView(Container):
         ] = {}  # watch_id -> {pattern, count, worker}
         self._completion_source: Optional[CompletionSource] = None
         self._client: Optional["StreamingAgentClient"] = None
+        self._stream_client: Optional["StreamingAgentClient"] = None
 
     def set_client(self, client: "StreamingAgentClient") -> None:
         """Set agent client for commands and completion."""
         self._client = client
         self._completion_source = CompletionSource(client)
+
+    def set_stream_client(self, client: "StreamingAgentClient") -> None:
+        self._stream_client = client
 
     def action_start_watch(self) -> None:
         """Start watching (triggered by Enter key)."""
@@ -179,13 +183,14 @@ class WatchView(Container):
 
     def _stream_observations(self, watch_id: str, pattern: str):
         """Stream observations in background thread."""
-        if not self._client:
+        stream = self._stream_client or self._client
+        if not stream:
             return
 
         worker = get_current_worker()
         local_count = 0
 
-        for observation in self._client.stream_observations():
+        for observation in stream.stream_observations():
             if worker.is_cancelled:
                 break
 

@@ -26,10 +26,14 @@ class MonitorView(Container):
         super().__init__()
         self.pid = pid
         self._client: Optional["StreamingAgentClient"] = None
+        self._stream_client: Optional["StreamingAgentClient"] = None
         self._workers: Dict[str, Worker] = {}
 
     def set_client(self, client: "StreamingAgentClient") -> None:
         self._client = client
+
+    def set_stream_client(self, client: "StreamingAgentClient") -> None:
+        self._stream_client = client
 
     def compose(self) -> ComposeResult:
         yield Container(
@@ -140,12 +144,13 @@ class MonitorView(Container):
         )
 
     def _stream_stats(self, watch_id: str, pattern: str):
-        if not self._client:
+        stream = self._stream_client or self._client
+        if not stream:
             return
 
         worker = get_current_worker()
 
-        for observation in self._client.stream_observations():
+        for observation in stream.stream_observations():
             if worker.is_cancelled:
                 break
 
@@ -228,4 +233,3 @@ class MonitorView(Container):
         for worker in self._workers.values():
             if worker:
                 worker.cancel()
-
