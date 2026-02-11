@@ -50,21 +50,21 @@ class MainScreen(Screen):
                 initial="dashboard",
                 id="main-content",
             ):
-                with TabPane("Dashboard [d]", id="dashboard"):
+                with TabPane("Dashboard", id="dashboard"):
                     yield DashboardView(self.pid)
-                with TabPane("Watch [w]", id="watch"):
+                with TabPane("Watch", id="watch"):
                     yield WatchView(self.pid)
-                with TabPane("Trace [t]", id="trace"):
+                with TabPane("Trace", id="trace"):
                     yield TraceView(self.pid)
-                with TabPane("Stack [s]", id="stack"):
+                with TabPane("Stack", id="stack"):
                     yield StackView(self.pid)
-                with TabPane("Monitor [m]", id="monitor"):
+                with TabPane("Monitor", id="monitor"):
                     yield MonitorView(self.pid)
-                with TabPane("Memory [e]", id="memory"):
+                with TabPane("Memory", id="memory"):
                     yield MemoryView(self.pid)
-                with TabPane("Logger [l]", id="logger"):
+                with TabPane("Logger", id="logger"):
                     yield LoggerView(self.pid)
-                with TabPane("Inspect [i]", id="inspect"):
+                with TabPane("Inspect", id="inspect"):
                     yield InspectView(self.pid)
         yield Footer()
 
