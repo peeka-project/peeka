@@ -268,7 +268,7 @@ class DecoratorInjector:
         with self._lock:
             for watch_id, info in list(self.instrumented.items()):
                 if pattern is None or self._match_pattern(
-                        info.get("pattern", ""), pattern
+                    info.get("pattern", ""), pattern
                 ):
                     watch_ids_to_reset.append(watch_id)
 
@@ -670,7 +670,7 @@ class DecoratorInjector:
         injector = self
 
         # Check if sys.monitoring is available (Python 3.12+)
-        use_monitoring = sys.version_info >= (3, 12) and hasattr(sys, 'monitoring')
+        use_monitoring = sys.version_info >= (3, 12) and hasattr(sys, "monitoring")
 
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -712,12 +712,24 @@ class DecoratorInjector:
             if use_monitoring:
                 # Use sys.monitoring for Python 3.12+
                 call_tree = injector._trace_with_monitoring(
-                    func, args, kwargs, trace_depth, skip_builtin, min_duration, call_stack
+                    func,
+                    args,
+                    kwargs,
+                    trace_depth,
+                    skip_builtin,
+                    min_duration,
+                    call_stack,
                 )
             else:
                 # Fallback to sys.settrace for older Python versions
                 call_tree = injector._trace_with_settrace(
-                    func, args, kwargs, trace_depth, skip_builtin, min_duration, call_stack
+                    func,
+                    args,
+                    kwargs,
+                    trace_depth,
+                    skip_builtin,
+                    min_duration,
+                    call_stack,
                 )
 
             # Calculate total duration
@@ -822,9 +834,13 @@ class DecoratorInjector:
                 if code.co_filename.startswith(("<", "/")):
                     # Built-in or C extension
                     return
-                if "site-packages" not in code.co_filename and "dist-packages" not in code.co_filename:
+                if (
+                    "site-packages" not in code.co_filename
+                    and "dist-packages" not in code.co_filename
+                ):
                     # Check if it's in stdlib
                     import os
+
                     py_path = os.path.dirname(os.__file__)
                     if code.co_filename.startswith(py_path):
                         return
@@ -836,7 +852,7 @@ class DecoratorInjector:
                     "filename": code.co_filename,
                     "lineno": frame.f_lineno,
                     "start_time": time.perf_counter(),
-                    "children": []
+                    "children": [],
                 }
                 call_times[id(frame)] = call_entry
                 call_stack.append(call_entry)
@@ -845,7 +861,9 @@ class DecoratorInjector:
                 frame_id = id(frame)
                 if frame_id in call_times:
                     call_entry = call_times[frame_id]
-                    duration_ms = (time.perf_counter() - call_entry["start_time"]) * 1000
+                    duration_ms = (
+                        time.perf_counter() - call_entry["start_time"]
+                    ) * 1000
 
                     # Only keep if above minimum duration
                     if duration_ms >= min_duration:
@@ -864,13 +882,17 @@ class DecoratorInjector:
             sys.monitoring.use_tool_id(tool_id, "peeka-trace")
             sys.monitoring.set_events(
                 tool_id,
-                sys.monitoring.events.PY_START | sys.monitoring.events.PY_RETURN
+                sys.monitoring.events.PY_START | sys.monitoring.events.PY_RETURN,
             )
             sys.monitoring.register_callback(
-                tool_id, sys.monitoring.events.PY_START, lambda code, offset: monitoring_callback(code, offset)
+                tool_id,
+                sys.monitoring.events.PY_START,
+                lambda code, offset: monitoring_callback(code, offset),
             )
             sys.monitoring.register_callback(
-                tool_id, sys.monitoring.events.PY_RETURN, lambda code, offset, retval: monitoring_callback(code, offset, retval)
+                tool_id,
+                sys.monitoring.events.PY_RETURN,
+                lambda code, offset, retval: monitoring_callback(code, offset, retval),
             )
 
             # Execute function
@@ -880,14 +902,20 @@ class DecoratorInjector:
                 duration_ms = (time.perf_counter() - start_time) * 1000
 
                 # Build tree structure from flat list
-                children = [entry for entry in call_times.values() if "duration_ms" in entry]
+                children = [
+                    entry for entry in call_times.values() if "duration_ms" in entry
+                ]
 
                 # Root node
                 root_node = {
                     "depth": 0,
                     "function": f"{func.__module__}.{func.__qualname__}",
-                    "filename": func.__code__.co_filename if hasattr(func, '__code__') else "unknown",
-                    "lineno": func.__code__.co_firstlineno if hasattr(func, '__code__') else 0,
+                    "filename": func.__code__.co_filename
+                    if hasattr(func, "__code__")
+                    else "unknown",
+                    "lineno": func.__code__.co_firstlineno
+                    if hasattr(func, "__code__")
+                    else 0,
                     "duration_ms": round(duration_ms, 3),
                     "children": children,
                     "_result": result,
@@ -897,12 +925,18 @@ class DecoratorInjector:
 
             except Exception as e:
                 duration_ms = (time.perf_counter() - start_time) * 1000
-                children = [entry for entry in call_times.values() if "duration_ms" in entry]
+                children = [
+                    entry for entry in call_times.values() if "duration_ms" in entry
+                ]
                 root_node = {
                     "depth": 0,
                     "function": f"{func.__module__}.{func.__qualname__}",
-                    "filename": func.__code__.co_filename if hasattr(func, '__code__') else "unknown",
-                    "lineno": func.__code__.co_firstlineno if hasattr(func, '__code__') else 0,
+                    "filename": func.__code__.co_filename
+                    if hasattr(func, "__code__")
+                    else "unknown",
+                    "lineno": func.__code__.co_firstlineno
+                    if hasattr(func, "__code__")
+                    else 0,
                     "duration_ms": round(duration_ms, 3),
                     "children": children,
                     "_exception": e,
@@ -947,7 +981,7 @@ class DecoratorInjector:
             if current_depth[0] >= max_depth:
                 return None
 
-            if event == 'call':
+            if event == "call":
                 code = frame.f_code
                 func_name = f"{code.co_filename}:{code.co_name}"
 
@@ -955,8 +989,12 @@ class DecoratorInjector:
                 if skip_builtin:
                     if code.co_filename.startswith(("<", "/")):
                         return None
-                    if "site-packages" not in code.co_filename and "dist-packages" not in code.co_filename:
+                    if (
+                        "site-packages" not in code.co_filename
+                        and "dist-packages" not in code.co_filename
+                    ):
                         import os
+
                         py_path = os.path.dirname(os.__file__)
                         if code.co_filename.startswith(py_path):
                             return None
@@ -964,23 +1002,27 @@ class DecoratorInjector:
                 current_depth[0] += 1
                 start_time = time.perf_counter()
 
-                call_tree.append({
-                    'depth': current_depth[0],
-                    'function': func_name,
-                    'filename': code.co_filename,
-                    'lineno': frame.f_lineno,
-                    'start_time': start_time
-                })
+                call_tree.append(
+                    {
+                        "depth": current_depth[0],
+                        "function": func_name,
+                        "filename": code.co_filename,
+                        "lineno": frame.f_lineno,
+                        "start_time": start_time,
+                    }
+                )
                 return local_trace
 
-            elif event == 'return':
-                if call_tree and call_tree[-1]['depth'] == current_depth[0]:
-                    duration_ms = (time.perf_counter() - call_tree[-1]['start_time']) * 1000
+            elif event == "return":
+                if call_tree and call_tree[-1]["depth"] == current_depth[0]:
+                    duration_ms = (
+                        time.perf_counter() - call_tree[-1]["start_time"]
+                    ) * 1000
 
                     # Only keep if above minimum duration
                     if duration_ms >= min_duration:
-                        call_tree[-1]['duration_ms'] = round(duration_ms, 3)
-                        del call_tree[-1]['start_time']
+                        call_tree[-1]["duration_ms"] = round(duration_ms, 3)
+                        del call_tree[-1]["start_time"]
                     else:
                         call_tree.pop()
 
@@ -1000,8 +1042,12 @@ class DecoratorInjector:
             root_node = {
                 "depth": 0,
                 "function": f"{func.__module__}.{func.__qualname__}",
-                "filename": func.__code__.co_filename if hasattr(func, '__code__') else "unknown",
-                "lineno": func.__code__.co_firstlineno if hasattr(func, '__code__') else 0,
+                "filename": func.__code__.co_filename
+                if hasattr(func, "__code__")
+                else "unknown",
+                "lineno": func.__code__.co_firstlineno
+                if hasattr(func, "__code__")
+                else 0,
                 "duration_ms": round(duration_ms, 3),
                 "children": call_tree,
                 "_result": result,
@@ -1014,8 +1060,12 @@ class DecoratorInjector:
             root_node = {
                 "depth": 0,
                 "function": f"{func.__module__}.{func.__qualname__}",
-                "filename": func.__code__.co_filename if hasattr(func, '__code__') else "unknown",
-                "lineno": func.__code__.co_firstlineno if hasattr(func, '__code__') else 0,
+                "filename": func.__code__.co_filename
+                if hasattr(func, "__code__")
+                else "unknown",
+                "lineno": func.__code__.co_firstlineno
+                if hasattr(func, "__code__")
+                else 0,
                 "duration_ms": round(duration_ms, 3),
                 "children": call_tree,
                 "_exception": e,
