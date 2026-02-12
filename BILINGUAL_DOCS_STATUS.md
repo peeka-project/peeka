@@ -18,14 +18,29 @@
 - ✅ `comparison.md` - Comparison with Arthas (8.5 KB)
 - ✅ `troubleshooting.md` - Troubleshooting guide (11 KB)
 
-### 4. Language Consistency Verification
+### 4. English Translations - Command Documentation
+- ✅ `commands/index.md` - Commands overview (4.8 KB)
+- ✅ `commands/attach.md` - Attach command (6.0 KB)
+- ✅ `commands/watch.md` - Watch command (29.6 KB)
+- ✅ `commands/trace.md` - Trace command (20.1 KB)
+- ✅ `commands/stack.md` - Stack command (25.3 KB)
+- ✅ `commands/monitor.md` - Monitor command (28.3 KB)
+- ✅ `commands/logger.md` - Logger command (28.3 KB)
+- ✅ `commands/memory.md` - Memory command (20.7 KB)
+- ✅ `commands/inspect.md` - Inspect command (17.7 KB)
+- ✅ `commands/search.md` - Search command (25.6 KB)
+- ✅ `commands/reset.md` - Reset command (15.1 KB)
+
+### 5. Language Consistency Verification
 - ✅ All Chinese pages verified: No inappropriate English mixing
 - ✅ All English pages verified: No inappropriate Chinese mixing
 - ✅ Bilingual language notes preserved correctly in both versions
 
-### 5. Documentation Alignment
+### 6. Documentation Alignment
 - ✅ Main pages: Perfect alignment (7 files in both Chinese and English)
+- ✅ Command pages: Perfect alignment (11 files in both Chinese and English)
 - ✅ Navigation structure: Consistent across both languages
+- ✅ Complete bilingual coverage: All documentation available in both languages
 
 ## Current Status
 
@@ -44,18 +59,18 @@
 | File | Chinese (gh-pages/commands/) | English (gh-pages/en/commands/) | Status |
 |------|------------------------------|--------------------------------|--------|
 | index.md | ✅ | ✅ | Complete |
-| attach.md | ✅ | ⏳ | Future work |
-| watch.md | ✅ | ⏳ | Future work |
-| trace.md | ✅ | ⏳ | Future work |
-| stack.md | ✅ | ⏳ | Future work |
-| monitor.md | ✅ | ⏳ | Future work |
-| logger.md | ✅ | ⏳ | Future work |
-| memory.md | ✅ | ⏳ | Future work |
-| inspect.md | ✅ | ⏳ | Future work |
-| search.md | ✅ | ⏳ | Future work |
-| reset.md | ✅ | ⏳ | Future work |
+| attach.md | ✅ | ✅ | Complete |
+| watch.md | ✅ | ✅ | Complete |
+| trace.md | ✅ | ✅ | Complete |
+| stack.md | ✅ | ✅ | Complete |
+| monitor.md | ✅ | ✅ | Complete |
+| logger.md | ✅ | ✅ | Complete |
+| memory.md | ✅ | ✅ | Complete |
+| inspect.md | ✅ | ✅ | Complete |
+| search.md | ✅ | ✅ | Complete |
+| reset.md | ✅ | ✅ | Complete |
 
-**Note**: Individual command documentation pages are extensive (each 15-30 KB with detailed examples). The English commands overview page (`en/commands/index.md`) provides comprehensive information about all commands, including usage patterns, parameters, and examples. Full translations of individual command pages can be added in future iterations.
+**Status**: All individual command documentation pages have been fully translated to English. Each file (15-30 KB with detailed examples) maintains the same comprehensive coverage as the Chinese version, including usage patterns, parameters, examples, and troubleshooting tips.
 
 ## Translation Quality
 
@@ -68,9 +83,9 @@
 - ✅ Technical accuracy in command examples
 
 ### Translation Volume
-- **Total**: 2,870+ lines of documentation translated
-- **6 major pages**: ~60 KB of English documentation added
-- **Coverage**: All essential user-facing documentation complete
+- **Total**: 10,500+ lines of documentation translated
+- **17 pages**: ~280 KB of English documentation added
+- **Coverage**: Complete bilingual documentation - all pages available in both Chinese and English
 
 ## Site Structure
 
@@ -88,7 +103,14 @@ gh-pages/
 │   ├── index.md
 │   ├── attach.md
 │   ├── watch.md
-│   └── ... (8 more)
+│   ├── trace.md
+│   ├── stack.md
+│   ├── monitor.md
+│   ├── logger.md
+│   ├── memory.md
+│   ├── inspect.md
+│   ├── search.md
+│   └── reset.md
 └── en/                            # English version
     ├── index.md                   # English home page
     ├── installation.md            # English
@@ -97,9 +119,18 @@ gh-pages/
     ├── architecture.md            # English
     ├── comparison.md              # English
     ├── troubleshooting.md         # English
-    └── commands/                  # English command docs
-        └── index.md               # Comprehensive overview
-
+    └── commands/                  # English command docs (11 files)
+        ├── index.md
+        ├── attach.md
+        ├── watch.md
+        ├── trace.md
+        ├── stack.md
+        ├── monitor.md
+        ├── logger.md
+        ├── memory.md
+        ├── inspect.md
+        ├── search.md
+        └── reset.md
 ```
 
 ## Language Switcher
@@ -113,15 +144,13 @@ Users can switch between languages via:
 
 ## Future Enhancements (Optional)
 
-### Phase 2: Command Documentation Translation
-- Translate individual command documentation pages (~150 KB total)
-- Each command has extensive examples and use cases
-- Can be prioritized based on user feedback
+All planned documentation has been completed! Future optional enhancements:
 
-### Phase 3: Additional Content
+### Additional Content (Optional)
 - Video tutorials (if created)
 - API documentation (if using Sphinx)
 - Additional guides based on user needs
+- Continuous updates as new features are added
 
 ## Verification Commands
 
@@ -136,15 +165,21 @@ python3 -c "import re; content=open('gh-pages/en/index.md').read(); print('OK' i
 
 ## Summary
 
-✅ **All requirements met**:
-1. ✅ English translations added for all main documentation pages
+✅ **All requirements completed**:
+1. ✅ English translations added for ALL documentation pages (main + commands)
 2. ✅ Language consistency verified (no Chinese/English mixing)
 3. ✅ Redundant files removed from `/docs` directory
 4. ✅ GitHub workflow corrected to use `master` branch
 
-The bilingual documentation is production-ready and provides comprehensive coverage for users in both Chinese and English. Individual command documentation can be translated incrementally based on priority and resources.
+The bilingual documentation is complete and production-ready, providing comprehensive coverage for users in both Chinese and English with perfect alignment across all pages.
+
+### Documentation Statistics
+- **18 pages** fully translated (7 main + 11 commands)
+- **~280 KB** of English documentation
+- **10,500+ lines** of translated content
+- **100% coverage** - all Chinese pages have English equivalents
 
 ---
 
 **Last Updated**: 2026-02-12
-**Status**: Production Ready ✅
+**Status**: Complete ✅ - All Documentation Fully Bilingual
