@@ -1,154 +1,82 @@
-# Peeka Docker 测试环境
+# Peeka Docker 测试镜像
 
-本目录包含用于验证 peeka-cli 和 peeka TUI 工具可用性的 Docker 配置。
+本目录包含 2 个测试用 Dockerfile，供 `testcontainers` 自动化测试和手动验证使用。
 
-## 镜像说明
+## 镜像概览
 
-| 镜像 | 用途 | Python版本 | 包含组件 |
-|------|------|-----------|---------|
-| `cli` | CLI 命令测试 | 3.12 | peeka-cli, gdb |
-| `tui` | TUI 界面测试 | 3.12 | peeka, textual |
-| `py314` | PEP 768 测试 | 3.14 | sys.remote_exec |
-| `full` | 完整测试 | 3.12 | 全部 + pytest |
+| 镜像标签 | Dockerfile | Python | 附加机制 | 用途 |
+|---------|------------|--------|---------|------|
+| `peeka-test:gdb` | `Dockerfile.test-gdb` | 3.12 | GDB + ptrace | 旧版 Python 附加测试 |
+| `peeka-test:py314` | `Dockerfile.test-py314` | 3.14 | PEP 768 `sys.remote_exec` | 原生远程调试测试 |
 
-## 快速开始
+两个镜像均使用 USTC 镜像源（中科大）加速 apt 和 pip 下载。
 
-### 使用 docker-compose (推荐)
+## 自动化测试（testcontainers）
+
+容器测试位于 `tests/container/`，由 pytest + testcontainers 自动管理镜像生命周期。
 
 ```bash
-cd docker
+# 运行全部容器测试（14 个：7 gdb + 7 py314）
+uv run pytest tests/container/test_attach.py -v -m container --timeout=180
 
-# 构建所有镜像
-docker-compose build
+# 仅运行 gdb 相关测试
+uv run pytest tests/container/test_attach.py -v -k "gdb"
 
-# 运行测试
-docker-compose run --rm cli   # CLI 测试
-docker-compose run --rm tui   # TUI 测试
-docker-compose run --rm py314 # Python 3.14 测试
-docker-compose run --rm full  # 完整测试
+# 仅运行 py314 相关测试
+uv run pytest tests/container/test_attach.py -v -k "py314"
 ```
 
-### 单独构建和运行
+测试 fixture 定义在 `tests/container/conftest.py`，自动构建镜像并启动容器。
+
+## 手动构建与验证
+
+从项目根目录执行：
 
 ```bash
-# 从项目根目录执行
+# 构建 GDB 测试镜像
+docker build --network=host -f docker/Dockerfile.test-gdb -t peeka-test:gdb .
 
-# CLI 测试
-docker build -f docker/Dockerfile.cli -t peeka-cli .
-docker run -it --cap-add=SYS_PTRACE peeka-cli
+# 构建 PEP 768 测试镜像
+docker build --network=host -f docker/Dockerfile.test-py314 -t peeka-test:py314 .
 
-# TUI 测试
-docker build -f docker/Dockerfile.tui -t peeka-tui .
-docker run -it --cap-add=SYS_PTRACE peeka-tui
-
-# Python 3.14 测试
-docker build -f docker/Dockerfile.py314 -t peeka-py314 .
-docker run -it --cap-add=SYS_PTRACE peeka-py314
-
-# 完整测试
-docker build -f docker/Dockerfile.full -t peeka-full .
-docker run -it --cap-add=SYS_PTRACE peeka-full
+# 运行容器（需要 ptrace 权限）
+docker run -it --cap-add=SYS_PTRACE --security-opt seccomp=unconfined peeka-test:gdb
+docker run -it --cap-add=SYS_PTRACE --security-opt seccomp=unconfined peeka-test:py314
 ```
 
-## 重要说明
-
-### ptrace 权限
-
-Peeka 需要 ptrace 权限才能附加到进程：
+### 容器内手动测试
 
 ```bash
-# 必须添加 SYS_PTRACE 能力
-docker run --cap-add=SYS_PTRACE ...
-```
+# 启动测试目标进程
+python examples/demo.py --mode loop &
 
-### TUI 终端支持
+# 附加到进程
+peeka-cli attach $(pgrep -f demo.py)
 
-TUI 需要交互式终端：
-
-```bash
-# 必须使用 -it 参数
-docker run -it --cap-add=SYS_PTRACE peeka-tui
-```
-
-### Python 3.14 说明
-
-Python 3.14 引入了 PEP 768 (`sys.remote_exec`)，允许无需 GDB 即可附加到进程。
-
-## CLI 测试清单
-
-容器启动后执行以下测试：
-
-```bash
-# 1. 附加到进程（首先获取 demo.py 的 PID）
-peeka-cli attach <PID>
-
-# 2. 观测函数调用（后续命令不需要 PID，因为已经 attach 了）
+# 观测函数调用
 peeka-cli watch 'demo.Calculator.add' -n 5
 
-# 3. 观测函数入口
-peeka-cli watch 'demo.Calculator.multiply' -b -n 3
-
-# 4. 只观测异常
-peeka-cli watch 'demo.Calculator.divide' -e -n 5
-
-# 5. 条件过滤
-peeka-cli watch 'demo.Calculator.add' --condition 'params[0] > 5' -n 3
-
-# 6. 追踪调用栈
+# 追踪调用栈
 peeka-cli stack 'demo.Calculator.add' -n 2
 
-# 7. 性能监控
-peeka-cli monitor 'demo.Calculator.add' --interval 3 -c 2
-
-# 8. 搜索类和方法
+# 搜索类
 peeka-cli sc 'Calculator'
-peeka-cli sm 'add'
-
-# 9. 日志级别
-peeka-cli logger --action list
-
-# 10. 内存分析
-peeka-cli memory --action overview
 ```
 
-## TUI 测试清单
+## 网络说明
 
-启动 TUI 后，验证以下功能：
+构建时必须使用 `--network=host`。原因：本机运行 Clash 代理（`127.0.0.1:7897`），
+DNS 会将域名解析为 `198.18.x.x` 段的 fake-IP，Docker 隔离网络无法路由到 Clash。
+使用 `--network=host` 共享宿主机网络栈即可正常访问 USTC 镜像源。
 
-- [ ] 进程列表显示 Python 进程
-- [ ] 可以按 PID/命令过滤进程
-- [ ] 选择进程后显示主界面
-- [ ] Tab 切换正常 (D/W/S/M/E/L/I 键)
-- [ ] 帮助界面显示 (? 键)
-- [ ] Ctrl+Q 退出应用
-- [ ] Escape 返回进程选择
+注意：Dockerfile 内部**不使用任何代理环境变量**（`http_proxy`/`https_proxy`），
+仅通过 USTC 镜像源直接下载。
 
-## 故障排除
+## 目录结构
 
-### 权限被拒绝
-
-```bash
-# 错误: ptrace: Operation not permitted
-# 解决: 确保使用 --cap-add=SYS_PTRACE
-docker run -it --cap-add=SYS_PTRACE peeka-cli
 ```
-
-### TUI 显示异常
-
-```bash
-# 确保终端支持 256 色
-export TERM=xterm-256color
-
-# 确保使用交互式模式
-docker run -it ...
-```
-
-### 进程附加失败
-
-```bash
-# 检查 demo 进程是否运行
-ps aux | grep demo.py
-
-# 检查 socket 文件
-ls -la /tmp/peeka_*.sock
+docker/
+├── Dockerfile.test-gdb     # GDB 测试镜像（Python 3.12 + gdb + python3-dbg）
+├── Dockerfile.test-py314   # PEP 768 测试镜像（Python 3.14）
+└── README.md               # 本文件
 ```

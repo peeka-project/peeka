@@ -186,32 +186,27 @@ Dynamic test modules: insert into `sys.modules`, clean up in teardown.
 | 3.14+    | PEP 768 `sys.remote_exec` | None                             |
 | 3.9-3.13 | GDB + ptrace fallback     | GDB, python3-dbg, CAP_SYS_PTRACE |
 
-## Docker Manual Testing
+## Docker Test Images
 
-Four images in `docker/` for manual testing. All require `--cap-add=SYS_PTRACE`.
+Two test images in `docker/` for testcontainers and manual verification. All require `--cap-add=SYS_PTRACE`.
 
-| Image | Dockerfile         | Python | Purpose                   |
-|-------|--------------------|--------|---------------------------|
-| cli   | `Dockerfile.cli`   | 3.12   | CLI commands (+ GDB)      |
-| tui   | `Dockerfile.tui`   | 3.12   | TUI interface (+ textual) |
-| py314 | `Dockerfile.py314` | 3.14   | PEP 768 native attach     |
-| full  | `Dockerfile.full`  | 3.12   | Full env (+ pytest)       |
+| Image | Dockerfile | Python | Purpose |
+|-------|------------|--------|---------|
+| `peeka-test:gdb` | `Dockerfile.test-gdb` | 3.12 | GDB + ptrace attach testing |
+| `peeka-test:py314` | `Dockerfile.test-py314` | 3.14 | PEP 768 native attach testing |
 
 ```bash
-# Build & run (from project root) — proxy required for network access
-docker build --network=host \
-  --build-arg http_proxy=http://127.0.0.1:7897 \
-  --build-arg https_proxy=http://127.0.0.1:7897 \
-  -f docker/Dockerfile.py314 -t peeka-py314 .
-docker run -it --cap-add=SYS_PTRACE --security-opt seccomp=unconfined peeka-py314
+# Build (from project root) — --network=host required (see note below)
+docker build --network=host -f docker/Dockerfile.test-gdb -t peeka-test:gdb .
+docker build --network=host -f docker/Dockerfile.test-py314 -t peeka-test:py314 .
 
-# Or via docker-compose (from docker/)
-docker-compose build py314
-docker-compose run --rm py314
+# Run container tests (testcontainers auto-manages images)
+pytest tests/container/test_attach.py -v -m container --timeout=180
 ```
 
-**Network note**: Clash proxy on `127.0.0.1:7897` requires `--network=host` + proxy build-args for Docker builds.
-Without these, pip/apt timeout on fake `198.18.x.x` DNS.
+**Network note**: Clash proxy on `127.0.0.1:7897` resolves DNS to fake `198.18.x.x` IPs.
+`--network=host` shares host network stack so Docker can route through Clash to USTC mirrors.
+No proxy env vars are used inside Dockerfiles — only USTC mirror URLs.
 
 ## Key Files
 
