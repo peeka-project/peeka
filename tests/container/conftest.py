@@ -22,24 +22,20 @@ from testcontainers.core.image import DockerImage
 
 @pytest.fixture(scope="session")
 def gdb_image():
-    """Build GDB-based test image (Python 3.12 + GDB + python3-dbg)."""
-    with DockerImage(
-        path=".",
-        dockerfile_path="docker/Dockerfile.test-gdb",
-        tag="peeka-test:gdb",
-    ) as image:
-        yield image
+    """Use pre-built GDB test image (Python 3.12 + GDB + python3-dbg).
+
+    Build: docker build -f docker/Dockerfile.test-gdb -t peeka-test:gdb .
+    """
+    return "peeka-test:gdb"
 
 
 @pytest.fixture(scope="session")
 def py314_image():
-    """Build Python 3.14 test image (PEP 768 native attach)."""
-    with DockerImage(
-        path=".",
-        dockerfile_path="docker/Dockerfile.test-py314",
-        tag="peeka-test:py314",
-    ) as image:
-        yield image
+    """Use pre-built Python 3.14 test image (PEP 768 native attach).
+
+    Build: docker build -f docker/Dockerfile.test-py314 -t peeka-test:py314 .
+    """
+    return "peeka-test:py314"
 
 
 # Function-scoped container fixtures (fresh container per test)

@@ -7,14 +7,12 @@ FROM python:3.14-rc-slim
 LABEL maintainer="peeka"
 LABEL description="Peeka E2E testing with Python 3.14 (PEP 768)"
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    procps \
-    && rm -rf /var/lib/apt/lists/*
+RUN sed -i 's|deb.debian.org|mirrors.ustc.edu.cn|g' /etc/apt/sources.list.d/debian.sources
 
 WORKDIR /app
 
 COPY . .
 
-RUN pip install --no-cache-dir -e ".[dev]"
+RUN pip install --no-cache-dir -i https://mirrors.ustc.edu.cn/pypi/web/simple -e ".[dev]"
 
 CMD ["sleep", "infinity"]
