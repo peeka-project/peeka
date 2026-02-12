@@ -26,7 +26,7 @@ Peeka 提供了一系列强大的诊断命令，每个命令都专注于特定�
 | [logger]({{ site.baseurl }}{% link commands/logger.md %}) | 日志管理 | 动态调整日志级别 |
 | [memory]({{ site.baseurl }}{% link commands/memory.md %}) | 内存分析 | 分析内存使用和泄漏 |
 | [inspect]({{ site.baseurl }}{% link commands/inspect.md %}) | 对象检查 | 运行时检查对象属性 |
-| [sc/sm]({{ site.baseurl }}{% link commands/search.md %}) | 搜索类和方法 | 代码探索和发现 |
+| [search]({{ site.baseurl }}{% link commands/search.md %}) | 搜索类和方法 (sc/sm) | 代码探索和发现 |
 | [reset]({{ site.baseurl }}{% link commands/reset.md %}) | 重置增强 | 恢复被观测的函数 |
 
 ---
@@ -185,5 +185,10 @@ peeka
 - [trace - 追踪调用链]({{ site.baseurl }}{% link commands/trace.md %})
 - [stack - 追踪调用栈]({{ site.baseurl }}{% link commands/stack.md %})
 - [monitor - 性能监控]({{ site.baseurl }}{% link commands/monitor.md %})
+- [logger - 日志管理]({{ site.baseurl }}{% link commands/logger.md %})
+- [memory - 内存分析]({{ site.baseurl }}{% link commands/memory.md %})
+- [inspect - 对象检查]({{ site.baseurl }}{% link commands/inspect.md %})
+- [search - 搜索类和方法]({{ site.baseurl }}{% link commands/search.md %})
+- [reset - 重置增强]({{ site.baseurl }}{% link commands/reset.md %})
 
 或查看 [快速开始]({{ site.baseurl }}{% link quickstart.md %}) 了解基本使用方法。
