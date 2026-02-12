@@ -1,6 +1,6 @@
 # Peeka GDB/Python 3.12 E2E Test Image
 # Test-only image for container-based E2E testing
-# Do not modify docker/Dockerfile.cli, .tui, .py314, .full
+# Used by testcontainers in tests/container/ — do not rename without updating conftest.py
 
 FROM python:3.12-slim
 
