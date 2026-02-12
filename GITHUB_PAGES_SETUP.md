@@ -8,19 +8,41 @@
 
 创建了 `gh-pages/` 目录，包含：
 
+#### 中文文档（完整）
+
 - **首页** (`index.md`) - 项目概览、核心特性、快速开始
 - **安装指南** (`installation.md`) - 各平台安装说明、权限配置
 - **快速开始** (`quickstart.md`) - 基础使用教程、数据处理示例
-- **命令参考** (`commands/`) - 详细的命令文档
+- **命令参考** (`commands/`) - 完整的命令文档
   - `index.md` - 命令概览
-  - `attach.md` - attach 命令详细文档
-  - (其他命令文档可按需添加)
+  - `attach.md` - attach 命令
+  - `watch.md` - watch 命令
+  - `trace.md` - trace 命令
+  - `stack.md` - stack 命令
+  - `monitor.md` - monitor 命令
+  - `logger.md` - logger 命令
+  - `memory.md` - memory 命令
+  - `inspect.md` - inspect 命令
+  - `search.md` - search 命令 (sc/sm)
+  - `reset.md` - reset 命令
 - **示例教程** (`examples.md`) - 7 个实际应用场景
 - **与 Arthas 对比** (`comparison.md`) - 功能对比、性能分析
 - **架构设计** (`architecture.md`) - 设计理念、核心组件
 - **故障排除** (`troubleshooting.md`) - 常见问题解决方案
 
-### 2. GitHub Actions 工作流
+#### 英文文档（基础结构）
+
+- **首页** (`en/index.md`) - 项目介绍、核心特性、快速开始
+- **命令参考** (`en/commands/index.md`) - 命令概览
+
+### 2. 双语支持
+
+- **语言切换器** - 在顶部导航栏添加中英文切换链接
+- **语言提示** - 在主页添加语言切换提示
+- **独立目录** - 英文文档位于 `/en/` 路径下
+- **灵活扩展** - 可按需添加更多语言版本
+
+### 3. GitHub Actions 工作流
 
 创建了 `.github/workflows/deploy-pages.yml`，实现：
 
@@ -28,7 +50,7 @@
 - 自动部署到 GitHub Pages
 - 当 `gh-pages/` 目录或工作流文件更新时触发
 
-### 3. Jekyll 配置
+### 4. Jekyll 配置
 
 - 使用 **Just the Docs** 主题 - 专业的文档网站模板
 - 配置了搜索功能
@@ -166,24 +188,30 @@ ga_tracking: UA-XXXXXXXXX-X
 
 目前网站已包含核心内容，以下是可选的扩展：
 
-1. **命令文档补全**：为每个命令创建详细文档页面
-   - watch.md
-   - trace.md
-   - stack.md
-   - monitor.md
-   - logger.md
-   - memory.md
-   - inspect.md
-   - search.md (sc/sm)
-   - reset.md
+1. ~~**命令文档补全**~~：✅ 已完成 - 所有命令文档已添加
+   - ✅ watch.md
+   - ✅ trace.md
+   - ✅ stack.md
+   - ✅ monitor.md
+   - ✅ logger.md
+   - ✅ memory.md
+   - ✅ inspect.md
+   - ✅ search.md (sc/sm)
+   - ✅ reset.md
 
-2. **视觉元素**：
+2. **英文文档翻译**：⏳ 已完成基础结构
+   - ✅ 英文主页
+   - ✅ 命令概览
+   - ⏳ 各命令详细文档（待翻译）
+   - ⏳ 安装指南（待翻译）
+   - ⏳ 快速开始（待翻译）
+   - ⏳ 架构设计（待翻译）
+   - ⏳ 其他指南（待翻译）
+
+3. **视觉元素**：
    - 添加项目 Logo
    - 添加示例截图
    - 添加架构图表
-
-3. **多语言支持**：
-   - 可选：添加完整的英文版本
 
 4. **视频教程**：
    - 可选：录制使用演示视频
