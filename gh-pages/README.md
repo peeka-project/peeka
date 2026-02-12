@@ -1,0 +1,155 @@
+# Peeka GitHub Pages
+
+This directory contains the GitHub Pages site for the Peeka project.
+
+## Structure
+
+```
+gh-pages/
+├── _config.yml          # Jekyll configuration
+├── index.md             # Landing page
+├── installation.md      # Installation guide
+├── quickstart.md        # Quick start guide
+├── examples.md          # Usage examples
+├── architecture.md      # Architecture documentation
+├── comparison.md        # Comparison with Arthas
+├── troubleshooting.md   # Troubleshooting guide
+└── commands/            # Command reference pages
+    ├── index.md         # Commands overview
+    ├── attach.md        # attach command
+    └── ...              # Other commands
+```
+
+## Theme
+
+This site uses the [Just the Docs](https://just-the-docs.github.io/just-the-docs/) theme, which provides:
+
+- Clean, professional documentation layout
+- Built-in search functionality
+- Mobile-responsive design
+- Easy navigation structure
+- Code syntax highlighting
+
+## Local Development
+
+### Prerequisites
+
+- Ruby 3.1+
+- Bundler
+
+### Setup
+
+```bash
+cd gh-pages
+
+# Install dependencies
+bundle install
+
+# Run local server
+bundle exec jekyll serve --baseurl "/peeka"
+
+# Open browser to http://localhost:4000/peeka
+```
+
+### Build
+
+```bash
+bundle exec jekyll build --baseurl "/peeka"
+```
+
+The built site will be in `_site/`.
+
+## Deployment
+
+The site is automatically deployed via GitHub Actions when changes are pushed to the `main` branch.
+
+See `.github/workflows/deploy-pages.yml` for the deployment configuration.
+
+## GitHub Pages Settings
+
+To enable GitHub Pages for this repository:
+
+1. Go to repository Settings → Pages
+2. Source: GitHub Actions
+3. The site will be available at `https://wwulfric.github.io/peeka`
+
+## Adding New Pages
+
+1. Create a new `.md` file in the `gh-pages/` directory
+2. Add front matter:
+   ```yaml
+   ---
+   layout: default
+   title: Your Page Title
+   nav_order: 10
+   ---
+   ```
+3. Write your content in Markdown
+4. The page will automatically appear in the navigation
+
+## Adding New Command Documentation
+
+1. Create a new `.md` file in `gh-pages/commands/`
+2. Add front matter:
+   ```yaml
+   ---
+   layout: default
+   title: command-name
+   parent: 命令参考
+   nav_order: X
+   ---
+   ```
+3. Document the command
+
+## Navigation Order
+
+Pages are sorted by `nav_order` in the front matter:
+
+- 1: 首页 (Home)
+- 2: 安装指南 (Installation)
+- 3: 快速开始 (Quick Start)
+- 4: 命令参考 (Commands)
+- 5: 示例教程 (Examples)
+- 7: 与 Arthas 对比 (Comparison)
+- 8: 架构设计 (Architecture)
+- 9: 故障排除 (Troubleshooting)
+
+## Updating Documentation
+
+When the project documentation changes:
+
+1. Update the corresponding `.md` files in `gh-pages/`
+2. Commit and push to `main`
+3. GitHub Actions will automatically rebuild and deploy the site
+
+## Customization
+
+### Colors
+
+Edit `_config.yml` to change the color scheme:
+
+```yaml
+color_scheme: light  # or dark, nil (system)
+```
+
+### Logo
+
+Add a logo by placing an image in `assets/images/` and updating `_config.yml`:
+
+```yaml
+logo: "/assets/images/logo.png"
+```
+
+### Footer
+
+Edit the footer content in `_config.yml`:
+
+```yaml
+footer_content: "Your custom footer text"
+```
+
+## Resources
+
+- [Just the Docs Documentation](https://just-the-docs.github.io/just-the-docs/)
+- [Jekyll Documentation](https://jekyllrb.com/docs/)
+- [GitHub Pages Documentation](https://docs.github.com/en/pages)
