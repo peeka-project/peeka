@@ -147,10 +147,12 @@ class TestContainerAttach:
         )
 
         # Verify target process still running
-        exit_code, output = exec_in_container(container, f"ps -p {pid}", timeout=5)
+        exit_code, output = exec_in_container(
+            container, f"test -d /proc/{pid} && echo alive", timeout=5
+        )
 
         assert exit_code == 0, f"Target process {pid} died after detach cycle"
-        assert str(pid) in output, f"PID {pid} not found in ps output:\n{output}"
+        assert "alive" in output, f"Process {pid} not running after detach cycle"
 
     def test_attach_socket_cleanup_on_detach(self, container_target):
         """Verify socket file is cleaned up after detach."""
