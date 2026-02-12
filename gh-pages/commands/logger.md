@@ -1,3 +1,10 @@
+---
+layout: default
+title: Peeka Logger 命令详解
+parent: 命令参考
+nav_order: 6
+---
+
 # Peeka Logger 命令详解
 
 ## 目录
@@ -1027,3 +1034,4 @@ peeka-cli logger --action set --logger myapp.MyClass --level DEBUG
 - 了解 [`stack`](stack.md) 命令（追踪调用栈）
 - 了解 [`memory`](memory.md) 命令（内存分析）
 - 参考 [AGENTS.md](../AGENTS.md)（开发者指南）
+

@@ -1,3 +1,10 @@
+---
+layout: default
+title: Peeka Stack 命令详解
+parent: 命令参考
+nav_order: 4
+---
+
 # Peeka Stack 命令详解
 
 ## 目录
@@ -857,3 +864,4 @@ peeka-cli stack "myapp.MyClass.myMethod" -n 10 \
 - 了解 [`watch`](watch.md) 命令（观测参数和返回值）
 - 了解 [`memory`](memory.md) 命令（内存分析）
 - 参考 [AGENTS.md](../AGENTS.md)（开发者指南）
+

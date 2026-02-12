@@ -1,3 +1,10 @@
+---
+layout: default
+title: inspect 命令
+parent: 命令参考
+nav_order: 8
+---
+
 # inspect 命令
 
 ## 目录
@@ -731,3 +738,4 @@ Arthas 需要先 getInstances 再统计，Peeka 优化为单独操作。
 - `memory` - 内存分析和追踪
 - `sc` - 搜索类
 - `sm` - 搜索方法
+

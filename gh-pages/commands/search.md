@@ -1,3 +1,10 @@
+---
+layout: default
+title: Peeka Search 命令详解（sc / sm）
+parent: 命令参考
+nav_order: 9
+---
+
 # Peeka Search 命令详解（sc / sm）
 
 ## 目录
@@ -1078,3 +1085,4 @@ com.example.MyClass
 - 了解 [`stack`](stack.md) 命令（追踪调用栈）
 - 了解 [`monitor`](monitor.md) 命令（性能监控）
 - 参考 [AGENTS.md](../AGENTS.md)（开发者指南）
+

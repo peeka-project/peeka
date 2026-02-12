@@ -1,3 +1,10 @@
+---
+layout: default
+title: watch 命令
+parent: 命令参考
+nav_order: 2
+---
+
 # watch 命令
 
 ## 简介
@@ -994,3 +1001,4 @@ for line in sys.stdin:
 | 版本    | 日期      | 更新内容               |
 |-------|---------|--------------------|
 | 0.1.0 | 2025-01 | 初始版本，支持基本 watch 功能 |
+
