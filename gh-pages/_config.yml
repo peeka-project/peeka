@@ -32,6 +32,10 @@ back_to_top_text: "回到顶部"
 
 # Auxiliary links
 aux_links:
+  "English":
+    - "/peeka/en/"
+  "中文":
+    - "/peeka/"
   "Peeka on GitHub":
     - "https://github.com/wwulfric/peeka"
 

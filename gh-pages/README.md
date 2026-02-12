@@ -7,18 +7,51 @@ This directory contains the GitHub Pages site for the Peeka project.
 ```
 gh-pages/
 ├── _config.yml          # Jekyll configuration
-├── index.md             # Landing page
-├── installation.md      # Installation guide
-├── quickstart.md        # Quick start guide
-├── examples.md          # Usage examples
-├── architecture.md      # Architecture documentation
-├── comparison.md        # Comparison with Arthas
-├── troubleshooting.md   # Troubleshooting guide
-└── commands/            # Command reference pages
-    ├── index.md         # Commands overview
-    ├── attach.md        # attach command
-    └── ...              # Other commands
+├── index.md             # Landing page (Chinese)
+├── installation.md      # Installation guide (Chinese)
+├── quickstart.md        # Quick start guide (Chinese)
+├── examples.md          # Usage examples (Chinese)
+├── architecture.md      # Architecture documentation (Chinese)
+├── comparison.md        # Comparison with Arthas (Chinese)
+├── troubleshooting.md   # Troubleshooting guide (Chinese)
+├── commands/            # Command reference pages (Chinese)
+│   ├── index.md         # Commands overview
+│   ├── attach.md        # attach command
+│   ├── watch.md         # watch command
+│   ├── trace.md         # trace command
+│   ├── stack.md         # stack command
+│   ├── monitor.md       # monitor command
+│   ├── logger.md        # logger command
+│   ├── memory.md        # memory command
+│   ├── inspect.md       # inspect command
+│   ├── search.md        # search command (sc/sm)
+│   └── reset.md         # reset command
+└── en/                  # English version
+    ├── index.md         # Landing page (English)
+    └── commands/        # Command reference (English)
+        └── index.md     # Commands overview
 ```
+
+## Languages
+
+The site supports bilingual documentation:
+
+- **Chinese (中文)**: Root directory - Complete documentation
+- **English**: `/en/` directory - Basic structure with home page and commands overview
+
+Users can switch languages using the language selector in the top navigation bar.
+
+### Translation Status
+
+**Chinese**: ✅ Complete
+- All main pages
+- Complete command documentation (watch, trace, stack, monitor, logger, memory, inspect, search, reset)
+
+**English**: ⏳ In Progress
+- ✅ Home page
+- ✅ Commands overview
+- ⏳ Individual command documentation (planned)
+- ⏳ Other guides (installation, quickstart, etc.)
 
 ## Theme
 

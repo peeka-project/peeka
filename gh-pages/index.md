@@ -17,6 +17,13 @@ permalink: /
 
 ---
 
+{: .note }
+> 🌐 **Language / 语言**: This documentation is also available in [English](/peeka/en/).
+>
+> 本文档也提供[英文版本](/peeka/en/)。
+
+---
+
 ## 什么是 Peeka？
 
 Peeka 是一个为 Python 开发者提供生产环境实时诊断能力的工具。它可以在**不修改目标代码**的情况下，动态观测和诊断运行中的 Python 应用。
