@@ -1,3 +1,10 @@
+---
+layout: default
+title: trace 命令
+parent: 命令参考
+nav_order: 3
+---
+
 # trace 命令
 
 ## 简介
@@ -668,4 +675,5 @@ for line in proc.stdout:
 |-------|---------|---------------|
 | 0.2.0 | 2026-02 | 添加 trace 命令文档 |
 | 0.1.0 | 2025-01 | 初始版本          |
+
 

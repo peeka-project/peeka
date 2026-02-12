@@ -1,3 +1,10 @@
+---
+layout: default
+title: Peeka Monitor 命令详解
+parent: 命令参考
+nav_order: 5
+---
+
 # Peeka Monitor 命令详解
 
 ## 目录
@@ -997,3 +1004,4 @@ peeka-cli monitor "myapp.MyClass.myMethod" --interval 5 -c 10
 - 了解 [`stack`](stack.md) 命令（追踪调用栈）
 - 了解 [`memory`](memory.md) 命令（内存分析）
 - 参考 [AGENTS.md](../AGENTS.md)（开发者指南）
+

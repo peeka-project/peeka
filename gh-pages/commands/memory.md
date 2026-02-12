@@ -1,3 +1,10 @@
+---
+layout: default
+title: memory 命令
+parent: 命令参考
+nav_order: 7
+---
+
 # memory 命令
 
 ## 简介
@@ -774,3 +781,4 @@ while True:
 | 版本 | 日期 | 更新内容 |
 |------|------|----------|
 | 0.1.0 | 2026-01 | 初始版本，支持 6 种 memory 操作 |
+

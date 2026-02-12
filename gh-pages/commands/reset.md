@@ -1,3 +1,10 @@
+---
+layout: default
+title: reset 命令
+parent: 命令参考
+nav_order: 10
+---
+
 # reset 命令
 
 ## 简介
@@ -774,3 +781,4 @@ jq '.enhanced[] | {pattern, count}' enhancements_backup.json
 | 版本    | 日期         | 更新内容                    |
 |-------|------------|-------------------------|
 | 0.1.0 | 2025-01-31 | 初始版本，支持 reset 和 list 功能 |
+
