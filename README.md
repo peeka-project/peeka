@@ -54,7 +54,7 @@ For detailed command usage, see [Command Reference](https://wwulfric.github.io/p
 
 - [📚 Full Documentation](https://wwulfric.github.io/peeka/en/) - Complete documentation site
 - [Quick Start Guide](https://wwulfric.github.io/peeka/en/quickstart.html) - Getting started
-- [Architecture](docs/ARCHITECTURE.md) - System architecture and design
+- [Architecture](https://wwulfric.github.io/peeka/en/architecture.html) - System architecture and design
 - [Examples](https://wwulfric.github.io/peeka/en/examples.html) - Usage examples
 - [Comparison with Arthas](https://wwulfric.github.io/peeka/en/comparison.html) - Feature comparison
 - [Troubleshooting](https://wwulfric.github.io/peeka/en/troubleshooting.html) - Common issues

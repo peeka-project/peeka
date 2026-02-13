@@ -54,7 +54,7 @@ peeka-cli watch "module.Class.method" --condition "len(params) > 2"
 
 - [📚 完整文档](https://wwulfric.github.io/peeka/) - 完整的文档站点
 - [快速开始](https://wwulfric.github.io/peeka/quickstart.html) - 快速上手指南
-- [架构设计](docs/ARCHITECTURE.md) - 系统架构和设计
+- [架构设计](https://wwulfric.github.io/peeka/architecture.html) - 系统架构和设计
 - [使用示例](https://wwulfric.github.io/peeka/examples.html) - 实际使用示例
 - [与 Arthas 对比](https://wwulfric.github.io/peeka/comparison.html) - 功能对比
 - [故障排除](https://wwulfric.github.io/peeka/troubleshooting.html) - 常见问题和解决方案
