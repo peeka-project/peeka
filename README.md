@@ -91,19 +91,19 @@ Peeka outputs **JSONL format** (one JSON object per line). Each message includes
 
 | Command | Description | Documentation |
 |---------|-------------|---------------|
-| `attach` | Attach to target process | [docs/attach.md](docs/attach.md) |
-| `watch` | Observe function calls (args, return, duration) | [docs/watch.md](docs/watch.md) |
-| `trace` | Trace function call chains with timing | [docs/trace.md](docs/trace.md) |
-| `stack` | Capture function call stacks | [docs/stack.md](docs/stack.md) |
-| `reset` | Reset instrumentation to restore original functions | [docs/reset.md](docs/reset.md) |
-| `logger` | Dynamically adjust log levels | [docs/logger.md](docs/logger.md) |
-| `monitor` | Performance monitoring and statistics | [docs/monitor.md](docs/monitor.md) |
-| `memory` | Memory analysis | [docs/memory.md](docs/memory.md) |
-| `inspect` | Runtime object inspection | [docs/inspect.md](docs/inspect.md) |
-| `sc` | Search for classes | [docs/search.md](docs/search.md) |
-| `sm` | Search for methods | [docs/search.md](docs/search.md) |
+| `attach` | Attach to target process | [📖 Documentation](https://wwulfric.github.io/peeka/en/commands/attach.html) |
+| `watch` | Observe function calls (args, return, duration) | [📖 Documentation](https://wwulfric.github.io/peeka/en/commands/watch.html) |
+| `trace` | Trace function call chains with timing | [📖 Documentation](https://wwulfric.github.io/peeka/en/commands/trace.html) |
+| `stack` | Capture function call stacks | [📖 Documentation](https://wwulfric.github.io/peeka/en/commands/stack.html) |
+| `reset` | Reset instrumentation to restore original functions | [📖 Documentation](https://wwulfric.github.io/peeka/en/commands/reset.html) |
+| `logger` | Dynamically adjust log levels | [📖 Documentation](https://wwulfric.github.io/peeka/en/commands/logger.html) |
+| `monitor` | Performance monitoring and statistics | [📖 Documentation](https://wwulfric.github.io/peeka/en/commands/monitor.html) |
+| `memory` | Memory analysis | [📖 Documentation](https://wwulfric.github.io/peeka/en/commands/memory.html) |
+| `inspect` | Runtime object inspection | [📖 Documentation](https://wwulfric.github.io/peeka/en/commands/inspect.html) |
+| `sc` | Search for classes | [📖 Documentation](https://wwulfric.github.io/peeka/en/commands/search.html) |
+| `sm` | Search for methods | [📖 Documentation](https://wwulfric.github.io/peeka/en/commands/search.html) |
 
-For detailed command usage, see [Command Reference](docs/commands.md).
+For detailed command usage, see [Command Reference](https://wwulfric.github.io/peeka/en/commands/).
 
 ## Technical Foundation
 
@@ -232,9 +232,11 @@ For more troubleshooting tips, see [docs/troubleshooting.md](docs/troubleshootin
 
 ## Documentation
 
+- [📚 Full Documentation](https://wwulfric.github.io/peeka/en/) - Complete documentation site
 - [Architecture](docs/ARCHITECTURE.md) - System architecture and design
-- [Commands](docs/commands.md) - Command reference and usage
 - [Examples](docs/examples.md) - Practical usage examples
+- [Comparison with Arthas](docs/comparison.md) - Feature comparison
+- [Troubleshooting](docs/troubleshooting.md) - Common issues and solutions
 - [Development](AGENTS.md) - Developer guide for contributors
 
 ## License

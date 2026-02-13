@@ -91,19 +91,19 @@ Peeka 所有命令均输出 **JSONL 格式**（每行一个 JSON 对象），每
 
 | 命令 | 功能 | 文档链接 |
 |------|------|----------|
-| `attach` | 附加到目标进程 | [docs/attach.md](docs/attach.md) |
-| `watch` | 观测函数调用（参数、返回值、执行时间） | [docs/watch.md](docs/watch.md) |
-| `trace` | 追踪函数调用链和执行耗时 | [docs/trace.md](docs/trace.md) |
-| `stack` | 追踪函数调用栈 | [docs/stack.md](docs/stack.md) |
-| `reset` | 重置增强恢复原函数 | [docs/reset.md](docs/reset.md) |
-| `logger` | 动态调整日志级别 | [docs/logger.md](docs/logger.md) |
-| `monitor` | 性能统计监控 | [docs/monitor.md](docs/monitor.md) |
-| `memory` | 内存分析 | [docs/memory.md](docs/memory.md) |
-| `inspect` | 运行时对象检查 | [docs/inspect.md](docs/inspect.md) |
-| `sc` | 搜索类 | [docs/search.md](docs/search.md) |
-| `sm` | 搜索方法 | [docs/search.md](docs/search.md) |
+| `attach` | 附加到目标进程 | [📖 文档](https://wwulfric.github.io/peeka/commands/attach.html) |
+| `watch` | 观测函数调用（参数、返回值、执行时间） | [📖 文档](https://wwulfric.github.io/peeka/commands/watch.html) |
+| `trace` | 追踪函数调用链和执行耗时 | [📖 文档](https://wwulfric.github.io/peeka/commands/trace.html) |
+| `stack` | 追踪函数调用栈 | [📖 文档](https://wwulfric.github.io/peeka/commands/stack.html) |
+| `reset` | 重置增强恢复原函数 | [📖 文档](https://wwulfric.github.io/peeka/commands/reset.html) |
+| `logger` | 动态调整日志级别 | [📖 文档](https://wwulfric.github.io/peeka/commands/logger.html) |
+| `monitor` | 性能统计监控 | [📖 文档](https://wwulfric.github.io/peeka/commands/monitor.html) |
+| `memory` | 内存分析 | [📖 文档](https://wwulfric.github.io/peeka/commands/memory.html) |
+| `inspect` | 运行时对象检查 | [📖 文档](https://wwulfric.github.io/peeka/commands/inspect.html) |
+| `sc` | 搜索类 | [📖 文档](https://wwulfric.github.io/peeka/commands/search.html) |
+| `sm` | 搜索方法 | [📖 文档](https://wwulfric.github.io/peeka/commands/search.html) |
 
-详细命令使用见 [命令参考文档](docs/commands.md)。
+详细命令使用见 [命令参考文档](https://wwulfric.github.io/peeka/commands/)。
 
 ## 技术基础
 
@@ -232,9 +232,11 @@ peeka-cli watch --action stop <watch_id>
 
 ## 文档
 
+- [📚 完整文档](https://wwulfric.github.io/peeka/) - 完整的文档站点
 - [架构设计](docs/ARCHITECTURE.md) - 系统架构和设计
-- [命令参考](docs/commands.md) - 命令参考和使用方法
 - [使用示例](docs/examples.md) - 实际使用示例
+- [与 Arthas 对比](docs/comparison.md) - 功能对比
+- [故障排除](docs/troubleshooting.md) - 常见问题和解决方案
 - [开发指南](AGENTS.md) - 开发者指南
 
 ## 许可证
