@@ -280,8 +280,7 @@ class TraceView(Container):
         # Update table count
         table = self.query_one("#trace-table", DataTable)
         try:
-            row_key = table.get_row_index(watch_id)
-            table.update_cell_at((row_key, 2), str(count))
+            table.update_cell(watch_id, "Count", str(count))
         except Exception:
             pass
 
