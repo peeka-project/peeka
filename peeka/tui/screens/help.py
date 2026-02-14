@@ -84,6 +84,6 @@ class HelpScreen(ModalScreen):
         help_container.border_subtitle = "Press ESC to close"
         yield help_container
 
-    def action_dismiss(self) -> None:
+    async def action_dismiss(self, *, result: None = None) -> None:
         """Close the help screen."""
-        self.app.pop_screen()
+        self.dismiss(result)
