@@ -46,13 +46,13 @@ class TraceView(Container):
     def set_stream_client(self, client: "StreamingAgentClient") -> None:
         self._stream_client = client
 
-    def action_start_trace(self) -> None:
+    async def action_start_trace(self) -> None:
         """Start tracing (triggered by Enter key)."""
-        self._start_trace()
+        await self._start_trace()
 
-    def action_stop_traces(self) -> None:
+    async def action_stop_traces(self) -> None:
         """Stop all traces (triggered by Delete key)."""
-        self._stop_all_traces()
+        await self._stop_all_traces()
 
     def action_clear_tree(self) -> None:
         """Clear the call tree display."""
@@ -183,7 +183,12 @@ class TraceView(Container):
             "condition_express": condition if condition else None,
         }
 
-        response = self._client.send_command(command)
+        worker = self.run_worker(
+            lambda: self._client.send_command(command),
+            thread=True,
+        )
+        await worker.wait()
+        response = worker.result
 
         if response.get("status") != "success":
             error_msg = response.get("error", "Trace start failed")
@@ -357,28 +362,36 @@ class TraceView(Container):
         stopped_count = 0
 
         for watch_id, trace_info in list(self._active_traces.items()):
-            worker = trace_info.get("worker")
-            if worker:
-                worker.cancel()
+            stream_worker = trace_info.get("worker")
+            if stream_worker:
+                stream_worker.cancel()
 
             try:
-                self._client.send_command(
-                    {
-                        "type": "trace",
-                        "action": "stop",
-                        "watch_id": watch_id,
-                    }
+                stop_worker = self.run_worker(
+                    lambda wid=watch_id: self._client.send_command(
+                        {
+                            "type": "trace",
+                            "action": "stop",
+                            "watch_id": wid,
+                        }
+                    ),
+                    thread=True,
                 )
+                await stop_worker.wait()
 
                 pattern = trace_info.get("pattern")
                 if pattern:
-                    self._client.send_command(
-                        {
-                            "type": "reset",
-                            "action": "reset",
-                            "pattern": pattern,
-                        }
+                    reset_worker = self.run_worker(
+                        lambda pat=pattern: self._client.send_command(
+                            {
+                                "type": "reset",
+                                "action": "reset",
+                                "pattern": pat,
+                            }
+                        ),
+                        thread=True,
                     )
+                    await reset_worker.wait()
 
                 stopped_count += 1
             except Exception:

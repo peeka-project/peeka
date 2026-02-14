@@ -89,9 +89,14 @@ class InspectView(Container):
             self.app.notify("Please enter an object path", severity="warning")
             return
 
-        response = self._client.send_command(
-            {"type": "vmtool", "action": "get", "target": target, "depth": 3}
+        worker = self.run_worker(
+            lambda: self._client.send_command(
+                {"type": "vmtool", "action": "get", "target": target, "depth": 3}
+            ),
+            thread=True,
         )
+        await worker.wait()
+        response = worker.result
 
         if response.get("status") != "success":
             self.app.notify(

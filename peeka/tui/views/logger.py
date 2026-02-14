@@ -57,7 +57,7 @@ class LoggerView(Container):
             id="logger-container",
         )
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         logger_list = self.query_one("#logger-list", Vertical)
         logger_list.border_title = "Loggers"
 
@@ -66,19 +66,19 @@ class LoggerView(Container):
         table.cursor_type = "row"
 
         if self._client:
-            self._refresh_loggers()
+            await self._refresh_loggers()
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "logger-refresh-btn":
-            self._refresh_loggers()
+            await self._refresh_loggers()
         elif event.button.id == "set-level-btn":
             await self._set_logger_level()
 
-    def action_refresh(self) -> None:
+    async def action_refresh(self) -> None:
         """Refresh logger list (triggered by r key)."""
-        self._refresh_loggers()
+        await self._refresh_loggers()
 
-    def _refresh_loggers(self) -> None:
+    async def _refresh_loggers(self) -> None:
         if not self._client:
             self.app.notify("Not connected to agent", severity="error")
             return
@@ -93,7 +93,12 @@ class LoggerView(Container):
         if pattern:
             command["pattern"] = pattern
 
-        response = self._client.send_command(command)
+        worker = self.run_worker(
+            lambda: self._client.send_command(command),
+            thread=True,
+        )
+        await worker.wait()
+        response = worker.result
 
         if response.get("status") != "success":
             self.app.notify(
@@ -140,7 +145,12 @@ class LoggerView(Container):
             "level": level,
         }
 
-        response = self._client.send_command(command)
+        worker = self.run_worker(
+            lambda: self._client.send_command(command),
+            thread=True,
+        )
+        await worker.wait()
+        response = worker.result
 
         if response.get("status") != "success":
             self.app.notify(
@@ -151,4 +161,4 @@ class LoggerView(Container):
 
         self.app.notify(f"Set {logger_name} to {level}", severity="information")
 
-        self._refresh_loggers()
+        await self._refresh_loggers()
