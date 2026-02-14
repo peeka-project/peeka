@@ -38,6 +38,7 @@ class DashboardView(Container):
         process_info = Vertical(
             Static(f"PID: {self.pid}", id="pid-info"),
             Static("Python: detecting...", id="python-version"),
+            Static("Args: detecting...", id="sys-argv"),
             Static("Uptime: calculating...", id="uptime"),
             id="process-info",
             classes="panel",
@@ -131,6 +132,14 @@ class DashboardView(Container):
             ver_result = ver_resp()
             if ver_result.get("status") == "success":
                 data["python_version"] = ver_result.get("value", "unknown")
+
+            argv_resp = lambda: self._client.send_command(
+                {"type": "vmtool", "action": "get", "target": "sys.argv", "depth": 2}
+            )
+            argv_result = argv_resp()
+            if argv_result.get("status") == "success":
+                data["sys_argv"] = argv_result.get("value", [])
+
             mem_resp = lambda: self._client.send_command(
                 {"type": "memory", "action": "overview"}
             )
@@ -148,17 +157,24 @@ class DashboardView(Container):
         """Update UI with fetched data (runs on main thread)."""
         # Update Python version
         if "python_version" in data:
-            version = data["python_version"]
-            if isinstance(version, str):
-                version_short = version.split()[0]
-                self.query_one("#python-version", Static).update(
-                    f"Python: {version_short}"
-                )
+            python_version = data["python_version"]
+            if isinstance(python_version, str):
+                short_ver = python_version.split()[0] if python_version else "unknown"
+                self.query_one("#python-version", Static).update(f"Python: {short_ver}")
 
-        # Update memory
+        if "sys_argv" in data:
+            argv_list = data["sys_argv"]
+            if isinstance(argv_list, list) and argv_list:
+                argv_str = " ".join(argv_list[:3])
+                if len(argv_list) > 3:
+                    argv_str += "..."
+                self.query_one("#sys-argv", Static).update(f"Args: {argv_str}")
+            else:
+                self.query_one("#sys-argv", Static).update("Args: N/A")
+
+        # Update memory stats
         if "rss_bytes" in data:
-            rss_bytes = data["rss_bytes"]
-            rss_mb = rss_bytes / (1024 * 1024)
+            rss_mb = data["rss_bytes"] / (1024 * 1024)
             self.query_one("#mem-rss", Static).update(f"RSS: {rss_mb:.1f} MB")
 
             tracemalloc_data = data.get("tracemalloc", {})
