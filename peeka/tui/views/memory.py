@@ -29,17 +29,17 @@ class MemoryView(Container):
     def set_client(self, client: "StreamingAgentClient") -> None:
         self._client = client
 
-    def action_refresh(self) -> None:
+    async def action_refresh(self) -> None:
         """Refresh memory data (triggered by r key)."""
-        self._refresh_overview()
+        await self._refresh_overview()
 
-    def action_toggle_tracking(self) -> None:
+    async def action_toggle_tracking(self) -> None:
         """Toggle memory tracking (triggered by t key)."""
-        self._toggle_tracking()
+        await self._toggle_tracking()
 
-    def action_gc_collect(self) -> None:
+    async def action_gc_collect(self) -> None:
         """Trigger garbage collection (triggered by g key)."""
-        self._gc_collect()
+        await self._gc_collect()
 
     def compose(self) -> ComposeResult:
         mem_overview = Vertical(
@@ -99,7 +99,12 @@ class MemoryView(Container):
         if not self._client:
             return
 
-        response = self._client.send_command({"type": "memory", "action": "overview"})
+        worker = self.run_worker(
+            lambda: self._client.send_command({"type": "memory", "action": "overview"}),
+            thread=True,
+        )
+        await worker.wait()
+        response = worker.result
 
         if response.get("status") != "success":
             self.app.notify(
@@ -142,9 +147,14 @@ class MemoryView(Container):
             f"GC: gen0={gc_counts[0]}, gen1={gc_counts[1]}, gen2={gc_counts[2]}"
         )
 
-        gc_response = self._client.send_command(
-            {"type": "memory", "action": "gc", "limit": 10}
+        gc_worker = self.run_worker(
+            lambda: self._client.send_command(
+                {"type": "memory", "action": "gc", "limit": 10}
+            ),
+            thread=True,
         )
+        await gc_worker.wait()
+        gc_response = gc_worker.result
 
         if gc_response.get("status") == "success":
             table = self.query_one("#mem-objects-table", DataTable)
@@ -165,7 +175,12 @@ class MemoryView(Container):
             return
 
         if self._tracking_enabled:
-            response = self._client.send_command({"type": "memory", "action": "stop"})
+            worker = self.run_worker(
+                lambda: self._client.send_command({"type": "memory", "action": "stop"}),
+                thread=True,
+            )
+            await worker.wait()
+            response = worker.result
 
             if response.get("status") == "success":
                 self.app.notify("Memory tracking stopped", severity="information")
@@ -181,9 +196,14 @@ class MemoryView(Container):
                     severity="error",
                 )
         else:
-            response = self._client.send_command(
-                {"type": "memory", "action": "start", "nframe": 10}
+            worker = self.run_worker(
+                lambda: self._client.send_command(
+                    {"type": "memory", "action": "start", "nframe": 10}
+                ),
+                thread=True,
             )
+            await worker.wait()
+            response = worker.result
 
             if response.get("status") == "success":
                 self.app.notify("Memory tracking started", severity="information")
@@ -203,9 +223,14 @@ class MemoryView(Container):
         if not self._client:
             return
 
-        response = self._client.send_command(
-            {"type": "memory", "action": "gc", "limit": 20}
+        worker = self.run_worker(
+            lambda: self._client.send_command(
+                {"type": "memory", "action": "gc", "limit": 20}
+            ),
+            thread=True,
         )
+        await worker.wait()
+        response = worker.result
 
         if response.get("status") == "success":
             total_objects = response.get("total_objects", 0)
@@ -225,7 +250,12 @@ class MemoryView(Container):
         if not self._client:
             return
 
-        response = self._client.send_command({"type": "memory", "action": "dump"})
+        worker = self.run_worker(
+            lambda: self._client.send_command({"type": "memory", "action": "dump"}),
+            thread=True,
+        )
+        await worker.wait()
+        response = worker.result
 
         if response.get("status") == "success":
             file_path = response.get("file_path", "unknown")

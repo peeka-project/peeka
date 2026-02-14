@@ -115,7 +115,12 @@ class StackView(Container):
             "times": -1,
         }
 
-        response = self._client.send_command(command)
+        worker = self.run_worker(
+            lambda: self._client.send_command(command),
+            thread=True,
+        )
+        await worker.wait()
+        response = worker.result
 
         if response.get("status") != "success":
             self.app.notify(
@@ -201,12 +206,21 @@ class StackView(Container):
 
             try:
                 if self._client:
-                    self._client.send_command(
-                        {"type": "stack", "action": "stop", "watch_id": watch_id}
+                    stop_worker = self.run_worker(
+                        lambda wid=watch_id: self._client.send_command(
+                            {"type": "stack", "action": "stop", "watch_id": wid}
+                        ),
+                        thread=True,
                     )
-                    self._client.send_command(
-                        {"type": "reset", "action": "reset", "pattern": "*"}
+                    await stop_worker.wait()
+
+                    reset_worker = self.run_worker(
+                        lambda: self._client.send_command(
+                            {"type": "reset", "action": "reset", "pattern": "*"}
+                        ),
+                        thread=True,
                     )
+                    await reset_worker.wait()
             except Exception:
                 pass
 

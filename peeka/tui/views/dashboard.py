@@ -3,7 +3,7 @@ Dashboard View - Overview of attached process.
 """
 
 import time
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -116,47 +116,52 @@ class DashboardView(Container):
                 break
 
             self.app.call_from_thread(self._refresh_dashboard_sync)
+            self.app.call_from_thread(self._update_uptime)
 
     def _refresh_dashboard_sync(self) -> None:
-        self.run_worker(self._refresh_dashboard(), exclusive=False)
-
-    async def _refresh_dashboard(self) -> None:
+        """Launch worker thread to fetch dashboard data."""
         if not self._client:
             return
 
-        await self._update_python_version()
-        await self._update_memory_stats()
-        await self._update_uptime()
+        def worker_fn():
+            data: Dict[str, Any] = {}
+            ver_resp = lambda: self._client.send_command(
+                {"type": "vmtool", "action": "get", "target": "sys.version", "depth": 1}
+            )
+            ver_result = ver_resp()
+            if ver_result.get("status") == "success":
+                data["python_version"] = ver_result.get("value", "unknown")
+            mem_resp = lambda: self._client.send_command(
+                {"type": "memory", "action": "overview"}
+            )
+            mem_result = mem_resp()
+            if mem_result.get("status") == "success":
+                data["rss_bytes"] = mem_result.get("rss_bytes", 0)
+                data["tracemalloc"] = mem_result.get("tracemalloc", {})
+                data["gc"] = mem_result.get("gc", {})
+            self.app.call_from_thread(self._update_dashboard_ui, data)
+            return data
 
-    async def _update_python_version(self) -> None:
-        if not self._client:
-            return
+        self.run_worker(worker_fn, thread=True, exclusive=False)
 
-        response = self._client.send_command(
-            {"type": "vmtool", "action": "get", "target": "sys.version", "depth": 1}
-        )
-
-        if response.get("status") == "success":
-            version = response.get("value", "unknown")
+    def _update_dashboard_ui(self, data: Dict[str, Any]) -> None:
+        """Update UI with fetched data (runs on main thread)."""
+        # Update Python version
+        if "python_version" in data:
+            version = data["python_version"]
             if isinstance(version, str):
                 version_short = version.split()[0]
                 self.query_one("#python-version", Static).update(
                     f"Python: {version_short}"
                 )
 
-    async def _update_memory_stats(self) -> None:
-        if not self._client:
-            return
-
-        response = self._client.send_command({"type": "memory", "action": "overview"})
-
-        if response.get("status") == "success":
-            rss_bytes = response.get("rss_bytes", 0)
+        # Update memory
+        if "rss_bytes" in data:
+            rss_bytes = data["rss_bytes"]
             rss_mb = rss_bytes / (1024 * 1024)
-
             self.query_one("#mem-rss", Static).update(f"RSS: {rss_mb:.1f} MB")
 
-            tracemalloc_data = response.get("tracemalloc", {})
+            tracemalloc_data = data.get("tracemalloc", {})
             if tracemalloc_data.get("enabled"):
                 current_bytes = tracemalloc_data.get("current_bytes", 0)
                 peak_bytes = tracemalloc_data.get("peak_bytes", 0)
@@ -171,14 +176,15 @@ class DashboardView(Container):
                 self.query_one("#mem-traced", Static).update("Traced: Not enabled")
                 self.query_one("#mem-peak", Static).update("Peak: N/A")
 
-            gc_data = response.get("gc", {})
+            gc_data = data.get("gc", {})
             gc_counts = gc_data.get("counts", [0, 0, 0])
 
             self.query_one("#gc-gen0", Static).update(f"Gen0: {gc_counts[0]}")
             self.query_one("#gc-gen1", Static).update(f"Gen1: {gc_counts[1]}")
             self.query_one("#gc-gen2", Static).update(f"Gen2: {gc_counts[2]}")
 
-    async def _update_uptime(self) -> None:
+    def _update_uptime(self) -> None:
+        """Update uptime display."""
         elapsed = time.time() - self._start_time
         hours = int(elapsed // 3600)
         minutes = int((elapsed % 3600) // 60)
