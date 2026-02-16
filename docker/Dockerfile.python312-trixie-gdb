@@ -2,15 +2,13 @@
 # Test-only image for container-based E2E testing
 # Used by testcontainers in tests/container/ — do not rename without updating conftest.py
 
-FROM python:3.12-trixie-gdb
+FROM python:3.12-trixie
 
 LABEL maintainer="peeka"
 LABEL description="Peeka E2E testing with GDB (Python 3.12)"
 
-WORKDIR /app
-
-COPY . .
-
-RUN pip install --no-cache-dir -i https://mirrors.ustc.edu.cn/pypi/web/simple -e ".[dev]"
-
-CMD ["bash", "-c", "python examples/demo.py --mode loop & sleep infinity"]
+RUN sed -i 's|deb.debian.org|mirrors.ustc.edu.cn|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    gdb \
+    python3-dbg \
+    && rm -rf /var/lib/apt/lists/*
