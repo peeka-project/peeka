@@ -2,7 +2,7 @@
 # Test-only image for container-based E2E testing
 # NOTE: 3.14-rc tag may change. Pin to specific version if reproducibility needed.
 
-FROM python:3.14-rc-slim
+FROM python:3.14-trixie
 
 LABEL maintainer="peeka"
 LABEL description="Peeka E2E testing with Python 3.14 (PEP 768)"
@@ -15,4 +15,4 @@ COPY . .
 
 RUN pip install --no-cache-dir -i https://mirrors.ustc.edu.cn/pypi/web/simple -e ".[dev]"
 
-CMD ["sleep", "infinity"]
+CMD ["bash", "-c", "python examples/demo.py --mode loop & sleep infinity"]
