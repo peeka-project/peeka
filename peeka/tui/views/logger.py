@@ -58,6 +58,9 @@ class LoggerView(Container):
         )
 
     async def on_mount(self) -> None:
+        container = self.query_one("#logger-container", Container)
+        container.border_title = "Logger"
+
         logger_list = self.query_one("#logger-list", Vertical)
         logger_list.border_title = "Loggers"
 

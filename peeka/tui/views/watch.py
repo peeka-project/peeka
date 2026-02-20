@@ -50,7 +50,7 @@ def _format_args_summary(params: Any, kwargs: Any, has_target: bool) -> str:
     if isinstance(params, (list, tuple)):
         # Skip 'self' (first arg) if this is an instance method
         start = 1 if has_target and len(params) > 0 else 0
-        for arg in params[start:start + 3]:
+        for arg in params[start : start + 3]:
             parts.append(_short_repr(arg, 25))
         remaining = len(params) - start - 3
         if remaining > 0:
@@ -79,7 +79,9 @@ def _format_detail(observation: dict) -> str:
     # Header
     status = "✓ Success" if success else "✗ Exception"
     lines.append(f"─── {func_name} [{status}] ───")
-    lines.append(f"Location: {location}  │  Cost: {cost:.3f}ms  │  Thread: {thread_name} ({thread_id})")
+    lines.append(
+        f"Location: {location}  │  Cost: {cost:.3f}ms  │  Thread: {thread_name} ({thread_id})"
+    )
 
     # Target (self)
     target = observation.get("target")
@@ -91,7 +93,9 @@ def _format_detail(observation: dict) -> str:
     params = observation.get("params", [])
     if params:
         # Skip self for instance methods
-        display_params = params[1:] if target is not None and len(params) > 0 else params
+        display_params = (
+            params[1:] if target is not None and len(params) > 0 else params
+        )
         lines.append(f"\n◆ args ({len(display_params)}):")
         for i, p in enumerate(display_params):
             formatted = _safe_json_format(p)
@@ -224,6 +228,9 @@ class WatchView(Container):
 
     def on_mount(self) -> None:
         """Initialize watch table and observations table."""
+        container = self.query_one("#watch-container", Container)
+        container.border_title = "Watch"
+
         # Active watches table
         table = self.query_one("#watch-table", DataTable)
         table.add_columns("ID", "Pattern", "Count", "Status")
@@ -382,9 +389,7 @@ class WatchView(Container):
                 self._add_observation, watch_id, count, observation
             )
 
-    def _add_observation(
-            self, watch_id: str, count: int, observation: dict
-    ) -> None:
+    def _add_observation(self, watch_id: str, count: int, observation: dict) -> None:
         """Add observation to table and update UI (called from main thread)."""
         self._obs_counter += 1
         row_id = self._obs_counter
@@ -409,7 +414,9 @@ class WatchView(Container):
         duration = observation.get("cost", 0)
 
         args_summary = _format_args_summary(params, kwargs, has_target)
-        result_summary = _short_repr(result, 40) if success else observation.get("throwExp", "Error")
+        result_summary = (
+            _short_repr(result, 40) if success else observation.get("throwExp", "Error")
+        )
         if isinstance(result_summary, str) and len(result_summary) > 40:
             result_summary = result_summary[:39] + "…"
 

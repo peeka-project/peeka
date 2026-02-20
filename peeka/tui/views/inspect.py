@@ -56,6 +56,9 @@ class InspectView(Container):
         )
 
     def on_mount(self) -> None:
+        container = self.query_one("#inspect-container", Container)
+        container.border_title = "Inspect"
+
         tree_panel = self.query_one("#inspect-tree-panel", Vertical)
         tree_panel.border_title = "Object Tree"
 

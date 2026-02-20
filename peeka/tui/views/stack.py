@@ -73,6 +73,9 @@ class StackView(Container):
         )
 
     def on_mount(self) -> None:
+        container = self.query_one("#stack-container", Container)
+        container.border_title = "Stack"
+
         table = self.query_one("#trace-table", DataTable)
         table.add_columns("ID", "Pattern", "Captures", "Status")
         table.cursor_type = "row"

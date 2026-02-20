@@ -62,6 +62,9 @@ class MonitorView(Container):
         )
 
     def on_mount(self) -> None:
+        container = self.query_one("#monitor-container", Container)
+        container.border_title = "Monitor"
+
         table = self.query_one("#stats-table", DataTable)
         table.add_columns(
             "Pattern",
