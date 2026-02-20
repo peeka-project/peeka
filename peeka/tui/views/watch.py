@@ -2,8 +2,11 @@
 Watch View - Function observation interface.
 """
 
-from typing import TYPE_CHECKING, Optional
+import json
+from collections import deque
+from typing import TYPE_CHECKING, Any, Optional
 
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Vertical, Horizontal
@@ -17,6 +20,124 @@ if TYPE_CHECKING:
     from peeka.core.client import StreamingAgentClient
 
 
+def _safe_json_format(value: Any, indent: int = 2) -> str:
+    """Format a value as pretty JSON, falling back to repr for non-serializable data."""
+    if value is None:
+        return "null"
+    try:
+        return json.dumps(value, indent=indent, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        return repr(value)
+
+
+def _short_repr(value: Any, max_len: int = 35) -> str:
+    """Create a short representation of a value for table display."""
+    if value is None:
+        return "-"
+    try:
+        s = json.dumps(value, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        s = repr(value)
+    if len(s) > max_len:
+        return s[: max_len - 1] + "…"
+    return s
+
+
+def _format_args_summary(params: Any, kwargs: Any, has_target: bool) -> str:
+    """Format function args as a short summary string."""
+    parts = []
+
+    if isinstance(params, (list, tuple)):
+        # Skip 'self' (first arg) if this is an instance method
+        start = 1 if has_target and len(params) > 0 else 0
+        for arg in params[start:start + 3]:
+            parts.append(_short_repr(arg, 25))
+        remaining = len(params) - start - 3
+        if remaining > 0:
+            parts.append(f"…+{remaining}")
+
+    if isinstance(kwargs, dict) and kwargs:
+        for k in list(kwargs.keys())[:2]:
+            parts.append(f"{k}=…")
+        if len(kwargs) > 2:
+            parts.append(f"…+{len(kwargs) - 2}")
+
+    return ", ".join(parts) if parts else "-"
+
+
+def _format_detail(observation: dict) -> str:
+    """Format full observation details for the detail panel."""
+    lines = []
+
+    func_name = observation.get("func_name", "unknown")
+    location = observation.get("location", "")
+    success = observation.get("success", True)
+    cost = observation.get("cost", 0)
+    thread_name = observation.get("thread_name", "")
+    thread_id = observation.get("thread_id", "")
+
+    # Header
+    status = "✓ Success" if success else "✗ Exception"
+    lines.append(f"─── {func_name} [{status}] ───")
+    lines.append(f"Location: {location}  │  Cost: {cost:.3f}ms  │  Thread: {thread_name} ({thread_id})")
+
+    # Target (self)
+    target = observation.get("target")
+    if target is not None:
+        lines.append(f"\n◆ self:")
+        lines.append(f"  {_safe_json_format(target)}")
+
+    # Params
+    params = observation.get("params", [])
+    if params:
+        # Skip self for instance methods
+        display_params = params[1:] if target is not None and len(params) > 0 else params
+        lines.append(f"\n◆ args ({len(display_params)}):")
+        for i, p in enumerate(display_params):
+            formatted = _safe_json_format(p)
+            # Indent multi-line values
+            if "\n" in formatted:
+                formatted = formatted.replace("\n", "\n    ")
+            lines.append(f"  [{i}] {formatted}")
+
+    # Kwargs
+    kwargs = observation.get("kwargs", {})
+    if kwargs:
+        lines.append(f"\n◆ kwargs:")
+        for k, v in kwargs.items():
+            formatted = _safe_json_format(v)
+            if "\n" in formatted:
+                formatted = formatted.replace("\n", "\n    ")
+            lines.append(f"  {k} = {formatted}")
+
+    # Return / Exception
+    if success:
+        ret = observation.get("returnObj")
+        if ret is not None:
+            lines.append(f"\n◆ return:")
+            lines.append(f"  {_safe_json_format(ret)}")
+    else:
+        exp = observation.get("throwExp")
+        if exp:
+            lines.append(f"\n◆ exception:")
+            lines.append(f"  {exp}")
+
+    # Stack
+    stack = observation.get("stack")
+    if stack:
+        lines.append(f"\n◆ stack:")
+        for frame in stack:
+            fn = frame.get("function", "?")
+            fname = frame.get("filename", "?")
+            lineno = frame.get("lineno", "?")
+            ctx = frame.get("code_context", "")
+            lines.append(f"  {fn} ({fname}:{lineno})")
+            if ctx:
+                lines.append(f"    {ctx}")
+
+    return "\n".join(lines)
+
+
 class WatchView(Container):
     """Watch view for observing function calls."""
 
@@ -24,6 +145,8 @@ class WatchView(Container):
         Binding("enter", "start_watch", "Watch"),
         Binding("delete", "stop_watches", "Stop All"),
     ]
+
+    MAX_OBSERVATIONS = 1000
 
     def __init__(self, pid: int) -> None:
         super().__init__()
@@ -34,6 +157,8 @@ class WatchView(Container):
         self._completion_source: Optional[CompletionSource] = None
         self._client: Optional["StreamingAgentClient"] = None
         self._stream_client: Optional["StreamingAgentClient"] = None
+        self._observations: deque[dict] = deque(maxlen=self.MAX_OBSERVATIONS)
+        self._obs_counter: int = 0
 
     def set_client(self, client: "StreamingAgentClient") -> None:
         """Set agent client for commands and completion."""
@@ -82,7 +207,13 @@ class WatchView(Container):
                     classes="panel",
                 ),
                 Vertical(
-                    RichLog(id="observations-log", highlight=True, markup=True),
+                    DataTable(id="observations-table"),
+                    RichLog(
+                        id="observation-detail",
+                        highlight=True,
+                        markup=True,
+                        wrap=True,
+                    ),
                     id="observations-panel",
                     classes="panel",
                 ),
@@ -92,7 +223,8 @@ class WatchView(Container):
         )
 
     def on_mount(self) -> None:
-        """Initialize watch table."""
+        """Initialize watch table and observations table."""
+        # Active watches table
         table = self.query_one("#watch-table", DataTable)
         table.add_columns("ID", "Pattern", "Count", "Status")
         table.cursor_type = "row"
@@ -100,8 +232,17 @@ class WatchView(Container):
         watch_list = self.query_one("#watch-list", Vertical)
         watch_list.border_title = "Active Watches"
 
+        # Observations table
+        obs_table = self.query_one("#observations-table", DataTable)
+        obs_table.add_columns("#", "Function", "Args", "Result", "ms", "")
+        obs_table.cursor_type = "row"
+
         observations_panel = self.query_one("#observations-panel", Vertical)
         observations_panel.border_title = "Observations"
+
+        # Detail panel title
+        detail = self.query_one("#observation-detail", RichLog)
+        detail.border_title = "Detail"
 
     def on_unmount(self) -> None:
         """Cancel all workers when view is unmounted."""
@@ -116,6 +257,34 @@ class WatchView(Container):
             await self._start_watch()
         elif event.button.id == "stop-btn":
             await self._stop_all_watches()
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        """Update detail panel when observation row is selected."""
+        table = event.data_table
+        if table.id != "observations-table":
+            return
+
+        if event.row_key is None:
+            return
+
+        # Find the observation by row key
+        try:
+            row_idx = int(str(event.row_key.value))
+        except (ValueError, TypeError):
+            return
+
+        # Search in our deque for the matching observation
+        for obs in self._observations:
+            if obs.get("_row_id") == row_idx:
+                self._show_detail(obs)
+                break
+
+    def _show_detail(self, observation: dict) -> None:
+        """Show full observation details in the detail panel."""
+        detail = self.query_one("#observation-detail", RichLog)
+        detail.clear()
+        detail_text = _format_detail(observation)
+        detail.write(detail_text)
 
     async def _start_watch(self) -> None:
         """Start a new watch."""
@@ -209,50 +378,75 @@ class WatchView(Container):
             if watch_id in self._active_watches:
                 self._active_watches[watch_id]["count"] = count
 
-            func_name = observation.get("func_name", "unknown")
-            # Agent sends "params" (list), "returnObj", and "cost" (ms)
-            args = observation.get("params", [])
-            kwargs = observation.get("kwargs", {})
-            result = observation.get("returnObj", None)
-            duration = observation.get("cost", 0)
-            success = observation.get("success", True)
-
-            args_str = ", ".join(repr(a) for a in args[:3])
-            if len(args) > 3:
-                args_str += ", ..."
-            if kwargs:
-                kwargs_preview = ", ".join(f"{k}=..." for k in list(kwargs.keys())[:2])
-                if args_str:
-                    args_str += ", " + kwargs_preview
-                else:
-                    args_str = kwargs_preview
-
-            if success:
-                result_str = f"[green]→ {repr(result)[:50]}[/green]"
-            else:
-                result_str = f"[red]✗ {repr(result)[:50]}[/red]"
-
-            log_line = (
-                f"[cyan]#{count}[/cyan] "
-                f"[yellow]{func_name}[/yellow]({args_str}) "
-                f"{result_str} "
-                f"[dim][{duration:.2f}ms][/dim]"
-            )
-
             self.app.call_from_thread(
-                self._update_observation, watch_id, count, log_line
+                self._add_observation, watch_id, count, observation
             )
 
-    def _update_observation(self, watch_id: str, count: int, log_line: str) -> None:
-        """Update UI with new observation (called from main thread)."""
-        log = self.query_one("#observations-log", RichLog)
-        log.write(log_line)
+    def _add_observation(
+            self, watch_id: str, count: int, observation: dict
+    ) -> None:
+        """Add observation to table and update UI (called from main thread)."""
+        self._obs_counter += 1
+        row_id = self._obs_counter
 
-        table = self.query_one("#watch-table", DataTable)
+        # Store observation with row ID
+        observation["_row_id"] = row_id
+        self._observations.append(observation)
+
+        func_name = observation.get("func_name", "unknown")
+        # Shorten module path: __main__.Calculator.add -> Calculator.add
+        if "." in func_name:
+            parts = func_name.split(".")
+            # Drop __main__ or long module paths
+            if parts[0] in ("__main__",) or len(parts) > 3:
+                func_name = ".".join(parts[-2:]) if len(parts) >= 2 else parts[-1]
+
+        params = observation.get("params", [])
+        kwargs = observation.get("kwargs", {})
+        has_target = observation.get("target") is not None
+        result = observation.get("returnObj")
+        success = observation.get("success", True)
+        duration = observation.get("cost", 0)
+
+        args_summary = _format_args_summary(params, kwargs, has_target)
+        result_summary = _short_repr(result, 40) if success else observation.get("throwExp", "Error")
+        if isinstance(result_summary, str) and len(result_summary) > 40:
+            result_summary = result_summary[:39] + "…"
+
+        status_icon = Text("✓", style="green") if success else Text("✗", style="red")
+
+        obs_table = self.query_one("#observations-table", DataTable)
+
+        # Evict oldest row if over limit
+        if obs_table.row_count >= self.MAX_OBSERVATIONS:
+            try:
+                first_key = list(obs_table.rows.keys())[0]
+                obs_table.remove_row(first_key)
+            except (IndexError, KeyError):
+                pass
+
+        obs_table.add_row(
+            str(row_id),
+            func_name,
+            args_summary,
+            result_summary,
+            f"{duration:.2f}",
+            status_icon,
+            key=str(row_id),
+        )
+
+        # Auto-scroll to latest
+        obs_table.move_cursor(row=obs_table.row_count - 1, animate=False)
+
+        # Update active watches table count
+        watch_table = self.query_one("#watch-table", DataTable)
         try:
-            table.update_cell(watch_id, "Count", str(count))
+            watch_table.update_cell(watch_id, "Count", str(count))
         except Exception:
             pass
+
+        # Auto-show detail for latest observation
+        self._show_detail(observation)
 
     async def _stop_all_watches(self) -> None:
         """Stop all active watches."""
