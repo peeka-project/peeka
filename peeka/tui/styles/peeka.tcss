@@ -14,20 +14,22 @@ Screen {
 }
 
 /* ============================================================================
-   PANEL SYSTEM — round borders, tight spacing, focus glow
+   PANEL SYSTEM — lazygit-style: always-visible borders, focus = bright color
    ============================================================================ */
 
 .panel {
-    border: round $surface-lighten-1;
-    border-title-color: $text;
+    border: round $primary 60%;
+    border-title-color: $primary 60%;
     border-title-style: bold;
     border-title-align: left;
     padding: 0 1;
     margin: 0;
+    transition: border 150ms;
 }
 
 .panel:focus-within {
     border: round $accent;
+    border-title-color: $accent;
 }
 
 /* ============================================================================
@@ -113,7 +115,7 @@ TabPane {
 }
 
 /* ============================================================================
-   VIEW CONTAINERS — tight padding
+   VIEW CONTAINERS — outer border with panel styling
    ============================================================================ */
 
 #dashboard-container,
@@ -125,6 +127,22 @@ TabPane {
 #logger-container,
 #inspect-container {
     padding: 0 1;
+    border: round $primary 60%;
+    border-title-color: $primary 60%;
+    border-title-style: bold;
+    border-title-align: left;
+}
+
+#dashboard-container:focus-within,
+#watch-container:focus-within,
+#trace-container:focus-within,
+#stack-container:focus-within,
+#monitor-container:focus-within,
+#memory-container:focus-within,
+#logger-container:focus-within,
+#inspect-container:focus-within {
+    border: round $accent;
+    border-title-color: $accent;
 }
 
 /* ============================================================================
@@ -137,17 +155,19 @@ TabPane {
 }
 
 .dashboard-card {
-    border: round $surface-lighten-1;
-    border-title-color: $text;
+    border: round $primary 60%;
+    border-title-color: $primary 60%;
     border-title-style: bold;
     border-title-align: left;
     padding: 0 1;
     margin: 0 1 0 0;
     min-width: 30;
+    transition: border 150ms;
 }
 
 .dashboard-card:focus-within {
     border: round $accent;
+    border-title-color: $accent;
 }
 
 #pid-info, #python-version, #uptime,
@@ -252,8 +272,8 @@ TabPane {
 #trace-stats {
     height: auto;
     padding: 0 1;
-    border: round $surface-lighten-1;
-    border-title-color: $text-muted;
+    border: round $primary 60%;
+    border-title-color: $primary 60%;
 }
 
 /* ============================================================================

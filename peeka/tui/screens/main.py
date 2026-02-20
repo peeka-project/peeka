@@ -104,6 +104,9 @@ class MainScreen(Screen):
             inspect_view = self.query_one(InspectView)
             inspect_view.set_client(self._client)
 
+    def on_unmount(self) -> None:
+        self._disconnect_clients()
+
     async def _connect(self) -> None:
         """Connect to the target process agent with separate command and streaming sockets."""
         try:
@@ -136,4 +139,11 @@ class MainScreen(Screen):
 
     def action_go_back(self) -> None:
         """Go back to process selector."""
+        self._disconnect_clients()
         self.app.pop_screen()
+
+    def _disconnect_clients(self) -> None:
+        if self._stream_client:
+            self._stream_client.disconnect()
+        if self._client:
+            self._client.disconnect()

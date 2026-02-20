@@ -85,7 +85,8 @@ class DashboardView(Container):
         )
 
     async def on_mount(self) -> None:
-        pass
+        container = self.query_one("#dashboard-container", Container)
+        container.border_title = "Dashboard"
 
     def on_unmount(self) -> None:
         if self._refresh_worker:

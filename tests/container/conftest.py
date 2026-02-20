@@ -2,29 +2,32 @@
 
 Provides Docker image building, container lifecycle management, and helper
 functions for running target processes inside containers.
+
+Images only contain base environment (Python + system deps). Host code is
+mounted via volume at /app with PYTHONPATH=/app, so the container always
+reflects the latest source without rebuilding or pip install.
 """
 
 import shlex
 import time
+from pathlib import Path
 from typing import Dict, Tuple
 
 import pytest
 
-# Conditionally import testcontainers - skip collection if not available
 pytest.importorskip("testcontainers")
 
 from testcontainers.core.container import DockerContainer
 from testcontainers.core.image import DockerImage
 
-
-# Session-scoped image fixtures (build once per test session)
+_PROJECT_ROOT = str(Path(__file__).resolve().parents[2])
 
 
 @pytest.fixture(scope="session")
 def gdb_image():
     """Use pre-built GDB test image (Python 3.12 + GDB + python3-dbg).
 
-    Build: docker build -f docker/Dockerfile.test-gdb -t peeka-test:gdb .
+    Build: docker build --network=host -f docker/Dockerfile.test-gdb -t peeka-test:gdb .
     """
     return "peeka-test:gdb"
 
@@ -33,34 +36,39 @@ def gdb_image():
 def py314_image():
     """Use pre-built Python 3.14 test image (PEP 768 native attach).
 
-    Build: docker build -f docker/Dockerfile.test-py314 -t peeka-test:py314 .
+    Build: docker build --network=host -f docker/Dockerfile.test-py314 -t peeka-test:py314 .
     """
     return "peeka-test:py314"
 
 
-# Function-scoped container fixtures (fresh container per test)
-
-
 @pytest.fixture(scope="function")
 def gdb_container(gdb_image):
-    """Start GDB-based container with ptrace capabilities."""
-    with DockerContainer(str(gdb_image)).with_kwargs(
-        cap_add=["SYS_PTRACE"],
-        security_opt=["seccomp:unconfined"],
-        init=True,
-    ) as container:
+    """Start GDB-based container with host code bind-mounted at /app."""
+    with (
+        DockerContainer(str(gdb_image))
+        .with_volume_mapping(_PROJECT_ROOT, "/app", mode="rw")
+        .with_kwargs(
+            cap_add=["SYS_PTRACE"],
+            security_opt=["seccomp:unconfined"],
+            init=True,
+        ) as container
+    ):
         container.start()
         yield container
 
 
 @pytest.fixture(scope="function")
 def py314_container(py314_image):
-    """Start Python 3.14 container with ptrace capabilities."""
-    with DockerContainer(str(py314_image)).with_kwargs(
-        cap_add=["SYS_PTRACE"],
-        security_opt=["seccomp:unconfined"],
-        init=True,
-    ) as container:
+    """Start Python 3.14 container with host code bind-mounted at /app."""
+    with (
+        DockerContainer(str(py314_image))
+        .with_volume_mapping(_PROJECT_ROOT, "/app", mode="rw")
+        .with_kwargs(
+            cap_add=["SYS_PTRACE"],
+            security_opt=["seccomp:unconfined"],
+            init=True,
+        ) as container
+    ):
         container.start()
         yield container
 

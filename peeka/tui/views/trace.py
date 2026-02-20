@@ -109,6 +109,9 @@ class TraceView(Container):
 
     def on_mount(self) -> None:
         """Initialize trace table and tree."""
+        container = self.query_one("#trace-container", Container)
+        container.border_title = "Trace"
+
         table = self.query_one("#trace-table", DataTable)
         table.add_columns("ID", "Pattern", "Count", "Status")
         table.cursor_type = "row"

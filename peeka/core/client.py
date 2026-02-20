@@ -6,7 +6,7 @@ Unix domain sockets using the length-prefixed JSON protocol defined in
 
 import json
 import socket
-import time
+import threading
 from pathlib import Path
 from typing import Any, Dict, Generator, Optional
 
@@ -87,6 +87,7 @@ class StreamingAgentClient:
         self.timeout = timeout
         self._sock: Optional[socket.socket] = None
         self._buffer = b""
+        self._stop_event = threading.Event()
 
     def connect(self) -> Dict[str, Any]:
         """Connect to the agent socket."""
@@ -106,8 +107,13 @@ class StreamingAgentClient:
             return {"status": "error", "error": str(e)}
 
     def disconnect(self) -> None:
-        """Close the connection."""
+        """Close the connection and signal streaming loops to stop."""
+        self._stop_event.set()
         if self._sock:
+            try:
+                self._sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
             try:
                 self._sock.close()
             except Exception:
@@ -149,7 +155,7 @@ class StreamingAgentClient:
         if not self._sock:
             return
 
-        while True:
+        while not self._stop_event.is_set():
             try:
                 chunk = self._sock.recv(4096)
                 if not chunk:
@@ -164,8 +170,9 @@ class StreamingAgentClient:
                     yield obs
 
             except socket.timeout:
-                time.sleep(0.1)  # Add 100ms delay to reduce CPU usage
                 continue
+            except OSError:
+                break
             except Exception:
                 break
 

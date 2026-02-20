@@ -75,6 +75,9 @@ class MemoryView(Container):
         )
 
     async def on_mount(self) -> None:
+        container = self.query_one("#memory-container", Container)
+        container.border_title = "Memory"
+
         table = self.query_one("#mem-objects-table", DataTable)
         table.add_columns("Type", "Count", "Size")
 
