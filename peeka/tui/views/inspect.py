@@ -36,7 +36,7 @@ class InspectView(Container):
                     placeholder="module.Class or module.variable",
                     id="inspect-path",
                 ),
-                Button("Inspect", id="inspect-btn", variant="primary"),
+                Button("Inspect", id="inspect-btn", variant="primary", flat=True),
                 id="inspect-controls",
             ),
             Horizontal(

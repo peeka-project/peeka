@@ -200,8 +200,8 @@ class WatchView(Container):
                     placeholder="condition (optional)",
                     id="watch-condition",
                 ),
-                Button("Watch", id="watch-btn", variant="primary"),
-                Button("Stop", id="stop-btn", variant="error"),
+                Button("Watch", id="watch-btn", variant="primary", flat=True),
+                Button("Stop", id="stop-btn", variant="error", flat=True),
                 id="watch-controls",
             ),
             Horizontal(
@@ -257,6 +257,42 @@ class WatchView(Container):
             worker = watch_info.get("worker")
             if worker:
                 worker.cancel()
+
+    def cleanup_for_exit(self) -> None:
+        """Stop all watches and reset instrumented functions before TUI exit."""
+        if not self._client:
+            return
+
+        for watch_id, watch_info in list(self._active_watches.items()):
+            worker = watch_info.get("worker")
+            if worker:
+                worker.cancel()
+
+            try:
+                self._client.send_command(
+                    {
+                        "type": "watch",
+                        "action": "stop",
+                        "watch_id": watch_id,
+                    }
+                )
+            except Exception:
+                pass
+
+            pattern = watch_info.get("pattern")
+            if pattern:
+                try:
+                    self._client.send_command(
+                        {
+                            "type": "reset",
+                            "action": "reset",
+                            "pattern": pattern,
+                        }
+                    )
+                except Exception:
+                    pass
+
+        self._active_watches.clear()
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""

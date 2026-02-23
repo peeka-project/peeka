@@ -52,8 +52,8 @@ class StackView(Container):
                     placeholder="module.Class.method",
                     id="stack-pattern",
                 ),
-                Button("Trace", id="trace-btn", variant="primary"),
-                Button("Stop", id="stop-trace-btn", variant="error"),
+                Button("Trace", id="trace-btn", variant="primary", flat=True),
+                Button("Stop", id="stop-trace-btn", variant="error", flat=True),
                 id="stack-controls",
             ),
             Horizontal(
@@ -91,6 +91,40 @@ class StackView(Container):
         for worker in self._workers.values():
             if worker:
                 worker.cancel()
+
+    def cleanup_for_exit(self) -> None:
+        """Stop all stack traces and reset instrumented functions before TUI exit."""
+        if not self._client:
+            return
+
+        for watch_id, worker in list(self._workers.items()):
+            if worker:
+                worker.cancel()
+
+            try:
+                self._client.send_command(
+                    {
+                        "type": "stack",
+                        "action": "stop",
+                        "watch_id": watch_id,
+                    }
+                )
+            except Exception:
+                pass
+
+        try:
+            self._client.send_command(
+                {
+                    "type": "reset",
+                    "action": "reset",
+                    "pattern": "*",
+                }
+            )
+        except Exception:
+            pass
+
+        self._workers.clear()
+        self._trace_counts.clear()
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "trace-btn":

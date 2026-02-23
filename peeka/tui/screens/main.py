@@ -105,7 +105,7 @@ class MainScreen(Screen):
             inspect_view.set_client(self._client)
 
     def on_unmount(self) -> None:
-        self._disconnect_clients()
+        self._cleanup_all_views()
 
     async def _connect(self) -> None:
         """Connect to the target process agent with separate command and streaming sockets."""
@@ -138,9 +138,23 @@ class MainScreen(Screen):
         tabbed.active = tab_id
 
     def action_go_back(self) -> None:
-        """Go back to process selector."""
-        self._disconnect_clients()
+        self._cleanup_all_views()
         self.app.pop_screen()
+
+    def _cleanup_all_views(self) -> None:
+        for view_cls in (WatchView, TraceView, StackView, MonitorView):
+            try:
+                self.query_one(view_cls).cleanup_for_exit()
+            except Exception:
+                pass
+
+        if self._client:
+            try:
+                self._client.send_command({"type": "detach"})
+            except Exception:
+                pass
+
+        self._disconnect_clients()
 
     def _disconnect_clients(self) -> None:
         if self._stream_client:

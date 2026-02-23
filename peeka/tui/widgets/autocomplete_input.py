@@ -1,12 +1,11 @@
-"""
-AutoComplete Input Widget - Input with fuzzy completion dropdown.
-"""
+"""AutoComplete Input Widget - Input with fuzzy completion dropdown."""
 
-from typing import Awaitable, Callable, List, Optional, Union
+from typing import Callable, List, Optional, Union
 
 from textual.app import ComposeResult
 from textual.events import Key
 from textual.message import Message
+from textual.timer import Timer
 from textual.widget import Widget
 from textual.widgets import Input, OptionList
 from textual.widgets.option_list import Option
@@ -16,6 +15,8 @@ try:
 except ImportError:
     Matcher = None
 
+_DEBOUNCE_SECONDS = 0.3
+
 
 class AutoCompleteInput(Widget):
     """Input widget with auto-completion dropdown."""
@@ -23,15 +24,14 @@ class AutoCompleteInput(Widget):
     DEFAULT_CSS = """
     AutoCompleteInput {
         width: 1fr;
-        height: 3;
+        height: auto;
         layout: vertical;
     }
-    
+
     AutoCompleteInput > #ac-input {
         width: 100%;
-        height: 3;
     }
-    
+
     AutoCompleteInput > #ac-dropdown {
         max-height: 10;
         border: solid $accent;
@@ -50,9 +50,7 @@ class AutoCompleteInput(Widget):
     def __init__(
         self,
         placeholder: str = "",
-            completions_callback: Optional[
-                Callable[[str], Union[List[str], Awaitable[List[str]]]]
-            ] = None,
+        completions_callback: Optional[Callable[[str], Union[List[str]]]] = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -60,6 +58,8 @@ class AutoCompleteInput(Widget):
         self._completions_callback = completions_callback
         self._completions: List[str] = []
         self._matcher = Matcher if Matcher else None
+        self._debounce_timer: Optional[Timer] = None
+        self._pending_prefix: Optional[str] = None
 
     def compose(self) -> ComposeResult:
         yield Input(placeholder=self.placeholder, id="ac-input")
@@ -70,37 +70,71 @@ class AutoCompleteInput(Widget):
         self.query_one("#ac-dropdown").display = False
 
     async def on_input_changed(self, event: Input.Changed) -> None:
-        """Update completions when input changes."""
         text = event.value
         dropdown = self.query_one("#ac-dropdown", OptionList)
+
+        if self._debounce_timer is not None:
+            self._debounce_timer.stop()
+            self._debounce_timer = None
 
         if not text or len(text) < 2:
             dropdown.display = False
             return
 
-        # Get completions from callback
-        if self._completions_callback:
-            self._completions = await self._get_completions(text)
+        if self._completions:
+            filtered = self._filter_completions(text)
+            if filtered:
+                dropdown.clear_options()
+                for item in filtered[:10]:
+                    dropdown.add_option(Option(item))
+                dropdown.display = True
+            else:
+                dropdown.display = False
 
-        # Filter with fuzzy matching
-        filtered = self._filter_completions(text)
+        self._pending_prefix = text
+        self._debounce_timer = self.set_timer(
+            _DEBOUNCE_SECONDS,
+            self._trigger_fetch,
+        )
+
+    def _trigger_fetch(self) -> None:
+        prefix = self._pending_prefix
+        if not prefix:
+            return
+
+        def _fetch_sync() -> None:
+            if self._completions_callback:
+                items = self._completions_callback(prefix)
+            else:
+                items = []
+            if self._pending_prefix != prefix:
+                return
+            self._completions = items
+            self.app.call_from_thread(self._apply_completions, prefix)
+
+        self.run_worker(_fetch_sync, thread=True, exclusive=True, group="autocomplete")
+
+    def _apply_completions(self, prefix: str) -> None:
+        try:
+            current_text = self.query_one("#ac-input", Input).value
+        except Exception:
+            return
+        if current_text != prefix:
+            prefix = current_text
+
+        if not prefix or len(prefix) < 2:
+            return
+
+        dropdown = self.query_one("#ac-dropdown", OptionList)
+        filtered = self._filter_completions(prefix)
 
         if filtered:
             dropdown.clear_options()
-            for item in filtered[:10]:  # Limit to 10 items
+            for item in filtered[:10]:
                 dropdown.add_option(Option(item))
             dropdown.display = True
         else:
             dropdown.display = False
-
-    async def _get_completions(self, prefix: str) -> List[str]:
-        """Get completions from callback."""
-        if self._completions_callback:
-            result = self._completions_callback(prefix)
-            if hasattr(result, "__await__"):
-                result = await result  # type: ignore
-            return result  # type: ignore
-        return []
 
     def _filter_completions(self, query: str) -> List[str]:
         """Filter completions using fuzzy matching."""

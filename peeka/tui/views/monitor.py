@@ -49,8 +49,8 @@ class MonitorView(Container):
                     value="5",
                     id="monitor-interval",
                 ),
-                Button("Monitor", id="monitor-btn", variant="primary"),
-                Button("Stop", id="stop-monitor-btn", variant="error"),
+                Button("Monitor", id="monitor-btn", variant="primary", flat=True),
+                Button("Stop", id="stop-monitor-btn", variant="error", flat=True),
                 id="monitor-controls",
             ),
             Vertical(
@@ -244,3 +244,25 @@ class MonitorView(Container):
         for worker in self._workers.values():
             if worker:
                 worker.cancel()
+
+    def cleanup_for_exit(self) -> None:
+        """Stop all monitors before TUI exit."""
+        if not self._client:
+            return
+
+        for watch_id, worker in list(self._workers.items()):
+            if worker:
+                worker.cancel()
+
+            try:
+                self._client.send_command(
+                    {
+                        "type": "monitor",
+                        "action": "stop",
+                        "watch_id": watch_id,
+                    }
+                )
+            except Exception:
+                pass
+
+        self._workers.clear()
