@@ -35,7 +35,7 @@ class LoggerView(Container):
             Horizontal(
                 Static("Filter:", classes="input-label"),
                 Input(placeholder="Filter loggers...", id="logger-filter"),
-                Button("Refresh", id="logger-refresh-btn", variant="primary"),
+                Button("Refresh", id="logger-refresh-btn", variant="primary", flat=True),
                 id="logger-controls",
             ),
             Vertical(
@@ -51,7 +51,7 @@ class LoggerView(Container):
                     id="logger-level-select",
                     prompt="Select level",
                 ),
-                Button("Set Level", id="set-level-btn", variant="primary"),
+                Button("Set Level", id="set-level-btn", variant="primary", flat=True),
                 id="logger-set-controls",
             ),
             id="logger-container",

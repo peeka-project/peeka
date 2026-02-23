@@ -60,10 +60,12 @@ class MemoryView(Container):
 
         yield Container(
             Horizontal(
-                Button("Refresh", id="mem-refresh-btn", variant="primary"),
-                Button("Start Tracking", id="mem-track-btn"),
-                Button("GC Collect", id="gc-btn"),
-                Button("Dump", id="mem-dump-btn"),
+                Button("Refresh", id="mem-refresh-btn", variant="primary", flat=True),
+                Button(
+                    "Start Tracking", id="mem-track-btn", variant="success", flat=True
+                ),
+                Button("GC Collect", id="gc-btn", variant="warning", flat=True),
+                Button("Dump", id="mem-dump-btn", variant="primary", flat=True),
                 id="memory-controls",
             ),
             Horizontal(

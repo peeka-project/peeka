@@ -85,9 +85,9 @@ class TraceView(Container):
                     placeholder="cost > 50 (optional)",
                     id="trace-condition",
                 ),
-                Button("Trace", id="trace-btn", variant="primary"),
-                Button("Stop", id="stop-trace-btn", variant="error"),
-                Button("Clear", id="clear-trace-btn", variant="warning"),
+                Button("Trace", id="trace-btn", variant="primary", flat=True),
+                Button("Stop", id="stop-trace-btn", variant="error", flat=True),
+                Button("Clear", id="clear-trace-btn", variant="warning", flat=True),
                 id="trace-controls",
             ),
             Horizontal(
@@ -137,6 +137,42 @@ class TraceView(Container):
             worker = trace_info.get("worker")
             if worker:
                 worker.cancel()
+
+    def cleanup_for_exit(self) -> None:
+        """Stop all traces and reset instrumented functions before TUI exit."""
+        if not self._client:
+            return
+
+        for watch_id, trace_info in list(self._active_traces.items()):
+            worker = trace_info.get("worker")
+            if worker:
+                worker.cancel()
+
+            try:
+                self._client.send_command(
+                    {
+                        "type": "trace",
+                        "action": "stop",
+                        "watch_id": watch_id,
+                    }
+                )
+            except Exception:
+                pass
+
+            pattern = trace_info.get("pattern")
+            if pattern:
+                try:
+                    self._client.send_command(
+                        {
+                            "type": "reset",
+                            "action": "reset",
+                            "pattern": pattern,
+                        }
+                    )
+                except Exception:
+                    pass
+
+        self._active_traces.clear()
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""

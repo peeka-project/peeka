@@ -34,25 +34,57 @@ class ProcessAttacher:
         """
         Check if there's already an active Peeka agent attached to any process.
         Returns (session_id, pid) tuple if found, None otherwise.
+
+        Validates by both process existence AND socket connectivity to avoid
+        stale files left after process restarts.
         """
         socket_dir = Path("/tmp")
         for sock_file in socket_dir.glob("peeka_*.sock"):
             if sock_file.is_socket():
                 session_id = sock_file.stem.replace("peeka_", "")
                 pid_file = socket_dir / f"peeka_{session_id}.pid"
+                ready_file = socket_dir / f"peeka_{session_id}.ready"
 
                 if pid_file.exists():
                     try:
                         attached_pid = int(pid_file.read_text().strip())
                         try:
                             os.kill(attached_pid, 0)
-                            return (session_id, attached_pid)
                         except (ProcessLookupError, PermissionError):
-                            pid_file.unlink(missing_ok=True)
-                            sock_file.unlink(missing_ok=True)
+                            self._cleanup_stale_files(sock_file, pid_file, ready_file)
+                            continue
+
+                        if self._is_socket_alive(str(sock_file)):
+                            return (session_id, attached_pid)
+                        else:
+                            self._cleanup_stale_files(sock_file, pid_file, ready_file)
                     except (ValueError, OSError):
                         continue
+                else:
+                    self._cleanup_stale_files(sock_file, pid_file, ready_file)
         return None
+
+    @staticmethod
+    def _is_socket_alive(socket_path: str) -> bool:
+        """Try connecting to the socket to verify the agent is actually responsive."""
+        import socket as sock_mod
+
+        try:
+            s = sock_mod.socket(sock_mod.AF_UNIX, sock_mod.SOCK_STREAM)
+            s.settimeout(1.0)
+            s.connect(socket_path)
+            s.close()
+            return True
+        except (ConnectionRefusedError, FileNotFoundError, OSError):
+            return False
+
+    @staticmethod
+    def _cleanup_stale_files(*paths: Path) -> None:
+        for p in paths:
+            try:
+                p.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     def _save_attachment_state(self) -> None:
         """Save the attached PID to a marker file for validation."""

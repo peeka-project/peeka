@@ -243,8 +243,17 @@ TabPane {
     height: 100%;
 }
 
-#observations-log {
-    height: 100%;
+#observations-table {
+    height: 2fr;
+}
+
+#observation-detail {
+    height: 1fr;
+    border: round $primary 40%;
+    border-title-color: $primary 40%;
+    border-title-style: bold;
+    border-title-align: left;
+    scrollbar-size-vertical: 1;
 }
 
 /* ============================================================================
@@ -382,12 +391,12 @@ TabPane {
    ============================================================================ */
 
 Input {
-    border: round $surface-lighten-2;
+    border: round $border-blurred !important;
     transition: border 150ms;
 }
 
 Input:focus {
-    border: round $primary;
+    border: round $border !important;
 }
 
 /* ============================================================================

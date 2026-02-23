@@ -2,7 +2,7 @@
 PeekaApp - Main TUI Application
 """
 
-from typing import Optional
+from typing import Dict, Optional
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -98,8 +98,23 @@ class PeekaApp(App):
 
         self.push_screen(ProcessSelectorScreen())
 
+    def get_css_variables(self) -> Dict[str, str]:
+        variables = super().get_css_variables()
+        primary = variables.get("primary", "")
+        if primary:
+            variables["border-blurred"] = primary + "70"
+        return variables
+
     def action_help(self) -> None:
-        """Show help screen."""
         from peeka.tui.screens.help import HelpScreen
 
         self.push_screen(HelpScreen())
+
+    async def action_quit(self) -> None:
+        from peeka.tui.screens.main import MainScreen
+
+        for screen in self.screen_stack:
+            if isinstance(screen, MainScreen):
+                screen._cleanup_all_views()
+                break
+        self.exit()
