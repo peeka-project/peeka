@@ -6,6 +6,7 @@ Requires: pip install peeka[tui]
 """
 
 import argparse
+import os
 import sys
 
 
@@ -78,6 +79,10 @@ def main() -> None:
         sys.exit(1)
 
     from peeka.tui.app import PeekaApp
+
+    # Ensure terminal capability env vars are set (needed in docker exec, ssh, etc.)
+    os.environ.setdefault("TERM", "xterm-256color")
+    os.environ.setdefault("COLORTERM", "truecolor")
 
     app = PeekaApp(theme=args.theme)
     app.run()

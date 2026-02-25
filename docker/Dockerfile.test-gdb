@@ -14,6 +14,8 @@ LABEL maintainer="peeka"
 LABEL description="Peeka E2E testing with GDB (Python 3.12)"
 
 ENV PYTHONPATH=/app
+ENV TERM=xterm-256color
+ENV COLORTERM=truecolor
 
 RUN pip install --no-cache-dir -i https://mirrors.ustc.edu.cn/pypi/web/simple \
     "textual>=7.5.0"
