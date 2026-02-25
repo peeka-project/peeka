@@ -90,7 +90,8 @@ TabPane {
 #memory-container,
 #logger-container,
 #inspect-container,
-#thread-container {
+#thread-container,
+#top-container {
     padding: 0 1;
 }
 
@@ -429,4 +430,21 @@ AutoCompleteInput #ac-dropdown {
 Button {
     min-width: 8;
     max-width: 14;
+}
+
+
+/* ============================================================================
+   TOP VIEW
+   ============================================================================ */
+
+#top-header {
+    height: 1;
+}
+
+#top-table {
+    height: 1fr;
+}
+
+#top-footer {
+    height: 1;
 }

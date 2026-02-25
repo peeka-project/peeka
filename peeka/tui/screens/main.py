@@ -17,6 +17,7 @@ from peeka.tui.views.stack import StackView
 from peeka.tui.views.trace import TraceView
 from peeka.tui.views.watch import WatchView
 from peeka.tui.views.thread import ThreadView
+from peeka.tui.views.top import TopView
 
 
 class MainScreen(Screen):
@@ -33,6 +34,7 @@ class MainScreen(Screen):
         Binding("i", "switch_tab('inspect')", "Inspect", priority=True),
         Binding("escape", "go_back", "Back", priority=True),
         Binding("h", "switch_tab('threads')", "Threads", priority=True),
+        Binding("F8", "switch_tab('top')", "Top", priority=True),
         Binding("q", "go_back", "Back"),
     ]
 
@@ -70,6 +72,8 @@ class MainScreen(Screen):
                     yield InspectView(self.pid)
                 with TabPane("Threads", id="threads"):
                     yield ThreadView(self.pid)
+                with TabPane("Top", id="top"):
+                    yield TopView(self.pid)
         yield Footer()
 
     async def on_mount(self) -> None:
@@ -110,6 +114,9 @@ class MainScreen(Screen):
 
             thread_view = self.query_one(ThreadView)
             thread_view.set_client(self._client)
+
+            top_view = self.query_one(TopView)
+            top_view.set_client(self._client)
 
     def on_unmount(self) -> None:
         self._cleanup_all_views()
