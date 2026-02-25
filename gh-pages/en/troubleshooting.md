@@ -484,15 +484,23 @@ spec:
 **Solutions**:
 
 ```bash
-# Check terminal type
+# Check if terminal type supports 256 color
 echo $TERM
-
-# Set compatible terminal type
-export TERM=xterm-256color
 
 # Or use CLI mode
 peeka-cli watch "func"
 ```
+
+
+### TUI Colors Broken in Docker Container
+
+**Symptom**: After entering a container via `docker exec`, TUI colors are missing or Header/Footer are indistinguishable from the main body.
+
+**Cause**: `docker exec` does not inherit host terminal environment variables (`TERM`, `COLORTERM`). The container defaults to `TERM=dumb`, and Textual cannot detect truecolor support.
+
+**Solutions**:
+
+Peeka test images have `TERM=xterm-256color` and `COLORTERM=truecolor` baked in. TUI works out of the box via `docker exec` — no manual env setup needed.
 
 ### TUI Freezes
 

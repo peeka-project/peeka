@@ -86,6 +86,12 @@ DNS 会将域名解析为 `198.18.x.x` 段的 fake-IP，Docker 隔离网络无�
 注意：Dockerfile 内部**不使用任何代理环境变量**（`http_proxy`/`https_proxy`），
 仅通过 USTC 镜像源直接下载。
 
+
+## 终端环境变量（TUI 必需）
+
+两个测试镜像已在 Dockerfile 中内置 `TERM=xterm-256color` 和 `COLORTERM=truecolor`，
+`docker exec` 进入容器后 TUI 可直接使用，无需额外设置。
+
 ## 目录结构
 
 ```
