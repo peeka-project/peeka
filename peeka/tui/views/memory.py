@@ -109,7 +109,11 @@ class MemoryView(Container):
             thread=True,
         )
         await worker.wait()
-        response = worker.result
+        try:
+            response = worker.result
+        except Exception as e:
+            self.app.notify(f"Connection error: {e}", severity="error")
+            return
 
         if response.get("status") != "success":
             self.app.notify(
@@ -159,7 +163,10 @@ class MemoryView(Container):
             thread=True,
         )
         await gc_worker.wait()
-        gc_response = gc_worker.result
+        try:
+            gc_response = gc_worker.result
+        except Exception:
+            return
 
         if gc_response.get("status") == "success":
             table = self.query_one("#mem-objects-table", DataTable)
@@ -185,7 +192,11 @@ class MemoryView(Container):
                 thread=True,
             )
             await worker.wait()
-            response = worker.result
+            try:
+                response = worker.result
+            except Exception as e:
+                self.app.notify(f"Connection error: {e}", severity="error")
+                return
 
             if response.get("status") == "success":
                 self.app.notify("Memory tracking stopped", severity="information")
@@ -208,7 +219,11 @@ class MemoryView(Container):
                 thread=True,
             )
             await worker.wait()
-            response = worker.result
+            try:
+                response = worker.result
+            except Exception as e:
+                self.app.notify(f"Connection error: {e}", severity="error")
+                return
 
             if response.get("status") == "success":
                 self.app.notify("Memory tracking started", severity="information")
@@ -235,7 +250,11 @@ class MemoryView(Container):
             thread=True,
         )
         await worker.wait()
-        response = worker.result
+        try:
+            response = worker.result
+        except Exception as e:
+            self.app.notify(f"Connection error: {e}", severity="error")
+            return
 
         if response.get("status") == "success":
             total_objects = response.get("total_objects", 0)
@@ -260,7 +279,11 @@ class MemoryView(Container):
             thread=True,
         )
         await worker.wait()
-        response = worker.result
+        try:
+            response = worker.result
+        except Exception as e:
+            self.app.notify(f"Connection error: {e}", severity="error")
+            return
 
         if response.get("status") == "success":
             file_path = response.get("file_path", "unknown")
