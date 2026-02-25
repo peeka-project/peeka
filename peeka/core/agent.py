@@ -46,6 +46,7 @@ class PeekaAgent:
         from peeka.commands.trace import TraceCommand
         from peeka.commands.vmtool import VMToolCommand
         from peeka.commands.watch import WatchCommand
+        from peeka.commands.thread import ThreadCommand
 
         self.command_handlers["complete"] = CompleteCommand(self)  # type: ignore[abstract]
         self.command_handlers["watch"] = WatchCommand(self)  # type: ignore[abstract]
@@ -59,6 +60,7 @@ class PeekaAgent:
         self.command_handlers["reset"] = ResetCommand(self)  # type: ignore[abstract]
         self.command_handlers["vmtool"] = VMToolCommand(self)  # type: ignore[abstract]
         self.command_handlers["detach"] = DetachCommand(self)  # type: ignore[abstract]
+        self.command_handlers["thread"] = ThreadCommand(self)  # type: ignore[abstract]
 
     def start(self) -> None:
         try:
