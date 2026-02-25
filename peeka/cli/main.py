@@ -402,6 +402,36 @@ Examples:
         help="Optional pattern to filter enhancements (supports * and ?)",
     )
 
+    thread_parser = subparsers.add_parser(
+        "thread", help="List threads and inspect stacks (must attach first)"
+    )
+    thread_parser.add_argument(
+        "--tid",
+        type=int,
+        default=None,
+        help="Thread ID to show detailed stack trace",
+    )
+    thread_parser.add_argument(
+        "--state",
+        type=str,
+        choices=["RUNNABLE", "WAITING", "TIMED_WAITING"],
+        default=None,
+        help="Filter threads by state",
+    )
+    thread_parser.add_argument(
+        "--sort-by",
+        dest="sort_by",
+        type=str,
+        choices=["tid", "name", "state"],
+        default="tid",
+        help="Sort threads by field (default: tid)",
+    )
+    thread_parser.add_argument(
+        "--depth",
+        type=int,
+        default=50,
+        help="Stack depth limit for detail view (default: 50)",
+    )
     detach_parser = subparsers.add_parser(
         "detach", help="Detach from the target process"
     )
@@ -437,6 +467,8 @@ Examples:
             return cmd_vmtool(args)
         elif args.command == "reset":
             return cmd_reset(args)
+        elif args.command == "thread":
+            return cmd_thread(args)
         else:
             OutputFormatter.error("peeka", error=f"Unknown command: {args.command}")
             return 1
@@ -848,6 +880,50 @@ def cmd_memory(args) -> int:
 
     return 0 if response.get("status") == "success" else 1
 
+
+def cmd_thread(args) -> int:
+    try:
+        socket_path, attached_pid = _check_agent_attached()
+    except ValueError as e:
+        OutputFormatter.error("thread", error=str(e))
+        return 1
+
+    streaming_client = StreamingAgentClient(socket_path)
+    connect_result = streaming_client.connect()
+
+    if connect_result.get("status") != "success":
+        OutputFormatter.error(
+            "thread", error=connect_result.get("error", "Connection failed")
+        )
+        return 1
+
+    if args.tid is not None:
+        command = {
+            "type": "thread",
+            "action": "detail",
+            "tid": args.tid,
+            "depth": args.depth,
+        }
+    else:
+        command = {
+            "type": "thread",
+            "action": "list",
+            "state": args.state,
+            "sort_by": args.sort_by,
+        }
+
+    response = streaming_client.send_command(command)
+
+    if response.get("status") == "success":
+        OutputFormatter.result("thread", data=response)
+    else:
+        OutputFormatter.error(
+            "thread", error=response.get("error", "Thread command failed")
+        )
+
+    streaming_client.disconnect()
+
+    return 0 if response.get("status") == "success" else 1
 
 def cmd_vmtool(args) -> int:
     try:
