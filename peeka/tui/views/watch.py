@@ -10,8 +10,9 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Vertical, Horizontal
-from textual.widgets import Static, DataTable, Input, Button, RichLog
-from textual.worker import Worker, get_current_worker
+from textual.widgets import Static, DataTable, Input, Button, Tree
+from textual.widgets.tree import TreeNode
+from textual.worker import get_current_worker
 
 from peeka.tui.completion import CompletionSource
 from peeka.tui.widgets.autocomplete_input import AutoCompleteInput
@@ -20,14 +21,6 @@ if TYPE_CHECKING:
     from peeka.core.client import StreamingAgentClient
 
 
-def _safe_json_format(value: Any, indent: int = 2) -> str:
-    """Format a value as pretty JSON, falling back to repr for non-serializable data."""
-    if value is None:
-        return "null"
-    try:
-        return json.dumps(value, indent=indent, ensure_ascii=False, default=str)
-    except (TypeError, ValueError):
-        return repr(value)
 
 
 def _short_repr(value: Any, max_len: int = 35) -> str:
@@ -65,81 +58,56 @@ def _format_args_summary(params: Any, kwargs: Any, has_target: bool) -> str:
     return ", ".join(parts) if parts else "-"
 
 
-def _format_detail(observation: dict) -> str:
-    """Format full observation details for the detail panel."""
-    lines = []
+def _format_leaf(value: Any, max_len: int = 80) -> str:
+    """Format a leaf value for tree display."""
+    if value is None:
+        return "null"
+    if isinstance(value, str):
+        if len(value) > max_len:
+            return f'"{ value[:max_len] }..."'
+        return f'"{value}"'
+    try:
+        s = json.dumps(value, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        s = repr(value)
+    if len(s) > max_len:
+        return s[:max_len - 1] + "…"
+    return s
 
-    func_name = observation.get("func_name", "unknown")
-    location = observation.get("location", "")
-    success = observation.get("success", True)
-    cost = observation.get("cost", 0)
-    thread_name = observation.get("thread_name", "")
-    thread_id = observation.get("thread_id", "")
 
-    # Header
-    status = "✓ Success" if success else "✗ Exception"
-    lines.append(f"─── {func_name} [{status}] ───")
-    lines.append(
-        f"Location: {location}  │  Cost: {cost:.3f}ms  │  Thread: {thread_name} ({thread_id})"
-    )
+def _populate_value_node(
+    node: TreeNode, value: Any, max_depth: int = 4, depth: int = 0
+) -> None:
+    """Recursively populate a tree node with a JSON-like value."""
+    if depth >= max_depth:
+        if isinstance(value, dict):
+            node.add_leaf(f"{{...}} ({len(value)} keys)")
+        elif isinstance(value, (list, tuple)):
+            node.add_leaf(f"[...] ({len(value)} items)")
+        return
 
-    # Target (self)
-    target = observation.get("target")
-    if target is not None:
-        lines.append(f"\n◆ self:")
-        lines.append(f"  {_safe_json_format(target)}")
-
-    # Params
-    params = observation.get("params", [])
-    if params:
-        # Skip self for instance methods
-        display_params = (
-            params[1:] if target is not None and len(params) > 0 else params
-        )
-        lines.append(f"\n◆ args ({len(display_params)}):")
-        for i, p in enumerate(display_params):
-            formatted = _safe_json_format(p)
-            # Indent multi-line values
-            if "\n" in formatted:
-                formatted = formatted.replace("\n", "\n    ")
-            lines.append(f"  [{i}] {formatted}")
-
-    # Kwargs
-    kwargs = observation.get("kwargs", {})
-    if kwargs:
-        lines.append(f"\n◆ kwargs:")
-        for k, v in kwargs.items():
-            formatted = _safe_json_format(v)
-            if "\n" in formatted:
-                formatted = formatted.replace("\n", "\n    ")
-            lines.append(f"  {k} = {formatted}")
-
-    # Return / Exception
-    if success:
-        ret = observation.get("returnObj")
-        if ret is not None:
-            lines.append(f"\n◆ return:")
-            lines.append(f"  {_safe_json_format(ret)}")
+    if isinstance(value, dict):
+        for key, val in value.items():
+            if isinstance(val, dict):
+                child = node.add(f"{key}: {{}} ({len(val)} keys)", expand=False)
+                _populate_value_node(child, val, max_depth, depth + 1)
+            elif isinstance(val, (list, tuple)):
+                child = node.add(f"{key}: [] ({len(val)} items)", expand=False)
+                _populate_value_node(child, val, max_depth, depth + 1)
+            else:
+                node.add_leaf(f"{key}: {_format_leaf(val)}")
+    elif isinstance(value, (list, tuple)):
+        for idx, val in enumerate(value):
+            if isinstance(val, dict):
+                child = node.add(f"[{idx}]: {{}} ({len(val)} keys)", expand=False)
+                _populate_value_node(child, val, max_depth, depth + 1)
+            elif isinstance(val, (list, tuple)):
+                child = node.add(f"[{idx}]: [] ({len(val)} items)", expand=False)
+                _populate_value_node(child, val, max_depth, depth + 1)
+            else:
+                node.add_leaf(f"[{idx}]: {_format_leaf(val)}")
     else:
-        exp = observation.get("throwExp")
-        if exp:
-            lines.append(f"\n◆ exception:")
-            lines.append(f"  {exp}")
-
-    # Stack
-    stack = observation.get("stack")
-    if stack:
-        lines.append(f"\n◆ stack:")
-        for frame in stack:
-            fn = frame.get("function", "?")
-            fname = frame.get("filename", "?")
-            lineno = frame.get("lineno", "?")
-            ctx = frame.get("code_context", "")
-            lines.append(f"  {fn} ({fname}:{lineno})")
-            if ctx:
-                lines.append(f"    {ctx}")
-
-    return "\n".join(lines)
+        node.add_leaf(_format_leaf(value))
 
 
 class WatchView(Container):
@@ -212,12 +180,7 @@ class WatchView(Container):
                 ),
                 Vertical(
                     DataTable(id="observations-table"),
-                    RichLog(
-                        id="observation-detail",
-                        highlight=True,
-                        markup=True,
-                        wrap=True,
-                    ),
+                    Tree("Detail", id="observation-detail"),
                     id="observations-panel",
                     classes="panel",
                 ),
@@ -248,8 +211,9 @@ class WatchView(Container):
         observations_panel.border_title = "Observations"
 
         # Detail panel title
-        detail = self.query_one("#observation-detail", RichLog)
+        detail = self.query_one("#observation-detail", Tree)
         detail.border_title = "Detail"
+        detail.show_root = False
 
     def on_unmount(self) -> None:
         """Cancel all workers when view is unmounted."""
@@ -323,11 +287,86 @@ class WatchView(Container):
                 break
 
     def _show_detail(self, observation: dict) -> None:
-        """Show full observation details in the detail panel."""
-        detail = self.query_one("#observation-detail", RichLog)
-        detail.clear()
-        detail_text = _format_detail(observation)
-        detail.write(detail_text)
+        """Show full observation details as an interactive tree."""
+        tree = self.query_one("#observation-detail", Tree)
+        tree.clear()
+
+        func_name = observation.get("func_name", "unknown")
+        success = observation.get("success", True)
+        cost = observation.get("cost", 0)
+        location = observation.get("location", "")
+        thread_name = observation.get("thread_name", "")
+        thread_id = observation.get("thread_id", "")
+
+        # Header node (always expanded)
+        status = "✓ Success" if success else "✗ Exception"
+        header = tree.root.add(f"{func_name} [{status}]")
+        header.add_leaf(f"Location: {location}")
+        header.add_leaf(f"Cost: {cost:.3f}ms")
+        if thread_name or thread_id:
+            header.add_leaf(f"Thread: {thread_name} ({thread_id})")
+        header.expand()
+
+        # Target (self)
+        target = observation.get("target")
+        if target is not None:
+            self_node = tree.root.add("self")
+            _populate_value_node(self_node, target)
+            self_node.expand()
+
+        # Params
+        params = observation.get("params", [])
+        if params:
+            display_params = (
+                params[1:] if target is not None and len(params) > 0 else params
+            )
+            if display_params:
+                args_node = tree.root.add(f"args ({len(display_params)})")
+                for i, p in enumerate(display_params):
+                    if isinstance(p, (dict, list, tuple)):
+                        child = args_node.add(f"[{i}]")
+                        _populate_value_node(child, p)
+                    else:
+                        args_node.add_leaf(f"[{i}]: {_format_leaf(p)}")
+                args_node.expand()
+
+        # Kwargs
+        kwargs = observation.get("kwargs", {})
+        if kwargs:
+            kwargs_node = tree.root.add(f"kwargs ({len(kwargs)})")
+            _populate_value_node(kwargs_node, kwargs)
+            kwargs_node.expand()
+
+        # Return / Exception
+        if success:
+            ret = observation.get("returnObj")
+            if ret is not None:
+                ret_node = tree.root.add("return")
+                if isinstance(ret, (dict, list, tuple)):
+                    _populate_value_node(ret_node, ret)
+                else:
+                    ret_node.add_leaf(_format_leaf(ret))
+                ret_node.expand()
+        else:
+            exp = observation.get("throwExp")
+            if exp:
+                exc_node = tree.root.add("exception")
+                exc_node.add_leaf(str(exp))
+                exc_node.expand()
+
+        # Stack
+        stack = observation.get("stack")
+        if stack:
+            stack_node = tree.root.add(f"stack ({len(stack)} frames)")
+            for frame in stack:
+                fn = frame.get("function", "?")
+                fname = frame.get("filename", "?")
+                lineno = frame.get("lineno", "?")
+                ctx = frame.get("code_context", "")
+                frame_node = stack_node.add(f"{fn} ({fname}:{lineno})")
+                if ctx:
+                    frame_node.add_leaf(ctx)
+            # Stack collapsed by default — user can expand if interested
 
     async def _start_watch(self) -> None:
         """Start a new watch."""
