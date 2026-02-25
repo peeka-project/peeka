@@ -267,6 +267,37 @@ Examples:
         help="Number of cycles (-1 for infinite)",
     )
 
+    top_parser = subparsers.add_parser(
+        "top", help="Function-level sampling profiler (like py-spy top)"
+    )
+    top_parser.add_argument(
+        "--interval",
+        "-i",
+        type=float,
+        default=0.01,
+        help="Sampling interval in seconds (default: 0.01)",
+    )
+    top_parser.add_argument(
+        "--cycles",
+        "-c",
+        type=int,
+        default=-1,
+        help="Number of display cycles before auto-stop (default: -1 for infinite)",
+    )
+    top_parser.add_argument(
+        "--sort",
+        type=str,
+        default="own",
+        choices=["own", "total", "own-time", "total-time"],
+        help="Sort column: own (default), total, own-time, total-time",
+    )
+    top_parser.add_argument(
+        "--no-filter-peeka",
+        action="store_true",
+        help="Disable peeka thread filtering (default: filter enabled)",
+    )
+    top_parser.set_defaults(func=cmd_top)
+
     sc_parser = subparsers.add_parser(
         "sc", help="Search classes in target process (must attach first)"
     )
@@ -1082,6 +1113,87 @@ def cmd_monitor(args) -> int:
 
     finally:
         cleanup_monitor()
+
+    return 0
+
+
+def cmd_top(args) -> int:
+    try:
+        socket_path, attached_pid = _check_agent_attached()
+    except ValueError as e:
+        OutputFormatter.error("top", error=str(e))
+        return 1
+
+    streaming_client: Optional[StreamingAgentClient] = None
+    top_id: Optional[str] = None
+
+    def cleanup_top(signum=None, frame=None):
+        nonlocal streaming_client, top_id
+        if streaming_client and top_id:
+            try:
+                streaming_client.send_command(
+                    {"type": "top", "action": "stop"}
+                )
+            except Exception:
+                pass
+            streaming_client.disconnect()
+        if signum is not None:
+            sys.exit(130)
+
+    signal.signal(signal.SIGINT, cleanup_top)
+    signal.signal(signal.SIGTERM, cleanup_top)
+
+    streaming_client = StreamingAgentClient(socket_path)
+    connect_result = streaming_client.connect()
+
+    if connect_result.get("status") != "success":
+        OutputFormatter.error(
+            "top", error=connect_result.get("error", "Connection failed")
+        )
+        return 1
+
+    command = {
+        "type": "top",
+        "action": "start",
+        "interval": args.interval,
+        "stream": True,
+        "filter_peeka": not args.no_filter_peeka,
+    }
+
+    response = streaming_client.send_command(command)
+
+    if response.get("status") != "success":
+        OutputFormatter.error(
+            "top", error=response.get("error", "Top start failed")
+        )
+        streaming_client.disconnect()
+        return 1
+
+    top_id = response.get("top_id")
+
+    OutputFormatter.event(
+        "top_started",
+        data={
+            "top_id": top_id,
+            "interval": args.interval,
+            "filter_peeka": not args.no_filter_peeka,
+        },
+    )
+    sys.stdout.flush()
+
+    try:
+        cycles_count = 0
+        for observation in streaming_client.stream_observations():
+            print(json.dumps(observation))
+            sys.stdout.flush()
+
+            if args.cycles > 0:
+                cycles_count += 1
+                if cycles_count >= args.cycles:
+                    break
+
+    finally:
+        cleanup_top()
 
     return 0
 
