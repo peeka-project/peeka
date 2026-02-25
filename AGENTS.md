@@ -208,6 +208,9 @@ pytest tests/container/test_attach.py -v -m container --timeout=180
 `--network=host` shares host network stack so Docker can route through Clash to USTC mirrors.
 No proxy env vars are used inside Dockerfiles — only USTC mirror URLs.
 
+
+**TUI in containers**: Test images have `TERM=xterm-256color` and `COLORTERM=truecolor` baked in via Dockerfile `ENV`. No manual terminal env setup needed for `docker exec`.
+
 ## Key Files
 
 - `peeka/core/injector.py` — Function wrapping, decorator injection, value formatting

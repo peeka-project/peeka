@@ -483,15 +483,23 @@ spec:
 **解决方案**:
 
 ```bash
-# 检查终端类型
+# 检查终端类型是否支持 256 色
 echo $TERM
-
-# 设置兼容的终端类型
-export TERM=xterm-256color
 
 # 或使用 CLI 模式
 peeka-cli watch "func"
 ```
+
+
+### Docker 容器内 TUI 颜色异常
+
+**症状**: 通过 `docker exec` 进入容器后，TUI 界面颜色丢失或 Header/Footer 与主体颜色无法区分。
+
+**原因**: `docker exec` 不会继承宿主机的终端环境变量（`TERM`、`COLORTERM`），容器内默认 `TERM=dumb`，Textual 无法检测 truecolor 支持。
+
+**解决方案**:
+
+Peeka 测试镜像已内置 `TERM=xterm-256color` 和 `COLORTERM=truecolor`，`docker exec` 进入容器后 TUI 可直接使用，无需额外设置。
 
 ### TUI 卡死
 

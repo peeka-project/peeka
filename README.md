@@ -517,6 +517,11 @@ Peeka 的设计深受 [Alibaba Arthas](https://github.com/alibaba/arthas) 启发
 docker run --cap-add=SYS_PTRACE your-image
 ```
 
+
+**Docker 容器内运行 TUI**:
+
+Peeka 测试镜像已内置 `TERM=xterm-256color` 和 `COLORTERM=truecolor` 环境变量，`docker exec` 进入容器后 TUI 可直接使用，无需额外设置。
+
 **临时放宽 ptrace 限制**（测试用）:
 ```bash
 echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope
