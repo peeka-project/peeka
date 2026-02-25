@@ -12,8 +12,39 @@ DEFAULT_RESPONSES = {
     "memory": {
         "status": "success",
         "rss_bytes": 52428800,  # 50 MB
+        "vms_bytes": 209715200,  # 200 MB
         "tracemalloc": {"enabled": False, "current_bytes": 0, "peak_bytes": 0},
-        "gc": {"counts": [700, 10, 1]},
+        "gc": {"counts": [700, 10, 1], "thresholds": [700, 10, 10]},
+    },
+    "thread": {
+        "status": "success",
+        "total": 2,
+        "threads": [
+            {
+                "tid": 1234,
+                "name": "MainThread",
+                "state": "RUNNABLE",
+                "daemon": False,
+                "stack_depth": 5,
+                "top_frame": {
+                    "filename": "test.py",
+                    "lineno": 10,
+                    "funcname": "main",
+                },
+            },
+            {
+                "tid": 5678,
+                "name": "Worker-1",
+                "state": "WAITING",
+                "daemon": True,
+                "stack_depth": 3,
+                "top_frame": {
+                    "filename": "threading.py",
+                    "lineno": 300,
+                    "funcname": "wait",
+                },
+            },
+        ],
     },
 }
 
@@ -27,6 +58,7 @@ class MockStreamingAgentClient:
         observations: Optional[List[Dict[str, Any]]] = None,
         should_fail_connect: bool = False,
         should_fail_send: bool = False,
+        socket_path: str = "/tmp/peeka_mock.sock",
     ):
         """
         Initialize mock client.
@@ -43,6 +75,7 @@ class MockStreamingAgentClient:
         self.commands_received: List[Dict[str, Any]] = []
         self._should_fail_connect = should_fail_connect
         self._should_fail_send = should_fail_send
+        self.socket_path = socket_path
 
     def connect(self) -> Dict[str, Any]:
         """Connect to agent socket (mock)."""

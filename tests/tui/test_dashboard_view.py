@@ -1,7 +1,7 @@
 """Tests for DashboardView - data-flow and error handling."""
 
 import pytest
-from textual.widgets import Static
+from textual.widgets import DataTable, Static
 
 from peeka.tui.app import PeekaApp
 from peeka.tui.screens.main import MainScreen
@@ -39,7 +39,7 @@ class TestDashboardView:
     @pytest.mark.asyncio
     @pytest.mark.tui
     async def test_memory_stats_display(self, mock_client):
-        """Memory stats from mock client appear in dashboard widgets."""
+        """Memory stats from mock client appear in dashboard memory DataTable."""
         mock_client.connect()
 
         app = PeekaApp()
@@ -56,13 +56,23 @@ class TestDashboardView:
             await pilot.pause()
             await pilot.pause()
 
-            mem_rss_widget = app.screen.query_one("#mem-rss", Static)
-            assert "50.0 MB" in mem_rss_widget.render().plain
+            mem_table = app.screen.query_one("#dash-mem-table", DataTable)
+            # Memory table should have rows (rss, vms, traced)
+            assert mem_table.row_count >= 2
+            # Check that 50.0M (rss = 50 MB) appears in some row
+            found_rss = False
+            for row_key in mem_table.rows:
+                row = mem_table.get_row(row_key)
+                row_text = " ".join(str(cell) for cell in row)
+                if "50.0M" in row_text and "rss" in row_text:
+                    found_rss = True
+                    break
+            assert found_rss, "RSS memory (50.0M) not found in memory table"
 
     @pytest.mark.asyncio
     @pytest.mark.tui
     async def test_gc_counts_display(self, mock_client):
-        """GC counts from mock memory response populate GC widgets."""
+        """GC counts from mock memory response populate GC DataTable."""
         mock_client.connect()
 
         app = PeekaApp()
@@ -79,18 +89,25 @@ class TestDashboardView:
             await pilot.pause()
             await pilot.pause()
 
-            gc_gen0 = app.screen.query_one("#gc-gen0", Static)
-            gc_gen1 = app.screen.query_one("#gc-gen1", Static)
-            gc_gen2 = app.screen.query_one("#gc-gen2", Static)
+            gc_table = app.screen.query_one("#dash-gc-table", DataTable)
+            assert gc_table.row_count == 3  # gen0, gen1, gen2
 
-            assert "700" in gc_gen0.render().plain
-            assert "10" in gc_gen1.render().plain
-            assert "1" in gc_gen2.render().plain
+            # Collect all row text for verification
+            gc_values = []
+            for row_key in gc_table.rows:
+                row = gc_table.get_row(row_key)
+                gc_values.append(" ".join(str(cell) for cell in row))
+            gc_text = "\n".join(gc_values)
+
+            assert "700" in gc_text, "gen0 count (700) not found in GC table"
+            assert "10" in gc_text, "gen1 count (10) not found in GC table"
+            # gen2 count = 1, threshold = 10 — both present
+            assert "gen2" in gc_text, "gen2 row not found in GC table"
 
     @pytest.mark.asyncio
     @pytest.mark.tui
     async def test_uptime_display(self, mock_client):
-        """Uptime widget displays calculated uptime."""
+        """Runtime info section displays uptime."""
         mock_client.connect()
 
         app = PeekaApp()
@@ -107,8 +124,9 @@ class TestDashboardView:
             await pilot.pause()
             await pilot.pause()
 
-            uptime_widget = app.screen.query_one("#uptime", Static)
-            assert "Uptime:" in uptime_widget.render().plain
+            runtime_info = app.screen.query_one("#dash-runtime-info", Static)
+            content = runtime_info.render().plain
+            assert "uptime" in content
 
     @pytest.mark.asyncio
     @pytest.mark.tui
@@ -146,6 +164,7 @@ class TestDashboardView:
             responses={
                 "vmtool": {"status": "error", "error": "vmtool failed"},
                 "memory": {"status": "error", "error": "memory failed"},
+                "thread": {"status": "error", "error": "thread failed"},
             }
         )
         error_client.connect()
@@ -164,9 +183,13 @@ class TestDashboardView:
             await pilot.pause()
             await pilot.pause()
 
-            mem_rss_widget = app.screen.query_one("#mem-rss", Static)
-            content = mem_rss_widget.render().plain
-            assert "detecting" in content or "RSS" in content
+            # Dashboard should not crash; memory table should be empty or have
+            # default rows, thread table should be empty
+            mem_table = app.screen.query_one("#dash-mem-table", DataTable)
+            thread_table = app.screen.query_one("#dash-thread-table", DataTable)
+            # Tables exist and didn't crash — that's the key assertion
+            assert mem_table is not None
+            assert thread_table is not None
 
     @pytest.mark.asyncio
     @pytest.mark.tui
@@ -182,10 +205,89 @@ class TestDashboardView:
 
             dashboard = app.screen.query_one("DashboardView", DashboardView)
 
-            python_version = app.screen.query_one("#python-version", Static)
-            mem_rss = app.screen.query_one("#mem-rss", Static)
-            uptime = app.screen.query_one("#uptime", Static)
+            # Thread summary should show placeholder dashes
+            thread_summary = app.screen.query_one("#dash-thread-summary", Static)
+            summary_text = thread_summary.render().plain
+            assert "Threads" in summary_text
 
-            assert "detecting" in python_version.render().plain
-            assert "detecting" in mem_rss.render().plain
-            assert "Uptime:" in uptime.render().plain
+            # Runtime info should be empty (no data fetched yet)
+            runtime_info = app.screen.query_one("#dash-runtime-info", Static)
+            runtime_text = runtime_info.render().plain
+            # Empty or minimal — no python.version populated
+            assert "3.12.0" not in runtime_text
+
+            # Tables should exist and be queryable
+            thread_table = app.screen.query_one("#dash-thread-table", DataTable)
+            mem_table = app.screen.query_one("#dash-mem-table", DataTable)
+            gc_table = app.screen.query_one("#dash-gc-table", DataTable)
+            assert thread_table is not None
+            assert mem_table is not None
+            assert gc_table is not None
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_thread_table_display(self, mock_client):
+        """Thread data from mock client populates thread DataTable."""
+        mock_client.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            dashboard = app.screen.query_one("DashboardView", DashboardView)
+            dashboard.set_client(mock_client)
+
+            await pilot.pause()
+            await pilot.pause()
+
+            # Thread summary should show counts
+            thread_summary = app.screen.query_one("#dash-thread-summary", Static)
+            summary_text = thread_summary.render().plain
+            assert "2" in summary_text  # 2 total threads
+
+            # Thread table should have 2 rows
+            thread_table = app.screen.query_one("#dash-thread-table", DataTable)
+            assert thread_table.row_count == 2
+
+            # Collect all row text
+            all_rows_text = []
+            for row_key in thread_table.rows:
+                row = thread_table.get_row(row_key)
+                all_rows_text.append(" ".join(str(cell) for cell in row))
+            combined = "\n".join(all_rows_text)
+
+            assert "MainThread" in combined
+            assert "Worker-1" in combined
+            assert "1234" in combined
+            assert "5678" in combined
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_runtime_info_content(self, mock_client):
+        """Runtime info shows python version, pid, and other key-value pairs."""
+        mock_client.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            dashboard = app.screen.query_one("DashboardView", DashboardView)
+            dashboard.set_client(mock_client)
+
+            await pilot.pause()
+            await pilot.pause()
+
+            runtime_info = app.screen.query_one("#dash-runtime-info", Static)
+            content = runtime_info.render().plain
+
+            assert "3.12.0" in content  # python version
+            assert "12345" in content  # pid
+            assert "uptime" in content
