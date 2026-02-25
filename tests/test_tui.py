@@ -57,8 +57,8 @@ class TestProcessSelectorScreen:
 
 class TestMainScreen:
     @pytest.mark.asyncio
-    async def test_main_screen_has_eight_tabs(self):
-        """MainScreen has exactly 8 tab panes."""
+    async def test_main_screen_has_nine_tabs(self):
+        """MainScreen has exactly 9 tab panes."""
         app = PeekaApp()
         async with app.run_test() as pilot:
             app.push_screen(
@@ -69,11 +69,11 @@ class TestMainScreen:
 
             tabbed = app.screen.query_one("#main-content", TabbedContent)
             panes = list(tabbed.query(TabPane))
-            assert len(panes) == 8
+            assert len(panes) == 9
 
     @pytest.mark.asyncio
     async def test_tab_labels_correct(self):
-        """All 8 tab pane IDs match expected names."""
+        """All 9 tab pane IDs match expected names."""
         app = PeekaApp()
         async with app.run_test() as pilot:
             app.push_screen(
@@ -94,6 +94,7 @@ class TestMainScreen:
                 "memory",
                 "logger",
                 "inspect",
+                "threads",
             ]
             assert pane_ids == expected
 

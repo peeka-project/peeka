@@ -3,12 +3,12 @@ Dashboard View - Overview of attached process.
 """
 
 import time
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
-from textual.widgets import Static
+from textual.widgets import DataTable, Static
 from textual.worker import Worker, get_current_worker
 
 if TYPE_CHECKING:
@@ -70,6 +70,13 @@ class DashboardView(Container):
         )
         gc_section.border_title = "GC Statistics"
 
+        thread_section = Vertical(
+            DataTable(id="dash-thread-table"),
+            id="dash-thread-section",
+            classes="panel",
+        )
+        thread_section.border_title = "Threads (top 15)"
+
         yield Container(
             Horizontal(
                 process_info,
@@ -81,12 +88,18 @@ class DashboardView(Container):
                 gc_section,
                 id="activity-row",
             ),
+            thread_section,
             id="dashboard-container",
         )
 
     async def on_mount(self) -> None:
         container = self.query_one("#dashboard-container", Container)
         container.border_title = "Dashboard"
+
+        # Set up thread table columns
+        thread_table = self.query_one("#dash-thread-table", DataTable)
+        thread_table.add_columns("TID", "Name", "State", "Daemon", "Top Frame")
+        thread_table.cursor_type = "row"
 
     def on_unmount(self) -> None:
         if self._refresh_worker:
@@ -149,6 +162,14 @@ class DashboardView(Container):
                 data["rss_bytes"] = mem_result.get("rss_bytes", 0)
                 data["tracemalloc"] = mem_result.get("tracemalloc", {})
                 data["gc"] = mem_result.get("gc", {})
+
+            # Fetch thread list
+            thread_resp = lambda: self._client.send_command(
+                {"type": "thread", "action": "list"}
+            )
+            thread_result = thread_resp()
+            if thread_result.get("status") == "success":
+                data["threads"] = thread_result.get("threads", [])
             self.app.call_from_thread(self._update_dashboard_ui, data)
             return data
 
@@ -200,6 +221,11 @@ class DashboardView(Container):
             self.query_one("#gc-gen1", Static).update(f"Gen1: {gc_counts[1]}")
             self.query_one("#gc-gen2", Static).update(f"Gen2: {gc_counts[2]}")
 
+        # Update thread table
+        threads = data.get("threads", [])
+        if threads:
+            self._update_thread_table(threads)
+
     def _update_uptime(self) -> None:
         """Update uptime display."""
         elapsed = time.time() - self._start_time
@@ -215,3 +241,49 @@ class DashboardView(Container):
             uptime_str = f"Uptime: {seconds}s"
 
         self.query_one("#uptime", Static).update(uptime_str)
+
+
+    # -- Thread table helpers --------------------------------------------------
+
+    _STATE_BADGES = {
+        "RUNNABLE": "[green]RUNNABLE[/]",
+        "WAITING": "[yellow]WAITING[/]",
+        "TIMED_WAITING": "[cyan]TIMED_WAIT[/]",
+        "UNKNOWN": "[dim]UNKNOWN[/]",
+    }
+
+    def _update_thread_table(self, threads: List[Dict[str, Any]]) -> None:
+        """Update the simplified dashboard thread table."""
+        table = self.query_one("#dash-thread-table", DataTable)
+        table.clear()
+
+        # Show top 15 threads
+        for t in threads[:15]:
+            tid = t.get("tid", 0)
+            name = t.get("name", "?")
+            state = t.get("state", "UNKNOWN")
+            daemon = t.get("daemon", False)
+
+            # Format top frame
+            top_frame = t.get("top_frame")
+            if top_frame:
+                funcname = top_frame.get("funcname", "?")
+                filename = top_frame.get("filename", "?")
+                if "/" in filename:
+                    filename = filename.rsplit("/", 1)[-1]
+                lineno = top_frame.get("lineno", 0)
+                top_str = f"{funcname} @ {filename}:{lineno}"
+            else:
+                top_str = "-"
+
+            state_badge = self._STATE_BADGES.get(state, state)
+            daemon_str = "✓" if daemon else ""
+
+            table.add_row(
+                str(tid),
+                name,
+                state_badge,
+                daemon_str,
+                top_str,
+                key=str(tid),
+            )
