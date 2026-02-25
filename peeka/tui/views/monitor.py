@@ -127,7 +127,11 @@ class MonitorView(Container):
             thread=True,
         )
         await worker.wait()
-        response = worker.result
+        try:
+            response = worker.result
+        except Exception as e:
+            self.app.notify(f"Connection error: {e}", severity="error")
+            return
 
         if response.get("status") != "success":
             self.app.notify(
