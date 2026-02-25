@@ -132,32 +132,50 @@ TabPane {
    DASHBOARD VIEW
    ============================================================================ */
 
-#metrics-row, #activity-row {
+#dash-thread-summary {
     height: auto;
-    margin-bottom: 1;
-}
-
-.dashboard-card {
     padding: 0 1;
-    margin: 0 1 0 0;
-    min-width: 30;
-}
-
-#pid-info, #python-version, #uptime,
-#mem-rss, #mem-traced, #mem-peak,
-#watch-count,
-#gc-gen0, #gc-gen1, #gc-gen2 {
-    margin: 1 0;
+    margin-bottom: 0;
 }
 
 #dash-thread-section {
     height: 1fr;
+    min-height: 10;
 }
 
 #dash-thread-table {
-    height: 100%;
+    height: 1fr;
 }
 
+#dash-mid-row {
+    height: auto;
+    max-height: 10;
+    margin-bottom: 0;
+}
+
+#dash-memory-section {
+    width: 1fr;
+    margin-right: 1;
+}
+
+#dash-gc-section {
+    width: 1fr;
+}
+
+#dash-mem-table,
+#dash-gc-table {
+    height: auto;
+    max-height: 8;
+}
+
+#dash-runtime-section {
+    height: auto;
+    max-height: 12;
+}
+
+#dash-runtime-info {
+    padding: 0 1;
+}
 /* ============================================================================
    CONTROLS — shared pattern across views
    ============================================================================ */
