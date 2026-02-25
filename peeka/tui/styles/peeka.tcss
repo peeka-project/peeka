@@ -1,35 +1,20 @@
-/* Peeka TUI Styles — Modern Textual (Lazygit / Posting inspired) */
+/* Peeka TUI Styles — Layout only (theme handles colors/borders) */
 
 /* ============================================================================
    GLOBAL
    ============================================================================ */
 
 Screen {
-    background: $surface;
     scrollbar-size: 1 1;
-    scrollbar-color: $surface-lighten-2;
-    scrollbar-color-hover: $primary 60%;
-    scrollbar-color-active: $primary;
-    scrollbar-background: $surface;
 }
 
 /* ============================================================================
-   PANEL SYSTEM — lazygit-style: always-visible borders, focus = bright color
+   PANEL SYSTEM
    ============================================================================ */
 
 .panel {
-    border: round $primary 60%;
-    border-title-color: $primary 60%;
-    border-title-style: bold;
-    border-title-align: left;
     padding: 0 1;
     margin: 0;
-    transition: border 150ms;
-}
-
-.panel:focus-within {
-    border: round $accent;
-    border-title-color: $accent;
 }
 
 /* ============================================================================
@@ -38,8 +23,6 @@ Screen {
 
 .empty-state {
     content-align: center middle;
-    color: $text-muted;
-    text-style: italic;
     padding: 1;
 }
 
@@ -52,8 +35,6 @@ Screen {
 }
 
 #process-selector #title {
-    text-style: bold;
-    color: $primary;
     margin-bottom: 1;
 }
 
@@ -74,13 +55,11 @@ Screen {
 }
 
 #pid-status {
-    text-style: bold;
-    color: $success;
     padding: 0 1;
 }
 
 /* ============================================================================
-   TABBED CONTENT — active tab uses $primary
+   TABBED CONTENT
    ============================================================================ */
 
 TabbedContent {
@@ -89,25 +68,10 @@ TabbedContent {
 
 Tabs {
     dock: top;
-    background: $surface;
-    color: $text-muted;
 }
 
 Tab {
     padding: 0 2;
-    color: $text-muted;
-    background: $surface;
-}
-
-Tab:hover {
-    color: $text;
-    background: $surface-lighten-1;
-}
-
-Tab.-active {
-    color: $text;
-    background: $primary;
-    text-style: bold;
 }
 
 TabPane {
@@ -115,7 +79,7 @@ TabPane {
 }
 
 /* ============================================================================
-   VIEW CONTAINERS — outer border with panel styling
+   VIEW CONTAINERS
    ============================================================================ */
 
 #dashboard-container,
@@ -127,22 +91,6 @@ TabPane {
 #logger-container,
 #inspect-container {
     padding: 0 1;
-    border: round $primary 60%;
-    border-title-color: $primary 60%;
-    border-title-style: bold;
-    border-title-align: left;
-}
-
-#dashboard-container:focus-within,
-#watch-container:focus-within,
-#trace-container:focus-within,
-#stack-container:focus-within,
-#monitor-container:focus-within,
-#memory-container:focus-within,
-#logger-container:focus-within,
-#inspect-container:focus-within {
-    border: round $accent;
-    border-title-color: $accent;
 }
 
 /* ============================================================================
@@ -155,19 +103,9 @@ TabPane {
 }
 
 .dashboard-card {
-    border: round $primary 60%;
-    border-title-color: $primary 60%;
-    border-title-style: bold;
-    border-title-align: left;
     padding: 0 1;
     margin: 0 1 0 0;
     min-width: 30;
-    transition: border 150ms;
-}
-
-.dashboard-card:focus-within {
-    border: round $accent;
-    border-title-color: $accent;
 }
 
 #pid-info, #python-version, #uptime,
@@ -178,7 +116,7 @@ TabPane {
 }
 
 /* ============================================================================
-   CONTROLS — shared pattern across Watch, Trace, Stack, Monitor, Logger, Inspect
+   CONTROLS — shared pattern across views
    ============================================================================ */
 
 #watch-controls,
@@ -227,7 +165,7 @@ TabPane {
 }
 
 /* ============================================================================
-   WATCH VIEW — panel-specific sizing
+   WATCH VIEW
    ============================================================================ */
 
 #watch-list {
@@ -249,15 +187,10 @@ TabPane {
 
 #observation-detail {
     height: 1fr;
-    border: round $primary 40%;
-    border-title-color: $primary 40%;
-    border-title-style: bold;
-    border-title-align: left;
-    scrollbar-size-vertical: 1;
 }
 
 /* ============================================================================
-   TRACE VIEW — panel-specific sizing
+   TRACE VIEW
    ============================================================================ */
 
 #trace-list {
@@ -281,12 +214,10 @@ TabPane {
 #trace-stats {
     height: auto;
     padding: 0 1;
-    border: round $primary 60%;
-    border-title-color: $primary 60%;
 }
 
 /* ============================================================================
-   STACK VIEW — panel-specific sizing
+   STACK VIEW
    ============================================================================ */
 
 #stack-panel {
@@ -298,7 +229,7 @@ TabPane {
 }
 
 /* ============================================================================
-   MONITOR VIEW — panel-specific sizing
+   MONITOR VIEW
    ============================================================================ */
 
 #stats-panel {
@@ -310,7 +241,7 @@ TabPane {
 }
 
 /* ============================================================================
-   MEMORY VIEW — panel-specific sizing
+   MEMORY VIEW
    ============================================================================ */
 
 #memory-controls {
@@ -340,7 +271,7 @@ TabPane {
 }
 
 /* ============================================================================
-   LOGGER VIEW — panel-specific sizing
+   LOGGER VIEW
    ============================================================================ */
 
 #logger-list {
@@ -366,7 +297,7 @@ TabPane {
 }
 
 /* ============================================================================
-   INSPECT VIEW — panel-specific sizing
+   INSPECT VIEW
    ============================================================================ */
 
 #inspect-tree-panel {
@@ -387,19 +318,6 @@ TabPane {
 }
 
 /* ============================================================================
-   INPUT WIDGETS — visible borders with focus transition
-   ============================================================================ */
-
-Input {
-    border: round $border-blurred !important;
-    transition: border 150ms;
-}
-
-Input:focus {
-    border: round $border !important;
-}
-
-/* ============================================================================
    INPUT LABELS
    ============================================================================ */
 
@@ -408,7 +326,6 @@ Input:focus {
     padding: 0 1;
     content-align: center middle;
     height: 3;
-    color: $text-muted;
 }
 
 /* ============================================================================
@@ -426,8 +343,6 @@ AutoCompleteInput #ac-input {
 
 AutoCompleteInput #ac-dropdown {
     max-height: 10;
-    border: round $accent;
-    background: $surface;
     padding: 0 1;
 }
 
@@ -438,11 +353,6 @@ AutoCompleteInput #ac-dropdown {
 #help-container {
     width: 80%;
     height: 80%;
-    border: round $accent;
-    border-title-color: $text;
-    border-title-style: bold;
-    border-title-align: center;
-    background: $surface;
     padding: 1;
 }
 
@@ -452,46 +362,10 @@ AutoCompleteInput #ac-dropdown {
 }
 
 /* ============================================================================
-   BUTTONS — compact, consistent
+   BUTTONS
    ============================================================================ */
 
 Button {
     min-width: 8;
     max-width: 14;
-}
-
-Button.success {
-    background: $success;
-}
-
-Button.error {
-    background: $error;
-}
-
-Button.warning {
-    background: $warning;
-}
-
-/* ============================================================================
-   DATA TABLE — zebra striping, primary header, bold cursor
-   ============================================================================ */
-
-DataTable {
-    background: $surface;
-}
-
-DataTable > .datatable--header {
-    background: $primary 20%;
-    text-style: bold;
-    color: $text;
-}
-
-DataTable > .datatable--cursor {
-    background: $primary;
-    color: $text;
-    text-style: bold;
-}
-
-DataTable > .datatable--even-row {
-    background: $surface-lighten-1 30%;
 }
