@@ -46,6 +46,20 @@ DEFAULT_RESPONSES = {
             },
         ],
     },
+    "top": {
+        "status": "success",
+        "type": "top_snapshot",
+        "top_id": "top_001",
+        "total_samples": 1000,
+        "sample_interval": 0.01,
+        "functions": [
+            {"name": "process_request", "filename": "app/server.py", "line": 45, "own_pct": 25.3, "total_pct": 68.2, "own_time": 2.53, "total_time": 6.82, "own_count": 253, "total_count": 682},
+            {"name": "parse_json", "filename": "app/parser.py", "line": 12, "own_pct": 18.7, "total_pct": 22.1, "own_time": 1.87, "total_time": 2.21, "own_count": 187, "total_count": 221},
+            {"name": "query_db", "filename": "app/db.py", "line": 88, "own_pct": 15.2, "total_pct": 45.6, "own_time": 1.52, "total_time": 4.56, "own_count": 152, "total_count": 456},
+            {"name": "serialize_response", "filename": "app/serializer.py", "line": 33, "own_pct": 8.4, "total_pct": 12.1, "own_time": 0.84, "total_time": 1.21, "own_count": 84, "total_count": 121},
+            {"name": "validate_input", "filename": "app/validator.py", "line": 7, "own_pct": 5.1, "total_pct": 5.3, "own_time": 0.51, "total_time": 0.53, "own_count": 51, "total_count": 53},
+        ]
+    },
 }
 
 
