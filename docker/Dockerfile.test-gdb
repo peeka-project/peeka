@@ -25,4 +25,4 @@ WORKDIR /app
 COPY examples/demo.py /opt/demo.py
 COPY docker/restart-demo.sh /opt/restart-demo.sh
 
-CMD ["bash", "-c", "sh /opt/restart-demo.sh && sleep infinity"]
+CMD ["bash", "-c", "sh /opt/restart-demo.sh; sleep infinity & wait"]
