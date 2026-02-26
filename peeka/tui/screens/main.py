@@ -122,18 +122,47 @@ class MainScreen(Screen):
         self._cleanup_all_views()
 
     async def _connect(self) -> None:
-        """Connect to the target process agent with separate command and streaming sockets."""
-        try:
-            from peeka.core.client import StreamingAgentClient
+        """Connect to the target process agent with retry logic.
 
-            self._client = StreamingAgentClient(self.socket_path)
-            result = self._client.connect()
+        Uses exponential backoff to handle the case where the agent socket
+        is still initializing when MainScreen is pushed immediately after attach.
+        """
+        import asyncio
 
-            if result.get("status") != "success":
+        from peeka.core.client import StreamingAgentClient
+
+        max_retries = 3
+        base_delay = 0.2  # seconds
+
+        for attempt in range(max_retries):
+            try:
+                self._client = StreamingAgentClient(self.socket_path)
+                result = self._client.connect()
+
+                if result.get("status") == "success":
+                    break
+
                 error_msg = result.get("error", "Unknown connection error")
-                self.notify(f"Failed to connect: {error_msg}", severity="error")
-                return
+                if attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)
+                    await asyncio.sleep(delay)
+                    continue
+                else:
+                    self.notify(f"Failed to connect: {error_msg}", severity="error")
+                    self._client = None
+                    return
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)
+                    await asyncio.sleep(delay)
+                    continue
+                else:
+                    self.notify(f"Failed to connect: {e}", severity="error")
+                    self._client = None
+                    return
 
+        # Command client connected, now set up streaming client
+        try:
             self._stream_client = StreamingAgentClient(self.socket_path)
             stream_result = self._stream_client.connect()
 
@@ -144,8 +173,8 @@ class MainScreen(Screen):
                 )
                 self._stream_client = None
         except Exception as e:
-            self.notify(f"Failed to connect: {e}", severity="error")
-
+            self.notify(f"Stream connection failed: {e}", severity="warning")
+            self._stream_client = None
     def action_switch_tab(self, tab_id: str) -> None:
         """Switch to a specific view."""
         tabbed = self.query_one("#main-content", TabbedContent)
