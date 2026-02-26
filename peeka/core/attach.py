@@ -225,16 +225,31 @@ class ProcessAttacher:
         return str(agent_path)
 
     def _wait_for_agent_ready(self, timeout: int = 5) -> bool:
-        """Wait for agent initialization"""
+        """Wait for agent initialization and socket readiness.
+
+        First waits for the .ready file (indicates bind+listen complete),
+        then verifies the socket is actually connectable to avoid race
+        conditions where the accept loop thread hasn't started yet.
+        """
         ready_file = Path(f"/tmp/peeka_{self.session_id}.ready")
+        socket_path = f"/tmp/peeka_{self.session_id}.sock"
 
         start_time = time.time()
+        # Phase 1: Wait for .ready file
         while time.time() - start_time < timeout:
             if ready_file.exists():
-                return True
+                break
             time.sleep(0.1)
+        else:
+            raise TimeoutError("Agent initialization timeout (ready file)")
 
-        raise TimeoutError("Agent initialization timeout")
+        # Phase 2: Verify socket is actually connectable
+        while time.time() - start_time < timeout:
+            if self._is_socket_alive(socket_path):
+                return True
+            time.sleep(0.05)
+
+        raise TimeoutError("Agent initialization timeout (socket not connectable)")
 
     def get_socket_path(self) -> str:
         """Get Unix domain socket path for communication"""
