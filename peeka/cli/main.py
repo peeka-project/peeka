@@ -500,6 +500,8 @@ Examples:
             return cmd_reset(args)
         elif args.command == "thread":
             return cmd_thread(args)
+        elif args.command == "top":
+            return cmd_top(args)
         else:
             OutputFormatter.error("peeka", error=f"Unknown command: {args.command}")
             return 1
