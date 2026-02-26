@@ -2,6 +2,7 @@
 Top Command - Function-level sampling profiler
 """
 
+import os
 import sys
 import threading
 
@@ -35,6 +36,9 @@ class TopCommand(BaseCommand):
         self._top_id: Optional[str] = None
         self._interval: float = 0.01  # 10ms default
         self._stream: bool = False
+
+        # Resolve peeka package directory for thread filtering
+        self._peeka_pkg_dir: str = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + os.sep
 
     def execute(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -332,9 +336,11 @@ class TopCommand(BaseCommand):
         ):
             return True
 
-        # Check if frame is in peeka code
-        if frame and "peeka/" in frame.f_code.co_filename:
-            return True
+        # Check if frame is in peeka package code (not just any path containing 'peeka/')
+        if frame:
+            fname = frame.f_code.co_filename
+            if fname.startswith(self._peeka_pkg_dir):
+                return True
 
         # Check thread name
         try:
