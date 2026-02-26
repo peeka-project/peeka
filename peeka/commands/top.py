@@ -329,10 +329,10 @@ class TopCommand(BaseCommand):
         Returns:
             True if this is a peeka thread
         """
-        # Check if current thread is the sampling thread itself
+        # Check if the thread being examined is the sampling thread itself
         if (
             self._sampling_thread
-            and threading.current_thread() == self._sampling_thread
+            and self._sampling_thread.ident == thread_id
         ):
             return True
 
