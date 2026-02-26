@@ -1,7 +1,7 @@
 """Tests for Top view (function-level profiling table)."""
 
 import pytest
-from textual.widgets import DataTable, Static
+from textual.widgets import Button, DataTable, Static
 
 from peeka.tui.app import PeekaApp
 from peeka.tui.screens.main import MainScreen
@@ -68,7 +68,7 @@ class TestTopView:
     @pytest.mark.asyncio
     @pytest.mark.tui
     async def test_top_view_initial_state(self, mock_client):
-        """Test TopView shows initialization message before data loads."""
+        """Test TopView shows stopped state before user starts profiling."""
         mock_client.connect()
 
         app = PeekaApp()
@@ -87,8 +87,8 @@ class TestTopView:
             header = top_view.query_one("#top-header", Static)
             header_text = header.render().plain
 
-            # After set_client(), profiling attempts to start (may show error with mock socket)
-            assert "Initializing" in header_text or "Top View" in header_text or "Error" in header_text
+            # Should show stopped state (no auto-start)
+            assert "Stopped" in header_text or "Top View" in header_text
 
     @pytest.mark.asyncio
     @pytest.mark.tui
@@ -113,7 +113,7 @@ class TestTopView:
             footer = top_view.query_one("#top-footer", Static)
             footer_text = footer.render().plain
 
-            assert "Press r to reset stats" in footer_text or "F8" in footer_text
+            assert "Start" in footer_text or "reset" in footer_text
 
     @pytest.mark.asyncio
     @pytest.mark.tui
@@ -140,7 +140,7 @@ class TestTopView:
     @pytest.mark.asyncio
     @pytest.mark.tui
     async def test_top_view_set_client(self, mock_client):
-        """Test TopView accepts client via set_client method."""
+        """Test TopView accepts client via set_client without auto-starting."""
         mock_client.connect()
 
         app = PeekaApp()
@@ -155,13 +155,14 @@ class TestTopView:
             top_view = app.screen.query_one(TopView)
             top_view.set_client(mock_client)
 
-            # Assert client is set
+            # Assert client is set but profiling NOT started
             assert top_view._client is mock_client
+            assert top_view._is_profiling is False
 
     @pytest.mark.asyncio
     @pytest.mark.tui
     async def test_top_view_widget_hierarchy(self, mock_client):
-        """Test TopView has correct widget structure."""
+        """Test TopView has correct widget structure including buttons."""
         mock_client.connect()
 
         app = PeekaApp()
@@ -181,10 +182,16 @@ class TestTopView:
             header = top_view.query_one("#top-header", Static)
             table = top_view.query_one("#top-table", DataTable)
             footer = top_view.query_one("#top-footer", Static)
+            start_btn = top_view.query_one("#top-start-btn", Button)
+            stop_btn = top_view.query_one("#top-stop-btn", Button)
+            reset_btn = top_view.query_one("#top-reset-btn", Button)
 
             assert header is not None
             assert table is not None
             assert footer is not None
+            assert start_btn is not None
+            assert stop_btn is not None
+            assert reset_btn is not None
 
     @pytest.mark.asyncio
     @pytest.mark.tui
@@ -208,3 +215,28 @@ class TestTopView:
 
             # Table should be empty initially (no data fetched yet)
             assert table.row_count == 0
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_top_view_button_initial_states(self, mock_client):
+        """Test button disabled states before and after client is set."""
+        mock_client.connect()
+
+        app = PeekaApp()
+        async with app.run_test(size=(120, 40)) as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            main_screen.action_switch_tab("top")
+            await pilot.pause()
+
+            top_view = app.screen.query_one(TopView)
+            stop_btn = top_view.query_one("#top-stop-btn", Button)
+            reset_btn = top_view.query_one("#top-reset-btn", Button)
+
+            # Stop and Reset should be disabled when not profiling
+            assert stop_btn.disabled is True
+            assert reset_btn.disabled is True
