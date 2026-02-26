@@ -1,11 +1,13 @@
 """Top view for function-level sampling profiler."""
 
+import logging
 import time
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
+from textual.binding import Binding
 from textual.containers import Container, Vertical
 from textual.widgets import DataTable, Static
-from textual.worker import get_current_worker
+from textual.worker import Worker, get_current_worker
 
 if TYPE_CHECKING:
     from peeka.core.client import StreamingAgentClient
@@ -13,6 +15,10 @@ if TYPE_CHECKING:
 
 class TopView(Container):
     """Top view displays function-level CPU profiling statistics."""
+
+    BINDINGS = [
+        Binding("r", "reset_stats", "Reset"),
+    ]
 
     def __init__(self, pid: int) -> None:
         """Initialize TopView.
@@ -23,8 +29,12 @@ class TopView(Container):
         super().__init__(id="top-container")
         self.pid = pid
         self._client: Optional["StreamingAgentClient"] = None
+        self._own_client: Optional["StreamingAgentClient"] = None
+        self._socket_path: Optional[str] = None
         self._top_id: Optional[str] = None
         self._is_profiling = False
+        self._refresh_worker: Optional[Worker] = None
+        self._log = logging.getLogger(__name__)
 
     def compose(self):
         """Compose the Top view layout."""
@@ -40,7 +50,27 @@ class TopView(Container):
             client: Streaming agent client instance
         """
         self._client = client
+        self._socket_path = client.socket_path
+        self._connect_own_client()
         self._start_profiling()
+
+    def _connect_own_client(self) -> None:
+        """Create a dedicated client for TopView to avoid socket contention."""
+        if not self._socket_path:
+            return
+        try:
+            from peeka.core.client import StreamingAgentClient
+
+            self._own_client = StreamingAgentClient(self._socket_path)
+            result = self._own_client.connect()
+            if result.get("status") != "success":
+                self._log.warning(
+                    "Top dedicated client failed: %s", result.get("error")
+                )
+                self._own_client = None
+        except Exception as e:
+            self._log.warning("Top dedicated client error: %s", e)
+            self._own_client = None
 
     async def on_mount(self) -> None:
         """Initialize when view is mounted."""
@@ -51,10 +81,11 @@ class TopView(Container):
 
     def _start_profiling(self) -> None:
         """Start the profiler and refresh worker."""
-        if not self._client:
+        client = self._own_client or self._client
+        if not client:
             return
         try:
-            response = self._client.send_command(
+            response = client.send_command(
                 {"type": "top", "action": "start", "stream": False}
             )
             if response.get("status") == "success":
@@ -71,7 +102,9 @@ class TopView(Container):
 
     def _start_refresh_worker(self) -> None:
         """Start background refresh worker."""
-        self.run_worker(self._periodic_refresh, thread=True, exclusive=True)
+        self._refresh_worker = self.run_worker(
+            self._periodic_refresh, thread=True, exclusive=True
+        )
 
     def _periodic_refresh(self) -> None:
         """Periodically fetch and update top snapshot."""
@@ -87,9 +120,10 @@ class TopView(Container):
             if worker.is_cancelled:
                 break
 
-            if self._client and self._is_profiling:
+            client = self._own_client or self._client
+            if client and self._is_profiling:
                 try:
-                    response = self._client.send_command(
+                    response = client.send_command(
                         {"type": "top", "action": "snapshot"}
                     )
                     if response.get("status") == "success":
@@ -127,14 +161,45 @@ class TopView(Container):
                 f"{func['name']} ({func['filename']}:{func['line']})",
             )
 
+    def action_reset_stats(self) -> None:
+        """Reset profiling statistics (triggered by 'r' key)."""
+        client = self._own_client or self._client
+        if not client or not self._is_profiling:
+            self.app.notify("Profiler not running", severity="warning")
+            return
+        try:
+            response = client.send_command({"type": "top", "action": "reset"})
+            if response.get("status") == "success":
+                self.app.notify("Statistics reset", severity="information")
+                # Clear table immediately for visual feedback
+                table = self.query_one("#top-table", DataTable)
+                table.clear()
+                header = self.query_one("#top-header", Static)
+                header.update("Profiling... | Samples: 0 | Stats reset")
+            else:
+                error = response.get("error", "Unknown error")
+                self.app.notify(f"Reset failed: {error}", severity="error")
+        except Exception as e:
+            self.app.notify(f"Reset error: {e}", severity="error")
+
     def on_unmount(self) -> None:
         """Cleanup when view is unmounted."""
+        # Cancel refresh worker
+        if self._refresh_worker:
+            self._refresh_worker.cancel()
+
         # Stop profiling
-        if self._client and self._is_profiling:
+        client = self._own_client or self._client
+        if client and self._is_profiling:
             try:
-                self._client.send_command({"type": "top", "action": "stop"})
+                client.send_command({"type": "top", "action": "stop"})
             except Exception:
                 pass  # Best effort
             finally:
                 self._is_profiling = False
                 self._top_id = None
+
+        # Disconnect dedicated client
+        if self._own_client:
+            self._own_client.disconnect()
+            self._own_client = None
