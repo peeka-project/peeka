@@ -34,12 +34,13 @@ class TopView(Container):
             yield Static("Press r to reset stats | F8 to switch tabs", id="top-footer")
 
     def set_client(self, client: "StreamingAgentClient") -> None:
-        """Set the agent client.
+        """Set the agent client and start profiling.
 
         Args:
             client: Streaming agent client instance
         """
         self._client = client
+        self._start_profiling()
 
     async def on_mount(self) -> None:
         """Initialize when view is mounted."""
@@ -48,23 +49,25 @@ class TopView(Container):
         table.add_columns("%Own", "%Total", "OwnTime", "TotalTime", "Function")
         table.show_cursor = False
 
-        # Start profiling
-        if self._client:
-            try:
-                response = self._client.send_command(
-                    {"type": "top", "action": "start", "stream": False}
-                )
-                if response.get("status") == "success":
-                    self._top_id = response.get("top_id")
-                    self._is_profiling = True
-                    self._start_refresh_worker()
-                else:
-                    header = self.query_one("#top-header", Static)
-                    error = response.get("error", "Unknown error")
-                    header.update(f"Error starting profiler: {error}")
-            except Exception as e:
+    def _start_profiling(self) -> None:
+        """Start the profiler and refresh worker."""
+        if not self._client:
+            return
+        try:
+            response = self._client.send_command(
+                {"type": "top", "action": "start", "stream": False}
+            )
+            if response.get("status") == "success":
+                self._top_id = response.get("top_id")
+                self._is_profiling = True
+                self._start_refresh_worker()
+            else:
                 header = self.query_one("#top-header", Static)
-                header.update(f"Error starting profiler: {e}")
+                error = response.get("error", "Unknown error")
+                header.update(f"Error starting profiler: {error}")
+        except Exception as e:
+            header = self.query_one("#top-header", Static)
+            header.update(f"Error starting profiler: {e}")
 
     def _start_refresh_worker(self) -> None:
         """Start background refresh worker."""
