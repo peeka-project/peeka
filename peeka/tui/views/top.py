@@ -5,8 +5,8 @@ import time
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from textual.binding import Binding
-from textual.containers import Container, Vertical
-from textual.widgets import DataTable, Static
+from textual.containers import Container, Horizontal, Vertical
+from textual.widgets import Button, DataTable, Static
 from textual.worker import Worker, get_current_worker
 
 if TYPE_CHECKING:
@@ -39,12 +39,20 @@ class TopView(Container):
     def compose(self):
         """Compose the Top view layout."""
         with Vertical():
-            yield Static("Top View - Initializing...", id="top-header")
+            yield Horizontal(
+                Button("Start", id="top-start-btn", variant="success", flat=True),
+                Button("Stop", id="top-stop-btn", variant="error", flat=True),
+                Button("Reset", id="top-reset-btn", variant="warning", flat=True),
+                id="top-controls",
+            )
+            yield Static("Top View - Stopped", id="top-header")
             yield DataTable(id="top-table")
-            yield Static("Press r to reset stats | F8 to switch tabs", id="top-footer")
+            yield Static(
+                "Press Start to begin profiling | r to reset stats", id="top-footer"
+            )
 
     def set_client(self, client: "StreamingAgentClient") -> None:
-        """Set the agent client and start profiling.
+        """Set the agent client (does NOT auto-start profiling).
 
         Args:
             client: Streaming agent client instance
@@ -52,7 +60,7 @@ class TopView(Container):
         self._client = client
         self._socket_path = client.socket_path
         self._connect_own_client()
-        self._start_profiling()
+        self._update_button_states()
 
     def _connect_own_client(self) -> None:
         """Create a dedicated client for TopView to avoid socket contention."""
@@ -78,6 +86,31 @@ class TopView(Container):
         table = self.query_one("#top-table", DataTable)
         table.add_columns("%Own", "%Total", "OwnTime", "TotalTime", "Function")
         table.show_cursor = False
+        self._update_button_states()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button presses."""
+        if event.button.id == "top-start-btn":
+            self._start_profiling()
+        elif event.button.id == "top-stop-btn":
+            self._stop_profiling()
+        elif event.button.id == "top-reset-btn":
+            self.action_reset_stats()
+
+    def _update_button_states(self) -> None:
+        """Update button disabled states based on profiling status."""
+        try:
+            start_btn = self.query_one("#top-start-btn", Button)
+            stop_btn = self.query_one("#top-stop-btn", Button)
+            reset_btn = self.query_one("#top-reset-btn", Button)
+
+            has_client = (self._own_client or self._client) is not None
+
+            start_btn.disabled = self._is_profiling or not has_client
+            stop_btn.disabled = not self._is_profiling
+            reset_btn.disabled = not self._is_profiling
+        except Exception:
+            pass  # Widgets may not be mounted yet
 
     def _start_profiling(self) -> None:
         """Start the profiler and refresh worker."""
@@ -92,6 +125,9 @@ class TopView(Container):
                 self._top_id = response.get("top_id")
                 self._is_profiling = True
                 self._start_refresh_worker()
+                self._update_button_states()
+                header = self.query_one("#top-header", Static)
+                header.update("Profiling... | Samples: 0 | Interval: 10.0ms")
             else:
                 header = self.query_one("#top-header", Static)
                 error = response.get("error", "Unknown error")
@@ -99,6 +135,31 @@ class TopView(Container):
         except Exception as e:
             header = self.query_one("#top-header", Static)
             header.update(f"Error starting profiler: {e}")
+
+    def _stop_profiling(self) -> None:
+        """Stop the profiler and refresh worker."""
+        # Cancel refresh worker first
+        if self._refresh_worker:
+            self._refresh_worker.cancel()
+            self._refresh_worker = None
+
+        client = self._own_client or self._client
+        if not client:
+            return
+        try:
+            response = client.send_command({"type": "top", "action": "stop"})
+            if response.get("status") == "success":
+                self._is_profiling = False
+                self._top_id = None
+                self._update_button_states()
+                header = self.query_one("#top-header", Static)
+                header.update("Top View - Stopped")
+                self.app.notify("Profiler stopped", severity="information")
+            else:
+                error = response.get("error", "Unknown error")
+                self.app.notify(f"Stop failed: {error}", severity="error")
+        except Exception as e:
+            self.app.notify(f"Stop error: {e}", severity="error")
 
     def _start_refresh_worker(self) -> None:
         """Start background refresh worker."""
@@ -162,7 +223,7 @@ class TopView(Container):
             )
 
     def action_reset_stats(self) -> None:
-        """Reset profiling statistics (triggered by 'r' key)."""
+        """Reset profiling statistics (triggered by 'r' key or Reset button)."""
         client = self._own_client or self._client
         if not client or not self._is_profiling:
             self.app.notify("Profiler not running", severity="warning")

@@ -186,7 +186,8 @@ TabPane {
 #stack-controls,
 #monitor-controls,
 #logger-controls,
-#inspect-controls {
+#inspect-controls,
+#top-controls {
     height: auto;
     margin-bottom: 1;
 }
@@ -208,7 +209,8 @@ TabPane {
 #stack-controls Button,
 #monitor-controls Button,
 #logger-controls Button,
-#inspect-controls Button {
+#inspect-controls Button,
+#top-controls Button {
     margin-left: 1;
     min-width: 8;
     max-width: 14;
