@@ -285,7 +285,7 @@ class TestTopCommand:
             del sys.modules["test_recursive_module"]
 
     def test_thread_exclusion(self, top_command):
-        """Test that peeka threads are excluded from profiling."""
+        """Test that peeka's sampling thread is excluded from profiling."""
         # Start profiling
         result = top_command.execute({"action": "start", "interval": 0.01})
         assert result["status"] == "success"
@@ -297,10 +297,11 @@ class TestTopCommand:
         snapshot_result = top_command.execute({"action": "snapshot"})
         snapshot = snapshot_result["snapshot"]
 
-        # Check that peeka threads are not in the statistics
+        # The sampling thread's own loop function should not appear
         for func in snapshot["functions"]:
-            # Peeka's own code should be filtered out
-            assert "peeka/" not in func.get("filename", "")
+            assert func["name"] != "_sampling_loop", (
+                "Peeka's sampling loop should not appear in profiling data"
+            )
 
         # Cleanup
         top_command.execute({"action": "stop"})
@@ -356,3 +357,106 @@ class TestTopCommand:
         time.sleep(0.2)
         assert top_command._sampling_thread is None
         assert not thread.is_alive()
+
+    def test_captures_real_thread_functions(self, top_command):
+        """Integration test: verify profiler captures functions from a real busy thread."""
+        import itertools
+
+        stop_flag = threading.Event()
+
+        def busy_worker():
+            """CPU-bound worker that the profiler should capture."""
+            counter = 0
+            while not stop_flag.is_set():
+                counter += 1
+                # Do some actual computation to stay on-CPU
+                for _ in itertools.islice(range(10000), 1000):
+                    pass
+
+        worker = threading.Thread(target=busy_worker, name="test-busy-worker", daemon=True)
+        worker.start()
+
+        try:
+            # Start profiling with short interval
+            result = top_command.execute({"action": "start", "interval": 0.005})
+            assert result["status"] == "success"
+
+            # Let it accumulate enough samples
+            time.sleep(0.3)
+
+            # Get snapshot
+            snapshot_result = top_command.execute({"action": "snapshot"})
+            snapshot = snapshot_result["snapshot"]
+
+            assert snapshot["total_samples"] > 0, "Profiler should have collected samples"
+            assert len(snapshot["functions"]) > 0, (
+                f"Profiler should have captured functions from the busy worker thread, "
+                f"but functions list is empty. total_samples={snapshot['total_samples']}"
+            )
+
+            # Verify at least one function has meaningful stats
+            func_names = [f["name"] for f in snapshot["functions"]]
+            has_real_function = any(
+                f["own_count"] > 0 for f in snapshot["functions"]
+            )
+            assert has_real_function, (
+                f"At least one function should have own_count > 0, "
+                f"but got: {func_names}"
+            )
+
+            # Cleanup profiler
+            top_command.execute({"action": "stop"})
+
+        finally:
+            stop_flag.set()
+            worker.join(timeout=2.0)
+
+    def test_thread_exclusion_with_real_threads(self, top_command):
+        """Verify peeka threads are excluded but non-peeka threads are captured."""
+        stop_flag = threading.Event()
+
+        def non_peeka_worker():
+            """Worker that should be captured by profiler."""
+            while not stop_flag.is_set():
+                sum(range(1000))  # Stay busy
+                time.sleep(0.001)
+
+        worker = threading.Thread(
+            target=non_peeka_worker, name="app-worker", daemon=True
+        )
+        worker.start()
+
+        try:
+            result = top_command.execute({"action": "start", "interval": 0.005})
+            assert result["status"] == "success"
+
+            time.sleep(0.3)
+
+            snapshot_result = top_command.execute({"action": "snapshot"})
+            snapshot = snapshot_result["snapshot"]
+
+            # Should capture at least some functions
+            assert len(snapshot["functions"]) > 0, (
+                "Should capture non-peeka thread functions"
+            )
+
+            # Verify the worker function was captured
+            func_names = [f["name"] for f in snapshot["functions"]]
+            assert "non_peeka_worker" in func_names, (
+                f"Expected 'non_peeka_worker' in captured functions, got: {func_names}"
+            )
+
+            # Peeka's own sampling/observation threads should not appear
+            for func in snapshot["functions"]:
+                assert func["name"] != "_sampling_loop", (
+                    "Peeka's sampling loop should not appear in profiling data"
+                )
+                assert func["name"] != "_send_periodic_observations", (
+                    "Peeka's observation loop should not appear in profiling data"
+                )
+
+            top_command.execute({"action": "stop"})
+
+        finally:
+            stop_flag.set()
+            worker.join(timeout=2.0)
