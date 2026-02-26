@@ -3,7 +3,7 @@ Process Selector Screen - List and select Python processes to attach.
 """
 
 import subprocess
-from typing import List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -14,6 +14,8 @@ from textual.widgets import DataTable, Header, Footer, Input
 
 class ProcessSelectorScreen(Screen):
     """Screen for selecting a Python process to attach to."""
+
+    _attaching: bool = False
 
     BINDINGS = [
         Binding("r", "refresh", "Refresh"),
@@ -96,29 +98,78 @@ class ProcessSelectorScreen(Screen):
             self._attach_to_process(pid)
 
     def _attach_to_process(self, pid: int) -> None:
-        """Attach to the selected process and show main screen."""
+        """Attach to the selected process in a background worker."""
+        if getattr(self, "_attaching", False):
+            return
+        self._attaching = True
+        self._disable_interaction()
+        self.notify(f"Attaching to process {pid}...", severity="information")
+        self.run_worker(
+            self._do_attach(pid), thread=True, exclusive=True
+        )
+
+    async def _do_attach(self, pid: int) -> None:
+        """Run attachment in worker thread, then push MainScreen on success."""
+        import asyncio
+
         from peeka.core.attach import ProcessAttacher
-        from peeka.tui.screens.main import MainScreen
 
         attacher = ProcessAttacher(pid)
+        result: Optional[Dict[str, Any]] = None
 
         try:
-            self.notify(f"Attaching to process {pid}...", severity="information")
-
             if attacher.attach():
-                session_id = attacher.session_id
-                socket_path = attacher.get_socket_path()
-
-                self.notify(
-                    f"Successfully attached to PID {pid}", severity="information"
-                )
-                self.app.push_screen(MainScreen(pid, session_id, socket_path))
+                result = {
+                    "pid": pid,
+                    "session_id": attacher.session_id,
+                    "socket_path": attacher.get_socket_path(),
+                }
             else:
-                self.notify(f"Failed to attach to process {pid}", severity="error")
+                self.app.call_from_thread(
+                    self.notify, f"Failed to attach to process {pid}", severity="error"
+                )
         except Exception as e:
-            self.notify(f"Attach error: {e}", severity="error")
+            self.app.call_from_thread(
+                self.notify, f"Attach error: {e}", severity="error"
+            )
         finally:
             attacher.cleanup()
+            self._attaching = False
+
+        if result:
+            self.app.call_from_thread(self._on_attach_success, result)
+
+    def _on_attach_success(self, result: Dict[str, Any]) -> None:
+        """Called on main thread after successful attachment."""
+        from peeka.tui.screens.main import MainScreen
+
+        self.notify(
+            f"Successfully attached to PID {result['pid']}", severity="information"
+        )
+        self._enable_interaction()
+        self.app.push_screen(
+            MainScreen(result["pid"], result["session_id"], result["socket_path"])
+        )
+
+    def _disable_interaction(self) -> None:
+        """Disable table and input to prevent double-attach."""
+        try:
+            table = self.query_one("#process-table", DataTable)
+            table.disabled = True
+            filter_input = self.query_one("#filter", Input)
+            filter_input.disabled = True
+        except Exception:
+            pass
+
+    def _enable_interaction(self) -> None:
+        """Re-enable table and input after attach completes."""
+        try:
+            table = self.query_one("#process-table", DataTable)
+            table.disabled = False
+            filter_input = self.query_one("#filter", Input)
+            filter_input.disabled = False
+        except Exception:
+            pass
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """Handle row selection with Enter key."""
