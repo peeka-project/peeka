@@ -116,6 +116,7 @@ class MonitorCommand(BaseCommand):
             timer_thread = threading.Thread(
                 target=self._periodic_output_loop,
                 args=(watch_id, cycle, cycles, stop_event),
+                name=f"peeka-monitor-{watch_id}",
                 daemon=True,
             )
             timer_thread.start()
