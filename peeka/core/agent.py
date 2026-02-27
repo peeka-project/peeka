@@ -29,6 +29,7 @@ class PeekaAgent:
         self._client_connections: list = []
         self._connections_lock = threading.Lock()
 
+        self._client_counter = 0
         self.observer = ObservationManager()
         self.injector = DecoratorInjector(self)
 
@@ -73,25 +74,37 @@ class PeekaAgent:
             self.server.bind(self.sock_path)
             self.server.listen(5)
 
-            Path(f"/tmp/peeka_{self.session_id}.ready").touch()
-
-            thread = threading.Thread(target=self._accept_loop, daemon=True)
-            print("[peeka Agent] Started and listening for connections")
+            # Use an event to ensure the accept loop is actually running
+            # before signaling readiness, avoiding a race where clients
+            # connect before accept() is called.
+            accept_ready = threading.Event()
+            thread = threading.Thread(
+                target=self._accept_loop, args=(accept_ready,),
+                name="peeka-agent-accept", daemon=True,
+            )
             thread.start()
+            accept_ready.wait(timeout=5)
+
+            Path(f"/tmp/peeka_{self.session_id}.ready").touch()
+            print("[peeka Agent] Started and listening for connections")
             print("[peeka Agent] Ready for commands")
 
         except Exception as e:
             print(f"[peeka Agent] Start failed: {e}", file=sys.stderr)
             traceback.print_exc()
 
-    def _accept_loop(self) -> None:
+    def _accept_loop(self, ready_event: threading.Event) -> None:
+        ready_event.set()
         while self.running:
             try:
                 if self.server is None:
                     break
                 conn, _ = self.server.accept()
+                self._client_counter += 1
                 threading.Thread(
-                    target=self._handle_client, args=(conn,), daemon=True
+                    target=self._handle_client, args=(conn,),
+                    name=f"peeka-agent-client-{self._client_counter}",
+                    daemon=True,
                 ).start()
             except Exception as e:
                 if self.running:
