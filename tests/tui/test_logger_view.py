@@ -67,7 +67,7 @@ class TestLoggerView:
             logger_view = app.screen.query_one("LoggerView", LoggerView)
             logger_view.set_client(logger_client)
 
-            logger_view._refresh_loggers()
+            await logger_view._refresh_loggers()
             await pilot.pause()
 
             commands = [cmd.get("action") for cmd in logger_client.commands_received]
@@ -184,7 +184,7 @@ class TestLoggerView:
             filter_input = logger_view.query_one("#logger-filter", Input)
             filter_input.value = "peeka.*"
 
-            logger_view._refresh_loggers()
+            await logger_view._refresh_loggers()
             await pilot.pause()
 
             list_commands = [
@@ -220,7 +220,7 @@ class TestLoggerView:
             logger_view = app.screen.query_one("LoggerView", LoggerView)
             logger_view.set_client(logger_client)
 
-            logger_view._refresh_loggers()
+            await logger_view._refresh_loggers()
             await pilot.pause()
 
             table = logger_view.query_one("#logger-table", DataTable)
@@ -248,7 +248,7 @@ class TestLoggerView:
             logger_view = app.screen.query_one("LoggerView", LoggerView)
             logger_view.set_client(error_client)
 
-            logger_view._refresh_loggers()
+            await logger_view._refresh_loggers()
             await pilot.pause()
 
             table = logger_view.query_one("#logger-table", DataTable)
@@ -302,7 +302,7 @@ class TestLoggerView:
 
             logger_view = app.screen.query_one("LoggerView", LoggerView)
 
-            logger_view._refresh_loggers()
+            await logger_view._refresh_loggers()
             await pilot.pause()
 
             table = logger_view.query_one("#logger-table", DataTable)
@@ -337,7 +337,7 @@ class TestLoggerView:
 
             initial_count = len(logger_client.commands_received)
 
-            logger_view.action_refresh()
+            await logger_view.action_refresh()
             await pilot.pause()
 
             assert len(logger_client.commands_received) > initial_count

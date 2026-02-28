@@ -158,7 +158,7 @@ class TestWatchView:
 
             watch_view = app.screen.query_one("WatchView", WatchView)
             watch_view.set_client(client)
-            watch_view.set_stream_client(stream_client)
+            watch_view._stream_client = stream_client
 
             pattern_input = watch_view.query_one("#watch-pattern", AutoCompleteInput)
             pattern_input.value = "module.func"
@@ -241,7 +241,7 @@ class TestWatchView:
 
             watch_view = app.screen.query_one("WatchView", WatchView)
             watch_view.set_client(client)
-            watch_view.set_stream_client(stream_client)
+            watch_view._stream_client = stream_client
 
             pattern_input = watch_view.query_one("#watch-pattern", AutoCompleteInput)
             pattern_input.value = "module.func"

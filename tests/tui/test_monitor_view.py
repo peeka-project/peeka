@@ -88,7 +88,7 @@ class TestMonitorView:
 
             monitor_view = app.screen.query_one("MonitorView", MonitorView)
             monitor_view.set_client(client)
-            monitor_view.set_stream_client(stream_client)
+            monitor_view._stream_client = stream_client
 
             pattern_input = monitor_view.query_one("#monitor-pattern", AutoCompleteInput)
             interval_input = monitor_view.query_one("#monitor-interval", Input)
@@ -156,7 +156,7 @@ class TestMonitorView:
 
             monitor_view = app.screen.query_one("MonitorView", MonitorView)
             monitor_view.set_client(client)
-            monitor_view.set_stream_client(stream_client)
+            monitor_view._stream_client = stream_client
 
             pattern_input = monitor_view.query_one("#monitor-pattern", AutoCompleteInput)
             pattern_input.value = "module.func"
@@ -202,7 +202,7 @@ class TestMonitorView:
 
             monitor_view = app.screen.query_one("MonitorView", MonitorView)
             monitor_view.set_client(client)
-            monitor_view.set_stream_client(stream_client)
+            monitor_view._stream_client = stream_client
 
             pattern_input = monitor_view.query_one("#monitor-pattern", AutoCompleteInput)
             pattern_input.value = "calculator.add"

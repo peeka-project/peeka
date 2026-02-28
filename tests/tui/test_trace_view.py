@@ -39,7 +39,7 @@ class TestTraceView:
 
             trace_view = app.screen.query_one("TraceView", TraceView)
             trace_view.set_client(client)
-            trace_view.set_stream_client(stream_client)
+            trace_view._stream_client = stream_client
 
             # Set pattern and depth
             pattern_input = trace_view.query_one("#trace-pattern", AutoCompleteInput)
@@ -110,7 +110,7 @@ class TestTraceView:
 
             trace_view = app.screen.query_one("TraceView", TraceView)
             trace_view.set_client(client)
-            trace_view.set_stream_client(stream_client)
+            trace_view._stream_client = stream_client
 
             pattern_input = trace_view.query_one("#trace-pattern", AutoCompleteInput)
             pattern_input.value = "module.func"
@@ -195,7 +195,7 @@ class TestTraceView:
 
             trace_view = app.screen.query_one("TraceView", TraceView)
             trace_view.set_client(client)
-            trace_view.set_stream_client(stream_client)
+            trace_view._stream_client = stream_client
 
             pattern_input = trace_view.query_one("#trace-pattern", AutoCompleteInput)
             pattern_input.value = "module.outer"
@@ -275,7 +275,7 @@ class TestTraceView:
 
             trace_view = app.screen.query_one("TraceView", TraceView)
             trace_view.set_client(client)
-            trace_view.set_stream_client(stream_client)
+            trace_view._stream_client = stream_client
 
             pattern_input = trace_view.query_one("#trace-pattern", AutoCompleteInput)
             pattern_input.value = "module.func"
@@ -351,7 +351,7 @@ class TestTraceView:
 
             trace_view = app.screen.query_one("TraceView", TraceView)
             trace_view.set_client(client)
-            trace_view.set_stream_client(stream_client)
+            trace_view._stream_client = stream_client
 
             pattern_input = trace_view.query_one("#trace-pattern", AutoCompleteInput)
             pattern_input.value = "calculator.compute"
@@ -397,7 +397,7 @@ class TestTraceView:
 
             trace_view = app.screen.query_one("TraceView", TraceView)
             trace_view.set_client(client)
-            trace_view.set_stream_client(stream_client)
+            trace_view._stream_client = stream_client
 
             pattern_input = trace_view.query_one("#trace-pattern", AutoCompleteInput)
             pattern_input.value = "invalid.pattern"
@@ -438,7 +438,7 @@ class TestTraceView:
 
             trace_view = app.screen.query_one("TraceView", TraceView)
             trace_view.set_client(client)
-            trace_view.set_stream_client(stream_client)
+            trace_view._stream_client = stream_client
 
             # Leave pattern empty
             pattern_input = trace_view.query_one("#trace-pattern", AutoCompleteInput)
@@ -477,7 +477,7 @@ class TestTraceView:
 
             trace_view = app.screen.query_one("TraceView", TraceView)
             trace_view.set_client(client)
-            trace_view.set_stream_client(stream_client)
+            trace_view._stream_client = stream_client
 
             pattern_input = trace_view.query_one("#trace-pattern", AutoCompleteInput)
             pattern_input.value = "module.func"
@@ -518,7 +518,7 @@ class TestTraceView:
 
             trace_view = app.screen.query_one("TraceView", TraceView)
             trace_view.set_client(client)
-            trace_view.set_stream_client(stream_client)
+            trace_view._stream_client = stream_client
 
             pattern_input = trace_view.query_one("#trace-pattern", AutoCompleteInput)
             pattern_input.value = "module.func"
@@ -604,14 +604,14 @@ class TestTraceView:
 
             trace_view = app.screen.query_one("TraceView", TraceView)
             trace_view.set_client(client)
-            trace_view.set_stream_client(stream_client)
+            trace_view._stream_client = stream_client
 
             pattern_input = trace_view.query_one("#trace-pattern", AutoCompleteInput)
             pattern_input.value = "module.func"
 
             await trace_view._start_trace()
             await pilot.pause()
-            await pilot.pause()
+            await pilot.pause(0.2)
             await pilot.pause()
 
             # Verify count updated in table
