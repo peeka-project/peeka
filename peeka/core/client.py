@@ -122,7 +122,14 @@ class StreamingAgentClient:
         self._buffer = b""
 
     def send_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
-        """Send a command and receive the immediate response."""
+        """Send a command and receive the immediate response.
+
+        Because the agent broadcasts OBS: frames to ALL connections
+        (including this one), observation data may arrive in the socket
+        buffer before the command response.  We drain any such frames
+        before reading the 4-byte response length so that we don't
+        mis-interpret ``OBS:`` (0x4f42533a) as a payload size.
+        """
         if not self._sock:
             return {"status": "error", "error": "Not connected"}
 
@@ -131,9 +138,29 @@ class StreamingAgentClient:
             self._sock.sendall(len(payload).to_bytes(4, "big"))
             self._sock.sendall(payload)
 
+            # Drain any OBS frames that arrived before the response
+            self._drain_obs_frames()
+
             length_bytes = self._recv_exact(4)
             if not length_bytes:
                 return {"status": "error", "error": "No response received"}
+
+            # After _recv_exact we may have read more data into _buffer.
+            # If the 4 bytes we got look like the OBS prefix, drain and retry.
+            while length_bytes == self.OBS_PREFIX:
+                # We just consumed "OBS:" — read & discard the OBS payload
+                obs_len_bytes = self._recv_exact(4)
+                if not obs_len_bytes:
+                    return {"status": "error", "error": "Truncated OBS frame"}
+                obs_len = int.from_bytes(obs_len_bytes, "big")
+                obs_data = self._recv_exact(obs_len)
+                if not obs_data:
+                    return {"status": "error", "error": "Truncated OBS payload"}
+                # Try reading the next 4 bytes (hopefully the real response)
+                self._drain_obs_frames()
+                length_bytes = self._recv_exact(4)
+                if not length_bytes:
+                    return {"status": "error", "error": "No response received"}
 
             length = int.from_bytes(length_bytes, "big")
             data = self._recv_exact(length)
@@ -201,6 +228,25 @@ class StreamingAgentClient:
             return json.loads(data.decode("utf-8"))
         except json.JSONDecodeError:
             return None
+
+    def _drain_obs_frames(self) -> None:
+        """Remove complete OBS frames sitting at the front of ``_buffer``.
+
+        This is called inside ``send_command`` to skip over any observation
+        broadcasts that arrived before the command response.  Only already-
+        buffered data is considered — we never block waiting for more.
+        """
+        while self._buffer.startswith(self.OBS_PREFIX):
+            header_size = self.PREFIX_LEN + 4  # "OBS:" + 4-byte length
+            if len(self._buffer) < header_size:
+                break  # incomplete header — leave it for the next recv
+            obs_len = int.from_bytes(
+                self._buffer[self.PREFIX_LEN:header_size], "big"
+            )
+            total_size = header_size + obs_len
+            if len(self._buffer) < total_size:
+                break  # incomplete payload — leave it
+            self._buffer = self._buffer[total_size:]
 
     def _recv_exact(self, size: int) -> bytes:
         """Receive exactly ``size`` bytes, using buffer first."""
