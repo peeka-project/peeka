@@ -10,9 +10,11 @@ from textual.containers import Container, Vertical, Horizontal
 from textual.widgets import Static, DataTable, Input, Button, Tree
 from textual.worker import Worker, get_current_worker
 
+from peeka.tui.completion import CompletionSource
+from peeka.tui.widgets.autocomplete_input import AutoCompleteInput
+
 if TYPE_CHECKING:
     from peeka.core.client import StreamingAgentClient
-
 
 class StackView(Container):
     """Stack view for tracing function call stacks."""
@@ -27,14 +29,22 @@ class StackView(Container):
         self.pid = pid
         self._client: Optional["StreamingAgentClient"] = None
         self._stream_client: Optional["StreamingAgentClient"] = None
+        self._completion_source: Optional[CompletionSource] = None
         self._workers: Dict[str, Worker] = {}
         self._trace_counts: Dict[str, int] = {}
 
     def set_client(self, client: "StreamingAgentClient") -> None:
         self._client = client
+        self._completion_source = CompletionSource(client)
 
     def set_stream_client(self, client: "StreamingAgentClient") -> None:
         self._stream_client = client
+
+    def _get_pattern_completions(self, prefix: str):
+        """Get completions for pattern input."""
+        if self._completion_source:
+            return self._completion_source.get_completions(prefix)
+        return []
 
     async def action_start_trace(self) -> None:
         """Start tracing (triggered by Enter key)."""
@@ -48,8 +58,9 @@ class StackView(Container):
         yield Container(
             Horizontal(
                 Static("Pattern:", classes="input-label"),
-                Input(
+                AutoCompleteInput(
                     placeholder="module.Class.method",
+                    completions_callback=self._get_pattern_completions,
                     id="stack-pattern",
                 ),
                 Button("Trace", id="trace-btn", variant="primary", flat=True),
@@ -137,8 +148,11 @@ class StackView(Container):
             self.app.notify("Not connected to agent", severity="error")
             return
 
-        pattern_input = self.query_one("#stack-pattern", Input)
-        pattern = pattern_input.value.strip()
+        pattern_widget = self.query_one("#stack-pattern")
+        if isinstance(pattern_widget, AutoCompleteInput):
+            pattern = pattern_widget.value.strip()
+        else:
+            pattern = pattern_widget.value.strip()  # type: ignore
 
         if not pattern:
             self.app.notify("Please enter a function pattern", severity="warning")
