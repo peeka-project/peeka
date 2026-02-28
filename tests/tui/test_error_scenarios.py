@@ -143,7 +143,7 @@ class TestErrorScenarios:
 
             watch_view = app.screen.query_one("WatchView", WatchView)
             watch_view.set_client(client)
-            watch_view.set_stream_client(stream_client)
+            watch_view._stream_client = stream_client
 
             pattern_input = watch_view.query_one("#watch-pattern", AutoCompleteInput)
             pattern_input.value = "module.func"
@@ -186,7 +186,7 @@ class TestErrorScenarios:
 
             trace_view = app.screen.query_one("TraceView", TraceView)
             trace_view.set_client(client)
-            trace_view.set_stream_client(stream_client)
+            trace_view._stream_client = stream_client
 
             pattern_input = trace_view.query_one("#trace-pattern", AutoCompleteInput)
             pattern_input.value = "module.func"
@@ -227,7 +227,7 @@ class TestErrorScenarios:
 
             stack_view = app.screen.query_one("StackView", StackView)
             stack_view.set_client(client)
-            stack_view.set_stream_client(stream_client)
+            stack_view._stream_client = stream_client
 
             pattern_input = stack_view.query_one("#stack-pattern", AutoCompleteInput)
             pattern_input.value = "module.func"
@@ -262,7 +262,7 @@ class TestErrorScenarios:
 
             watch_view = app.screen.query_one("WatchView", WatchView)
             watch_view.set_client(client)
-            watch_view.set_stream_client(stream_client)
+            watch_view._stream_client = stream_client
 
             pattern_input = watch_view.query_one("#watch-pattern", AutoCompleteInput)
             pattern_input.value = "module.func"
@@ -315,7 +315,7 @@ class TestErrorScenarios:
             # Start watch
             watch_view = app.screen.query_one("WatchView", WatchView)
             watch_view.set_client(client)
-            watch_view.set_stream_client(stream_client)
+            watch_view._stream_client = stream_client
 
             pattern_input = watch_view.query_one("#watch-pattern", AutoCompleteInput)
             pattern_input.value = "module.func"
@@ -395,7 +395,7 @@ class TestErrorScenarios:
             # Start watch
             watch_view = app.screen.query_one("WatchView", WatchView)
             watch_view.set_client(watch_client)
-            watch_view.set_stream_client(watch_stream_client)
+            watch_view._stream_client = watch_stream_client
 
             pattern_input = watch_view.query_one("#watch-pattern", AutoCompleteInput)
             pattern_input.value = "module.func"
@@ -409,7 +409,7 @@ class TestErrorScenarios:
 
             monitor_view = app.screen.query_one("MonitorView", MonitorView)
             monitor_view.set_client(monitor_client)
-            monitor_view.set_stream_client(monitor_stream_client)
+            monitor_view._stream_client = monitor_stream_client
 
             pattern_input_monitor = monitor_view.query_one("#monitor-pattern", AutoCompleteInput)
             pattern_input_monitor.value = "module.func"

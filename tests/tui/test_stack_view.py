@@ -96,7 +96,7 @@ class TestStackView:
 
             stack_view = app.screen.query_one("StackView", StackView)
             stack_view.set_client(client)
-            stack_view.set_stream_client(stream_client)
+            stack_view._stream_client = stream_client
 
             pattern_input = stack_view.query_one("#stack-pattern", AutoCompleteInput)
             pattern_input.value = "module.func"
@@ -153,7 +153,7 @@ class TestStackView:
 
             stack_view = app.screen.query_one("StackView", StackView)
             stack_view.set_client(client)
-            stack_view.set_stream_client(stream_client)
+            stack_view._stream_client = stream_client
 
             pattern_input = stack_view.query_one("#stack-pattern", AutoCompleteInput)
             pattern_input.value = "test.func"
@@ -219,7 +219,7 @@ class TestStackView:
 
             stack_view = app.screen.query_one("StackView", StackView)
             stack_view.set_client(client)
-            stack_view.set_stream_client(stream_client)
+            stack_view._stream_client = stream_client
 
             pattern_input = stack_view.query_one("#stack-pattern", AutoCompleteInput)
             pattern_input.value = "module.func"
@@ -372,7 +372,7 @@ class TestStackView:
 
             stack_view = app.screen.query_one("StackView", StackView)
             stack_view.set_client(client)
-            stack_view.set_stream_client(stream_client)
+            stack_view._stream_client = stream_client
 
             pattern_input = stack_view.query_one("#stack-pattern", AutoCompleteInput)
             pattern_input.value = "test.func"
@@ -426,7 +426,7 @@ class TestStackView:
 
             stack_view = app.screen.query_one("StackView", StackView)
             stack_view.set_client(client)
-            stack_view.set_stream_client(stream_client)
+            stack_view._stream_client = stream_client
 
             pattern_input = stack_view.query_one("#stack-pattern", AutoCompleteInput)
             pattern_input.value = "test.func"
