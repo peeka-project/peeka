@@ -197,7 +197,9 @@ TabPane {
 #trace-controls Input,
 #trace-controls AutoCompleteInput,
 #stack-controls Input,
+#stack-controls AutoCompleteInput,
 #monitor-controls Input,
+#monitor-controls AutoCompleteInput,
 #logger-controls Input,
 #inspect-controls Input {
     width: 1fr;

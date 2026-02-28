@@ -10,9 +10,11 @@ from textual.containers import Container, Vertical, Horizontal
 from textual.widgets import Static, DataTable, Input, Button
 from textual.worker import Worker, get_current_worker
 
+from peeka.tui.completion import CompletionSource
+from peeka.tui.widgets.autocomplete_input import AutoCompleteInput
+
 if TYPE_CHECKING:
     from peeka.core.client import StreamingAgentClient
-
 
 class MonitorView(Container):
     """Monitor view for performance statistics."""
@@ -27,20 +29,29 @@ class MonitorView(Container):
         self.pid = pid
         self._client: Optional["StreamingAgentClient"] = None
         self._stream_client: Optional["StreamingAgentClient"] = None
+        self._completion_source: Optional[CompletionSource] = None
         self._workers: Dict[str, Worker] = {}
 
     def set_client(self, client: "StreamingAgentClient") -> None:
         self._client = client
+        self._completion_source = CompletionSource(client)
 
     def set_stream_client(self, client: "StreamingAgentClient") -> None:
         self._stream_client = client
+
+    def _get_pattern_completions(self, prefix: str):
+        """Get completions for pattern input."""
+        if self._completion_source:
+            return self._completion_source.get_completions(prefix)
+        return []
 
     def compose(self) -> ComposeResult:
         yield Container(
             Horizontal(
                 Static("Pattern:", classes="input-label"),
-                Input(
+                AutoCompleteInput(
                     placeholder="module.Class.method",
+                    completions_callback=self._get_pattern_completions,
                     id="monitor-pattern",
                 ),
                 Static("Interval:", classes="input-label"),
@@ -99,10 +110,13 @@ class MonitorView(Container):
             self.app.notify("Not connected to agent", severity="error")
             return
 
-        pattern_input = self.query_one("#monitor-pattern", Input)
-        interval_input = self.query_one("#monitor-interval", Input)
+        pattern_widget = self.query_one("#monitor-pattern")
+        if isinstance(pattern_widget, AutoCompleteInput):
+            pattern = pattern_widget.value.strip()
+        else:
+            pattern = pattern_widget.value.strip()  # type: ignore
 
-        pattern = pattern_input.value.strip()
+        interval_input = self.query_one("#monitor-interval", Input)
         if not pattern:
             self.app.notify("Please enter a function pattern", severity="warning")
             return
