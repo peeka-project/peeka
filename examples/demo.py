@@ -41,6 +41,26 @@ class Calculator:
         self.history.append(("divide", a, b, result))
         return result
 
+    def calculate(self, a: int, b: int) -> dict:
+        """Compound calculation - good for trace demo.
+
+        Calls multiple sub-methods with varying cost, then returns.
+        Use: peeka-cli trace 'demo.Calculator.calculate' --depth 2
+        """
+        sum_result = self.add(a, b)
+        prod_result = self.multiply(a, b)
+        if b != 0:
+            div_result = self.divide(a, b)
+        else:
+            div_result = 0.0
+        slow_val = slow_operation(sum_result)
+        return {
+            "sum": sum_result,
+            "product": prod_result,
+            "division": div_result,
+            "slow": slow_val,
+        }
+
     def get_history(self) -> list:
         """Get calculation history"""
         return self.history.copy()
@@ -143,6 +163,9 @@ def demo_loop():
 
             if counter % 10 == 0:
                 print(f"[{counter}] Operations performed: {len(calc.get_history())}")
+
+            if counter % 3 == 0:
+                calc.calculate(counter, counter + 1)
 
             time.sleep(0.5)
 
