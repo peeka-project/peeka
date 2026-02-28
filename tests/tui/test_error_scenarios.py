@@ -229,7 +229,7 @@ class TestErrorScenarios:
             stack_view.set_client(client)
             stack_view.set_stream_client(stream_client)
 
-            pattern_input = stack_view.query_one("#stack-pattern", Input)
+            pattern_input = stack_view.query_one("#stack-pattern", AutoCompleteInput)
             pattern_input.value = "module.func"
 
             await stack_view._start_trace()
@@ -411,7 +411,7 @@ class TestErrorScenarios:
             monitor_view.set_client(monitor_client)
             monitor_view.set_stream_client(monitor_stream_client)
 
-            pattern_input_monitor = monitor_view.query_one("#monitor-pattern", Input)
+            pattern_input_monitor = monitor_view.query_one("#monitor-pattern", AutoCompleteInput)
             pattern_input_monitor.value = "module.func"
 
             await monitor_view._start_monitor()

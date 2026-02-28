@@ -1,7 +1,9 @@
 """Tests for StackView - streaming, data-flow, and error handling."""
 
 import pytest
-from textual.widgets import DataTable, Tree, Input
+from textual.widgets import DataTable, Tree
+
+from peeka.tui.widgets.autocomplete_input import AutoCompleteInput
 
 from peeka.tui.app import PeekaApp
 from peeka.tui.screens.main import MainScreen
@@ -33,7 +35,7 @@ class TestStackView:
             stack_view = app.screen.query_one("StackView", StackView)
             stack_view.set_client(client)
 
-            pattern_input = stack_view.query_one("#stack-pattern", Input)
+            pattern_input = stack_view.query_one("#stack-pattern", AutoCompleteInput)
             pattern_input.value = "demo.Calculator.add"
 
             await stack_view._start_trace()
@@ -96,7 +98,7 @@ class TestStackView:
             stack_view.set_client(client)
             stack_view.set_stream_client(stream_client)
 
-            pattern_input = stack_view.query_one("#stack-pattern", Input)
+            pattern_input = stack_view.query_one("#stack-pattern", AutoCompleteInput)
             pattern_input.value = "module.func"
 
             await stack_view._start_trace()
@@ -153,7 +155,7 @@ class TestStackView:
             stack_view.set_client(client)
             stack_view.set_stream_client(stream_client)
 
-            pattern_input = stack_view.query_one("#stack-pattern", Input)
+            pattern_input = stack_view.query_one("#stack-pattern", AutoCompleteInput)
             pattern_input.value = "test.func"
 
             await stack_view._start_trace()
@@ -219,7 +221,7 @@ class TestStackView:
             stack_view.set_client(client)
             stack_view.set_stream_client(stream_client)
 
-            pattern_input = stack_view.query_one("#stack-pattern", Input)
+            pattern_input = stack_view.query_one("#stack-pattern", AutoCompleteInput)
             pattern_input.value = "module.func"
 
             await stack_view._start_trace()
@@ -253,7 +255,7 @@ class TestStackView:
             stack_view = app.screen.query_one("StackView", StackView)
             stack_view.set_client(error_client)
 
-            pattern_input = stack_view.query_one("#stack-pattern", Input)
+            pattern_input = stack_view.query_one("#stack-pattern", AutoCompleteInput)
             pattern_input.value = "invalid.pattern"
 
             await stack_view._start_trace()
@@ -284,7 +286,7 @@ class TestStackView:
             stack_view = app.screen.query_one("StackView", StackView)
             stack_view.set_client(client)
 
-            pattern_input = stack_view.query_one("#stack-pattern", Input)
+            pattern_input = stack_view.query_one("#stack-pattern", AutoCompleteInput)
             pattern_input.value = ""
 
             await stack_view._start_trace()
@@ -306,7 +308,7 @@ class TestStackView:
 
             stack_view = app.screen.query_one("StackView", StackView)
 
-            pattern_input = stack_view.query_one("#stack-pattern", Input)
+            pattern_input = stack_view.query_one("#stack-pattern", AutoCompleteInput)
             pattern_input.value = "test.func"
 
             await stack_view._start_trace()
@@ -372,7 +374,7 @@ class TestStackView:
             stack_view.set_client(client)
             stack_view.set_stream_client(stream_client)
 
-            pattern_input = stack_view.query_one("#stack-pattern", Input)
+            pattern_input = stack_view.query_one("#stack-pattern", AutoCompleteInput)
             pattern_input.value = "test.func"
 
             await stack_view._start_trace()
@@ -426,7 +428,7 @@ class TestStackView:
             stack_view.set_client(client)
             stack_view.set_stream_client(stream_client)
 
-            pattern_input = stack_view.query_one("#stack-pattern", Input)
+            pattern_input = stack_view.query_one("#stack-pattern", AutoCompleteInput)
             pattern_input.value = "test.func"
 
             await stack_view._start_trace()

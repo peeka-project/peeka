@@ -3,6 +3,8 @@
 import pytest
 from textual.widgets import DataTable, Input
 
+from peeka.tui.widgets.autocomplete_input import AutoCompleteInput
+
 from peeka.tui.app import PeekaApp
 from peeka.tui.screens.main import MainScreen
 from peeka.tui.views.monitor import MonitorView
@@ -34,7 +36,7 @@ class TestMonitorView:
             monitor_view.set_client(client)
 
             # Set pattern and interval in input widgets
-            pattern_input = monitor_view.query_one("#monitor-pattern", Input)
+            pattern_input = monitor_view.query_one("#monitor-pattern", AutoCompleteInput)
             interval_input = monitor_view.query_one("#monitor-interval", Input)
             pattern_input.value = "module.Class.method"
             interval_input.value = "10"
@@ -88,7 +90,7 @@ class TestMonitorView:
             monitor_view.set_client(client)
             monitor_view.set_stream_client(stream_client)
 
-            pattern_input = monitor_view.query_one("#monitor-pattern", Input)
+            pattern_input = monitor_view.query_one("#monitor-pattern", AutoCompleteInput)
             interval_input = monitor_view.query_one("#monitor-interval", Input)
             pattern_input.value = "module.func"
             interval_input.value = "5"
@@ -156,7 +158,7 @@ class TestMonitorView:
             monitor_view.set_client(client)
             monitor_view.set_stream_client(stream_client)
 
-            pattern_input = monitor_view.query_one("#monitor-pattern", Input)
+            pattern_input = monitor_view.query_one("#monitor-pattern", AutoCompleteInput)
             pattern_input.value = "module.func"
 
             await monitor_view._start_monitor()
@@ -202,7 +204,7 @@ class TestMonitorView:
             monitor_view.set_client(client)
             monitor_view.set_stream_client(stream_client)
 
-            pattern_input = monitor_view.query_one("#monitor-pattern", Input)
+            pattern_input = monitor_view.query_one("#monitor-pattern", AutoCompleteInput)
             pattern_input.value = "calculator.add"
 
             await monitor_view._start_monitor()
@@ -232,7 +234,7 @@ class TestMonitorView:
             monitor_view = app.screen.query_one("MonitorView", MonitorView)
             monitor_view.set_client(client)
 
-            pattern_input = monitor_view.query_one("#monitor-pattern", Input)
+            pattern_input = monitor_view.query_one("#monitor-pattern", AutoCompleteInput)
             pattern_input.value = "invalid.pattern"
 
             await monitor_view._start_monitor()
@@ -267,7 +269,7 @@ class TestMonitorView:
             monitor_view.set_client(client)
 
             # Leave pattern input empty
-            pattern_input = monitor_view.query_one("#monitor-pattern", Input)
+            pattern_input = monitor_view.query_one("#monitor-pattern", AutoCompleteInput)
             pattern_input.value = ""
 
             await monitor_view._start_monitor()
@@ -300,7 +302,7 @@ class TestMonitorView:
             monitor_view = app.screen.query_one("MonitorView", MonitorView)
             monitor_view.set_client(client)
 
-            pattern_input = monitor_view.query_one("#monitor-pattern", Input)
+            pattern_input = monitor_view.query_one("#monitor-pattern", AutoCompleteInput)
             interval_input = monitor_view.query_one("#monitor-interval", Input)
             pattern_input.value = "module.func"
             interval_input.value = "invalid"
