@@ -3,6 +3,7 @@ Monitor View - Performance statistics interface.
 """
 
 from typing import Optional, Dict, TYPE_CHECKING
+import logging
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -29,15 +30,33 @@ class MonitorView(Container):
         self.pid = pid
         self._client: Optional["StreamingAgentClient"] = None
         self._stream_client: Optional["StreamingAgentClient"] = None
+        self._socket_path: Optional[str] = None
         self._completion_source: Optional[CompletionSource] = None
         self._workers: Dict[str, Worker] = {}
+        self._log = logging.getLogger(__name__)
 
     def set_client(self, client: "StreamingAgentClient") -> None:
         self._client = client
+        self._socket_path = client.socket_path
         self._completion_source = CompletionSource(client)
+        self._connect_own_stream_client()
 
-    def set_stream_client(self, client: "StreamingAgentClient") -> None:
-        self._stream_client = client
+    def _connect_own_stream_client(self) -> None:
+        """Create a dedicated StreamingAgentClient for streaming observations."""
+        if not self._socket_path:
+            return
+        try:
+            from peeka.core.client import StreamingAgentClient
+            self._stream_client = StreamingAgentClient(self._socket_path)
+            result = self._stream_client.connect()
+            if result.get("status") != "success":
+                self._log.warning(
+                    "Monitor stream client failed: %s", result.get("error")
+                )
+                self._stream_client = None
+        except Exception as e:
+            self._log.warning("Monitor stream client error: %s", e)
+            self._stream_client = None
 
     def _get_pattern_completions(self, prefix: str):
         """Get completions for pattern input."""
@@ -78,14 +97,14 @@ class MonitorView(Container):
 
         table = self.query_one("#stats-table", DataTable)
         table.add_columns(
-            "Pattern",
-            "Calls",
-            "Success",
-            "Fail",
-            "Avg(ms)",
-            "Min(ms)",
-            "Max(ms)",
-            "P95(ms)",
+            ("Pattern", "Pattern"),
+            ("Calls", "Calls"),
+            ("Success", "Success"),
+            ("Fail", "Fail"),
+            ("Avg(ms)", "Avg(ms)"),
+            ("Min(ms)", "Min(ms)"),
+            ("Max(ms)", "Max(ms)"),
+            ("P95(ms)", "P95(ms)"),
         )
 
         stats_panel = self.query_one("#stats-panel", Vertical)
@@ -133,7 +152,8 @@ class MonitorView(Container):
             "type": "monitor",
             "action": "start",
             "pattern": pattern,
-            "interval": 3,  # seconds
+            "cycle": interval,
+            "cycles": -1,
         }
 
         worker = self.run_worker(
@@ -258,10 +278,13 @@ class MonitorView(Container):
         self.app.notify("All monitors stopped", severity="information")
 
     def on_unmount(self) -> None:
-        """Cancel all workers when view is unmounted."""
+        """Cancel all workers and disconnect stream client when view is unmounted."""
         for worker in self._workers.values():
             if worker:
                 worker.cancel()
+        if self._stream_client:
+            self._stream_client.disconnect()
+            self._stream_client = None
 
     def cleanup_for_exit(self) -> None:
         """Stop all monitors before TUI exit."""
@@ -284,3 +307,6 @@ class MonitorView(Container):
                 pass
 
         self._workers.clear()
+        if self._stream_client:
+            self._stream_client.disconnect()
+            self._stream_client = None

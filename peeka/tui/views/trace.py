@@ -2,6 +2,7 @@
 Trace View - Function call tree tracing interface.
 """
 
+import logging
 from typing import TYPE_CHECKING, Optional, Dict, Any, List
 
 from textual.app import ComposeResult
@@ -36,15 +37,33 @@ class TraceView(Container):
         self._completion_source: Optional[CompletionSource] = None
         self._client: Optional["StreamingAgentClient"] = None
         self._stream_client: Optional["StreamingAgentClient"] = None
+        self._socket_path: Optional[str] = None
         self._current_tree_nodes: Dict[str, TreeNode] = {}  # For tree node management
+        self._log = logging.getLogger(__name__)
 
     def set_client(self, client: "StreamingAgentClient") -> None:
         """Set agent client for commands and completion."""
         self._client = client
+        self._socket_path = client.socket_path
         self._completion_source = CompletionSource(client)
+        self._connect_own_stream_client()
 
-    def set_stream_client(self, client: "StreamingAgentClient") -> None:
-        self._stream_client = client
+    def _connect_own_stream_client(self) -> None:
+        """Create a dedicated StreamingAgentClient for streaming observations."""
+        if not self._socket_path:
+            return
+        try:
+            from peeka.core.client import StreamingAgentClient
+            self._stream_client = StreamingAgentClient(self._socket_path)
+            result = self._stream_client.connect()
+            if result.get("status") != "success":
+                self._log.warning(
+                    "Trace stream client failed: %s", result.get("error")
+                )
+                self._stream_client = None
+        except Exception as e:
+            self._log.warning("Trace stream client error: %s", e)
+            self._stream_client = None
 
     async def action_start_trace(self) -> None:
         """Start tracing (triggered by Enter key)."""
@@ -113,7 +132,12 @@ class TraceView(Container):
         container.border_title = "Trace"
 
         table = self.query_one("#trace-table", DataTable)
-        table.add_columns("ID", "Pattern", "Count", "Status")
+        table.add_columns(
+            ("ID", "ID"),
+            ("Pattern", "Pattern"),
+            ("Count", "Count"),
+            ("Status", "Status"),
+        )
         table.cursor_type = "row"
 
         trace_list = self.query_one("#trace-list", Vertical)
@@ -132,11 +156,14 @@ class TraceView(Container):
         stats.update("[dim]No trace data yet[/dim]")
 
     def on_unmount(self) -> None:
-        """Cancel all workers when view is unmounted."""
+        """Cancel all workers and disconnect stream client when view is unmounted."""
         for trace_info in self._active_traces.values():
             worker = trace_info.get("worker")
             if worker:
                 worker.cancel()
+        if self._stream_client:
+            self._stream_client.disconnect()
+            self._stream_client = None
 
     def cleanup_for_exit(self) -> None:
         """Stop all traces and reset instrumented functions before TUI exit."""
@@ -173,6 +200,9 @@ class TraceView(Container):
                     pass
 
         self._active_traces.clear()
+        if self._stream_client:
+            self._stream_client.disconnect()
+            self._stream_client = None
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
