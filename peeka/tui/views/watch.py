@@ -3,6 +3,7 @@ Watch View - Function observation interface.
 """
 
 import json
+import logging
 from collections import deque
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -129,16 +130,34 @@ class WatchView(Container):
         self._completion_source: Optional[CompletionSource] = None
         self._client: Optional["StreamingAgentClient"] = None
         self._stream_client: Optional["StreamingAgentClient"] = None
+        self._socket_path: Optional[str] = None
         self._observations: deque[dict] = deque(maxlen=self.MAX_OBSERVATIONS)
         self._obs_counter: int = 0
+        self._log = logging.getLogger(__name__)
 
     def set_client(self, client: "StreamingAgentClient") -> None:
         """Set agent client for commands and completion."""
         self._client = client
+        self._socket_path = client.socket_path
         self._completion_source = CompletionSource(client)
+        self._connect_own_stream_client()
 
-    def set_stream_client(self, client: "StreamingAgentClient") -> None:
-        self._stream_client = client
+    def _connect_own_stream_client(self) -> None:
+        """Create a dedicated StreamingAgentClient for streaming observations."""
+        if not self._socket_path:
+            return
+        try:
+            from peeka.core.client import StreamingAgentClient
+            self._stream_client = StreamingAgentClient(self._socket_path)
+            result = self._stream_client.connect()
+            if result.get("status") != "success":
+                self._log.warning(
+                    "Watch stream client failed: %s", result.get("error")
+                )
+                self._stream_client = None
+        except Exception as e:
+            self._log.warning("Watch stream client error: %s", e)
+            self._stream_client = None
 
     async def action_start_watch(self) -> None:
         """Start watching (triggered by Enter key)."""
@@ -196,7 +215,12 @@ class WatchView(Container):
 
         # Active watches table
         table = self.query_one("#watch-table", DataTable)
-        table.add_columns("ID", "Pattern", "Count", "Status")
+        table.add_columns(
+            ("ID", "ID"),
+            ("Pattern", "Pattern"),
+            ("Count", "Count"),
+            ("Status", "Status"),
+        )
         table.cursor_type = "row"
 
         watch_list = self.query_one("#watch-list", Vertical)
@@ -204,7 +228,14 @@ class WatchView(Container):
 
         # Observations table
         obs_table = self.query_one("#observations-table", DataTable)
-        obs_table.add_columns("#", "Function", "Args", "Result", "ms", "")
+        obs_table.add_columns(
+            ("#", "#"),
+            ("Function", "Function"),
+            ("Args", "Args"),
+            ("Result", "Result"),
+            ("ms", "ms"),
+            ("", "Status"),
+        )
         obs_table.cursor_type = "row"
 
         observations_panel = self.query_one("#observations-panel", Vertical)
@@ -216,11 +247,14 @@ class WatchView(Container):
         detail.show_root = False
 
     def on_unmount(self) -> None:
-        """Cancel all workers when view is unmounted."""
+        """Cancel all workers and disconnect stream client when view is unmounted."""
         for watch_info in self._active_watches.values():
             worker = watch_info.get("worker")
             if worker:
                 worker.cancel()
+        if self._stream_client:
+            self._stream_client.disconnect()
+            self._stream_client = None
 
     def cleanup_for_exit(self) -> None:
         """Stop all watches and reset instrumented functions before TUI exit."""
@@ -257,6 +291,9 @@ class WatchView(Container):
                     pass
 
         self._active_watches.clear()
+        if self._stream_client:
+            self._stream_client.disconnect()
+            self._stream_client = None
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""

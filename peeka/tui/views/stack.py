@@ -3,6 +3,7 @@ Stack View - Call stack tracing interface.
 """
 
 from typing import Optional, Dict, TYPE_CHECKING
+import logging
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -29,16 +30,34 @@ class StackView(Container):
         self.pid = pid
         self._client: Optional["StreamingAgentClient"] = None
         self._stream_client: Optional["StreamingAgentClient"] = None
+        self._socket_path: Optional[str] = None
         self._completion_source: Optional[CompletionSource] = None
         self._workers: Dict[str, Worker] = {}
         self._trace_counts: Dict[str, int] = {}
+        self._log = logging.getLogger(__name__)
 
     def set_client(self, client: "StreamingAgentClient") -> None:
         self._client = client
+        self._socket_path = client.socket_path
         self._completion_source = CompletionSource(client)
+        self._connect_own_stream_client()
 
-    def set_stream_client(self, client: "StreamingAgentClient") -> None:
-        self._stream_client = client
+    def _connect_own_stream_client(self) -> None:
+        """Create a dedicated StreamingAgentClient for streaming observations."""
+        if not self._socket_path:
+            return
+        try:
+            from peeka.core.client import StreamingAgentClient
+            self._stream_client = StreamingAgentClient(self._socket_path)
+            result = self._stream_client.connect()
+            if result.get("status") != "success":
+                self._log.warning(
+                    "Stack stream client failed: %s", result.get("error")
+                )
+                self._stream_client = None
+        except Exception as e:
+            self._log.warning("Stack stream client error: %s", e)
+            self._stream_client = None
 
     def _get_pattern_completions(self, prefix: str):
         """Get completions for pattern input."""
@@ -88,7 +107,12 @@ class StackView(Container):
         container.border_title = "Stack"
 
         table = self.query_one("#trace-table", DataTable)
-        table.add_columns("ID", "Pattern", "Captures", "Status")
+        table.add_columns(
+            ("ID", "ID"),
+            ("Pattern", "Pattern"),
+            ("Captures", "Captures"),
+            ("Status", "Status"),
+        )
         table.cursor_type = "row"
 
         trace_list = self.query_one("#trace-list", Vertical)
@@ -98,10 +122,13 @@ class StackView(Container):
         stack_panel.border_title = "Call Stack"
 
     def on_unmount(self) -> None:
-        """Cancel all workers when view is unmounted."""
+        """Cancel all workers and disconnect stream client when view is unmounted."""
         for worker in self._workers.values():
             if worker:
                 worker.cancel()
+        if self._stream_client:
+            self._stream_client.disconnect()
+            self._stream_client = None
 
     def cleanup_for_exit(self) -> None:
         """Stop all stack traces and reset instrumented functions before TUI exit."""
@@ -136,6 +163,9 @@ class StackView(Container):
 
         self._workers.clear()
         self._trace_counts.clear()
+        if self._stream_client:
+            self._stream_client.disconnect()
+            self._stream_client = None
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "trace-btn":
