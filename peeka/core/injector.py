@@ -805,16 +805,10 @@ class DecoratorInjector:
         import sys
 
         call_stack = []
-        call_times = {}
+        completed_calls = []
 
         def monitoring_callback(code, instruction_offset, *callback_args):
             """Callback for sys.monitoring events."""
-            # Get current frame
-            try:
-                frame = sys._getframe(1)
-            except ValueError:
-                return
-
             func_name = f"{code.co_filename}:{code.co_name}"
 
             # Determine event type based on callback args
@@ -825,57 +819,70 @@ class DecoratorInjector:
                 # PY_RETURN event
                 event = "return"
 
-            # Skip if too deep
-            if len(call_stack) >= max_depth:
-                return
-
-            # Skip built-in and stdlib if requested
-            if skip_builtin:
-                if code.co_filename.startswith(("<", "/")):
-                    # Built-in or C extension
-                    return
-                if (
-                    "site-packages" not in code.co_filename
-                    and "dist-packages" not in code.co_filename
-                ):
-                    # Check if it's in stdlib
-                    import os
-
-                    py_path = os.path.dirname(os.__file__)
-                    if code.co_filename.startswith(py_path):
-                        return
-
             if event == "call":
+                # Skip if too deep
+                if len(call_stack) >= max_depth:
+                    return
+
+                # Skip built-in and stdlib if requested
+                if skip_builtin:
+                    if code.co_filename.startswith("<"):
+                        return
+                    if (
+                        "site-packages" not in code.co_filename
+                        and "dist-packages" not in code.co_filename
+                    ):
+                        import os
+
+                        py_path = os.path.dirname(os.__file__)
+                        if code.co_filename.startswith(py_path):
+                            return
+
                 call_entry = {
                     "depth": len(call_stack) + 1,
                     "function": func_name,
                     "filename": code.co_filename,
-                    "lineno": frame.f_lineno,
+                    "lineno": code.co_firstlineno,
                     "start_time": time.perf_counter(),
                     "children": [],
+                    "_code": code,
                 }
-                call_times[id(frame)] = call_entry
                 call_stack.append(call_entry)
 
             elif event == "return":
-                frame_id = id(frame)
-                if frame_id in call_times:
-                    call_entry = call_times[frame_id]
-                    duration_ms = (
-                        time.perf_counter() - call_entry["start_time"]
-                    ) * 1000
+                # Find matching entry on the stack by code object.
+                # PY_RETURN fires in LIFO order so top of stack should match.
+                if not call_stack:
+                    return
+                call_entry = call_stack[-1]
+                if call_entry.get("_code") is not code:
+                    # Not the expected return (call was skipped by filter)
+                    return
 
-                    # Only keep if above minimum duration
-                    if duration_ms >= min_duration:
-                        call_entry["duration_ms"] = round(duration_ms, 3)
-                        del call_entry["start_time"]
+                call_stack.pop()
+                duration_ms = (
+                    time.perf_counter() - call_entry["start_time"]
+                ) * 1000
 
-                        # Pop from stack
-                        if call_stack and call_stack[-1] is call_entry:
-                            call_stack.pop()
+                # Clean up internal keys
+                del call_entry["_code"]
 
-                    del call_times[frame_id]
+                # Only keep if above minimum duration
+                if duration_ms >= min_duration:
+                    call_entry["duration_ms"] = round(duration_ms, 3)
+                    del call_entry["start_time"]
 
+                    # Link to parent's children list
+                    if call_stack:
+                        call_stack[-1]["children"].append(call_entry)
+                    else:
+                        completed_calls.append(call_entry)
+                else:
+                    # Below min_duration: discard but migrate children up
+                    if call_entry["children"] and call_stack:
+                        call_stack[-1]["children"].extend(
+                            call_entry["children"]
+                        )
         # Register monitoring
         tool_id = 0
         try:
@@ -902,9 +909,7 @@ class DecoratorInjector:
                 duration_ms = (time.perf_counter() - start_time) * 1000
 
                 # Build tree structure from flat list
-                children = [
-                    entry for entry in call_times.values() if "duration_ms" in entry
-                ]
+                children = list(completed_calls)
 
                 # Root node
                 root_node = {
@@ -925,9 +930,7 @@ class DecoratorInjector:
 
             except Exception as e:
                 duration_ms = (time.perf_counter() - start_time) * 1000
-                children = [
-                    entry for entry in call_times.values() if "duration_ms" in entry
-                ]
+                children = list(completed_calls)
                 root_node = {
                     "depth": 0,
                     "function": f"{func.__module__}.{func.__qualname__}",
@@ -987,7 +990,7 @@ class DecoratorInjector:
 
                 # Skip built-in and stdlib if requested
                 if skip_builtin:
-                    if code.co_filename.startswith(("<", "/")):
+                    if code.co_filename.startswith("<"):
                         return None
                     if (
                         "site-packages" not in code.co_filename
