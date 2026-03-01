@@ -21,8 +21,8 @@ class StackView(Container):
     """Stack view for tracing function call stacks."""
 
     BINDINGS = [
-        Binding("enter", "start_trace", "Trace"),
-        Binding("delete", "stop_traces", "Stop All"),
+        Binding("enter", "start_stack", "Stack"),
+        Binding("delete", "stop_stacks", "Stop All"),
     ]
 
     def __init__(self, pid: int) -> None:
@@ -33,7 +33,7 @@ class StackView(Container):
         self._socket_path: Optional[str] = None
         self._completion_source: Optional[CompletionSource] = None
         self._workers: Dict[str, Worker] = {}
-        self._trace_counts: Dict[str, int] = {}
+        self._stack_counts: Dict[str, int] = {}
         self._log = logging.getLogger(__name__)
 
     def set_client(self, client: "StreamingAgentClient") -> None:
@@ -65,13 +65,13 @@ class StackView(Container):
             return self._completion_source.get_completions(prefix)
         return []
 
-    async def action_start_trace(self) -> None:
+    async def action_start_stack(self) -> None:
         """Start tracing (triggered by Enter key)."""
-        await self._start_trace()
+        await self._start_stack()
 
-    async def action_stop_traces(self) -> None:
+    async def action_stop_stacks(self) -> None:
         """Stop all traces (triggered by Delete key)."""
-        await self._stop_all_traces()
+        await self._stop_all_stacks()
 
     def compose(self) -> ComposeResult:
         yield Container(
@@ -82,14 +82,14 @@ class StackView(Container):
                     completions_callback=self._get_pattern_completions,
                     id="stack-pattern",
                 ),
-                Button("Trace", id="trace-btn", variant="primary", flat=True),
-                Button("Stop", id="stop-trace-btn", variant="error", flat=True),
+                Button("Stack", id="stack-btn", variant="primary", flat=True),
+                Button("Stop", id="stop-stack-btn", variant="error", flat=True),
                 id="stack-controls",
             ),
             Horizontal(
                 Vertical(
-                    DataTable(id="trace-table"),
-                    id="trace-list",
+                    DataTable(id="stack-table"),
+                    id="stack-list",
                     classes="panel",
                 ),
                 Vertical(
@@ -106,7 +106,7 @@ class StackView(Container):
         container = self.query_one("#stack-container", Container)
         container.border_title = "Stack"
 
-        table = self.query_one("#trace-table", DataTable)
+        table = self.query_one("#stack-table", DataTable)
         table.add_columns(
             ("ID", "ID"),
             ("Pattern", "Pattern"),
@@ -115,8 +115,8 @@ class StackView(Container):
         )
         table.cursor_type = "row"
 
-        trace_list = self.query_one("#trace-list", Vertical)
-        trace_list.border_title = "Active Traces"
+        stack_list = self.query_one("#stack-list", Vertical)
+        stack_list.border_title = "Active Stack Traces"
 
         stack_panel = self.query_one("#stack-panel", Vertical)
         stack_panel.border_title = "Call Stack"
@@ -162,18 +162,18 @@ class StackView(Container):
             pass
 
         self._workers.clear()
-        self._trace_counts.clear()
+        self._stack_counts.clear()
         if self._stream_client:
             self._stream_client.disconnect()
             self._stream_client = None
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "trace-btn":
-            await self._start_trace()
-        elif event.button.id == "stop-trace-btn":
-            await self._stop_all_traces()
+        if event.button.id == "stack-btn":
+            await self._start_stack()
+        elif event.button.id == "stop-stack-btn":
+            await self._stop_all_stacks()
 
-    async def _start_trace(self) -> None:
+    async def _start_stack(self) -> None:
         if not self._client:
             self.app.notify("Not connected to agent", severity="error")
             return
@@ -209,7 +209,7 @@ class StackView(Container):
 
         if response.get("status") != "success":
             self.app.notify(
-                f"Trace failed: {response.get('error', 'Unknown error')}",
+                f"Stack failed: {response.get('error', 'Unknown error')}",
                 severity="error",
             )
             return
@@ -217,19 +217,19 @@ class StackView(Container):
         watch_id = response.get("watch_id", "")
         short_id = watch_id[:8] if len(watch_id) > 8 else watch_id
 
-        table = self.query_one("#trace-table", DataTable)
+        table = self.query_one("#stack-table", DataTable)
         table.add_row(short_id, pattern, "0", "Running", key=watch_id)
 
-        self._trace_counts[watch_id] = 0
+        self._stack_counts[watch_id] = 0
 
         worker = self.run_worker(
-            lambda: self._stream_traces(watch_id, pattern), thread=True, exclusive=False
+            lambda: self._stream_stacks(watch_id, pattern), thread=True, exclusive=False
         )
         self._workers[watch_id] = worker
 
-        self.app.notify(f"Trace started: {pattern}", severity="information")
+        self.app.notify(f"Stack trace started: {pattern}", severity="information")
 
-    def _stream_traces(self, watch_id: str, pattern: str):
+    def _stream_stacks(self, watch_id: str, pattern: str):
         stream = self._stream_client or self._client
         if not stream:
             return
@@ -248,11 +248,11 @@ class StackView(Container):
             stack_frames = observation.get("stack", [])
 
             self.app.call_from_thread(
-                self._update_trace_ui, watch_id, count, stack_frames
+                self._update_stack_ui, watch_id, count, stack_frames
             )
 
-    def _update_trace_ui(self, watch_id: str, count: int, stack_frames: list) -> None:
-        table = self.query_one("#trace-table", DataTable)
+    def _update_stack_ui(self, watch_id: str, count: int, stack_frames: list) -> None:
+        table = self.query_one("#stack-table", DataTable)
 
         try:
             row = table.get_row(watch_id)
@@ -280,9 +280,9 @@ class StackView(Container):
             if code:
                 frame_node.add_leaf(f"  {code}")
 
-    async def _stop_all_traces(self) -> None:
+    async def _stop_all_stacks(self) -> None:
         if not self._workers:
-            self.app.notify("No active traces", severity="information")
+            self.app.notify("No active stack traces", severity="information")
             return
 
         for watch_id, worker in list(self._workers.items()):
@@ -310,12 +310,12 @@ class StackView(Container):
                 pass
 
         self._workers.clear()
-        self._trace_counts.clear()
+        self._stack_counts.clear()
 
-        table = self.query_one("#trace-table", DataTable)
+        table = self.query_one("#stack-table", DataTable)
         table.clear()
 
         tree = self.query_one("#stack-tree", Tree)
         tree.clear()
 
-        self.app.notify("All traces stopped", severity="information")
+        self.app.notify("All stack traces stopped", severity="information")

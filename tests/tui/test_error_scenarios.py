@@ -232,11 +232,11 @@ class TestErrorScenarios:
             pattern_input = stack_view.query_one("#stack-pattern", AutoCompleteInput)
             pattern_input.value = "module.func"
 
-            await stack_view._start_trace()
+            await stack_view._start_stack()
             await pilot.pause()
             await pilot.pause()
 
-            table = stack_view.query_one("#trace-table", DataTable)
+            table = stack_view.query_one("#stack-table", DataTable)
             assert table is not None
 
     @pytest.mark.asyncio
