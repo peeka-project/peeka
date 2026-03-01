@@ -22,7 +22,6 @@ RUN pip install --no-cache-dir -i https://mirrors.ustc.edu.cn/pypi/web/simple \
 
 WORKDIR /app
 
-COPY examples/demo.py /opt/demo.py
 COPY docker/restart-demo.sh /opt/restart-demo.sh
 
 CMD ["bash", "-c", "sh /opt/restart-demo.sh; sleep infinity & wait"]
