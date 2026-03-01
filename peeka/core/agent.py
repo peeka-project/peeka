@@ -83,7 +83,7 @@ class PeekaAgent:
                 name="peeka-agent-accept", daemon=True,
             )
             thread.start()
-            accept_ready.wait(timeout=5)
+            accept_ready.wait(timeout=10)
 
             Path(f"/tmp/peeka_{self.session_id}.ready").touch()
             print("[peeka Agent] Started and listening for connections")
