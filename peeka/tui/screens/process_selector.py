@@ -133,7 +133,10 @@ class ProcessSelectorScreen(Screen):
                 self.notify, f"Attach error: {e}", severity="error"
             )
         finally:
-            attacher.cleanup()
+            # Do NOT call attacher.cleanup() here — sys.remote_exec() is
+            # fire-and-forget and the target process may not have read the
+            # agent script yet. The script is a small temp file in /tmp and
+            # will be cleaned up on reboot or by a future attach session.
             self._attaching = False
 
         if result:
