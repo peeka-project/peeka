@@ -286,6 +286,15 @@ TabPane {
    STACK VIEW
    ============================================================================ */
 
+#stack-list {
+    width: 40%;
+    margin-right: 1;
+}
+
+#stack-table {
+    height: 100%;
+}
+
 #stack-panel {
     width: 60%;
 }

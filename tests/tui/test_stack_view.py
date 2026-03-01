@@ -38,7 +38,7 @@ class TestStackView:
             pattern_input = stack_view.query_one("#stack-pattern", AutoCompleteInput)
             pattern_input.value = "demo.Calculator.add"
 
-            await stack_view._start_trace()
+            await stack_view._start_stack()
             await pilot.pause()
 
             assert len(client.commands_received) > 0
@@ -101,10 +101,10 @@ class TestStackView:
             pattern_input = stack_view.query_one("#stack-pattern", AutoCompleteInput)
             pattern_input.value = "module.func"
 
-            await stack_view._start_trace()
+            await stack_view._start_stack()
             await pilot.pause()
 
-            table = stack_view.query_one("#trace-table", DataTable)
+            table = stack_view.query_one("#stack-table", DataTable)
             assert table.row_count > 0
 
             row0 = table.get_row_at(0)
@@ -158,10 +158,10 @@ class TestStackView:
             pattern_input = stack_view.query_one("#stack-pattern", AutoCompleteInput)
             pattern_input.value = "test.func"
 
-            await stack_view._start_trace()
+            await stack_view._start_stack()
             await pilot.pause()
 
-            table = stack_view.query_one("#trace-table", DataTable)
+            table = stack_view.query_one("#stack-table", DataTable)
             assert table.row_count > 0
 
     @pytest.mark.asyncio
@@ -224,10 +224,10 @@ class TestStackView:
             pattern_input = stack_view.query_one("#stack-pattern", AutoCompleteInput)
             pattern_input.value = "module.func"
 
-            await stack_view._start_trace()
+            await stack_view._start_stack()
             await pilot.pause()
 
-            table = stack_view.query_one("#trace-table", DataTable)
+            table = stack_view.query_one("#stack-table", DataTable)
             assert table.row_count > 0
 
             tree = stack_view.query_one("#stack-tree", Tree)
@@ -258,10 +258,10 @@ class TestStackView:
             pattern_input = stack_view.query_one("#stack-pattern", AutoCompleteInput)
             pattern_input.value = "invalid.pattern"
 
-            await stack_view._start_trace()
+            await stack_view._start_stack()
             await pilot.pause()
 
-            table = stack_view.query_one("#trace-table", DataTable)
+            table = stack_view.query_one("#stack-table", DataTable)
             assert table.row_count == 0
 
     @pytest.mark.asyncio
@@ -289,7 +289,7 @@ class TestStackView:
             pattern_input = stack_view.query_one("#stack-pattern", AutoCompleteInput)
             pattern_input.value = ""
 
-            await stack_view._start_trace()
+            await stack_view._start_stack()
             await pilot.pause()
 
             assert len(client.commands_received) == 0
@@ -311,10 +311,10 @@ class TestStackView:
             pattern_input = stack_view.query_one("#stack-pattern", AutoCompleteInput)
             pattern_input.value = "test.func"
 
-            await stack_view._start_trace()
+            await stack_view._start_stack()
             await pilot.pause()
 
-            table = stack_view.query_one("#trace-table", DataTable)
+            table = stack_view.query_one("#stack-table", DataTable)
             assert table.row_count == 0
 
     @pytest.mark.asyncio
@@ -377,15 +377,15 @@ class TestStackView:
             pattern_input = stack_view.query_one("#stack-pattern", AutoCompleteInput)
             pattern_input.value = "test.func"
 
-            await stack_view._start_trace()
+            await stack_view._start_stack()
             await pilot.pause()
 
-            table = stack_view.query_one("#trace-table", DataTable)
+            table = stack_view.query_one("#stack-table", DataTable)
             assert table.row_count > 0
 
     @pytest.mark.asyncio
     @pytest.mark.tui
-    async def test_stop_all_traces(self, mock_client_factory):
+    async def test_stop_all_stacks(self, mock_client_factory):
         """Stop all traces cancels workers and clears table."""
         observations = [
             {
@@ -431,14 +431,14 @@ class TestStackView:
             pattern_input = stack_view.query_one("#stack-pattern", AutoCompleteInput)
             pattern_input.value = "test.func"
 
-            await stack_view._start_trace()
+            await stack_view._start_stack()
             await pilot.pause()
             await pilot.pause()
 
-            table = stack_view.query_one("#trace-table", DataTable)
+            table = stack_view.query_one("#stack-table", DataTable)
             initial_row_count = table.row_count
 
-            await stack_view._stop_all_traces()
+            await stack_view._stop_all_stacks()
             await pilot.pause()
 
             assert table.row_count == 0
