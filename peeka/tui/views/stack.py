@@ -37,6 +37,7 @@ class StackView(Container):
         self._stack_counts: Dict[str, int] = {}
         self._stack_cache: Dict[str, List[dict]] = {}
         self._capture_seq: int = 0
+        self._auto_follow: bool = True
         self._log = logging.getLogger(__name__)
 
     def set_client(self, client: "StreamingAgentClient") -> None:
@@ -131,6 +132,11 @@ class StackView(Container):
 
         if event.row_key is None:
             return
+
+        # If user selects a row that is NOT the last one, disable auto-follow.
+        # If user selects the last row, re-enable auto-follow.
+        row_index = event.cursor_row
+        self._auto_follow = (row_index == table.row_count - 1)
 
         capture_key = str(event.row_key.value)
         frames = self._stack_cache.get(capture_key, [])
@@ -312,8 +318,9 @@ class StackView(Container):
             capture_key, pattern, str(len(stack_frames)), source, key=capture_key
         )
 
-        # Auto-select the latest row to show its stack
-        table.move_cursor(row=table.row_count - 1)
+        # Only auto-scroll to latest row if user hasn't navigated away
+        if self._auto_follow:
+            table.move_cursor(row=table.row_count - 1)
 
     async def _stop_all_stacks(self) -> None:
         if not self._workers:
@@ -346,13 +353,5 @@ class StackView(Container):
 
         self._workers.clear()
         self._stack_counts.clear()
-        self._stack_cache.clear()
-        self._capture_seq = 0
-
-        table = self.query_one("#stack-table", DataTable)
-        table.clear()
-
-        tree = self.query_one("#stack-tree", Tree)
-        tree.clear()
 
         self.app.notify("All stack traces stopped", severity="information")

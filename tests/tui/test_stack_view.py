@@ -493,7 +493,7 @@ class TestStackView:
     @pytest.mark.asyncio
     @pytest.mark.tui
     async def test_stop_all_stacks(self, mock_client_factory):
-        """Stop all traces cancels workers and clears table."""
+        """Stop all traces cancels workers but preserves table data for browsing."""
         observations = [
             {
                 "watch_id": "stack_006",
@@ -548,6 +548,7 @@ class TestStackView:
             await stack_view._stop_all_stacks()
             await pilot.pause()
 
-            assert table.row_count == 0
+            # Stop preserves captured data — table and cache remain intact
+            assert table.row_count == initial_row_count
             assert len(stack_view._workers) == 0
-            assert len(stack_view._stack_cache) == 0
+            assert len(stack_view._stack_cache) == initial_row_count
