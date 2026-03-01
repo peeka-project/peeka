@@ -154,10 +154,23 @@ class ProcessAttacher:
         # Inject to target process
         sys.remote_exec(self.pid, self.agent_script)
 
-        # Wait for agent ready
-        if self._wait_for_agent_ready():
-            print(f"[Peeka] Successfully attached to process {self.pid}")
-            return True
+        # Wait for agent ready with retry — agent bootstrap imports 13+
+        # command modules and may take longer than a single timeout on
+        # loaded systems or first injection into a cold process.
+        max_attempts = 2
+        for attempt in range(max_attempts):
+            try:
+                if self._wait_for_agent_ready():
+                    print(f"[Peeka] Successfully attached to process {self.pid}")
+                    return True
+            except TimeoutError:
+                if attempt < max_attempts - 1:
+                    print(
+                        f"[Peeka] Agent not ready yet, retrying... "
+                        f"(attempt {attempt + 1}/{max_attempts})"
+                    )
+                else:
+                    raise
 
         return False
 
@@ -224,7 +237,7 @@ class ProcessAttacher:
 
         return str(agent_path)
 
-    def _wait_for_agent_ready(self, timeout: int = 5) -> bool:
+    def _wait_for_agent_ready(self, timeout: int = 10) -> bool:
         """Wait for agent initialization and socket readiness.
 
         First waits for the .ready file (indicates bind+listen complete),
