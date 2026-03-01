@@ -2,7 +2,7 @@
 Stack View - Call stack tracing interface.
 """
 
-from typing import Optional, Dict, TYPE_CHECKING
+from typing import Optional, Dict, List, TYPE_CHECKING
 import logging
 
 from textual.app import ComposeResult
@@ -16,6 +16,7 @@ from peeka.tui.widgets.autocomplete_input import AutoCompleteInput
 
 if TYPE_CHECKING:
     from peeka.core.client import StreamingAgentClient
+
 
 class StackView(Container):
     """Stack view for tracing function call stacks."""
@@ -34,6 +35,8 @@ class StackView(Container):
         self._completion_source: Optional[CompletionSource] = None
         self._workers: Dict[str, Worker] = {}
         self._stack_counts: Dict[str, int] = {}
+        self._stack_cache: Dict[str, List[dict]] = {}
+        self._capture_seq: int = 0
         self._log = logging.getLogger(__name__)
 
     def set_client(self, client: "StreamingAgentClient") -> None:
@@ -48,12 +51,11 @@ class StackView(Container):
             return
         try:
             from peeka.core.client import StreamingAgentClient
+
             self._stream_client = StreamingAgentClient(self._socket_path)
             result = self._stream_client.connect()
             if result.get("status") != "success":
-                self._log.warning(
-                    "Stack stream client failed: %s", result.get("error")
-                )
+                self._log.warning("Stack stream client failed: %s", result.get("error"))
                 self._stream_client = None
         except Exception as e:
             self._log.warning("Stack stream client error: %s", e)
@@ -108,18 +110,53 @@ class StackView(Container):
 
         table = self.query_one("#stack-table", DataTable)
         table.add_columns(
-            ("ID", "ID"),
+            ("#", "#"),
             ("Pattern", "Pattern"),
-            ("Captures", "Captures"),
-            ("Status", "Status"),
+            ("Frames", "Frames"),
+            ("Source", "Source"),
         )
         table.cursor_type = "row"
 
         stack_list = self.query_one("#stack-list", Vertical)
-        stack_list.border_title = "Active Stack Traces"
+        stack_list.border_title = "Captures"
 
         stack_panel = self.query_one("#stack-panel", Vertical)
         stack_panel.border_title = "Call Stack"
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        """Show the stack trace for the selected capture row."""
+        table = event.data_table
+        if table.id != "stack-table":
+            return
+
+        if event.row_key is None:
+            return
+
+        capture_key = str(event.row_key.value)
+        frames = self._stack_cache.get(capture_key, [])
+        self._render_stack_tree(capture_key, frames)
+
+    def _render_stack_tree(self, capture_key: str, frames: List[dict]) -> None:
+        """Render stack frames into the Tree widget."""
+        tree = self.query_one("#stack-tree", Tree)
+        tree.clear()
+
+        root = tree.root
+        root.label = f"Stack Trace {capture_key}"
+
+        for frame in frames:
+            filename = frame.get("filename", "")
+            lineno = frame.get("lineno", 0)
+            function = frame.get("function", "")
+            code = frame.get("code", "")
+
+            frame_label = f"{function} @ {filename}:{lineno}"
+            frame_node = root.add(frame_label)
+
+            if code:
+                frame_node.add_leaf(f"  {code}")
+
+        root.expand()
 
     def on_unmount(self) -> None:
         """Cancel all workers and disconnect stream client when view is unmounted."""
@@ -163,6 +200,8 @@ class StackView(Container):
 
         self._workers.clear()
         self._stack_counts.clear()
+        self._stack_cache.clear()
+        self._capture_seq = 0
         if self._stream_client:
             self._stream_client.disconnect()
             self._stream_client = None
@@ -215,10 +254,6 @@ class StackView(Container):
             return
 
         watch_id = response.get("watch_id", "")
-        short_id = watch_id[:8] if len(watch_id) > 8 else watch_id
-
-        table = self.query_one("#stack-table", DataTable)
-        table.add_row(short_id, pattern, "0", "Running", key=watch_id)
 
         self._stack_counts[watch_id] = 0
 
@@ -248,37 +283,37 @@ class StackView(Container):
             stack_frames = observation.get("stack", [])
 
             self.app.call_from_thread(
-                self._update_stack_ui, watch_id, count, stack_frames
+                self._update_stack_ui, watch_id, count, stack_frames, pattern
             )
 
-    def _update_stack_ui(self, watch_id: str, count: int, stack_frames: list) -> None:
+    def _update_stack_ui(
+        self, watch_id: str, count: int, stack_frames: list, pattern: str
+    ) -> None:
+        """Add a new capture row and cache its stack frames."""
+        self._capture_seq += 1
+        capture_key = f"#{self._capture_seq}"
+
+        # Cache the stack frames for this capture
+        self._stack_cache[capture_key] = stack_frames
+
+        # Update per-watch count
+        self._stack_counts[watch_id] = count
+
+        # Determine top frame as source hint
+        if stack_frames:
+            top = stack_frames[0]
+            source = f"{top.get('function', '?')}:{top.get('lineno', '?')}"
+        else:
+            source = "-"
+
+        # Add a row per capture
         table = self.query_one("#stack-table", DataTable)
+        table.add_row(
+            capture_key, pattern, str(len(stack_frames)), source, key=capture_key
+        )
 
-        try:
-            row = table.get_row(watch_id)
-            short_id = row[0]
-            pattern = row[1]
-            table.update_cell(watch_id, "Captures", str(count))
-        except Exception:
-            return
-
-        tree = self.query_one("#stack-tree", Tree)
-        tree.clear()
-
-        root = tree.root
-        root.label = f"Stack Trace #{count}"
-
-        for frame in stack_frames:
-            filename = frame.get("filename", "")
-            lineno = frame.get("lineno", 0)
-            function = frame.get("function", "")
-            code = frame.get("code", "")
-
-            frame_label = f"{function} @ {filename}:{lineno}"
-            frame_node = root.add(frame_label)
-
-            if code:
-                frame_node.add_leaf(f"  {code}")
+        # Auto-select the latest row to show its stack
+        table.move_cursor(row=table.row_count - 1)
 
     async def _stop_all_stacks(self) -> None:
         if not self._workers:
@@ -311,6 +346,8 @@ class StackView(Container):
 
         self._workers.clear()
         self._stack_counts.clear()
+        self._stack_cache.clear()
+        self._capture_seq = 0
 
         table = self.query_one("#stack-table", DataTable)
         table.clear()
