@@ -429,3 +429,154 @@ class TestErrorScenarios:
             watch_view = app.screen.query_one("WatchView", WatchView)
             watch_table = watch_view.query_one("#watch-table", DataTable)
             assert watch_table.row_count >= 1
+
+
+class TestAdditionalErrorScenarios:
+    """Additional error handling tests for views not covered above."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_connection_failure_thread_view(self, mock_client_factory):
+        """ThreadView with failed client connect handles gracefully."""
+        from peeka.tui.views.thread import ThreadView
+
+        client = mock_client_factory(should_fail_connect=True)
+        result = client.connect()
+        assert result["status"] == "error"
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            thread_view = app.screen.query_one("ThreadView", ThreadView)
+            thread_view.set_client(client)
+            await pilot.pause()
+            await pilot.pause()
+
+            # Mock is not connected, send_command returns error
+            # Table should remain empty
+            table = thread_view.query_one("#threads-table", DataTable)
+            assert table.row_count == 0
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_connection_failure_top_view(self, mock_client_factory):
+        """TopView with failed client handles start gracefully."""
+        from peeka.tui.views.top import TopView
+
+        client = mock_client_factory(should_fail_send=True)
+        client.connect()
+
+        app = PeekaApp()
+        async with app.run_test(size=(120, 40)) as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            main_screen.action_switch_tab("top")
+            await pilot.pause()
+
+            top_view = app.screen.query_one(TopView)
+            top_view._client = client
+            top_view._own_client = client
+            top_view._update_button_states()
+
+            top_view._start_profiling()
+            await pilot.pause()
+
+            # Should NOT be profiling on send failure
+            assert top_view._is_profiling is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_send_failure_monitor_view(self, mock_client_factory):
+        """MonitorView with should_fail_send handles start gracefully."""
+        client = mock_client_factory(should_fail_send=True)
+        client.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            monitor_view = app.screen.query_one("MonitorView", MonitorView)
+            monitor_view.set_client(client)
+
+            from peeka.tui.widgets.autocomplete_input import AutoCompleteInput
+            pattern_input = monitor_view.query_one("#monitor-pattern", AutoCompleteInput)
+            pattern_input.value = "module.func"
+
+            await monitor_view._start_monitor()
+            await pilot.pause()
+
+            # Send failure should prevent monitor entry from being created
+            assert len(client.commands_received) >= 1
+            table = monitor_view.query_one("#stats-table", DataTable)
+            assert table.row_count == 0
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_send_failure_memory_view(self, mock_client_factory):
+        """MemoryView with should_fail_send handles refresh gracefully."""
+        from peeka.tui.views.memory import MemoryView
+
+        client = mock_client_factory(should_fail_send=True)
+        client.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            memory_view = app.screen.query_one("MemoryView", MemoryView)
+            memory_view.set_client(client)
+            await pilot.pause()
+            await pilot.pause()
+
+            # Memory view should handle send failure without crashing
+            # No crash = success. Commands may or may not have been sent
+            # depending on async worker timing.
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_send_failure_inspect_view(self, mock_client_factory):
+        """InspectView with should_fail_send handles inspect gracefully."""
+        from peeka.tui.views.inspect import InspectView
+
+        client = mock_client_factory(should_fail_send=True)
+        client.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            inspect_view = app.screen.query_one("InspectView", InspectView)
+            inspect_view.set_client(client)
+
+            # Find the input and set an expression
+            expr_input = inspect_view.query_one("#inspect-path", Input)
+            expr_input.value = "len(sys.modules)"
+
+            # Trigger evaluation via _inspect_object
+            await inspect_view._inspect_object()
+            await pilot.pause()
+            await pilot.pause()
+
+            # Should not crash, command was attempted
+            assert len(client.commands_received) >= 1
