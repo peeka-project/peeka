@@ -73,6 +73,9 @@ class PeekaAgent:
 
             self.server.bind(self.sock_path)
             self.server.listen(5)
+            # Set a timeout so accept() doesn't block forever,
+            # allowing the accept loop to check self.running periodically.
+            self.server.settimeout(1.0)
 
             # Use an event to ensure the accept loop is actually running
             # before signaling readiness, avoiding a race where clients
@@ -106,6 +109,12 @@ class PeekaAgent:
                     name=f"peeka-agent-client-{self._client_counter}",
                     daemon=True,
                 ).start()
+            except socket.timeout:
+                # Periodic wakeup to re-check self.running
+                continue
+            except OSError:
+                # Server socket closed (stop() called) — exit cleanly
+                break
             except Exception as e:
                 if self.running:
                     print(f"[peeka Agent] Accept error: {e}", file=sys.stderr)
@@ -184,9 +193,21 @@ class PeekaAgent:
     def stop(self) -> None:
         self.running = False
         self.injector.uninject_all()
+
         if self.server:
-            self.server.close()
+            try:
+                self.server.close()
+            except OSError:
+                pass
+
         self._cleanup_session_files()
+
+        # Remove self from the global agent registry
+        if hasattr(sys, "_peeka_agents"):
+            agents = sys._peeka_agents  # type: ignore[attr-defined]
+            keys_to_remove = [k for k, v in agents.items() if v is self]
+            for k in keys_to_remove:
+                del agents[k]
 
     def _cleanup_session_files(self) -> None:
         """Remove .sock, .ready, and .pid files for this session.
@@ -203,6 +224,19 @@ class PeekaAgent:
 
 def _init_agent(session_id: str, attached_pid: Optional[int] = None) -> None:
     try:
+        # Stop ALL existing agents from previous sessions to prevent thread leaks.
+        # Each sys.remote_exec() call creates a new agent; without this cleanup,
+        # old accept-loop and client-handler threads accumulate indefinitely.
+        if hasattr(sys, "_peeka_agents"):
+            old_agents = list(sys._peeka_agents.values())  # type: ignore[attr-defined]
+            for old_agent in old_agents:
+                try:
+                    old_agent.stop()
+                    print(f"[peeka Agent] Stopped previous agent: {old_agent.session_id}")
+                except Exception:
+                    pass
+            sys._peeka_agents.clear()  # type: ignore[attr-defined]
+
         agent = PeekaAgent(session_id, attached_pid)
         agent.start()
 
@@ -213,7 +247,6 @@ def _init_agent(session_id: str, attached_pid: Optional[int] = None) -> None:
     except Exception as e:
         print(f"[peeka Agent] Initialization failed: {e}", file=sys.stderr)
         traceback.print_exc()
-
 
 # Auto-initialize when injected via sys.remote_exec() or GDB
 # {{SESSION_ID}} and {{ATTACHED_PID}} are replaced by ProcessAttacher before injection
