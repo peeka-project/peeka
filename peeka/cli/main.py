@@ -1255,9 +1255,8 @@ def cmd_sm(args) -> int:
 
     command = {
         "type": "sm",
-        "class_pattern": args.class_pattern,
-        "method_pattern": args.method_pattern,
-        "detail": args.detail,
+        "pattern": f"{args.class_pattern}.{args.method_pattern}",
+        "details": args.detail,
     }
 
     response = streaming_client.send_command(command)
