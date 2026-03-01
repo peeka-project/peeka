@@ -122,8 +122,8 @@ class MainScreen(Screen):
 
         from peeka.core.client import StreamingAgentClient
 
-        max_retries = 3
-        base_delay = 0.2  # seconds
+        max_retries = 5
+        base_delay = 0.5  # seconds
 
         for attempt in range(max_retries):
             try:

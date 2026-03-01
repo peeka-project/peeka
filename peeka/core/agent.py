@@ -186,7 +186,20 @@ class PeekaAgent:
         self.injector.uninject_all()
         if self.server:
             self.server.close()
+        self._cleanup_session_files()
 
+    def _cleanup_session_files(self) -> None:
+        """Remove .sock, .ready, and .pid files for this session.
+
+        Called on stop/detach so that stale files don't trick
+        _check_existing_attachment() into reporting a live agent.
+        """
+        for suffix in (".sock", ".ready", ".pid"):
+            p = Path(f"/tmp/peeka_{self.session_id}{suffix}")
+            try:
+                p.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 def _init_agent(session_id: str, attached_pid: Optional[int] = None) -> None:
     try:
