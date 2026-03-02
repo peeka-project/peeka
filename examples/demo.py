@@ -3,10 +3,19 @@ Peeka Demo Application
 Demonstrates Peeka capabilities
 """
 
+import logging
 import os
 import sys
 import time
 
+# Set up loggers for logger command demo
+logging.basicConfig(level=logging.WARNING, format="%(name)s [%(levelname)s] %(message)s")
+logger = logging.getLogger("demo")
+logger.setLevel(logging.INFO)
+calc_logger = logging.getLogger("demo.calculator")
+calc_logger.setLevel(logging.DEBUG)
+perf_logger = logging.getLogger("demo.performance")
+perf_logger.setLevel(logging.WARNING)
 
 class Calculator:
     """Simple calculator for demonstration"""
@@ -17,6 +26,7 @@ class Calculator:
 
     def add(self, a: int, b: int) -> int:
         """Add two numbers"""
+        calc_logger.debug("add(%d, %d)", a, b)
         result = a + b
         self.history.append(("add", a, b, result))
         return result
@@ -36,6 +46,7 @@ class Calculator:
     def divide(self, a: int, b: int) -> float:
         """Divide two numbers (may raise exception)"""
         if b == 0:
+            calc_logger.error("Division by zero: %d / %d", a, b)
             raise ValueError("Division by zero")
         result = a / b
         self.history.append(("divide", a, b, result))
@@ -47,6 +58,7 @@ class Calculator:
         Calls multiple sub-methods with varying cost, then returns.
         Use: peeka-cli trace 'demo.Calculator.calculate' --depth 2
         """
+        calc_logger.info("calculate(%d, %d) started", a, b)
         sum_result = self.add(a, b)
         prod_result = self.multiply(a, b)
         if b != 0:
@@ -54,6 +66,7 @@ class Calculator:
         else:
             div_result = 0.0
         slow_val = slow_operation(sum_result)
+        calc_logger.info("calculate(%d, %d) done", a, b)
         return {
             "sum": sum_result,
             "product": prod_result,
@@ -84,6 +97,7 @@ def slow_operation(value: int) -> int:
     """Simulate slow operation for cost filtering demo"""
     import time
 
+    perf_logger.warning("slow_operation started, value=%d", value)
     time.sleep(0.02)
     return value * 2
 
@@ -138,6 +152,11 @@ def demo_loop():
     print(f"  peeka-cli attach {os.getpid()}")
     print(f"  peeka-cli watch 'demo.Calculator.multiply' -b -s")
     print()
+    print(f"  # Logger command - list/get/set log levels at runtime")
+    print(f"  peeka-cli attach {os.getpid()}")
+    print(f"  peeka-cli logger --action list")
+    print(f"  peeka-cli logger --action set --logger demo.calculator --level WARNING")
+    print()
 
     calc = Calculator("loop-calc")
     counter = 0
@@ -166,6 +185,8 @@ def demo_loop():
 
             if counter % 3 == 0:
                 calc.calculate(counter, counter + 1)
+
+            logger.info("[iter %d] cycle complete", counter)
 
             time.sleep(0.5)
 
