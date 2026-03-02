@@ -60,6 +60,33 @@ Peeka 的设计深受 [Alibaba Arthas](https://github.com/alibaba/arthas) 启发
 | 内存概览 | ✅ | ✅ | 显示内存使用情况 |
 | **inspect 命令** | ✅ | ✅ (ognl) | 运行时对象检查 |
 
+### ✅ 已实现的功能
+
+| 功能 | Peeka | Arthas | 说明 |
+|------|-------|--------|------|
+| **attach 命令** | ✅ | ✅ | 附加到目标进程 |
+| **watch 命令** | ✅ | ✅ | 观测函数调用 |
+| 观测点控制 | `-b/-e/-s/-f` | `-b/-e/-s/-f` | AtEnter/AtExit/AtExceptionExit |
+| 条件过滤 | `--condition` | `--condition-express` | 支持表达式过滤 |
+| 耗时过滤 | `cost > 100` | `#cost>100` | 基于执行时间过滤 |
+| 输出字段 | `params/returnObj/throwExp/cost/target` | 相同 | Arthas 兼容字段名 |
+| **trace 命令** | ✅ | ✅ | 追踪函数调用链和耗时 |
+| 调用树展示 | ✅ 树形结构 | ✅ 树形结构 | 可视化调用关系 |
+| 深度限制 | `-d, --depth` | `-n` | 控制追踪深度 |
+| 跳过内置函数 | `--skip-builtin` | `--skipJDKMethod` | 减少输出噪音 |
+| 最小耗时 | `--min-duration` | - | 过滤耗时较小的调用 |
+| **stack 命令** | ✅ | ✅ | 捕获函数调用栈 |
+| **monitor 命令** | ✅ | ✅ | 性能统计监控 |
+| **logger 命令** | ✅ | ✅ | 动态调整日志级别 |
+| **memory 命令** | ✅ | ✅ (dashboard) | 内存分析 |
+| 内存概览 | ✅ | ✅ | 显示内存使用情况 |
+| **inspect 命令** | ✅ | ✅ (ognl) | 运行时对象检查 |
+| **sc/sm 命令** | ✅ | ✅ | 搜索类和方法 |
+| **reset 命令** | ✅ | ✅ (stop) | 重置增强恢复原函数 |
+| **thread 命令** | ✅ | ✅ | 线程分析和线程栈 |
+| **top 命令** | ✅ | ✅ (profiler) | 函数级性能采样 |
+| **detach 命令** | ✅ | ✅ (quit/exit) | 安全断开连接 |
+
 ### ⏳ 计划中的功能
 
 | 功能 | Peeka | Arthas | 优先级 | 说明 |
@@ -67,8 +94,7 @@ Peeka 的设计深受 [Alibaba Arthas](https://github.com/alibaba/arthas) 启发
 | 通配符匹配 | 计划中 | ✅ `module.*` | 中 | 支持 glob 模式 |
 | 自定义输出表达式 | 计划中 | ✅ `-x '{params, returnObj}'` | 低 | 灵活的输出格式 |
 | tt 命令 | 计划中 | ✅ | 高 | 时间隧道（记录和回放） |
-| thread 命令 | 计划中 | ✅ | 中 | 线程诊断 |
-| profiler | 计划中 | ✅ | 高 | 性能剖析 |
+| profiler | 计划中 | ✅ | 高 | CPU/堆栈火焰图 |
 | heapdump | 计划中 | ✅ | 中 | 堆转储分析 |
 
 ### ❌ 不适用的功能
