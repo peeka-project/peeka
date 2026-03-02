@@ -39,6 +39,29 @@ The `inspect` command provides **runtime object inspection** capabilities, allow
 
 ---
 
+## TUI Usage
+
+In TUI mode, press **`i`** key to switch to **Inspect View**, providing the following interactive features:
+
+- **Operation Selection**: Visually switch between get/instances/count operations
+- **get Operation**: Get module/class attribute values
+  - Input target path (e.g., `sys.version`, `module.attr`)
+  - Configure output depth
+  - Display attribute value and type information
+- **instances Operation**: Find type instances
+  - Input class name (e.g., `myapp.User`)
+  - Configure result count limit and filter expression
+  - Display instance list and attributes
+  - Support --gc-first (GC before execution)
+- **count Operation**: Count instance numbers
+  - Input class name (e.g., `list`, `dict`)
+  - Quickly count instance numbers
+- **Quick Operations**:
+  - Press Enter after entering parameters to execute
+  - Press `c` to clear results
+
+**CLI Equivalent Commands**: All examples below use CLI commands for demonstration. TUI provides the same functionality with a graphical interface.
+
 ## Use Cases
 
 ### 1. Configuration Checking

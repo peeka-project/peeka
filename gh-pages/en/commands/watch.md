@@ -14,6 +14,20 @@ The `watch` command is used to observe the execution of specified Python functio
 
 **Design Inspiration**: Peeka's `watch` command draws inspiration from [Arthas](https://arthas.aliyun.com/), providing similar function observation capabilities but deeply optimized for Python language features.
 
+## TUI Usage
+
+In TUI mode, press **`w`** key to switch to **Watch View**, providing the following interactive features:
+
+- **Pattern Input**: Supports function name auto-completion (fetched in real-time from the target process)
+- **Parameter Configuration**: Visual configuration of depth, times, observation points, condition expressions
+- **Real-time Streaming Observation**: Observation data displayed as streaming table, auto-updates
+- **Quick Operations**:
+  - Press Enter after entering pattern to start observation
+  - Press `s` to stop current observation
+  - Press `c` to clear observation records
+  - Press `r` to refresh view
+
+**CLI Equivalent Commands**: All examples below use CLI commands for demonstration. TUI provides the same functionality with a graphical interface.
 ## Use Cases
 
 - **Troubleshooting**: Observe if functions are called, if parameters are correct, if return values meet expectations
@@ -915,16 +929,17 @@ peeka-cli watch "obj.method" --condition-express "len(params) > 0"
 | **Automation Integration** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | Peeka JSON output easier to process |
 | **Performance Overhead** | < 5% | < 5% | Both comparable |
 
-### Peeka Future Plans
+### Peeka Implementation Progress
 
-To narrow the feature gap with Arthas, planned support:
+Implementation status of Arthas features in Peeka:
 
-- [x] Multiple observation points (`-b/-e/-s/-f`)
-- [ ] Wildcard matching (`module.*`)
-- [ ] Regular expression matching (`-E`)
-- [ ] Access object properties (`target.field`)
-- [ ] Built-in variables (`#cost`, `#thread`)
-- [ ] Static field access
+- [x] **Multiple observation points** (`-b/-e/-s/-f`) —— ✅ Fully implemented
+- [x] **cost variable** (execution time filtering) —— ✅ Implemented
+- [x] **target variable** (target object) —— ✅ Implemented (included in output)
+- [ ] **Wildcard matching** (`module.*`) —— ⏳ Planned
+- [ ] **Regular expression matching** (`-E`) —— ⏳ Planned
+- [ ] **Object property navigation** (`target.field`) —— ⏳ Planned
+- [ ] **Static field access** (`@Class@field`) —— ⏳ Planned
 
 ## Advanced Techniques
 

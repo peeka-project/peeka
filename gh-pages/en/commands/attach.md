@@ -36,6 +36,22 @@ The `attach` command is the first step in using Peeka. It injects Peeka Agent co
 
 ---
 
+## TUI Usage
+
+**TUI Auto-Attach on Launch**: Running `peeka` command directly launches TUI and automatically shows process selector:
+
+1. Run `peeka` (no arguments)
+2. In process selector, choose target process
+3. Press Enter to auto-attach and enter main interface
+
+**TUI Features**:
+- Real-time process list refresh
+- Display process PID, command line, CPU/memory usage
+- Support search/filter (type keywords to filter)
+- Auto-validate permissions (show PEP 768 or GDB availability)
+
+**CLI Equivalent Commands**: All examples below use CLI commands for demonstration. TUI provides the same functionality with a graphical interface.
+
 ## Syntax
 
 ```bash

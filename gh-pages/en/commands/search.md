@@ -47,6 +47,22 @@ The `sc` (Search Class) and `sm` (Search Method) commands search for classes and
 
 ---
 
+## TUI Usage
+
+**Note**: The search command (sc/sm) has **no dedicated view in TUI**, but can be executed through the command input box:
+
+- Press `:` in the TUI main interface to enter command mode
+- Enter `sc <pattern>` or `sm <class_pattern>` to execute search
+- Results are displayed in the command output area
+
+**Quick Operations**:
+- sc command: `: sc "myapp.*" -d --limit 20`
+- sm command: `: sm "myapp.User" --method-pattern "get*"`
+
+**Recommended Usage**: The search command is primarily used for code exploration. CLI mode is recommended for pipeline operations and result filtering.
+
+**CLI Equivalent Commands**: All examples below use CLI commands for demonstration.
+
 ## Use Cases
 
 ### 1. Exploring Unknown Codebases

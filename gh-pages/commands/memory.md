@@ -21,17 +21,42 @@ nav_order: 7
 - **快照对比**：导出多个快照，离线对比分析内存增长
 - **RSS 监控**：查看进程物理内存（RSS）使用情况
 
+## TUI 使用
+
+在 TUI 模式下，按 **`e`** 键切换到 **Memory 视图**，提供以下交互式功能：
+
+- **内存概览显示**：
+  - 进程 RSS（物理内存）使用情况
+  - tracemalloc 状态（启用/停用）和内存使用
+  - GC 对象统计（各代对象数量）
+- **追踪控制**：
+  - 快捷启动/停止 tracemalloc 追踪
+  - 可配置调用栈深度（nframe）
+- **分配分析**：
+  - Top N 内存分配热点展示
+  - 按文件名/行号分组显示
+  - 实时刷新分配数据
+- **快捷操作**：
+  - 按 `s` 启动 tracemalloc
+  - 按 `t` 显示 Top 分配
+  - 按 `g` 显示 GC 统计
+  - 按 `d` 导出快照
+
+**CLI 等效命令**：下文所有示例使用 CLI 命令演示，TUI 提供了相同功能的图形化界面。
 ## 命令格式
 
 ```bash
-peeka-cli memory <pid> [options]
+# 必须先附加到目标进程
+peeka-cli attach <pid>
+
+# 然后执行 memory 命令
+peeka-cli memory [options]
 ```
 
 ### 参数说明
 
 | 参数 | 说明 | 默认值 | 示例 |
 |------|------|--------|------|
-| `pid` | 目标进程 ID | - | `12345` |
 | `--action` | 内存操作类型 | `overview` | `--action start` |
 | `--nframe` | tracemalloc 调用栈深度 | `25` | `--nframe 50` |
 | `--group-by` | 分配分组方式 | `lineno` | `--group-by filename` |

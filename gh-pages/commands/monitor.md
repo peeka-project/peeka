@@ -40,6 +40,22 @@ nav_order: 5
 - `watch`：记录**每次调用的详细信息**（参数、返回值、调用栈等）
 - `monitor`：只记录**统计数据**（调用次数、响应时间等），输出周期性汇总
 
+## TUI 使用
+
+在 TUI 模式下，按 **`m`** 键切换到 **Monitor 视图**，提供以下交互式功能：
+
+- **模式输入**：支持函数名自动补全（从目标进程实时获取）
+- **参数配置**：可视化配置输出间隔、监控周期数
+- **统计数据展示**：实时展示性能统计指标
+  - 调用次数（total）、成功次数（success）、失败次数（fail）
+  - 失败率（fail_rate）、响应时间（avg/min/max）
+  - 周期计数器（cycle）和间隔时间（interval）
+- **快捷操作**：
+  - 输入模式后按 Enter 开始监控
+  - 按 `s` 停止监控
+  - 按 `c` 清空统计数据
+
+**CLI 等效命令**：下文所有示例使用 CLI 命令演示，TUI 提供了相同功能的图形化界面。
 ---
 
 ## 使用场景
@@ -156,12 +172,14 @@ peeka-cli monitor "myapp.process" --interval 10 | \
 ## 命令格式
 
 ```bash
-peeka-cli monitor [--pid PID | --name NAME] <pattern> [options]
+# 必须先附加到目标进程
+peeka-cli attach <pid>
+
+# 然后执行 monitor 命令
+peeka-cli monitor <pattern> [options]
 ```
 
 **必需参数**：
-- `--pid, -p`：目标进程 PID（与 `--name` 二选一）
-- `--name`：目标进程名称（与 `--pid` 二选一）
 - `pattern`：目标函数的模式（如 `module.Class.method`）
 
 **可选参数**：

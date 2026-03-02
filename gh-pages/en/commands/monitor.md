@@ -41,6 +41,22 @@ The `monitor` command periodically collects and outputs function performance sta
 - `watch`: Records **detailed information for each call** (arguments, return values, call stacks, etc.)
 - `monitor`: Only records **statistical data** (call counts, response times, etc.), outputs periodic summaries
 
+## TUI Usage
+
+In TUI mode, press **`m`** to switch to **Monitor view**, which provides the following interactive features:
+
+- **Pattern Input**: Supports function name autocomplete (fetched from target process in real-time)
+- **Parameter Configuration**: Visual configuration for output interval, monitoring cycle count
+- **Statistics Display**: Real-time display of performance metrics
+  - Call counts (total, success, fail)
+  - Failure rate (fail_rate), response times (avg/min/max)
+  - Cycle counter and interval time
+- **Keyboard Shortcuts**:
+  - Enter after entering pattern to start monitoring
+  - Press `s` to stop monitoring
+  - Press `c` to clear statistics
+
+**CLI Equivalent**: All examples below use CLI commands for demonstration; TUI provides the same functionality with a graphical interface.
 ---
 
 ## Use Cases

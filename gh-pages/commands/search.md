@@ -44,6 +44,21 @@ nav_order: 9
 - 验证模块是否已加载
 - 学习第三方库的 API
 
+## TUI 使用
+
+**注意**：search 命令（sc/sm）在 TUI 中**暂无独立视图**，但可以通过命令输入框执行：
+
+- 在 TUI 主界面按 `:` 进入命令模式
+- 输入 `sc <pattern>` 或 `sm <class_pattern>` 执行搜索
+- 结果展示在命令输出区域
+
+**快捷操作**：
+- sc 命令：`: sc "myapp.*" -d --limit 20`
+- sm 命令：`: sm "myapp.User" --method-pattern "get*"`
+
+**推荐使用 CLI**：search 命令主要用于代码探索，建议使用 CLI 模式以便管道操作和结果过滤。
+
+**CLI 等效命令**：下文所有示例使用 CLI 命令演示。
 ---
 
 ## 使用场景
@@ -138,12 +153,14 @@ peeka-cli sm "requests.Session.*"
 ### sc - 搜索类
 
 ```bash
-peeka-cli sc [--pid PID | --name NAME] <pattern> [options]
+# 必须先附加到目标进程
+peeka-cli attach <pid>
+
+# 然后执行 sc 命令
+peeka-cli sc <pattern> [options]
 ```
 
 **必需参数**：
-- `--pid, -p`：目标进程 PID（与 `--name` 二选一）
-- `--name`：目标进程名称（与 `--pid` 二选一）
 - `pattern`：类模式（支持通配符）
 
 **可选参数**：
@@ -153,12 +170,14 @@ peeka-cli sc [--pid PID | --name NAME] <pattern> [options]
 ### sm - 搜索方法
 
 ```bash
-peeka-cli sm [--pid PID | --name NAME] <class_pattern> [options]
+# 必须先附加到目标进程
+peeka-cli attach <pid>
+
+# 然后执行 sm 命令
+peeka-cli sm <class_pattern> [options]
 ```
 
 **必需参数**：
-- `--pid, -p`：目标进程 PID（与 `--name` 二选一）
-- `--name`：目标进程名称（与 `--pid` 二选一）
 - `class_pattern`：类模式（支持通配符）
 
 **可选参数**：

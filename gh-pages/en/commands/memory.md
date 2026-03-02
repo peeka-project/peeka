@@ -14,6 +14,28 @@ The `memory` command is used to analyze **memory usage** in running Python proce
 
 **Design Inspiration**: Peeka's `memory` command is inspired by [Arthas](https://arthas.aliyun.com/)'s `memory` command, implemented for Python using `tracemalloc` and `gc` modules.
 
+## TUI Usage
+
+In TUI mode, press **`e`** key to switch to **Memory View**, providing the following interactive features:
+
+- **Memory Overview Display**: Shows current memory state
+  - Process RSS (physical memory) usage
+  - tracemalloc status (enabled/disabled) and memory usage
+  - GC object statistics (object count per generation)
+- **Trace Control**: Start/stop tracemalloc tracing
+  - Quick launch/stop tracemalloc tracing
+  - Configurable call stack depth (nframe)
+- **Allocation Analysis**: View memory allocation hotspots
+  - Top N memory allocation hotspots
+  - Display grouped by filename or line number
+  - Real-time refresh of allocation data
+- **Quick Operations**:
+  - Press `s` to start tracemalloc
+  - Press `t` to show Top allocations
+  - Press `g` to show GC statistics
+  - Press `d` to export snapshot
+
+**CLI Equivalent Commands**: All examples below use CLI commands for demonstration. TUI provides the same functionality with a graphical interface.
 ## Use Cases
 
 - **Memory leak diagnosis**: View which code locations allocate the most memory

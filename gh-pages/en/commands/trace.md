@@ -14,6 +14,24 @@ The `trace` command is used to track the complete call chain and execution time 
 
 **Design Inspiration**: Peeka's `trace` command is inspired by [Arthas](https://arthas.aliyun.com/)'s trace feature, but deeply optimized for Python language characteristics and runtime environment.
 
+## TUI Usage
+
+In TUI mode, press **`t`** key to switch to **Trace View**, providing the following interactive features:
+
+- **Pattern Input**: Supports function name auto-completion (fetched in real-time from the target process)
+- **Parameter Configuration**: Visual configuration of depth, times, condition expressions, skip-builtin
+- **Call Tree Visualization**: Display call chains as interactive tree structure, expandable/collapsible
+- **Color-coded Timing**:
+  - 🟢 Green: < 10ms (fast)
+  - 🟡 Yellow: 10-100ms (medium)
+  - 🔴 Red: >= 100ms (slow)
+- **Quick Operations**:
+  - Press Enter after entering pattern to start tracing
+  - Press Enter to expand/collapse nodes
+  - Press `c` to clear trace records
+  - Press Delete to remove selected record
+
+**CLI Equivalent Commands**: All examples below use CLI commands for demonstration. TUI provides the same functionality with a graphical interface.
 ## Use Cases
 
 - **Performance bottleneck identification**: Quickly find slow calls through timing data
@@ -233,17 +251,33 @@ peeka-cli trace "mymodule.func" --skip-builtin=false
 
 Peeka's `trace` command automatically selects the optimal implementation based on Python version:
 
-### Supported Implementation Methods
+### Implementation Principles
+
+Peeka's `trace` command automatically selects the optimal implementation based on Python version:
 
 | Python Version | Implementation | Performance Overhead | Notes |
 |----------------|----------------|----------------------|-------|
-| 3.12+ | sys.monitoring | < 5% | Official support, recommended |
-| 3.9-3.11 | Local Trace | < 20% | Good compatibility, auto-enabled |
+| 3.12+ | sys.monitoring | < 5% | Official PEP 669 API, optimal performance |
+| 3.9-3.11 | sys.settrace | < 20% | Good compatibility, auto-enabled |
 
-**Notes**:
-- Python 3.12+ automatically uses `sys.monitoring` for better performance
-- Older versions use local trace implementation with slightly higher overhead but fully functional
-- All implementations are optimized to enable tracing only during function execution
+**sys.monitoring Implementation (Python 3.12+)**:
+
+- Based on official monitoring API from [PEP 669](https://peps.python.org/pep-0669/)
+- Uses `PY_START` and `PY_RETURN` events to capture calls
+- Performance overhead < 5%, recommended for production environments
+- Automatically allocates tool_id, no conflicts with multiple observations
+
+**sys.settrace Implementation (Python 3.9-3.11)**:
+
+- Uses Python's built-in `sys.settrace()` mechanism
+- Enabled only during target function execution (local trace)
+- Performance overhead < 20%, fully usable in most scenarios
+
+**skip-builtin Filtering Mechanism**:
+
+- Checks `code.co_filename.startswith('<')` to filter built-in functions (e.g., `<built-in>`)
+- Checks Python standard library paths to filter stdlib functions
+- Enabled by default, reduces output nodes by 50%+
 
 ## Performance Impact
 
