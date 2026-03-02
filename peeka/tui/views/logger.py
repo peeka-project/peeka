@@ -2,6 +2,7 @@
 Logger View - Dynamic logger configuration interface.
 """
 
+import logging
 from typing import Optional, TYPE_CHECKING
 
 from textual.app import ComposeResult
@@ -26,12 +27,32 @@ class LoggerView(Container):
         super().__init__()
         self.pid = pid
         self._client: Optional["StreamingAgentClient"] = None
+        self._own_client: Optional["StreamingAgentClient"] = None
+        self._socket_path: Optional[str] = None
+        self._log = logging.getLogger(__name__)
         self._mounted = False
 
     def set_client(self, client: "StreamingAgentClient") -> None:
         self._client = client
+        self._socket_path = client.socket_path
+        self._connect_own_client()
         if self._mounted:
             self.run_worker(self._refresh_loggers(), thread=False)
+
+    def _connect_own_client(self) -> None:
+        """Create a dedicated StreamingAgentClient to avoid socket contention."""
+        if not self._socket_path:
+            return
+        from peeka.core.client import StreamingAgentClient
+        self._own_client = StreamingAgentClient(self._socket_path)
+        result = self._own_client.connect()
+        if result.get("status") != "success":
+            self._log.warning("%s dedicated client failed: %s", self.__class__.__name__, result.get("error"))
+            self._own_client = None
+
+    def _get_client(self) -> Optional["StreamingAgentClient"]:
+        """Return dedicated client if available, else shared client."""
+        return self._own_client or self._client
 
     def compose(self) -> ComposeResult:
         yield Container(
@@ -86,7 +107,7 @@ class LoggerView(Container):
         await self._refresh_loggers()
 
     async def _refresh_loggers(self) -> None:
-        if not self._client:
+        if not self._get_client():
             self.app.notify("Not connected to agent", severity="error")
             return
 
@@ -101,7 +122,7 @@ class LoggerView(Container):
             command["pattern"] = pattern
 
         worker = self.run_worker(
-            lambda: self._client.send_command(command),
+            lambda: self._get_client().send_command(command),
             thread=True,
         )
         await worker.wait()
@@ -131,7 +152,7 @@ class LoggerView(Container):
         self.app.notify(f"Loaded {len(loggers)} logger(s)", severity="information")
 
     async def _set_logger_level(self) -> None:
-        if not self._client:
+        if not self._get_client():
             self.app.notify("Not connected to agent", severity="error")
             return
 
@@ -157,7 +178,7 @@ class LoggerView(Container):
         }
 
         worker = self.run_worker(
-            lambda: self._client.send_command(command),
+            lambda: self._get_client().send_command(command),
             thread=True,
         )
         await worker.wait()
