@@ -25,9 +25,12 @@ class MemoryView(Container):
         self.pid = pid
         self._client: Optional["StreamingAgentClient"] = None
         self._tracking_enabled = False
+        self._mounted = False
 
     def set_client(self, client: "StreamingAgentClient") -> None:
         self._client = client
+        if self._mounted:
+            self.run_worker(self._refresh_overview(), thread=False)
 
     async def action_refresh(self) -> None:
         """Refresh memory data (triggered by r key)."""
@@ -83,6 +86,7 @@ class MemoryView(Container):
         table = self.query_one("#mem-objects-table", DataTable)
         table.add_columns("Type", "Count", "Size")
 
+        self._mounted = True
         if self._client:
             await self._refresh_overview()
 
