@@ -76,6 +76,7 @@ class LoggerCommand(BaseCommand):
                         "name": name,
                         "level": level_name,
                         "level_num": logger_obj.level,
+                        "handlers": len(logger_obj.handlers),
                     }
                 )
 
@@ -105,6 +106,7 @@ class LoggerCommand(BaseCommand):
             "name": name,
             "level": level_name,
             "level_num": logger_obj.level,
+            "handlers": len(logger_obj.handlers),
         }
 
     def _set_logger_level(self, params: Dict[str, Any]) -> Dict[str, Any]:
