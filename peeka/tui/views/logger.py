@@ -26,9 +26,12 @@ class LoggerView(Container):
         super().__init__()
         self.pid = pid
         self._client: Optional["StreamingAgentClient"] = None
+        self._mounted = False
 
     def set_client(self, client: "StreamingAgentClient") -> None:
         self._client = client
+        if self._mounted:
+            self.run_worker(self._refresh_loggers(), thread=False)
 
     def compose(self) -> ComposeResult:
         yield Container(
@@ -67,6 +70,7 @@ class LoggerView(Container):
         table = self.query_one("#logger-table", DataTable)
         table.add_columns("Logger", "Level", "Handlers")
         table.cursor_type = "row"
+        self._mounted = True
 
         if self._client:
             await self._refresh_loggers()
