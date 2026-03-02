@@ -41,6 +41,24 @@ nav_order: 6
 - 动态调整日志级别进行性能优化
 - 排查日志缺失问题（检查 logger 配置）
 
+## TUI 使用
+
+在 TUI 模式下，按 **`l`** 键切换到 **Logger 视图**，提供以下交互式功能：
+
+- **Logger 列表显示**：自动加载并展示所有 logger 及其当前级别
+  - 按 logger 名称排序
+  - 显示 logger 名称、当前级别、级别数值
+  - 实时刷新按钮（Refresh）
+- **级别修改**：选中 logger 后可快速调整级别
+  - 支持 DEBUG, INFO, WARNING, ERROR, CRITICAL
+  - 修改后立即生效
+- **模式过滤**：支持 fnmatch 通配符（`*` 和 `?`）过滤 logger
+- **快捷操作**：
+  - 上下方向键选择 logger
+  - Enter 修改选中 logger 的级别
+  - 按 `r` 刷新 logger 列表
+
+**CLI 等效命令**：下文所有示例使用 CLI 命令演示，TUI 提供了相同功能的图形化界面。
 ---
 
 ## 使用场景

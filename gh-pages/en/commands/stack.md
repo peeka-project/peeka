@@ -39,6 +39,22 @@ The `stack` command captures the complete call stack when a function is invoked,
 - `watch`: Observes function **arguments, return values, execution time**
 - `stack`: Observes function **call path** (where it was called from)
 
+## TUI Usage
+
+In TUI mode, press **`s`** to switch to **Stack view**, which provides the following interactive features:
+
+- **Pattern Input**: Supports function name autocomplete (fetched from target process in real-time)
+- **Parameter Configuration**: Visual configuration for capture count, condition expressions, stack depth
+- **Call Stack Visualization**: Real-time display of call stacks in table format
+  - Shows file names, line numbers, function names, code snippets
+  - Each capture displays complete call chain (from innermost to outermost)
+- **Keyboard Shortcuts**:
+  - Enter after entering pattern to start capturing
+  - Press `c` to clear capture records
+  - Press Delete to remove selected record
+  - Up/Down arrow keys to browse stack levels
+
+**CLI Equivalent**: All examples below use CLI commands for demonstration; TUI provides the same functionality with a graphical interface.
 ---
 
 ## Use Cases

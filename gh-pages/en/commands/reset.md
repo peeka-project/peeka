@@ -14,6 +14,21 @@ The `reset` command is used to **restore enhanced methods to their original stat
 
 **Design Inspiration**: Peeka's `reset` command is inspired by [Arthas](https://arthas.aliyun.com/)'s `reset` command, providing similar enhancement restoration capabilities.
 
+## TUI Usage
+
+**Note**: The reset command has **no dedicated view in TUI**, but can be executed through the command input box:
+
+- Press `:` in the TUI main interface to enter command mode
+- Enter `reset` command to execute
+
+**Common Operations**:
+- List all enhancements: `: reset --list` or `: reset -l`
+- Reset all enhancements: `: reset`
+- Reset specific pattern: `: reset "myapp.service.*"`
+
+**Shortcuts**: Each view typically has an independent "Stop" button, no need to manually enter reset command.
+
+**CLI Equivalent Commands**: All examples below use CLI commands for demonstration.
 ## Use Cases
 
 - **Cleanup after diagnostics**: Remove all injected observation logic after completing troubleshooting

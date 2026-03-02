@@ -128,6 +128,25 @@ peeka-cli logger --action set --logger myapp.metrics --level WARNING
 
 ---
 
+## TUI Usage
+
+In TUI mode, press **`l`** key to switch to **Logger View**, providing the following interactive features:
+
+- **Logger List Display**: Automatically loads and displays all loggers and their current levels
+  - Sorted by logger name
+  - Shows logger name, current level, level number
+  - Real-time Refresh button
+- **Level Modification**: Quickly adjust level for selected logger
+  - Supports DEBUG, INFO, WARNING, ERROR, CRITICAL
+  - Changes take effect immediately
+- **Pattern Filtering**: Supports fnmatch wildcards (`*` and `?`) for filtering loggers
+- **Quick Operations**:
+  - Up/Down arrow keys to select logger
+  - Press Enter to modify selected logger's level
+  - Press `r` to refresh logger list
+
+**CLI Equivalent Commands**: All examples below use CLI commands for demonstration. TUI provides the same functionality with a graphical interface.
+
 ## Command Format
 
 ```bash

@@ -74,17 +74,43 @@ peeka inspect --action get --target "sys.path"
 
 ---
 
+## TUI 使用
+
+在 TUI 模式下，按 **`i`** 键切换到 **Inspect 视图**，提供以下交互式功能：
+
+- **操作选择**：可视化切换 get/instances/count 操作
+- **get 操作**：
+  - 输入目标路径（如 `sys.version`, `module.attr`）
+  - 配置输出深度（depth）
+  - 展示属性值和类型信息
+- **instances 操作**：
+  - 输入类名（如 `myapp.User`）
+  - 配置结果数量限制、过滤表达式
+  - 展示实例列表和属性
+  - 支持 --gc-first（执行前先 GC）
+- **count 操作**：
+  - 输入类名（如 `list`, `dict`）
+  - 快速统计实例数量
+- **快捷操作**：
+  - 输入参数后按 Enter 执行
+  - 按 `c` 清空结果
+
+**CLI 等效命令**：下文所有示例使用 CLI 命令演示，TUI 提供了相同功能的图形化界面。
+
 ## 命令格式
 
 ```bash
-peeka inspect --action <action> [options]
+# 必须先附加到目标进程
+peeka-cli attach <pid>
+
+# 然后执行 inspect 命令
+peeka-cli inspect --action <action> [options]
 ```
 
 ### 基本参数
 
 | 参数          | 说明       | 必需 | 默认值   |
 |-------------|----------|----|-------|
-| `-p, --pid` | 目标进程 PID | 是  | -     |
 | `--action`  | 操作类型     | 否  | `get` |
 
 ### action 操作类型
