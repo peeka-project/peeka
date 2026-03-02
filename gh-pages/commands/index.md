@@ -9,7 +9,7 @@ permalink: /commands
 # 命令参考
 {: .no_toc }
 
-Peeka 提供了一系列强大的诊断命令，每个命令都专注于特定的诊断场景。
+Peeka 提供了一系列强大的诊断命令，每个命令都专注于特定的诊断场景。本文档涵盖了 13 个核心命令。
 {: .fs-6 .fw-300 }
 
 ---
@@ -27,6 +27,9 @@ Peeka 提供了一系列强大的诊断命令，每个命令都专注于特定�
 | [memory]({{ site.baseurl }}{% link commands/memory.md %}) | 内存分析 | 分析内存使用和泄漏 |
 | [inspect]({{ site.baseurl }}{% link commands/inspect.md %}) | 对象检查 | 运行时检查对象属性 |
 | [search]({{ site.baseurl }}{% link commands/search.md %}) | 搜索类和方法 (sc/sm) | 代码探索和发现 |
+| [thread]({{ site.baseurl }}{% link commands/thread.md %}) | 线程分析 | 枚举线程和查看线程栈 |
+| [top]({{ site.baseurl }}{% link commands/top.md %}) | 函数性能采样 | 函数级性能热点分析 |
+| [detach]({{ site.baseurl }}{% link commands/detach.md %}) | 断开连接 | 安全退出诊断会话 |
 | [reset]({{ site.baseurl }}{% link commands/reset.md %}) | 重置增强 | 恢复被观测的函数 |
 
 ---
@@ -99,13 +102,19 @@ peeka-cli reset "module.func"
 peeka
 
 # 使用快捷键切换视图
-# W - Watch 视图
-# T - Trace 视图
-# S - Stack 视图
-# M - Monitor 视图
-# L - Logger 视图
-# Y - Memory 视图
+# d - Dashboard 仪表盘
+# w - Watch 观测视图
+# t - Trace 追踪视图
+# s - Stack 调用栈视图
+# m - Monitor 性能监控视图
+# l - Logger 日志管理视图
+# e - Memory 内存分析视图
+# i - Inspect 对象检查视图
+# h - Threads 线程分析视图
+# F8 - Top 函数热点视图
 ```
+
+详见 [TUI 使用指南]({{ site.baseurl }}{% link tui.md %})。
 
 ---
 
@@ -180,7 +189,7 @@ peeka
 
 选择您需要的命令查看详细文档：
 
-- [attach - 附加到进程]({{ site.baseurl }}{% link commands/attach.md %})
+- [attach - 附加到进程]({{ site.baseurl }}{% link commands/attach.md %}) 
 - [watch - 观测函数调用]({{ site.baseurl }}{% link commands/watch.md %})
 - [trace - 追踪调用链]({{ site.baseurl }}{% link commands/trace.md %})
 - [stack - 追踪调用栈]({{ site.baseurl }}{% link commands/stack.md %})
@@ -190,5 +199,8 @@ peeka
 - [inspect - 对象检查]({{ site.baseurl }}{% link commands/inspect.md %})
 - [search - 搜索类和方法]({{ site.baseurl }}{% link commands/search.md %})
 - [reset - 重置增强]({{ site.baseurl }}{% link commands/reset.md %})
+- [thread - 线程分析]({{ site.baseurl }}{% link commands/thread.md %})
+- [top - 函数性能采样]({{ site.baseurl }}{% link commands/top.md %})
+- [detach - 断开连接]({{ site.baseurl }}{% link commands/detach.md %})
 
 或查看 [快速开始]({{ site.baseurl }}{% link quickstart.md %}) 了解基本使用方法。

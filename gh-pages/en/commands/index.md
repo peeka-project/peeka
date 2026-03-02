@@ -9,7 +9,7 @@ permalink: /en/commands
 # Command Reference
 {: .no_toc }
 
-Peeka provides a series of powerful diagnostic commands, each focused on specific diagnostic scenarios.
+Peeka provides a series of powerful diagnostic commands, each focused on specific diagnostic scenarios. This documentation covers 13 core commands.
 {: .fs-6 .fw-300 }
 
 ---
@@ -28,6 +28,9 @@ Peeka provides a series of powerful diagnostic commands, each focused on specifi
 | inspect | Object inspection | Runtime object property inspection |
 | search (sc/sm) | Search classes and methods | Code exploration and discovery |
 | reset | Reset enhancements | Restore observed functions |
+| thread | Thread analysis | Enumerate threads and view thread stacks |
+| top | Function profiling | Function-level performance hotspot analysis |
+| detach | Disconnect | Safely exit diagnostic session |
 
 ---
 
@@ -99,13 +102,20 @@ peeka-cli reset "module.func"
 peeka
 
 # Use shortcuts to switch views
-# W - Watch view
-# T - Trace view
-# S - Stack view
-# M - Monitor view
-# L - Logger view
-# Y - Memory view
+# d - Dashboard
+# w - Watch view
+# t - Trace view
+# s - Stack view
+# m - Monitor view
+# l - Logger view
+# e - Memory view
+# i - Inspect view
+# h - Threads view
+# F8 - Top view
 ```
+
+See [TUI Usage Guide]({{ site.baseurl }}{% link tui.md %}) for details.
+
 
 ---
 
@@ -178,8 +188,24 @@ Conditional expressions use `simpleeval` library for safe evaluation, not suppor
 
 ## Next Steps
 
-Choose the command you need to view detailed documentation:
+
+Select the command you need for detailed documentation:
+
+- [attach - Attach to target process]({{ site.baseurl }}{% link en/commands/attach.md %})
+- [watch - Observe function calls]({{ site.baseurl }}{% link en/commands/watch.md %})
+- [trace - Trace call chain]({{ site.baseurl }}{% link en/commands/trace.md %})
+- [stack - Trace call stack]({{ site.baseurl }}{% link en/commands/stack.md %})
+- [monitor - Performance monitoring]({{ site.baseurl }}{% link en/commands/monitor.md %})
+- [logger - Log management]({{ site.baseurl }}{% link en/commands/logger.md %})
+- [memory - Memory analysis]({{ site.baseurl }}{% link en/commands/memory.md %})
+- [inspect - Object inspection]({{ site.baseurl }}{% link en/commands/inspect.md %})
+- [search - Search classes and methods]({{ site.baseurl }}{% link en/commands/search.md %})
+- [reset - Reset enhancements]({{ site.baseurl }}{% link en/commands/reset.md %})
+- [thread - Thread analysis]({{ site.baseurl }}{% link en/commands/thread.md %})
+- [top - Function profiling]({{ site.baseurl }}{% link en/commands/top.md %})
+- [detach - Disconnect]({{ site.baseurl }}{% link en/commands/detach.md %})
 
 > **Note**: Detailed English documentation for individual commands is being prepared. Currently, command documentation is available in Chinese. Please refer to the Chinese version for complete command documentation.
 
 Or view [Quick Start]({{ site.baseurl }}{% link quickstart.md %}) to learn basic usage methods.
+

@@ -117,6 +117,7 @@ peeka-cli watch "module.func" | jq 'select(.type == "observation" and .data.dura
 
 | 命令 | 功能 | 状态 |
 |------|------|------|
+| `attach` | 附加到目标进程 | ✅ |
 | `watch` | 观测函数调用（参数、返回值、执行时间） | ✅ |
 | `trace` | 追踪函数调用链和执行耗时 | ✅ |
 | `stack` | 追踪函数调用栈 | ✅ |
@@ -125,8 +126,33 @@ peeka-cli watch "module.func" | jq 'select(.type == "observation" and .data.dura
 | `memory` | 内存分析 | ✅ |
 | `inspect` | 运行时对象检查 | ✅ |
 | `sc/sm` | 搜索类和方法 | ✅ |
+| `reset` | 重置增强 | ✅ |
+| `thread` | 线程分析 | ✅ |
+| `top` | 函数级性能采样 | ✅ |
+| `detach` | 安全断开连接 | ✅ |
 
 [查看完整命令参考]({{ site.baseurl }}{% link commands/index.md %}){: .btn .btn-outline }
+
+### 🎨 TUI 交互式界面
+{: .text-delta }
+
+除了 CLI 命令行工具，Peeka 还提供功能完整的 TUI（文本用户界面）：
+
+- **进程选择器** - 自动显示系统进程列表，支持搜索过滤
+- **10 个专用视图** - Dashboard、Watch、Trace、Stack、Monitor、Logger、Memory、Inspect、Threads、Top
+- **实时数据流** - 流式显示观测数据，支持暂停/继续/清屏
+- **自动补全** - 动态获取目标进程的类和方法列表
+- **主题支持** - 内置多种配色主题
+
+```bash
+# 启动 TUI
+peeka
+
+# 使用快捷键切换视图
+# d/w/t/s/m/l/e/i/h/F8
+```
+
+[查看 TUI 完整使用指南]({{ site.baseurl }}{% link tui.md %}){: .btn .btn-outline }
 
 ---
 

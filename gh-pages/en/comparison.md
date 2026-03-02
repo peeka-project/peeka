@@ -61,6 +61,38 @@ Peeka's design is deeply inspired by [Alibaba Arthas](https://github.com/alibaba
 | Memory overview | ✅ | ✅ | Show memory usage |
 | **inspect command** | ✅ | ✅ (ognl) | Runtime object inspection |
 
+### ✅ Fully Implemented Features
+
+| Feature | Peeka | Arthas | Description |
+|------|-------|--------|------|
+| **attach command** | ✅ | ✅ | Attach to target process |
+| **watch command** | ✅ | ✅ | Observe function calls, parameters, return values |
+| Observation point control | `-b/-e/-s/-f` | `-b/-e/-s/-f` | AtEnter/AtExit/AtExceptionExit |
+| Conditional filtering | `--condition-express` | `--condition-express` | Support expression filtering |
+| Cost filtering | `cost > 100` | `#cost>100` | Based on execution time filtering |
+| Output fields | `params/returnObj/throwExp/cost` | Same | Arthas-compatible field names |
+| **trace command** | ✅ | ✅ | Trace function call chain and timing |
+| Call tree display | ✅ Tree structure | ✅ Tree structure | Visualize call relationships |
+| Depth limit | `-d, --depth` | `-n` | Control trace depth |
+| Skip built-ins | `--skip-builtin` | `--skipJDKMethod` | Reduce output noise |
+| Min duration | `--min-duration` | - | Filter low-cost calls |
+| **stack command** | ✅ | ✅ | Capture function call stack |
+| Conditional filtering | ✅ | ✅ | Support conditional expressions |
+| **monitor command** | ✅ | ✅ | Performance statistics monitoring |
+| Periodic statistics | ✅ | ✅ | Periodically output statistics |
+| **logger command** | ✅ | ✅ | Dynamically adjust log levels |
+| View loggers | ✅ | ✅ | List all loggers |
+| Modify level | ✅ | ✅ | Modify log level at runtime |
+| **sc/sm commands** | ✅ | ✅ | Search classes and methods |
+| Pattern matching | ✅ | ✅ | Support wildcard search |
+| **memory command** | ✅ | ✅ | Memory analysis |
+| Memory overview | ✅ | ✅ | Show memory usage |
+| **inspect command** | ✅ | ✅ (ognl) | Runtime object inspection |
+| **reset command** | ✅ | ✅ (stop) | Reset enhancement, restore original function |
+| **thread command** | ✅ | ✅ (jstack) | Thread analysis and thread stack |
+| **top command** | ✅ | ✅ (profiler) | Function-level performance sampling |
+| **detach command** | ✅ | ✅ (quit/exit) | Safely disconnect session |
+
 ### ⏳ Planned Features
 
 | Feature | Peeka | Arthas | Priority | Description |
@@ -68,8 +100,7 @@ Peeka's design is deeply inspired by [Alibaba Arthas](https://github.com/alibaba
 | Wildcard matching | Planned | ✅ `module.*` | Medium | Support glob patterns |
 | Custom output expressions | Planned | ✅ `-x '{params, returnObj}'` | Low | Flexible output format |
 | tt command | Planned | ✅ | High | Time tunnel (record and replay) |
-| thread command | Planned | ✅ | Medium | Thread diagnostics |
-| profiler | Planned | ✅ | High | Performance profiling |
+| profiler | Planned | ✅ | High | CPU/stack flame graphs |
 | heapdump | Planned | ✅ | Medium | Heap dump analysis |
 
 ### ❌ Non-Applicable Features

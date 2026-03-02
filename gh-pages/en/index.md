@@ -117,6 +117,7 @@ peeka-cli watch "module.func" | jq 'select(.type == "observation" and .data.dura
 
 | Command | Function | Status |
 |---------|----------|--------|
+| `attach` | Attach to target process | ✅ |
 | `watch` | Observe function calls (params, return, time) | ✅ |
 | `trace` | Trace call chain and execution time | ✅ |
 | `stack` | Trace call stack | ✅ |
@@ -125,8 +126,33 @@ peeka-cli watch "module.func" | jq 'select(.type == "observation" and .data.dura
 | `memory` | Memory analysis | ✅ |
 | `inspect` | Runtime object inspection | ✅ |
 | `sc/sm` | Search classes and methods | ✅ |
+| `reset` | Reset enhancements | ✅ |
+| `thread` | Thread analysis | ✅ |
+| `top` | Function-level performance sampling | ✅ |
+| `detach` | Safely exit diagnostic session | ✅ |
 
 [View Complete Command Reference]({{ site.baseurl }}{% link en/commands/index.md %}){: .btn .btn-outline }
+
+### 🎨 Interactive TUI Interface
+{: .text-delta }
+
+In addition to CLI commands, Peeka also provides a feature-complete TUI (Text User Interface):
+
+- **Process Selector** - Automatically displays system process list with search filtering
+- **10 Dedicated Views** - Dashboard, Watch, Trace, Stack, Monitor, Logger, Memory, Inspect, Threads, Top
+- **Real-Time Data Stream** - Streaming observation data with pause/resume/clear support
+- **Auto-Completion** - Dynamically retrieve classes and methods from target process
+- **Theme Support** - Multiple built-in color themes
+
+```bash
+# Launch TUI
+peeka
+
+# Use shortcuts to switch views
+# d/w/t/s/m/l/e/i/h/F8
+```
+
+[View Complete TUI Usage Guide]({{ site.baseurl }}{% link tui.md %}){: .btn .btn-outline }
 
 ---
 
