@@ -4,6 +4,7 @@ Watch View - Function observation interface.
 
 import json
 import logging
+import threading
 from collections import deque
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -130,6 +131,7 @@ class WatchView(Container):
         self._completion_source: Optional[CompletionSource] = None
         self._client: Optional["StreamingAgentClient"] = None
         self._stream_client: Optional["StreamingAgentClient"] = None
+        self._stream_client_lock: threading.Lock = threading.Lock()
         self._socket_path: Optional[str] = None
         self._observations: deque[dict] = deque(maxlen=self.MAX_OBSERVATIONS)
         self._obs_counter: int = 0
@@ -140,7 +142,7 @@ class WatchView(Container):
         self._client = client
         self._socket_path = client.socket_path
         self._completion_source = CompletionSource(client)
-        self._connect_own_stream_client()
+        # Defer stream client creation to first use (lazy connection)
 
     def _connect_own_stream_client(self) -> None:
         """Create a dedicated StreamingAgentClient for streaming observations."""
@@ -158,6 +160,14 @@ class WatchView(Container):
         except Exception as e:
             self._log.warning("Watch stream client error: %s", e)
             self._stream_client = None
+
+    def _ensure_stream_client(self) -> Optional["StreamingAgentClient"]:
+        """Lazily create stream client on first use (thread-safe)."""
+        if self._stream_client is None:
+            with self._stream_client_lock:
+                if self._stream_client is None:
+                    self._connect_own_stream_client()
+        return self._stream_client
 
     async def action_start_watch(self) -> None:
         """Start watching (triggered by Enter key)."""
@@ -480,7 +490,7 @@ class WatchView(Container):
 
     def _stream_observations(self, watch_id: str, pattern: str):
         """Stream observations in background thread."""
-        stream = self._stream_client or self._client
+        stream = self._ensure_stream_client() or self._client
         if not stream:
             return
 
