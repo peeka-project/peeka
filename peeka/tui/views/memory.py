@@ -25,33 +25,14 @@ class MemoryView(Container):
         super().__init__()
         self.pid = pid
         self._client: Optional["StreamingAgentClient"] = None
-        self._own_client: Optional["StreamingAgentClient"] = None
-        self._socket_path: Optional[str] = None
         self._log = logging.getLogger(__name__)
         self._tracking_enabled = False
         self._mounted = False
 
     def set_client(self, client: "StreamingAgentClient") -> None:
         self._client = client
-        self._socket_path = client.socket_path
-        self._connect_own_client()
         if self._mounted:
             self.run_worker(self._refresh_overview(), thread=False)
-
-    def _connect_own_client(self) -> None:
-        """Create a dedicated StreamingAgentClient to avoid socket contention."""
-        if not self._socket_path:
-            return
-        from peeka.core.client import StreamingAgentClient
-        self._own_client = StreamingAgentClient(self._socket_path)
-        result = self._own_client.connect()
-        if result.get("status") != "success":
-            self._log.warning("%s dedicated client failed: %s", self.__class__.__name__, result.get("error"))
-            self._own_client = None
-
-    def _get_client(self) -> Optional["StreamingAgentClient"]:
-        """Return dedicated client if available, else shared client."""
-        return self._own_client or self._client
 
     async def action_refresh(self) -> None:
         """Refresh memory data (triggered by r key)."""
@@ -126,11 +107,11 @@ class MemoryView(Container):
             await self._dump_memory()
 
     async def _refresh_overview(self) -> None:
-        if not self._get_client():
+        if not self._client:
             return
 
         worker = self.run_worker(
-            lambda: self._get_client().send_command({"type": "memory", "action": "overview"}),
+            lambda: self._client.send_command({"type": "memory", "action": "overview"}),
             thread=True,
         )
         await worker.wait()
@@ -182,7 +163,7 @@ class MemoryView(Container):
         )
 
         gc_worker = self.run_worker(
-            lambda: self._get_client().send_command(
+            lambda: self._client.send_command(
                 {"type": "memory", "action": "gc", "limit": 10}
             ),
             thread=True,
@@ -208,12 +189,12 @@ class MemoryView(Container):
         self.app.notify("Memory overview refreshed", severity="information")
 
     async def _toggle_tracking(self) -> None:
-        if not self._get_client():
+        if not self._client:
             return
 
         if self._tracking_enabled:
             worker = self.run_worker(
-                lambda: self._get_client().send_command({"type": "memory", "action": "stop"}),
+                lambda: self._client.send_command({"type": "memory", "action": "stop"}),
                 thread=True,
             )
             await worker.wait()
@@ -238,7 +219,7 @@ class MemoryView(Container):
                 )
         else:
             worker = self.run_worker(
-                lambda: self._get_client().send_command(
+                lambda: self._client.send_command(
                     {"type": "memory", "action": "start", "nframe": 10}
                 ),
                 thread=True,
@@ -265,11 +246,11 @@ class MemoryView(Container):
                 )
 
     async def _gc_collect(self) -> None:
-        if not self._get_client():
+        if not self._client:
             return
 
         worker = self.run_worker(
-            lambda: self._get_client().send_command(
+            lambda: self._client.send_command(
                 {"type": "memory", "action": "gc", "limit": 20}
             ),
             thread=True,
@@ -296,11 +277,11 @@ class MemoryView(Container):
             )
 
     async def _dump_memory(self) -> None:
-        if not self._get_client():
+        if not self._client:
             return
 
         worker = self.run_worker(
-            lambda: self._get_client().send_command({"type": "memory", "action": "dump"}),
+            lambda: self._client.send_command({"type": "memory", "action": "dump"}),
             thread=True,
         )
         await worker.wait()
