@@ -59,7 +59,7 @@ class TopView(Container):
         """
         self._client = client
         self._socket_path = client.socket_path
-        self._connect_own_client()
+        # Defer client creation to first use (lazy connection)
         self._update_button_states()
 
     def _connect_own_client(self) -> None:
@@ -79,6 +79,11 @@ class TopView(Container):
         except Exception as e:
             self._log.warning("Top dedicated client error: %s", e)
             self._own_client = None
+
+    def _ensure_own_client(self) -> None:
+        """Lazily create dedicated client on first use."""
+        if self._own_client is None:
+            self._connect_own_client()
 
     async def on_mount(self) -> None:
         """Initialize when view is mounted."""
@@ -114,6 +119,7 @@ class TopView(Container):
 
     def _start_profiling(self) -> None:
         """Start the profiler and refresh worker."""
+        self._ensure_own_client()
         client = self._own_client or self._client
         if not client:
             return
