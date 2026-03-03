@@ -7,7 +7,8 @@ Runtime diagnostic tool for Python 3.9-3.14+ using PEP 768 remote debugging.
 ```bash
 uv pip install -e .                 # Core only
 uv pip install -e ".[tui]"         # With TUI (textual)
-uv pip install -e ".[dev]"         # Dev (pytest, textual, testcontainers)
+uv pip install -e ".[dev]"         # Dev (pytest, textual)
+uv sync --dev                      # Dev with testcontainers, docker, pytest-cov, pytest-timeout
 
 pytest tests/ -v                                          # All tests
 pytest tests/ -v -m "not e2e and not container"           # CI-safe (no ptrace/docker)
@@ -71,7 +72,6 @@ Use `typing` module types (`Dict`, `Optional`, `Any`, `Callable`), not PEP 604 `
 if target_info is None:
     raise ValueError(f"Cannot find target: {pattern}")
 
-
 # Commands: CATCH and return structured dicts
 def execute(self, params: dict) -> dict:
     try:
@@ -85,7 +85,8 @@ def execute(self, params: dict) -> dict:
 
 ### Thread Safety
 
-Use `threading.Lock` for shared mutable state in agent/injector. Keep critical sections small.
+Use `threading.Lock` for shared mutable state in agent/injector/TUI views. Keep critical sections small.
+TUI streaming views use double-checked locking for lazy client initialization (`_ensure_stream_client()`).
 
 ### Logging
 
@@ -102,7 +103,8 @@ peeka/
 │   ├── app.py               # PeekaApp main
 │   ├── completion.py         # CLI/TUI completion helper
 │   ├── screens/             # process_selector, main, help
-│   ├── views/               # dashboard, watch, stack, monitor, memory, logger, inspect
+│   ├── views/               # dashboard, watch, stack, trace, monitor,
+│   │                        #   memory, logger, inspect, thread, top
 │   └── widgets/             # autocomplete_input
 ├── core/
 │   ├── agent.py             # PeekaAgent - injected into target, Unix socket server
@@ -115,8 +117,9 @@ peeka/
 │   └── safeeval/            # Safe expression evaluation (simpleeval)
 ├── commands/                # BaseCommand subclasses
 │   ├── base.py              # ABC: execute() + validate_params()
-│   ├── watch.py, stack.py, monitor.py, memory.py
+│   ├── watch.py, stack.py, trace.py, monitor.py, memory.py
 │   ├── logger.py, search.py, reset.py, vmtool.py
+│   ├── thread.py, top.py
 │   └── complete.py, detach.py
 └── utils/
     ├── formatters.py        # Value formatting utilities
@@ -143,6 +146,10 @@ self.app.call_from_thread(self._update_ui, data)  # From background thread
 widget = app.screen.query_one("#widget-id", WidgetType)  # After push_screen
 ```
 
+Streaming views (watch, trace, stack, monitor) create dedicated `StreamingAgentClient` connections
+lazily via `_ensure_stream_client()` with thread-safe double-checked locking. Non-streaming views
+(logger, memory, inspect, thread) share the main client.
+
 ## Testing Patterns
 
 Tests use **classes** with pytest fixtures. Custom `MockAgent` classes (not unittest.mock).
@@ -154,7 +161,6 @@ class MockAgent:
 
     def _send_observation(self, observation):
         self._observations.append(observation)
-
 
 class TestMyFeature:
     @pytest.fixture
@@ -204,12 +210,9 @@ docker build --network=host -f docker/Dockerfile.test-py314 -t peeka-test:py314 
 pytest tests/container/test_attach.py -v -m container --timeout=180
 ```
 
-**Network note**: Clash proxy on `127.0.0.1:7897` resolves DNS to fake `198.18.x.x` IPs.
-`--network=host` shares host network stack so Docker can route through Clash to USTC mirrors.
-No proxy env vars are used inside Dockerfiles — only USTC mirror URLs.
+**Network note**: `--network=host` lets Docker route through host proxy (Clash on `127.0.0.1:7897`) to USTC mirrors. No proxy env vars in Dockerfiles.
 
-
-**TUI in containers**: Test images have `TERM=xterm-256color` and `COLORTERM=truecolor` baked in via Dockerfile `ENV`. No manual terminal env setup needed for `docker exec`.
+**TUI in containers**: Test images have `TERM=xterm-256color` and `COLORTERM=truecolor` baked in. No manual terminal env setup needed.
 
 ## Key Files
 
@@ -218,3 +221,9 @@ No proxy env vars are used inside Dockerfiles — only USTC mirror URLs.
 - `peeka/core/safeeval/simpleeval.py` — Expression security, safe AST evaluation
 - `peeka/core/output.py` — OutputFormatter for structured JSONL CLI output
 - `tests/e2e/conftest.py` — E2E fixtures (target process lifecycle, ptrace checks)
+
+## Git Conventions
+
+- **Commit style**: Semantic (`feat:`, `fix:`, `perf:`, `docs:`, `test:`, `refactor:`)
+- **Scope**: Module name in parens — `fix(tui):`, `feat(cli):`, `test(tui):`
+- **Language**: English
