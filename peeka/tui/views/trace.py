@@ -3,6 +3,7 @@ Trace View - Function call tree tracing interface.
 """
 
 import logging
+import threading
 from typing import TYPE_CHECKING, Optional, Dict, Any, List
 
 from textual.app import ComposeResult
@@ -37,6 +38,7 @@ class TraceView(Container):
         self._completion_source: Optional[CompletionSource] = None
         self._client: Optional["StreamingAgentClient"] = None
         self._stream_client: Optional["StreamingAgentClient"] = None
+        self._stream_client_lock: threading.Lock = threading.Lock()
         self._socket_path: Optional[str] = None
         self._current_tree_nodes: Dict[str, TreeNode] = {}  # For tree node management
         self._log = logging.getLogger(__name__)
@@ -46,7 +48,7 @@ class TraceView(Container):
         self._client = client
         self._socket_path = client.socket_path
         self._completion_source = CompletionSource(client)
-        self._connect_own_stream_client()
+        # Defer stream client creation to first use (lazy connection)
 
     def _connect_own_stream_client(self) -> None:
         """Create a dedicated StreamingAgentClient for streaming observations."""
@@ -64,6 +66,14 @@ class TraceView(Container):
         except Exception as e:
             self._log.warning("Trace stream client error: %s", e)
             self._stream_client = None
+
+    def _ensure_stream_client(self) -> Optional["StreamingAgentClient"]:
+        """Lazily create stream client on first use (thread-safe)."""
+        if self._stream_client is None:
+            with self._stream_client_lock:
+                if self._stream_client is None:
+                    self._connect_own_stream_client()
+        return self._stream_client
 
     async def action_start_trace(self) -> None:
         """Start tracing (triggered by Enter key)."""
@@ -295,7 +305,7 @@ class TraceView(Container):
 
     def _stream_trace_observations(self, watch_id: str, pattern: str):
         """Stream trace observations in background thread."""
-        stream = self._stream_client or self._client
+        stream = self._ensure_stream_client() or self._client
         if not stream:
             return
 

@@ -4,6 +4,7 @@ Monitor View - Performance statistics interface.
 
 from typing import Optional, Dict, TYPE_CHECKING
 import logging
+import threading
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -30,6 +31,7 @@ class MonitorView(Container):
         self.pid = pid
         self._client: Optional["StreamingAgentClient"] = None
         self._stream_client: Optional["StreamingAgentClient"] = None
+        self._stream_client_lock: threading.Lock = threading.Lock()
         self._socket_path: Optional[str] = None
         self._completion_source: Optional[CompletionSource] = None
         self._workers: Dict[str, Worker] = {}
@@ -39,7 +41,7 @@ class MonitorView(Container):
         self._client = client
         self._socket_path = client.socket_path
         self._completion_source = CompletionSource(client)
-        self._connect_own_stream_client()
+        # Defer stream client creation to first use (lazy connection)
 
     def _connect_own_stream_client(self) -> None:
         """Create a dedicated StreamingAgentClient for streaming observations."""
@@ -57,6 +59,14 @@ class MonitorView(Container):
         except Exception as e:
             self._log.warning("Monitor stream client error: %s", e)
             self._stream_client = None
+
+    def _ensure_stream_client(self) -> Optional["StreamingAgentClient"]:
+        """Lazily create stream client on first use (thread-safe)."""
+        if self._stream_client is None:
+            with self._stream_client_lock:
+                if self._stream_client is None:
+                    self._connect_own_stream_client()
+        return self._stream_client
 
     def _get_pattern_completions(self, prefix: str):
         """Get completions for pattern input."""
@@ -189,7 +199,7 @@ class MonitorView(Container):
         )
 
     def _stream_stats(self, watch_id: str, pattern: str):
-        stream = self._stream_client or self._client
+        stream = self._ensure_stream_client() or self._client
         if not stream:
             return
 
