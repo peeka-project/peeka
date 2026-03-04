@@ -354,13 +354,29 @@ TabPane {
     display: block;
 }
 
-/* Placeholder styling */
-#mem-allocations-placeholder, #mem-diff-placeholder, #mem-references-placeholder {
+#mem-allocations-content {
+    height: 100%;
+    display: block;
+}
+
+#mem-alloc-table {
+    height: 1fr;
+    display: block;
+}
+
+#mem-alloc-placeholder {
+    display: none;
     content-align: center middle;
     color: $text-muted;
     text-style: italic;
 }
 
+/* Placeholder styling */
+#mem-alloc-placeholder, #mem-diff-placeholder, #mem-references-placeholder {
+    content-align: center middle;
+    color: $text-muted;
+    text-style: italic;
+}
 /* ============================================================================
    LOGGER VIEW
    ============================================================================ */

@@ -3,7 +3,7 @@ Memory View - Memory analysis interface.
 """
 
 import logging
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, Any, Dict
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -28,7 +28,16 @@ class MemoryView(Container):
         self._log = logging.getLogger(__name__)
         self._tracking_enabled = False
         self._mounted = False
+        self._alloc_data: Optional[Dict[str, Any]] = None
 
+    def _format_size(self, bytes: int) -> str:
+        """Format bytes as human-readable size."""
+        if bytes < 1024:
+            return f"{bytes} B"
+        elif bytes < 1024 * 1024:
+            return f"{bytes / 1024:.1f} KB"
+        else:
+            return f"{bytes / (1024 * 1024):.1f} MB"
     def set_client(self, client: "StreamingAgentClient") -> None:
         self._client = client
         if self._mounted:
@@ -82,9 +91,13 @@ class MemoryView(Container):
                     id="mem-overview-content",
                 )
             with TabPane("Allocations", id="mem-allocations-pane"):
-                yield Static(
-                    "Enable tracking to see top allocations (press 't')",
-                    id="mem-allocations-placeholder",
+                yield Vertical(
+                    Static(
+                        "Start tracking to see top allocations (press 't')",
+                        id="mem-alloc-placeholder",
+                    ),
+                    DataTable(id="mem-alloc-table", show_header=True, zebra_stripes=True),
+                    id="mem-allocations-content",
                 )
             with TabPane("Diff", id="mem-diff-pane"):
                 yield Static(
@@ -104,6 +117,9 @@ class MemoryView(Container):
         table = self.query_one("#mem-objects-table", DataTable)
         table.add_columns("Type", "Count", "Size")
 
+        alloc_table = self.query_one("#mem-alloc-table", DataTable)
+        alloc_table.add_columns("Rank", "Size", "Count", "Location")
+
         self._mounted = True
         if self._client:
             await self._refresh_overview()
@@ -115,6 +131,7 @@ class MemoryView(Container):
 
         if event.button.id == "mem-refresh-btn":
             await self._refresh_overview()
+            await self._refresh_allocations()
         elif event.button.id == "mem-track-btn":
             await self._toggle_tracking()
         elif event.button.id == "gc-btn":
@@ -203,6 +220,59 @@ class MemoryView(Container):
                 )
 
         self.app.notify("Memory overview refreshed", severity="information")
+
+    async def _refresh_allocations(self) -> None:
+        if not self._client:
+            return
+
+        placeholder = self.query_one("#mem-alloc-placeholder", Static)
+        alloc_table = self.query_one("#mem-alloc-table", DataTable)
+
+        if not self._tracking_enabled:
+            placeholder.styles.display = "block"
+            alloc_table.styles.display = "none"
+            return
+
+        placeholder.styles.display = "none"
+        alloc_table.styles.display = "block"
+
+        worker = self.run_worker(
+            lambda: self._client.send_command({"type": "memory", "action": "top", "limit": 20}),
+            thread=True,
+        )
+        await worker.wait()
+        try:
+            response = worker.result
+        except Exception as e:
+            self.app.notify(f"Connection error: {e}", severity="error")
+            return
+
+        if response.get("status") != "success":
+            self.app.notify(f"Failed: {response.get('error')}", severity="error")
+            return
+
+        alloc_table.clear()
+        allocations = response.get("allocations", [])
+
+        for alloc in allocations:
+            rank = alloc.get("rank", 0)
+            size_bytes = alloc.get("size_bytes", 0)
+            count = alloc.get("count", 0)
+            traceback = alloc.get("traceback", [])
+
+            location = "unknown"
+            if traceback:
+                first_frame = traceback[0]
+                filename = first_frame.get("filename", "?")
+                lineno = first_frame.get("lineno", 0)
+                location = f"{filename}:{lineno}"
+
+            alloc_table.add_row(
+                str(rank),
+                self._format_size(size_bytes),
+                str(count),
+                location,
+            )
 
     async def _toggle_tracking(self) -> None:
         if not self._client:
