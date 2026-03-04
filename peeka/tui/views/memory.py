@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Optional, Any, Dict, List, Sequence
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Vertical, Horizontal
-from textual.widgets import Static, DataTable, Button, TabbedContent, TabPane, Sparkline
+from textual.widgets import Static, DataTable, Button, TabbedContent, TabPane, Sparkline, Input
 
 if TYPE_CHECKING:
     from peeka.core.client import StreamingAgentClient
@@ -36,6 +36,8 @@ class MemoryView(Container):
         self._sort_reverse: bool = False
         self._gc_column_keys: List[Any] = []  # Store column keys for sorting
         self._mem_history: List[float] = []  # RSS MB history (max 100 points)
+        self._nframe: int = 10  # Frame depth for tracemalloc tracking
+        self._limit: int = 20  # Limit for GC stats and allocations display
 
     def _format_size(self, bytes: int) -> str:
         """Format bytes as human-readable size."""
@@ -120,6 +122,10 @@ class MemoryView(Container):
                 ),
                 Button("GC Collect", id="gc-btn", variant="warning", flat=True),
                 Button("Dump", id="mem-dump-btn", variant="primary", flat=True),
+                Static("nframe:", classes="input-label"),
+                Input(value="10", id="mem-nframe-input", max_length=3),
+                Static("limit:", classes="input-label"),
+                Input(value="20", id="mem-limit-input", max_length=3),
                 id="memory-controls",
             )
         with TabbedContent(id="mem-tabs"):
@@ -190,6 +196,28 @@ class MemoryView(Container):
         elif event.button.id == "mem-diff-btn":
             self.run_worker(self._diff_snapshots(), thread=False)
 
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Handle Input widget changes with validation."""
+        if event.input.id == "mem-nframe-input":
+            try:
+                val = int(event.value)
+                if 1 <= val <= 50:
+                    self._nframe = val
+                else:
+                    raise ValueError(f"nframe must be 1-50, got {val}")
+            except ValueError as e:
+                self.app.notify(f"Invalid nframe: {e}", severity="error")
+                event.input.value = str(self._nframe)  # Revert to previous value
+        elif event.input.id == "mem-limit-input":
+            try:
+                val = int(event.value)
+                if 1 <= val <= 100:
+                    self._limit = val
+                else:
+                    raise ValueError(f"limit must be 1-100, got {val}")
+            except ValueError as e:
+                self.app.notify(f"Invalid limit: {e}", severity="error")
+                event.input.value = str(self._limit)  # Revert to previous value
     def on_data_table_header_selected(self, event: Any) -> None:
         """Handle DataTable column header selection for sorting."""
         if event.label is None:
@@ -277,7 +305,7 @@ class MemoryView(Container):
 
         gc_worker = self.run_worker(
             lambda: self._client.send_command(
-                {"type": "memory", "action": "gc", "limit": 10}
+                {"type": "memory", "action": "gc", "limit": self._limit}
             ),
             thread=True,
         )
@@ -350,7 +378,7 @@ class MemoryView(Container):
         alloc_table.styles.display = "block"
 
         worker = self.run_worker(
-            lambda: self._client.send_command({"type": "memory", "action": "top", "limit": 20}),
+            lambda: self._client.send_command({"type": "memory", "action": "top", "limit": self._limit}),
             thread=True,
         )
         await worker.wait()
@@ -419,7 +447,7 @@ class MemoryView(Container):
         else:
             worker = self.run_worker(
                 lambda: self._client.send_command(
-                    {"type": "memory", "action": "start", "nframe": 10}
+                    {"type": "memory", "action": "start", "nframe": self._nframe}
                 ),
                 thread=True,
             )
@@ -450,7 +478,7 @@ class MemoryView(Container):
 
         worker = self.run_worker(
             lambda: self._client.send_command(
-                {"type": "memory", "action": "gc", "limit": 20}
+                {"type": "memory", "action": "gc", "limit": self._limit}
             ),
             thread=True,
         )
