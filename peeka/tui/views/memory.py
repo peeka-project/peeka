@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Optional, Any, Dict, List, Sequence
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Vertical, Horizontal
-from textual.widgets import Static, DataTable, Button, TabbedContent, TabPane, Sparkline, Input
+from textual.widgets import Static, DataTable, Button, TabbedContent, TabPane, Sparkline, Input, Tree
 
 if TYPE_CHECKING:
     from peeka.core.client import StreamingAgentClient
@@ -167,10 +167,13 @@ class MemoryView(Container):
                     id="mem-diff-content",
                 )
             with TabPane("References", id="mem-references-pane"):
-                yield Static(
-                    "Find object references (coming soon)",
-                    id="mem-references-placeholder",
-                )
+                with Vertical(id="mem-references-content"):
+                    with Horizontal(id="mem-references-controls"):
+                        yield Static("Type:", classes="input-label")
+                        yield Input(value="", placeholder="dict", id="mem-type-input")
+                        yield Button("Referrers", id="mem-referrers-btn", variant="default")
+                        yield Button("Referents", id="mem-referents-btn", variant="default")
+                    yield Tree("No data", id="mem-ref-tree")
 
     async def on_mount(self) -> None:
         container = self.query_one("#memory-container", Container)
@@ -208,6 +211,10 @@ class MemoryView(Container):
             self.run_worker(self._take_snapshot(), thread=False)
         elif event.button.id == "mem-diff-btn":
             self.run_worker(self._diff_snapshots(), thread=False)
+        elif event.button.id == "mem-referrers-btn":
+            self.run_worker(self._find_referrers(), thread=False)
+        elif event.button.id == "mem-referents-btn":
+            self.run_worker(self._find_referents(), thread=False)
 
     def on_input_changed(self, event: Input.Changed) -> None:
         """Handle Input widget changes with validation."""
@@ -759,3 +766,71 @@ class MemoryView(Container):
         # Note: Textual DataTable doesn't expose a public API to update column headers,
         # so we can't display the sort indicator. The sorting is still applied to the data.
         pass
+
+    async def _find_referrers(self) -> None:
+        """Find referrers for type."""
+        type_input = self.query_one("#mem-type-input", Input)
+        type_name = type_input.value.strip()
+        
+        if not type_name:
+            self.app.notify("Please enter a type name", severity="warning")
+            return
+        
+        try:
+            command = {
+                "type": "memory",
+                "action": "referrers",
+                "type_name": type_name
+            }
+            response = await self._client.send_command(command)
+            
+            if response.get("status") == "error":
+                self.app.notify(response["error"], severity="error")
+                return
+            
+            tree = self.query_one("#mem-ref-tree", Tree)
+            self._populate_tree(tree, response, "referrers")
+        except Exception as e:
+            self.app.notify(f"Error: {e}", severity="error")
+    
+    async def _find_referents(self) -> None:
+        """Find referents for type."""
+        type_input = self.query_one("#mem-type-input", Input)
+        type_name = type_input.value.strip()
+        
+        if not type_name:
+            self.app.notify("Please enter a type name", severity="warning")
+            return
+        
+        try:
+            command = {
+                "type": "memory",
+                "action": "referents",
+                "type_name": type_name
+            }
+            response = await self._client.send_command(command)
+            
+            if response.get("status") == "error":
+                self.app.notify(response["error"], severity="error")
+                return
+            
+            tree = self.query_one("#mem-ref-tree", Tree)
+            self._populate_tree(tree, response, "referents")
+        except Exception as e:
+            self.app.notify(f"Error: {e}", severity="error")
+    
+    def _populate_tree(self, tree: Tree, data: Dict[str, Any], relation: str) -> None:
+        """Populate tree with referrer/referent data."""
+        tree.clear()
+        target = data["target"]
+        tree.root.label = f"{target['type']} ({target['count']} instances)"
+        
+        for item in data.get(relation, []):
+            self._add_tree_node(tree.root, item, relation)
+    
+    def _add_tree_node(self, parent, item: Dict[str, Any], relation: str) -> None:
+        """Recursively add tree nodes."""
+        label = f"{item['type']}: {item['repr_short']}"
+        node = parent.add(label)
+        for child in item.get(relation, []):
+            self._add_tree_node(node, child, relation)
