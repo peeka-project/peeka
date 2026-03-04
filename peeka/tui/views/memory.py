@@ -3,7 +3,7 @@ Memory View - Memory analysis interface.
 """
 
 import logging
-from typing import TYPE_CHECKING, Optional, Any, Dict, List
+from typing import TYPE_CHECKING, Optional, Any, Dict, List, Sequence
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -30,6 +30,9 @@ class MemoryView(Container):
         self._mounted = False
         self._alloc_data: Optional[Dict[str, Any]] = None
         self._prev_gc_stats: Optional[List[Dict[str, Any]]] = None
+        self._sort_column: Optional[str] = None
+        self._sort_reverse: bool = False
+        self._gc_column_keys: List[Any] = []  # Store column keys for sorting
 
     def _format_size(self, bytes: int) -> str:
         """Format bytes as human-readable size."""
@@ -146,7 +149,7 @@ class MemoryView(Container):
         container.border_title = "Memory"
 
         table = self.query_one("#mem-objects-table", DataTable)
-        table.add_columns("Type", "Count", "Δ Count", "Size", "Δ Size")
+        self._gc_column_keys = table.add_columns("Type", "Count", "Δ Count", "Size", "Δ Size")
 
         alloc_table = self.query_one("#mem-alloc-table", DataTable)
         alloc_table.add_columns("Rank", "Size", "Count", "Location")
@@ -169,6 +172,26 @@ class MemoryView(Container):
             await self._gc_collect()
         elif event.button.id == "mem-dump-btn":
             await self._dump_memory()
+
+    def on_data_table_header_selected(self, event: Any) -> None:
+        """Handle DataTable column header selection for sorting."""
+        if event.label is None:
+            return
+
+        # Get the column label text (without sort indicator)
+        column_label = event.label.rstrip(" ↑↓")
+        table = self.query_one("#mem-objects-table", DataTable)
+
+        # Toggle sort direction if same column, otherwise new column
+        if self._sort_column == column_label:
+            self._sort_reverse = not self._sort_reverse
+        else:
+            self._sort_column = column_label
+            self._sort_reverse = False
+
+        # Re-apply sort if data exists
+        if self._prev_gc_stats:
+            self._apply_sort_to_table(table)
 
     async def _refresh_overview(self) -> None:
         if not self._client:
@@ -277,6 +300,11 @@ class MemoryView(Container):
             
             # Store current stats for next comparison
             self._prev_gc_stats = objects
+            
+            # Re-apply sort if a sort column is selected
+            if self._sort_column:
+                self._apply_sort_to_table(table)
+
 
         self.app.notify("Memory overview refreshed", severity="information")
 
@@ -450,3 +478,79 @@ class MemoryView(Container):
                 f"Failed to dump memory: {response.get('error', 'Unknown error')}",
                 severity="error",
             )
+
+    def _apply_sort_to_table(self, table: DataTable) -> None:
+        """Sort the table by the current sort column and update column labels."""
+        if not self._sort_column or not self._prev_gc_stats:
+            return
+
+        # Determine sort index from column name
+        column_names = ["Type", "Count", "Δ Count", "Size", "Δ Size"]
+        try:
+            sort_index = column_names.index(self._sort_column)
+        except ValueError:
+            return
+
+        # Build lookup dict from previous stats for delta computation
+        prev_lookup = {obj["type"]: obj for obj in self._prev_gc_stats}
+
+        # Define sort keys for each column
+        def get_sort_key(obj: Dict[str, Any]) -> Any:
+            if sort_index == 0:  # Type
+                return obj.get("type", "")
+            elif sort_index == 1:  # Count
+                return obj.get("count", 0)
+            elif sort_index == 2:  # Δ Count
+                obj_type = obj.get("type", "")
+                if obj_type in prev_lookup:
+                    return obj.get("count", 0) - prev_lookup[obj_type].get("count", 0)
+                return 0
+            elif sort_index == 3:  # Size
+                return obj.get("size_bytes", 0)
+            elif sort_index == 4:  # Δ Size
+                obj_type = obj.get("type", "")
+                if obj_type in prev_lookup:
+                    return obj.get("size_bytes", 0) - prev_lookup[obj_type].get("size_bytes", 0)
+                return 0
+            return 0
+
+        # Sort data
+        sorted_stats = sorted(
+            self._prev_gc_stats,
+            key=get_sort_key,
+            reverse=self._sort_reverse
+        )
+
+        # Clear and repopulate table with sorted data
+        table.clear()
+        for obj in sorted_stats:
+            obj_type = obj.get("type", "unknown")
+            count = obj.get("count", 0)
+            size_bytes = obj.get("size_bytes", 0)
+
+            # Compute deltas
+            if obj_type in prev_lookup and prev_lookup[obj_type] != obj:
+                count_delta = count - prev_lookup[obj_type].get("count", 0)
+                size_delta = size_bytes - prev_lookup[obj_type].get("size_bytes", 0)
+                count_delta_str = self._format_delta(count_delta, is_count=True)
+                size_delta_str = self._format_delta(size_delta, is_count=False)
+            else:
+                count_delta_str = "—"
+                size_delta_str = "—"
+
+            table.add_row(
+                obj_type,
+                str(count),
+                count_delta_str,
+                self._format_size(size_bytes) if size_bytes > 0 else "N/A",
+                size_delta_str,
+            )
+
+        # Update column labels with sort indicator
+        self._update_column_labels(table)
+
+    def _update_column_labels(self, table: DataTable) -> None:
+        """Update column labels to show sort indicator on active column."""
+        # Note: Textual DataTable doesn't expose a public API to update column headers,
+        # so we can't display the sort indicator. The sorting is still applied to the data.
+        pass
