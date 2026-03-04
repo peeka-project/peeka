@@ -27,6 +27,7 @@ class MemoryCommand(BaseCommand):
     def __init__(self, agent: "PeekaAgent"):
         super().__init__()
         self.agent = agent
+        self._snapshots: List[tracemalloc.Snapshot] = []
 
     def execute(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -64,6 +65,10 @@ class MemoryCommand(BaseCommand):
             elif action == "gc":
                 limit = self._get_int_param(params, "limit", 20, 1, 100)
                 return self._gc_stats(limit)
+            elif action == "snapshot":
+                return self._take_snapshot()
+            elif action == "diff":
+                return self._diff_snapshots()
             else:
                 return {"status": "error", "error": f"Unknown action: {action}"}
 
@@ -294,6 +299,78 @@ class MemoryCommand(BaseCommand):
             "limit": limit,
             "total_objects": total_objects,
             "objects_by_type": objects_by_type,
+        }
+
+    def _take_snapshot(self) -> Dict[str, Any]:
+        """
+        Take a tracemalloc snapshot and store it (max 2, FIFO).
+
+        Returns:
+            Dict containing snapshot status
+        """
+        if not tracemalloc.is_tracing():
+            return {
+                "status": "error",
+                "action": "snapshot",
+                "error": "tracemalloc is not running. Run 'memory start' first.",
+            }
+
+        snapshot = tracemalloc.take_snapshot()
+        self._snapshots.append(snapshot)
+
+        # Enforce FIFO: max 2 snapshots
+        if len(self._snapshots) > 2:
+            self._snapshots.pop(0)
+
+        return {
+            "status": "success",
+            "action": "snapshot",
+            "snapshot_count": len(self._snapshots),
+            "timestamp": time.time(),
+        }
+
+    def _diff_snapshots(self) -> Dict[str, Any]:
+        """
+        Compare the last two snapshots using Snapshot.compare_to().
+
+        Returns:
+            Dict containing StatisticDiff entries or error
+        """
+        if len(self._snapshots) < 2:
+            return {
+                "status": "error",
+                "action": "diff",
+                "error": "Need at least 2 snapshots to compare. Take more snapshots first.",
+            }
+
+        new_snapshot = self._snapshots[-1]
+        old_snapshot = self._snapshots[-2]
+
+        stats = new_snapshot.compare_to(old_snapshot, key_type="lineno")
+
+        # Limit to first 50 entries to avoid huge responses
+        diffs = []
+        for stat in stats[:50]:
+            # Get location from first traceback frame
+            location = "unknown"
+            if stat.traceback:
+                frame = stat.traceback[0]
+                location = f"{frame.filename}:{frame.lineno}"
+
+            diffs.append({
+                "location": location,
+                "size_diff": stat.size_diff,
+                "size_new": stat.size,
+                "size_old": stat.size - stat.size_diff,
+                "count_diff": stat.count_diff,
+                "count_new": stat.count,
+                "count_old": stat.count - stat.count_diff,
+            })
+
+        return {
+            "status": "success",
+            "action": "diff",
+            "diffs": diffs,
         }
 
     # Helper methods

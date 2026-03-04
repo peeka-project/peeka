@@ -30,6 +30,8 @@ class MemoryView(Container):
         self._mounted = False
         self._alloc_data: Optional[Dict[str, Any]] = None
         self._prev_gc_stats: Optional[List[Dict[str, Any]]] = None
+        self._snapshot_count: int = 0
+        self._diff_data: Optional[List[Dict[str, Any]]] = None
         self._sort_column: Optional[str] = None
         self._sort_reverse: bool = False
         self._gc_column_keys: List[Any] = []  # Store column keys for sorting
@@ -134,9 +136,15 @@ class MemoryView(Container):
                     id="mem-allocations-content",
                 )
             with TabPane("Diff", id="mem-diff-pane"):
-                yield Static(
-                    "Take snapshots to compare memory changes",
-                    id="mem-diff-placeholder",
+                yield Vertical(
+                    Horizontal(
+                        Button("Snap", id="mem-snap-btn", variant="primary", flat=True),
+                        Button("Diff", id="mem-diff-btn", variant="primary", flat=True, disabled=True),
+                        Static("Snapshots: 0/2", id="mem-snapshot-status"),
+                        id="mem-diff-controls",
+                    ),
+                    DataTable(id="mem-diff-table", show_header=True, zebra_stripes=True),
+                    id="mem-diff-content",
                 )
             with TabPane("References", id="mem-references-pane"):
                 yield Static(
@@ -154,6 +162,8 @@ class MemoryView(Container):
         alloc_table = self.query_one("#mem-alloc-table", DataTable)
         alloc_table.add_columns("Rank", "Size", "Count", "Location")
 
+        diff_table = self.query_one("#mem-diff-table", DataTable)
+        diff_table.add_columns("Location", "Size Δ", "New", "Old", "Count Δ")
         self._mounted = True
         if self._client:
             await self._refresh_overview()
@@ -172,6 +182,10 @@ class MemoryView(Container):
             await self._gc_collect()
         elif event.button.id == "mem-dump-btn":
             await self._dump_memory()
+        elif event.button.id == "mem-snap-btn":
+            self.run_worker(self._take_snapshot(), thread=False)
+        elif event.button.id == "mem-diff-btn":
+            self.run_worker(self._diff_snapshots(), thread=False)
 
     def on_data_table_header_selected(self, event: Any) -> None:
         """Handle DataTable column header selection for sorting."""
@@ -476,6 +490,96 @@ class MemoryView(Container):
         else:
             self.app.notify(
                 f"Failed to dump memory: {response.get('error', 'Unknown error')}",
+                severity="error",
+            )
+
+    async def _take_snapshot(self) -> None:
+        """Take a tracemalloc snapshot."""
+        if not self._client:
+            return
+
+        worker = self.run_worker(
+            lambda: self._client.send_command({"type": "memory", "action": "snapshot"}),
+            thread=True,
+        )
+        await worker.wait()
+        try:
+            response = worker.result
+        except Exception as e:
+            self.app.notify(f"Connection error: {e}", severity="error")
+            return
+
+        if response.get("status") == "success":
+            self._snapshot_count = response.get("snapshot_count", 0)
+            
+            # Update snapshot count indicator
+            status_widget = self.query_one("#mem-snapshot-status", Static)
+            status_text = f"Snapshots: {self._snapshot_count}/2"
+            if self._snapshot_count == 2:
+                status_text += " (ready to diff)"
+            status_widget.update(status_text)
+            
+            # Enable/disable Diff button based on snapshot count
+            diff_btn = self.query_one("#mem-diff-btn", Button)
+            diff_btn.disabled = (self._snapshot_count < 2)
+            
+            self.app.notify(f"Snapshot taken ({self._snapshot_count}/2)", severity="information")
+        else:
+            self.app.notify(
+                f"Failed to take snapshot: {response.get('error', 'Unknown error')}",
+                severity="error",
+            )
+
+    async def _diff_snapshots(self) -> None:
+        """Compare last two snapshots and display results."""
+        if not self._client:
+            return
+
+        worker = self.run_worker(
+            lambda: self._client.send_command({"type": "memory", "action": "diff"}),
+            thread=True,
+        )
+        await worker.wait()
+        try:
+            response = worker.result
+        except Exception as e:
+            self.app.notify(f"Connection error: {e}", severity="error")
+            return
+
+        if response.get("status") == "success":
+            diffs = response.get("diffs", [])
+            table = self.query_one("#mem-diff-table", DataTable)
+            table.clear()
+            
+            for diff in diffs:
+                location = diff.get("location", "unknown")
+                size_diff = diff.get("size_diff", 0)
+                size_new = diff.get("size_new", 0)
+                size_old = diff.get("size_old", 0)
+                count_diff = diff.get("count_diff", 0)
+                count_new = diff.get("count_new", 0)
+                count_old = diff.get("count_old", 0)
+                
+                # Format deltas with color
+                size_delta_str = self._format_delta(size_diff, is_count=False)
+                count_delta_str = self._format_delta(count_diff, is_count=True)
+                
+                # Format sizes
+                size_new_str = self._format_size(size_new)
+                size_old_str = self._format_size(size_old)
+                
+                table.add_row(
+                    location,
+                    size_delta_str,
+                    size_new_str,
+                    size_old_str,
+                    count_delta_str,
+                )
+            
+            self.app.notify(f"Diff computed: {len(diffs)} entries", severity="information")
+        else:
+            self.app.notify(
+                f"Failed to diff snapshots: {response.get('error', 'Unknown error')}",
                 severity="error",
             )
 
