@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Optional, Any, Dict, List, Sequence
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Vertical, Horizontal
-from textual.widgets import Static, DataTable, Button, TabbedContent, TabPane
+from textual.widgets import Static, DataTable, Button, TabbedContent, TabPane, Sparkline
 
 if TYPE_CHECKING:
     from peeka.core.client import StreamingAgentClient
@@ -35,6 +35,7 @@ class MemoryView(Container):
         self._sort_column: Optional[str] = None
         self._sort_reverse: bool = False
         self._gc_column_keys: List[Any] = []  # Store column keys for sorting
+        self._mem_history: List[float] = []  # RSS MB history (max 100 points)
 
     def _format_size(self, bytes: int) -> str:
         """Format bytes as human-readable size."""
@@ -97,6 +98,8 @@ class MemoryView(Container):
             Static("Total: calculating...", id="mem-total"),
             Static("RSS: calculating...", id="mem-rss"),
             Static("GC: calculating...", id="mem-gc"),
+            Static("RSS Trend (last 100 samples)", id="mem-sparkline-label"),
+            Sparkline(data=[], summary_function=max, id="mem-sparkline"),
             id="mem-overview",
             classes="panel dashboard-card",
         )
@@ -232,6 +235,15 @@ class MemoryView(Container):
         data = response
         rss_bytes = data.get("rss_bytes", 0)
         rss_mb = rss_bytes / (1024 * 1024)
+
+        # Update RSS history for sparkline (FIFO, max 100 points)
+        self._mem_history.append(rss_mb)
+        if len(self._mem_history) > 100:
+            self._mem_history.pop(0)
+        
+        # Update sparkline widget
+        sparkline = self.query_one("#mem-sparkline", Sparkline)
+        sparkline.data = self._mem_history
 
         tracemalloc_data = data.get("tracemalloc", {})
         tracemalloc_enabled = tracemalloc_data.get("enabled", False)
