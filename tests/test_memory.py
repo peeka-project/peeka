@@ -247,3 +247,65 @@ class TestMemoryCommand:
         assert str(temp_dump_dir) in result["file_path"]
         assert "passwd" in result["file_path"]
         assert "../" not in result["file_path"]
+
+    def test_snapshot_stores_snapshot(self, memory_cmd):
+        """Test snapshot action stores snapshot."""
+        # Start tracking first
+        start_result = memory_cmd.execute({"action": "start", "nframe": 10})
+        assert start_result["status"] == "success"
+        
+        # Take snapshot
+        result = memory_cmd.execute({"action": "snapshot"})
+        assert result["status"] == "success"
+        assert result["action"] == "snapshot"
+        assert result["snapshot_count"] == 1
+        assert "timestamp" in result
+
+    def test_snapshot_fifo_max_2(self, memory_cmd):
+        """Test FIFO behavior: max 2 snapshots, oldest replaced."""
+        memory_cmd.execute({"action": "start", "nframe": 10})
+        
+        # Take 3 snapshots
+        memory_cmd.execute({"action": "snapshot"})
+        memory_cmd.execute({"action": "snapshot"})
+        result = memory_cmd.execute({"action": "snapshot"})
+        
+        # Should still be 2 (FIFO)
+        assert result["snapshot_count"] == 2
+        assert len(memory_cmd._snapshots) == 2
+
+    def test_diff_requires_two_snapshots(self, memory_cmd):
+        """Test diff returns error if < 2 snapshots."""
+        memory_cmd.execute({"action": "start", "nframe": 10})
+        
+        # Only 1 snapshot
+        memory_cmd.execute({"action": "snapshot"})
+        
+        # Try diff
+        result = memory_cmd.execute({"action": "diff"})
+        assert result["status"] == "error"
+        assert "at least 2" in result["error"].lower()
+
+    def test_diff_returns_stat_diffs(self, memory_cmd):
+        """Test diff returns StatisticDiff entries."""
+        memory_cmd.execute({"action": "start", "nframe": 10})
+        
+        # Take 2 snapshots with allocations between
+        memory_cmd.execute({"action": "snapshot"})
+        _ = [object() for _ in range(100)]  # Allocate some objects
+        memory_cmd.execute({"action": "snapshot"})
+        
+        # Get diff
+        result = memory_cmd.execute({"action": "diff"})
+        assert result["status"] == "success"
+        assert result["action"] == "diff"
+        assert "diffs" in result
+        assert isinstance(result["diffs"], list)
+        
+        # Check structure of first diff entry
+        if result["diffs"]:
+            diff = result["diffs"][0]
+            assert "location" in diff
+            assert "size_diff" in diff
+            assert "size_new" in diff
+            assert "count_diff" in diff
