@@ -12,11 +12,13 @@ from textual.widgets import Static, DataTable, Button, TabbedContent, TabPane, S
 
 if TYPE_CHECKING:
     from peeka.core.client import StreamingAgentClient
+    from textual.timer import Timer
 
 
 class MemoryView(Container):
     BINDINGS = [
         Binding("r", "refresh", "Refresh"),
+        Binding("a", "toggle_auto", "Auto"),
         Binding("t", "toggle_tracking", "Track"),
         Binding("g", "gc_collect", "GC"),
     ]
@@ -38,6 +40,9 @@ class MemoryView(Container):
         self._mem_history: List[float] = []  # RSS MB history (max 100 points)
         self._nframe: int = 10  # Frame depth for tracemalloc tracking
         self._limit: int = 20  # Limit for GC stats and allocations display
+        self._auto_polling: bool = False
+        self._auto_timer: Optional["Timer"] = None
+        self._refreshing: bool = False
 
     def _format_size(self, bytes: int) -> str:
         """Format bytes as human-readable size."""
@@ -94,6 +99,11 @@ class MemoryView(Container):
         """Trigger garbage collection (triggered by g key)."""
         await self._gc_collect()
 
+    def action_toggle_auto(self) -> None:
+        """Toggle auto-refresh on/off (triggered by 'a' key)."""
+        button = self.query_one("#mem-auto-btn", Button)
+        button.action_press()  # Trigger button press programmatically
+
     def compose(self) -> ComposeResult:
         # Overview tab content (existing widgets)
         mem_overview = Vertical(
@@ -122,6 +132,7 @@ class MemoryView(Container):
                 ),
                 Button("GC Collect", id="gc-btn", variant="warning", flat=True),
                 Button("Dump", id="mem-dump-btn", variant="primary", flat=True),
+                Button("Auto", id="mem-auto-btn", variant="default", flat=True),
                 Static("nframe:", classes="input-label"),
                 Input(value="10", id="mem-nframe-input", max_length=3),
                 Static("limit:", classes="input-label"),
@@ -191,6 +202,8 @@ class MemoryView(Container):
             await self._gc_collect()
         elif event.button.id == "mem-dump-btn":
             await self._dump_memory()
+        elif event.button.id == "mem-auto-btn":
+            self._toggle_auto_polling()
         elif event.button.id == "mem-snap-btn":
             self.run_worker(self._take_snapshot(), thread=False)
         elif event.button.id == "mem-diff-btn":
@@ -361,6 +374,54 @@ class MemoryView(Container):
 
 
         self.app.notify("Memory overview refreshed", severity="information")
+
+    def _toggle_auto_polling(self) -> None:
+        """Toggle auto-refresh timer on/off."""
+        button = self.query_one("#mem-auto-btn", Button)
+        
+        if self._auto_polling:
+            # Stop auto-refresh
+            if self._auto_timer is not None:
+                self._auto_timer.stop()
+                self._auto_timer = None
+            self._auto_polling = False
+            button.variant = "default"
+            button.label = "Auto"
+            self.app.notify("Auto-refresh stopped", severity="information")
+        else:
+            # Start auto-refresh
+            self._auto_timer = self.set_interval(5.0, self._auto_refresh_callback)
+            self._auto_polling = True
+            button.variant = "success"
+            button.label = "Auto✓"
+            self.app.notify("Auto-refresh started (5s interval)", severity="information")
+
+    def _auto_refresh_callback(self) -> None:
+        """Periodic callback for auto-refresh. Guard against concurrent refreshes."""
+        if self._refreshing:
+            return  # Skip if previous refresh still in-flight
+        
+        self._refreshing = True
+        
+        # Refresh overview
+        self.run_worker(self._refresh_overview_safe(), thread=False)
+
+    async def _refresh_overview_safe(self) -> None:
+        """Wrapper to refresh overview and reset refreshing flag."""
+        try:
+            await self._refresh_overview()
+            
+            # Also refresh allocations if tracking enabled
+            if self._tracking_enabled:
+                await self._refresh_allocations()
+        finally:
+            self._refreshing = False
+
+    def on_unmount(self) -> None:
+        """Cleanup timer on view removal."""
+        if self._auto_timer is not None:
+            self._auto_timer.stop()
+            self._auto_timer = None
 
     async def _refresh_allocations(self) -> None:
         if not self._client:
