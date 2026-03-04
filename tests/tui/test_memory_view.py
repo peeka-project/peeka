@@ -240,7 +240,7 @@ class TestMemoryView:
             commands = [cmd.get("action") for cmd in gc_client.commands_received]
             assert "gc" in commands
 
-            gc_widget = memory_view.query_one("#mem-vms", Static)
+            gc_widget = memory_view.query_one("#mem-gc", Static)
             rendered = gc_widget.render().plain
             assert "gen0=300" in rendered or "GC:" in rendered
 

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Optional
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Vertical, Horizontal
-from textual.widgets import Static, DataTable, Button
+from textual.widgets import Static, DataTable, Button, TabbedContent, TabPane
 
 if TYPE_CHECKING:
     from peeka.core.client import StreamingAgentClient
@@ -47,10 +47,11 @@ class MemoryView(Container):
         await self._gc_collect()
 
     def compose(self) -> ComposeResult:
+        # Overview tab content (existing widgets)
         mem_overview = Vertical(
             Static("Total: calculating...", id="mem-total"),
             Static("RSS: calculating...", id="mem-rss"),
-            Static("VMS: calculating...", id="mem-vms"),
+            Static("GC: calculating...", id="mem-gc"),
             id="mem-overview",
             classes="panel dashboard-card",
         )
@@ -63,8 +64,8 @@ class MemoryView(Container):
         )
         mem_objects.border_title = "Top Objects by Size"
 
-        yield Container(
-            Horizontal(
+        with Container(id="memory-container"):
+            yield Horizontal(
                 Button("Refresh", id="mem-refresh-btn", variant="primary", flat=True),
                 Button(
                     "Start Tracking", id="mem-track-btn", variant="success", flat=True
@@ -72,14 +73,29 @@ class MemoryView(Container):
                 Button("GC Collect", id="gc-btn", variant="warning", flat=True),
                 Button("Dump", id="mem-dump-btn", variant="primary", flat=True),
                 id="memory-controls",
-            ),
-            Horizontal(
-                mem_overview,
-                mem_objects,
-                id="memory-content",
-            ),
-            id="memory-container",
-        )
+            )
+        with TabbedContent(id="mem-tabs"):
+            with TabPane("Overview", id="mem-overview-pane"):
+                yield Vertical(
+                    mem_overview,
+                    mem_objects,
+                    id="mem-overview-content",
+                )
+            with TabPane("Allocations", id="mem-allocations-pane"):
+                yield Static(
+                    "Enable tracking to see top allocations (press 't')",
+                    id="mem-allocations-placeholder",
+                )
+            with TabPane("Diff", id="mem-diff-pane"):
+                yield Static(
+                    "Take snapshots to compare memory changes",
+                    id="mem-diff-placeholder",
+                )
+            with TabPane("References", id="mem-references-pane"):
+                yield Static(
+                    "Find object references (coming soon)",
+                    id="mem-references-placeholder",
+                )
 
     async def on_mount(self) -> None:
         container = self.query_one("#memory-container", Container)
@@ -158,7 +174,7 @@ class MemoryView(Container):
 
         gc_data = data.get("gc", {})
         gc_counts = gc_data.get("counts", [0, 0, 0])
-        self.query_one("#mem-vms", Static).update(
+        self.query_one("#mem-gc", Static).update(
             f"GC: gen0={gc_counts[0]}, gen1={gc_counts[1]}, gen2={gc_counts[2]}"
         )
 
