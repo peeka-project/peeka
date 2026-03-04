@@ -3,7 +3,7 @@ Memory View - Memory analysis interface.
 """
 
 import logging
-from typing import TYPE_CHECKING, Optional, Any, Dict
+from typing import TYPE_CHECKING, Optional, Any, Dict, List
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -29,15 +29,46 @@ class MemoryView(Container):
         self._tracking_enabled = False
         self._mounted = False
         self._alloc_data: Optional[Dict[str, Any]] = None
+        self._prev_gc_stats: Optional[List[Dict[str, Any]]] = None
 
     def _format_size(self, bytes: int) -> str:
         """Format bytes as human-readable size."""
+        sign = ""
+        if bytes < 0:
+            sign = "-"
+            bytes = abs(bytes)
+        
         if bytes < 1024:
-            return f"{bytes} B"
+            return f"{sign}{bytes} B"
         elif bytes < 1024 * 1024:
-            return f"{bytes / 1024:.1f} KB"
+            return f"{sign}{bytes / 1024:.1f} KB"
         else:
-            return f"{bytes / (1024 * 1024):.1f} MB"
+            return f"{sign}{bytes / (1024 * 1024):.1f} MB"
+
+    def _format_delta(self, delta: int, is_count: bool) -> str:
+        """Format delta with +/- prefix and color.
+        
+        Args:
+            delta: The delta value (positive = growth, negative = shrinkage)
+            is_count: True for count deltas, False for size deltas
+            
+        Returns:
+            Rich markup string with color
+        """
+        if delta == 0:
+            return "0"
+        elif delta > 0:
+            # Growth (bad) — red
+            if is_count:
+                return f"[red]+{delta}[/red]"
+            else:
+                return f"[red]+{self._format_size(delta)}[/red]"
+        else:
+            # Shrinkage (good) — green
+            if is_count:
+                return f"[green]{delta}[/green]"  # delta already has minus sign
+            else:
+                return f"[green]{self._format_size(delta)}[/green]"  # will show as "-X.X KB"
     def set_client(self, client: "StreamingAgentClient") -> None:
         self._client = client
         if self._mounted:
@@ -115,7 +146,7 @@ class MemoryView(Container):
         container.border_title = "Memory"
 
         table = self.query_one("#mem-objects-table", DataTable)
-        table.add_columns("Type", "Count", "Size")
+        table.add_columns("Type", "Count", "Δ Count", "Size", "Δ Size")
 
         alloc_table = self.query_one("#mem-alloc-table", DataTable)
         alloc_table.add_columns("Rank", "Size", "Count", "Location")
@@ -210,14 +241,42 @@ class MemoryView(Container):
         if gc_response.get("status") == "success":
             table = self.query_one("#mem-objects-table", DataTable)
             table.clear()
-
+            
             objects = gc_response.get("objects_by_type", [])
+            
+            # Build lookup dict from previous stats
+            prev_lookup = {}
+            if self._prev_gc_stats is not None:
+                prev_lookup = {obj["type"]: obj for obj in self._prev_gc_stats}
+            
             for obj in objects:
+                obj_type = obj.get("type", "unknown")
+                count = obj.get("count", 0)
+                size_bytes = obj.get("size_bytes", 0)
+                
+                # Compute deltas
+                if obj_type in prev_lookup:
+                    count_delta = count - prev_lookup[obj_type].get("count", 0)
+                    size_delta = size_bytes - prev_lookup[obj_type].get("size_bytes", 0)
+                    
+                    # Format with color: red for growth, green for shrinkage
+                    count_delta_str = self._format_delta(count_delta, is_count=True)
+                    size_delta_str = self._format_delta(size_delta, is_count=False)
+                else:
+                    # First time seeing this type
+                    count_delta_str = "—"
+                    size_delta_str = "—"
+                
                 table.add_row(
-                    obj.get("type", "unknown"),
-                    str(obj.get("count", 0)),
-                    "N/A",
+                    obj_type,
+                    str(count),
+                    count_delta_str,
+                    self._format_size(size_bytes) if size_bytes > 0 else "N/A",
+                    size_delta_str,
                 )
+            
+            # Store current stats for next comparison
+            self._prev_gc_stats = objects
 
         self.app.notify("Memory overview refreshed", severity="information")
 
