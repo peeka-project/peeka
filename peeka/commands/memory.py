@@ -69,6 +69,20 @@ class MemoryCommand(BaseCommand):
                 return self._take_snapshot()
             elif action == "diff":
                 return self._diff_snapshots()
+            elif action == "referrers":
+                type_name = params.get("type_name")
+                if not type_name or not isinstance(type_name, str):
+                    return {"status": "error", "error": "type_name parameter is required and must be a string"}
+                max_depth = self._get_int_param(params, "max_depth", 2, 1, 3)
+                max_per_level = self._get_int_param(params, "max_per_level", 10, 1, 20)
+                return self._get_referrers(type_name, max_depth, max_per_level)
+            elif action == "referents":
+                type_name = params.get("type_name")
+                if not type_name or not isinstance(type_name, str):
+                    return {"status": "error", "error": "type_name parameter is required and must be a string"}
+                max_depth = self._get_int_param(params, "max_depth", 2, 1, 3)
+                max_per_level = self._get_int_param(params, "max_per_level", 10, 1, 20)
+                return self._get_referents(type_name, max_depth, max_per_level)
             else:
                 return {"status": "error", "error": f"Unknown action: {action}"}
 
@@ -468,3 +482,147 @@ class MemoryCommand(BaseCommand):
         except (ValueError, TypeError):
             value = default
         return max(min_val, min(value, max_val))
+
+    def _get_referrers(self, type_name: str, max_depth: int = 2, max_per_level: int = 10) -> Dict[str, Any]:
+        """
+        Get referrer tree for objects of given type.
+        
+        Args:
+            type_name: Type name to search for
+            max_depth: Maximum recursion depth (hard capped at 3)
+            max_per_level: Maximum referrers per level (hard capped at 20)
+        
+        Returns:
+            Dict with status, target info, and referrers tree
+        """
+        import gc
+        
+        if not type_name:
+            return {"status": "error", "error": "type_name is required"}
+        
+        # Find first object of given type
+        target_obj = None
+        count = 0
+        for obj in gc.get_objects():
+            if type(obj).__name__ == type_name:
+                if target_obj is None:
+                    target_obj = obj
+                count += 1
+        
+        if target_obj is None:
+            return {
+                "status": "error",
+                "error": f"No objects of type '{type_name}' found"
+            }
+        
+        def safe_repr(o: Any) -> str:
+            """Get safe truncated repr of object."""
+            try:
+                return repr(o)[:80]
+            except Exception:
+                return "<repr error>"
+        
+        def traverse(o: Any, depth: int, visited: set[int]) -> List[Dict[str, Any]]:
+            """Recursively traverse referrers."""
+            if depth >= max_depth:
+                return []
+            
+            obj_id = id(o)
+            if obj_id in visited:
+                return []
+            visited.add(obj_id)
+            
+            referrers = gc.get_referrers(o)[:max_per_level]
+            result = []
+            for ref in referrers:
+                ref_info: Dict[str, Any] = {
+                    "type": type(ref).__name__,
+                    "repr_short": safe_repr(ref),
+                }
+                if depth + 1 < max_depth:
+                    ref_info["referrers"] = traverse(ref, depth + 1, visited)
+                result.append(ref_info)
+            return result
+        
+        return {
+            "status": "success",
+            "action": "referrers",
+            "target": {
+                "type": type_name,
+                "repr_short": safe_repr(target_obj),
+                "count": count
+            },
+            "referrers": traverse(target_obj, 0, set())
+        }
+    
+    def _get_referents(self, type_name: str, max_depth: int = 2, max_per_level: int = 10) -> Dict[str, Any]:
+        """
+        Get referent tree for objects of given type (what the object references).
+        
+        Args:
+            type_name: Type name to search for
+            max_depth: Maximum recursion depth (hard capped at 3)
+            max_per_level: Maximum referents per level (hard capped at 20)
+        
+        Returns:
+            Dict with status, target info, and referents tree
+        """
+        import gc
+        
+        if not type_name:
+            return {"status": "error", "error": "type_name is required"}
+        
+        # Find first object of given type
+        target_obj = None
+        count = 0
+        for obj in gc.get_objects():
+            if type(obj).__name__ == type_name:
+                if target_obj is None:
+                    target_obj = obj
+                count += 1
+        
+        if target_obj is None:
+            return {
+                "status": "error",
+                "error": f"No objects of type '{type_name}' found"
+            }
+        
+        def safe_repr(o: Any) -> str:
+            """Get safe truncated repr of object."""
+            try:
+                return repr(o)[:80]
+            except Exception:
+                return "<repr error>"
+        
+        def traverse(o: Any, depth: int, visited: set[int]) -> List[Dict[str, Any]]:
+            """Recursively traverse referents."""
+            if depth >= max_depth:
+                return []
+            
+            obj_id = id(o)
+            if obj_id in visited:
+                return []
+            visited.add(obj_id)
+            
+            referents = gc.get_referents(o)[:max_per_level]
+            result = []
+            for ref in referents:
+                ref_info: Dict[str, Any] = {
+                    "type": type(ref).__name__,
+                    "repr_short": safe_repr(ref),
+                }
+                if depth + 1 < max_depth:
+                    ref_info["referents"] = traverse(ref, depth + 1, visited)
+                result.append(ref_info)
+            return result
+        
+        return {
+            "status": "success",
+            "action": "referents",
+            "target": {
+                "type": type_name,
+                "repr_short": safe_repr(target_obj),
+                "count": count
+            },
+            "referents": traverse(target_obj, 0, set())
+        }
