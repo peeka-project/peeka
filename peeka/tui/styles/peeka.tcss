@@ -328,6 +328,11 @@ TabPane {
     margin-right: 1;
 }
 
+#mem-nframe-input, #mem-limit-input {
+    width: 8;
+    margin-right: 1;
+}
+
 #mem-overview {
     width: 40%;
     margin-right: 1;
