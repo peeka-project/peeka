@@ -41,14 +41,14 @@ class CompleteCommand(BaseCommand):
         completions = []
 
         if not prefix:
-            # Return top-level module names
+            # Return top-level module names + __main__ attributes as shortcuts
             completions = self._get_top_modules(limit)
         elif "." in prefix:
             # Complete within a module/class
             completions = self._get_nested_completions(prefix, comp_type, limit)
         else:
-            # Complete module names
-            completions = self._get_module_completions(prefix, limit)
+            # Complete module names + search __main__ attributes
+            completions = self._get_module_completions(prefix, comp_type, limit)
 
         return {
             "status": "success",
@@ -59,24 +59,62 @@ class CompleteCommand(BaseCommand):
         }
 
     def _get_top_modules(self, limit: int) -> List[str]:
-        """Get top-level module names."""
+        """Get top-level module names including __main__."""
         modules = set()
         for name in sys.modules:
             if not name.startswith("_"):
                 top = name.split(".")[0]
                 modules.add(top)
-        return sorted(modules)[:limit]
+        # Always include __main__ — it's the user's code
+        if "__main__" in sys.modules:
+            modules.add("__main__")
+        result = sorted(modules)
+        # Put __main__ first since it's most relevant
+        if "__main__" in result:
+            result.remove("__main__")
+            result.insert(0, "__main__")
+        return result[:limit]
 
-    def _get_module_completions(self, prefix: str, limit: int) -> List[str]:
-        """Get module names matching prefix."""
+    def _get_module_completions(
+        self, prefix: str, comp_type: str, limit: int
+    ) -> List[str]:
+        """Get module names matching prefix + __main__ attributes as shortcuts."""
         prefix_lower = prefix.lower()
         matches = []
 
+        # Match top-level module names
         for name in sys.modules:
             if not name.startswith("_"):
                 top = name.split(".")[0]
                 if top.lower().startswith(prefix_lower):
                     matches.append(top)
+
+        # Include __main__ if it matches
+        if "__main__".startswith(prefix_lower) and "__main__" in sys.modules:
+            matches.append("__main__")
+
+        # Also search __main__ attributes — users often type function/class
+        # names directly (e.g. "Calc" to find __main__.Calculator)
+        main_mod = sys.modules.get("__main__")
+        if main_mod is not None:
+            try:
+                for attr_name in dir(main_mod):
+                    if attr_name.startswith("_"):
+                        continue
+                    if attr_name.lower().startswith(prefix_lower):
+                        full_name = f"__main__.{attr_name}"
+                        if comp_type != "all":
+                            try:
+                                attr = getattr(main_mod, attr_name)
+                                if comp_type == "classes" and not isinstance(attr, type):
+                                    continue
+                                if comp_type == "functions" and not callable(attr):
+                                    continue
+                            except Exception:
+                                continue
+                        matches.append(full_name)
+            except Exception:
+                pass
 
         return sorted(set(matches))[:limit]
 
