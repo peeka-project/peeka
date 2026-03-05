@@ -135,6 +135,7 @@ class WatchView(Container):
         self._socket_path: Optional[str] = None
         self._observations: deque[dict] = deque(maxlen=self.MAX_OBSERVATIONS)
         self._obs_counter: int = 0
+        self._auto_follow: bool = True
         self._log = logging.getLogger(__name__)
 
     def set_client(self, client: "StreamingAgentClient") -> None:
@@ -320,6 +321,11 @@ class WatchView(Container):
 
         if event.row_key is None:
             return
+
+        # If user selects a row that is NOT the last one, disable auto-follow.
+        # If user selects the last row, re-enable auto-follow.
+        row_index = event.cursor_row
+        self._auto_follow = (row_index == table.row_count - 1)
 
         # Find the observation by row key
         try:
@@ -568,8 +574,9 @@ class WatchView(Container):
             key=str(row_id),
         )
 
-        # Auto-scroll to latest
-        obs_table.move_cursor(row=obs_table.row_count - 1, animate=False)
+        # Auto-scroll and auto-show detail only if following latest
+        if self._auto_follow:
+            obs_table.move_cursor(row=obs_table.row_count - 1, animate=False)
 
         # Update active watches table count
         watch_table = self.query_one("#watch-table", DataTable)
@@ -578,8 +585,9 @@ class WatchView(Container):
         except Exception:
             pass
 
-        # Auto-show detail for latest observation
-        self._show_detail(observation)
+        # Auto-show detail for latest observation only if following
+        if self._auto_follow:
+            self._show_detail(observation)
 
     async def _stop_all_watches(self) -> None:
         """Stop all active watches."""
