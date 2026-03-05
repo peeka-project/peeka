@@ -46,6 +46,7 @@ class TraceView(Container):
         self._current_tree_nodes: Dict[str, TreeNode] = {}  # For tree node management
         self._observations: deque[dict] = deque(maxlen=self.MAX_OBSERVATIONS)
         self._obs_counter: int = 0
+        self._auto_follow: bool = True
         self._log = logging.getLogger(__name__)
 
     def set_client(self, client: "StreamingAgentClient") -> None:
@@ -253,6 +254,11 @@ class TraceView(Container):
         if event.row_key is None:
             return
 
+        # If user selects a row that is NOT the last one, disable auto-follow.
+        # If user selects the last row, re-enable auto-follow.
+        row_index = event.cursor_row
+        self._auto_follow = (row_index == table.row_count - 1)
+
         try:
             row_idx = int(str(event.row_key.value))
         except (ValueError, TypeError):
@@ -456,11 +462,10 @@ class TraceView(Container):
             key=str(row_id),
         )
 
-        # Auto-scroll to latest
-        obs_table.move_cursor(row=obs_table.row_count - 1, animate=False)
-
-        # Auto-show detail for latest observation
-        self._show_trace_detail(observation)
+        # Auto-scroll and auto-show detail only if following latest
+        if self._auto_follow:
+            obs_table.move_cursor(row=obs_table.row_count - 1, animate=False)
+            self._show_trace_detail(observation)
 
     def _build_call_tree(
         self, parent_node: TreeNode, call_tree: List[Dict[str, Any]]
