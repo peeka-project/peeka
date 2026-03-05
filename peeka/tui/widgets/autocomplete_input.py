@@ -157,7 +157,9 @@ class AutoCompleteInput(Widget):
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         """Handle completion selection."""
         value = str(event.option.prompt)
-        self.query_one("#ac-input", Input).value = value
+        inp = self.query_one("#ac-input", Input)
+        inp.value = value
+        inp.cursor_position = len(value)
         self.query_one("#ac-dropdown").display = False
         self.post_message(self.Selected(value))
 
@@ -174,7 +176,9 @@ class AutoCompleteInput(Widget):
                 option = dropdown.get_option_at_index(0)
 
             value = str(option.prompt)
-            self.query_one("#ac-input", Input).value = value
+            inp = self.query_one("#ac-input", Input)
+            inp.value = value
+            inp.cursor_position = len(value)
             dropdown.display = False
             self.post_message(self.Selected(value))
             event.prevent_default()
