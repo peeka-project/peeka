@@ -18,9 +18,13 @@ class CompletionSource:
 
     def get_completions(self, prefix: str) -> List[str]:
         """Get completions for a given prefix."""
-        # Check cache first
-        cache_key = prefix[: prefix.rfind(".") + 1] if "." in prefix else ""
-        if cache_key in self._cache:
+        # Cache key: the module base path (everything up to and including last dot).
+        # For no-dot prefixes, always fetch fresh from agent since cached
+        # top-level results contain __main__.X items that can't be filtered
+        # correctly with simple startswith matching.
+        has_dot = "." in prefix
+        cache_key = prefix[: prefix.rfind(".") + 1] if has_dot else None
+        if cache_key is not None and cache_key in self._cache:
             cached_time, cached_items = self._cache[cache_key]
             if time.monotonic() - cached_time < self._cache_ttl:
                 return self._filter_by_prefix(cached_items, prefix)
@@ -37,8 +41,9 @@ class CompletionSource:
 
             if response.get("status") == "success":
                 items = response.get("data", {}).get("completions", [])
-                # Cache the results
-                self._cache[cache_key] = (time.monotonic(), items)
+                # Only cache dotted prefixes where startswith filtering works
+                if cache_key is not None:
+                    self._cache[cache_key] = (time.monotonic(), items)
                 return items
         except Exception:
             pass
