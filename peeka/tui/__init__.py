@@ -5,6 +5,7 @@ This module provides a full-featured TUI for Peeka diagnostics.
 Requires: pip install peeka[tui]
 """
 
+import atexit
 import argparse
 import os
 import sys
@@ -85,6 +86,19 @@ def main() -> None:
     os.environ.setdefault("COLORTERM", "truecolor")
 
     app = PeekaApp(theme=args.theme)
+
+    # atexit fallback: ensure cleanup runs even if signal handlers don't fire
+    def _atexit_cleanup() -> None:
+        try:
+            from peeka.tui.screens.main import MainScreen
+            for screen in app.screen_stack:
+                if isinstance(screen, MainScreen):
+                    screen._cleanup_all_views()
+                    break
+        except Exception:
+            pass  # Best-effort: swallow to protect target process
+
+    atexit.register(_atexit_cleanup)
     app.run()
 
 
