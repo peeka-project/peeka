@@ -2,6 +2,9 @@
 PeekaApp - Main TUI Application
 """
 
+import asyncio
+import signal
+
 from typing import Dict, Optional
 
 from textual.app import App, ComposeResult
@@ -95,6 +98,11 @@ class PeekaApp(App):
             )
         )
         self.theme = self._theme_name
+
+        # Register signal handlers for graceful shutdown
+        loop = asyncio.get_event_loop()
+        for sig in (signal.SIGHUP, signal.SIGTERM):
+            loop.add_signal_handler(sig, lambda: asyncio.ensure_future(self.action_quit()))
 
         self.push_screen(ProcessSelectorScreen())
 
