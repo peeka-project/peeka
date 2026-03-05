@@ -269,7 +269,12 @@ TabPane {
 }
 
 #trace-table {
-    height: 100%;
+    height: auto;
+    max-height: 8;
+}
+
+#trace-obs-table {
+    height: 1fr;
 }
 
 #call-tree {
@@ -281,7 +286,6 @@ TabPane {
     height: auto;
     padding: 0 1;
 }
-
 /* ============================================================================
    STACK VIEW
    ============================================================================ */

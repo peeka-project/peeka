@@ -4,12 +4,13 @@ Trace View - Function call tree tracing interface.
 
 import logging
 import threading
-from typing import TYPE_CHECKING, Optional, Dict, Any, List
+from collections import deque
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Vertical, Horizontal
-from textual.widgets import Static, DataTable, Input, Button, Tree
+from textual.containers import Container, Horizontal, Vertical
+from textual.widgets import Button, DataTable, Input, Static, Tree
 from textual.widgets.tree import TreeNode
 from textual.worker import Worker, get_current_worker
 
@@ -29,6 +30,8 @@ class TraceView(Container):
         Binding("c", "clear_tree", "Clear Tree"),
     ]
 
+    MAX_OBSERVATIONS = 1000
+
     def __init__(self, pid: int) -> None:
         super().__init__()
         self.pid = pid
@@ -41,6 +44,8 @@ class TraceView(Container):
         self._stream_client_lock: threading.Lock = threading.Lock()
         self._socket_path: Optional[str] = None
         self._current_tree_nodes: Dict[str, TreeNode] = {}  # For tree node management
+        self._observations: deque[dict] = deque(maxlen=self.MAX_OBSERVATIONS)
+        self._obs_counter: int = 0
         self._log = logging.getLogger(__name__)
 
     def set_client(self, client: "StreamingAgentClient") -> None:
@@ -122,6 +127,7 @@ class TraceView(Container):
             Horizontal(
                 Vertical(
                     DataTable(id="trace-table"),
+                    DataTable(id="trace-obs-table"),
                     id="trace-list",
                     classes="panel",
                 ),
@@ -137,10 +143,11 @@ class TraceView(Container):
         )
 
     def on_mount(self) -> None:
-        """Initialize trace table and tree."""
+        """Initialize trace table, observations table, and tree."""
         container = self.query_one("#trace-container", Container)
         container.border_title = "Trace"
 
+        # Active traces table
         table = self.query_one("#trace-table", DataTable)
         table.add_columns(
             ("ID", "ID"),
@@ -153,6 +160,18 @@ class TraceView(Container):
         trace_list = self.query_one("#trace-list", Vertical)
         trace_list.border_title = "Active Traces"
 
+        # Observation history table
+        obs_table = self.query_one("#trace-obs-table", DataTable)
+        obs_table.add_columns(
+            ("#", "#"),
+            ("Function", "Function"),
+            ("Duration", "Duration"),
+            ("Nodes", "Nodes"),
+        )
+        obs_table.cursor_type = "row"
+        obs_table.border_title = "Observations"
+
+        # Call tree panel
         trace_tree_panel = self.query_one("#trace-tree-panel", Vertical)
         trace_tree_panel.border_title = "Call Tree & Stats"
 
@@ -222,6 +241,55 @@ class TraceView(Container):
             await self._stop_all_traces()
         elif event.button.id == "clear-trace-btn":
             self.action_clear_tree()
+
+    def on_data_table_row_highlighted(
+        self, event: DataTable.RowHighlighted
+    ) -> None:
+        """Update call tree when an observation row is selected."""
+        table = event.data_table
+        if table.id != "trace-obs-table":
+            return
+
+        if event.row_key is None:
+            return
+
+        try:
+            row_idx = int(str(event.row_key.value))
+        except (ValueError, TypeError):
+            return
+
+        # Find the observation by row key
+        for obs in self._observations:
+            if obs.get("_row_id") == row_idx:
+                self._show_trace_detail(obs)
+                break
+
+    def _show_trace_detail(self, observation: dict) -> None:
+        """Show a stored observation's call tree and stats."""
+        call_tree = observation.get("call_tree", [])
+        total_duration = observation.get("total_duration_ms", 0)
+        node_count = observation.get("node_count", 0)
+        func_name = observation.get("func_name", "unknown")
+        count = observation.get("_count", 0)
+
+        # Rebuild tree
+        tree = self.query_one("#call-tree", Tree)
+        tree.clear()
+        tree.root.label = f"[bold cyan]#{count} {func_name}[/bold cyan]"
+        tree.root.expand()
+
+        if call_tree:
+            self._build_call_tree(tree.root, call_tree)
+
+        # Update stats
+        stats = self.query_one("#trace-stats", Static)
+        stats_text = (
+            f"[cyan]Observation #{count}[/cyan]\n"
+            f"Total Duration: {self._format_duration(total_duration)}\n"
+            f"Node Count: {node_count}\n"
+            f"Function: [yellow]{func_name}[/yellow]"
+        )
+        stats.update(stats_text)
 
     async def _start_trace(self) -> None:
         """Start a new trace."""
@@ -330,58 +398,69 @@ class TraceView(Container):
             if watch_id in self._active_traces:
                 self._active_traces[watch_id]["count"] = count
 
-            # Extract trace data
-            call_tree = observation.get("call_tree", [])
-            total_duration = observation.get("total_duration_ms", 0)
-            node_count = observation.get("node_count", 0)
-            func_name = observation.get("func_name", "unknown")
-
             self.app.call_from_thread(
-                self._update_trace_display,
+                self._add_trace_observation,
                 watch_id,
                 count,
-                func_name,
-                call_tree,
-                total_duration,
-                node_count,
+                observation,
             )
 
-    def _update_trace_display(
-        self,
-        watch_id: str,
-        count: int,
-        func_name: str,
-        call_tree: List[Dict[str, Any]],
-        total_duration: float,
-        node_count: int,
+    def _add_trace_observation(
+        self, watch_id: str, count: int, observation: dict
     ) -> None:
-        """Update UI with new trace observation (called from main thread)."""
-        # Update table count
-        table = self.query_one("#trace-table", DataTable)
+        """Store observation and update UI (called from main thread)."""
+        self._obs_counter += 1
+        row_id = self._obs_counter
+
+        # Store observation with metadata
+        observation["_row_id"] = row_id
+        observation["_count"] = count
+        self._observations.append(observation)
+
+        func_name = observation.get("func_name", "unknown")
+        total_duration = observation.get("total_duration_ms", 0)
+        node_count = observation.get("node_count", 0)
+
+        # Shorten module path: __main__.Calculator.add -> Calculator.add
+        display_name = func_name
+        if "." in display_name:
+            parts = display_name.split(".")
+            if parts[0] in ("__main__",) or len(parts) > 3:
+                display_name = (
+                    ".".join(parts[-2:]) if len(parts) >= 2 else parts[-1]
+                )
+
+        # Update active traces table count
+        trace_table = self.query_one("#trace-table", DataTable)
         try:
-            table.update_cell(watch_id, "Count", str(count))
+            trace_table.update_cell(watch_id, "Count", str(count))
         except Exception:
             pass
 
-        # Update tree visualization
-        tree = self.query_one("#call-tree", Tree)
-        tree.clear()
-        tree.root.label = f"[bold cyan]#{count} {func_name}[/bold cyan]"
-        tree.root.expand()
+        # Add row to observation history table
+        obs_table = self.query_one("#trace-obs-table", DataTable)
 
-        # Build tree from call_tree data
-        if call_tree:
-            self._build_call_tree(tree.root, call_tree)
+        # Evict oldest row if over limit
+        if obs_table.row_count >= self.MAX_OBSERVATIONS:
+            try:
+                first_key = list(obs_table.rows.keys())[0]
+                obs_table.remove_row(first_key)
+            except (IndexError, KeyError):
+                pass
 
-        # Update stats
-        stats = self.query_one("#trace-stats", Static)
-        stats_text = (
-            f"[cyan]Observation #{count}[/cyan]\n"
-            f"Total Duration: {self._format_duration(total_duration)}\n"
-            f"Node Count: {node_count}\n"
-            f"Function: [yellow]{func_name}[/yellow]"
+        obs_table.add_row(
+            str(row_id),
+            display_name,
+            f"{total_duration:.2f}ms",
+            str(node_count),
+            key=str(row_id),
         )
-        stats.update(stats_text)
+
+        # Auto-scroll to latest
+        obs_table.move_cursor(row=obs_table.row_count - 1, animate=False)
+
+        # Auto-show detail for latest observation
+        self._show_trace_detail(observation)
 
     def _build_call_tree(
         self, parent_node: TreeNode, call_tree: List[Dict[str, Any]]
