@@ -77,7 +77,7 @@ class AutoCompleteInput(Widget):
             self._debounce_timer.stop()
             self._debounce_timer = None
 
-        if not text or len(text) < 2:
+        if not text:
             dropdown.display = False
             return
 
@@ -122,7 +122,7 @@ class AutoCompleteInput(Widget):
         if current_text != prefix:
             prefix = current_text
 
-        if not prefix or len(prefix) < 2:
+        if not prefix:
             return
 
         dropdown = self.query_one("#ac-dropdown", OptionList)
