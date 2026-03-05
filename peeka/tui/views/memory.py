@@ -27,6 +27,8 @@ class MemoryView(Container):
         super().__init__()
         self.pid = pid
         self._client: Optional["StreamingAgentClient"] = None
+        self._own_client: Optional["StreamingAgentClient"] = None
+        self._socket_path: Optional[str] = None
         self._log = logging.getLogger(__name__)
         self._tracking_enabled = False
         self._mounted = False
@@ -84,8 +86,23 @@ class MemoryView(Container):
                 return f"[green]{self._format_size(delta)}[/green]"  # will show as "-X.X KB"
     def set_client(self, client: "StreamingAgentClient") -> None:
         self._client = client
+        self._socket_path = client.socket_path
+        # Create a dedicated connection for memory view to avoid
+        # socket contention with other views sharing the same client.
+        self._connect_own_client()
         if self._mounted:
             self.run_worker(self._refresh_overview(), thread=False)
+
+    def _connect_own_client(self) -> None:
+        """Create a dedicated StreamingAgentClient for memory data fetching."""
+        if not self._socket_path:
+            return
+        from peeka.core.client import StreamingAgentClient
+        self._own_client = StreamingAgentClient(self._socket_path)
+        result = self._own_client.connect()
+        if result.get("status") != "success":
+            self._log.warning("Memory dedicated client failed: %s", result.get("error"))
+            self._own_client = None
 
     async def action_refresh(self) -> None:
         """Refresh memory data (triggered by r key)."""
@@ -128,9 +145,9 @@ class MemoryView(Container):
             yield Horizontal(
                 Button("Refresh", id="mem-refresh-btn", variant="primary", flat=True),
                 Button(
-                    "Start Tracking", id="mem-track-btn", variant="success", flat=True
+                    "Track", id="mem-track-btn", variant="success", flat=True
                 ),
-                Button("GC Collect", id="gc-btn", variant="warning", flat=True),
+                Button("GC", id="gc-btn", variant="warning", flat=True),
                 Button("Dump", id="mem-dump-btn", variant="primary", flat=True),
                 Button("Auto", id="mem-auto-btn", variant="default", flat=True),
                 Static("nframe:", classes="input-label"),
@@ -192,7 +209,7 @@ class MemoryView(Container):
             await self._refresh_overview()
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
-        if not self._client:
+        if not self._own_client and not self._client:
             self.app.notify("Not connected to agent", severity="warning")
             return
 
@@ -259,11 +276,12 @@ class MemoryView(Container):
             self._apply_sort_to_table(table)
 
     async def _refresh_overview(self) -> None:
-        if not self._client:
+        client = self._own_client or self._client
+        if not client:
             return
 
         worker = self.run_worker(
-            lambda: self._client.send_command({"type": "memory", "action": "overview"}),
+            lambda: client.send_command({"type": "memory", "action": "overview"}),
             thread=True,
         )
         await worker.wait()
@@ -309,13 +327,13 @@ class MemoryView(Container):
             self._tracking_enabled = True
 
             track_btn = self.query_one("#mem-track-btn", Button)
-            track_btn.label = "Stop Tracking"
+            track_btn.label = "Stop"
         else:
             self.query_one("#mem-total", Static).update("Traced: Not tracking")
             self._tracking_enabled = False
 
             track_btn = self.query_one("#mem-track-btn", Button)
-            track_btn.label = "Start Tracking"
+            track_btn.label = "Track"
 
         gc_data = data.get("gc", {})
         gc_counts = gc_data.get("counts", [0, 0, 0])
@@ -324,7 +342,7 @@ class MemoryView(Container):
         )
 
         gc_worker = self.run_worker(
-            lambda: self._client.send_command(
+            lambda: client.send_command(
                 {"type": "memory", "action": "gc", "limit": self._limit}
             ),
             thread=True,
@@ -425,13 +443,17 @@ class MemoryView(Container):
             self._refreshing = False
 
     def on_unmount(self) -> None:
-        """Cleanup timer on view removal."""
+        """Cleanup timer and dedicated client on view removal."""
         if self._auto_timer is not None:
             self._auto_timer.stop()
             self._auto_timer = None
+        if self._own_client:
+            self._own_client.disconnect()
+            self._own_client = None
 
     async def _refresh_allocations(self) -> None:
-        if not self._client:
+        client = self._own_client or self._client
+        if not client:
             return
 
         placeholder = self.query_one("#mem-alloc-placeholder", Static)
@@ -446,7 +468,7 @@ class MemoryView(Container):
         alloc_table.styles.display = "block"
 
         worker = self.run_worker(
-            lambda: self._client.send_command({"type": "memory", "action": "top", "limit": self._limit}),
+            lambda: client.send_command({"type": "memory", "action": "top", "limit": self._limit}),
             thread=True,
         )
         await worker.wait()
@@ -484,12 +506,13 @@ class MemoryView(Container):
             )
 
     async def _toggle_tracking(self) -> None:
-        if not self._client:
+        client = self._own_client or self._client
+        if not client:
             return
 
         if self._tracking_enabled:
             worker = self.run_worker(
-                lambda: self._client.send_command({"type": "memory", "action": "stop"}),
+                lambda: client.send_command({"type": "memory", "action": "stop"}),
                 thread=True,
             )
             await worker.wait()
@@ -504,7 +527,7 @@ class MemoryView(Container):
                 self._tracking_enabled = False
 
                 track_btn = self.query_one("#mem-track-btn", Button)
-                track_btn.label = "Start Tracking"
+                track_btn.label = "Track"
 
                 await self._refresh_overview()
             else:
@@ -514,7 +537,7 @@ class MemoryView(Container):
                 )
         else:
             worker = self.run_worker(
-                lambda: self._client.send_command(
+                lambda: client.send_command(
                     {"type": "memory", "action": "start", "nframe": self._nframe}
                 ),
                 thread=True,
@@ -531,7 +554,7 @@ class MemoryView(Container):
                 self._tracking_enabled = True
 
                 track_btn = self.query_one("#mem-track-btn", Button)
-                track_btn.label = "Stop Tracking"
+                track_btn.label = "Stop"
 
                 await self._refresh_overview()
             else:
@@ -541,11 +564,12 @@ class MemoryView(Container):
                 )
 
     async def _gc_collect(self) -> None:
-        if not self._client:
+        client = self._own_client or self._client
+        if not client:
             return
 
         worker = self.run_worker(
-            lambda: self._client.send_command(
+            lambda: client.send_command(
                 {"type": "memory", "action": "gc", "limit": self._limit}
             ),
             thread=True,
@@ -572,11 +596,12 @@ class MemoryView(Container):
             )
 
     async def _dump_memory(self) -> None:
-        if not self._client:
+        client = self._own_client or self._client
+        if not client:
             return
 
         worker = self.run_worker(
-            lambda: self._client.send_command({"type": "memory", "action": "dump"}),
+            lambda: client.send_command({"type": "memory", "action": "dump"}),
             thread=True,
         )
         await worker.wait()
@@ -603,11 +628,12 @@ class MemoryView(Container):
 
     async def _take_snapshot(self) -> None:
         """Take a tracemalloc snapshot."""
-        if not self._client:
+        client = self._own_client or self._client
+        if not client:
             return
 
         worker = self.run_worker(
-            lambda: self._client.send_command({"type": "memory", "action": "snapshot"}),
+            lambda: client.send_command({"type": "memory", "action": "snapshot"}),
             thread=True,
         )
         await worker.wait()
@@ -640,11 +666,12 @@ class MemoryView(Container):
 
     async def _diff_snapshots(self) -> None:
         """Compare last two snapshots and display results."""
-        if not self._client:
+        client = self._own_client or self._client
+        if not client:
             return
 
         worker = self.run_worker(
-            lambda: self._client.send_command({"type": "memory", "action": "diff"}),
+            lambda: client.send_command({"type": "memory", "action": "diff"}),
             thread=True,
         )
         await worker.wait()
@@ -769,6 +796,10 @@ class MemoryView(Container):
 
     async def _find_referrers(self) -> None:
         """Find referrers for type."""
+        client = self._own_client or self._client
+        if not client:
+            return
+        
         type_input = self.query_one("#mem-type-input", Input)
         type_name = type_input.value.strip()
         
@@ -776,25 +807,35 @@ class MemoryView(Container):
             self.app.notify("Please enter a type name", severity="warning")
             return
         
+        command = {
+            "type": "memory",
+            "action": "referrers",
+            "type_name": type_name
+        }
+        worker = self.run_worker(
+            lambda: client.send_command(command),
+            thread=True,
+        )
+        await worker.wait()
         try:
-            command = {
-                "type": "memory",
-                "action": "referrers",
-                "type_name": type_name
-            }
-            response = await self._client.send_command(command)
-            
-            if response.get("status") == "error":
-                self.app.notify(response["error"], severity="error")
-                return
-            
-            tree = self.query_one("#mem-ref-tree", Tree)
-            self._populate_tree(tree, response, "referrers")
+            response = worker.result
         except Exception as e:
             self.app.notify(f"Error: {e}", severity="error")
+            return
+        
+        if response.get("status") == "error":
+            self.app.notify(response["error"], severity="error")
+            return
+        
+        tree = self.query_one("#mem-ref-tree", Tree)
+        self._populate_tree(tree, response, "referrers")
     
     async def _find_referents(self) -> None:
         """Find referents for type."""
+        client = self._own_client or self._client
+        if not client:
+            return
+        
         type_input = self.query_one("#mem-type-input", Input)
         type_name = type_input.value.strip()
         
@@ -802,22 +843,28 @@ class MemoryView(Container):
             self.app.notify("Please enter a type name", severity="warning")
             return
         
+        command = {
+            "type": "memory",
+            "action": "referents",
+            "type_name": type_name
+        }
+        worker = self.run_worker(
+            lambda: client.send_command(command),
+            thread=True,
+        )
+        await worker.wait()
         try:
-            command = {
-                "type": "memory",
-                "action": "referents",
-                "type_name": type_name
-            }
-            response = await self._client.send_command(command)
-            
-            if response.get("status") == "error":
-                self.app.notify(response["error"], severity="error")
-                return
-            
-            tree = self.query_one("#mem-ref-tree", Tree)
-            self._populate_tree(tree, response, "referents")
+            response = worker.result
         except Exception as e:
             self.app.notify(f"Error: {e}", severity="error")
+            return
+        
+        if response.get("status") == "error":
+            self.app.notify(response["error"], severity="error")
+            return
+        
+        tree = self.query_one("#mem-ref-tree", Tree)
+        self._populate_tree(tree, response, "referents")
     
     def _populate_tree(self, tree: Tree, data: Dict[str, Any], relation: str) -> None:
         """Populate tree with referrer/referent data."""
