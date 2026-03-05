@@ -10,6 +10,7 @@ This module provides memory diagnostic capabilities including:
 
 import gc
 import os
+import sys
 import time
 import tracemalloc
 from collections import defaultdict
@@ -290,14 +291,22 @@ class MemoryCommand(BaseCommand):
         Returns:
             Dict containing object census
         """
-        # Count objects by type
+        # Count objects and sizes by type
         type_counts: Dict[str, int] = defaultdict(int)
+        type_sizes: Dict[str, int] = defaultdict(int)
         for obj in gc.get_objects():
             type_name = type(obj).__name__
             type_counts[type_name] += 1
+            try:
+                type_sizes[type_name] += sys.getsizeof(obj)
+            except (TypeError, ValueError):
+                pass  # Some objects don't support getsizeof
 
-        # Sort by count descending, then by type name alphabetically
-        sorted_types = sorted(type_counts.items(), key=lambda x: (-x[1], x[0]))
+        # Sort by size descending, then by type name alphabetically
+        sorted_types = sorted(
+            type_counts.items(),
+            key=lambda x: (-type_sizes.get(x[0], 0), x[0]),
+        )
 
         # Calculate totals
         total_objects = sum(type_counts.values())
@@ -305,7 +314,12 @@ class MemoryCommand(BaseCommand):
         # Format top N types
         objects_by_type = []
         for rank, (type_name, count) in enumerate(sorted_types[:limit], start=1):
-            objects_by_type.append({"rank": rank, "type": type_name, "count": count})
+            objects_by_type.append({
+                "rank": rank,
+                "type": type_name,
+                "count": count,
+                "size_bytes": type_sizes.get(type_name, 0),
+            })
 
         return {
             "status": "success",

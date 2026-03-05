@@ -326,11 +326,18 @@ TabPane {
 
 #memory-controls Button {
     margin-right: 1;
+    min-width: 4;
+    max-width: 16;
 }
 
 #mem-nframe-input, #mem-limit-input {
-    width: 8;
+    width: 6;
     margin-right: 1;
+}
+
+#memory-controls .input-label {
+    padding: 0;
+    margin-right: 0;
 }
 
 #mem-overview {
