@@ -20,7 +20,7 @@ class MemoryView(Container):
         Binding("r", "refresh", "Refresh"),
         Binding("a", "toggle_auto", "Auto"),
         Binding("T", "toggle_tracking", "Track"),
-        Binding("g", "gc_collect", "GC"),
+        Binding("g", "gc_stats", "GC Stats"),
     ]
 
     def __init__(self, pid: int) -> None:
@@ -113,9 +113,9 @@ class MemoryView(Container):
         """Toggle memory tracking (triggered by t key)."""
         await self._toggle_tracking()
 
-    async def action_gc_collect(self) -> None:
-        """Trigger garbage collection (triggered by g key)."""
-        await self._gc_collect()
+    async def action_gc_stats(self) -> None:
+        """Trigger GC stats retrieval (triggered by g key)."""
+        await self._gc_stats_action()
 
     def action_toggle_auto(self) -> None:
         """Toggle auto-refresh on/off (triggered by 'a' key)."""
@@ -146,15 +146,15 @@ class MemoryView(Container):
             yield Horizontal(
                 Button("Refresh", id="mem-refresh-btn", variant="primary", flat=True),
                 Button(
-                    "Track", id="mem-track-btn", variant="success", flat=True
+                    "Track", id="mem-track-btn", variant="default", flat=True
                 ),
-                Button("GC", id="gc-btn", variant="warning", flat=True),
+                Button("GC Stats", id="gc-btn", variant="warning", flat=True),
                 Button("Dump", id="mem-dump-btn", variant="primary", flat=True),
                 Button("Auto", id="mem-auto-btn", variant="default", flat=True),
                 Static("nframe:", classes="input-label"),
-                Input(value="10", id="mem-nframe-input", max_length=3),
+                Input(value="10", id="mem-nframe-input", max_length=3, tooltip="Stack frames to capture (1-50)"),
                 Static("limit:", classes="input-label"),
-                Input(value="20", id="mem-limit-input", max_length=3),
+                Input(value="20", id="mem-limit-input", max_length=3, tooltip="Max rows to display (1-100)"),
                 id="memory-controls",
             )
         with TabbedContent(id="mem-tabs"):
@@ -178,6 +178,7 @@ class MemoryView(Container):
                     Horizontal(
                         Button("Snap", id="mem-snap-btn", variant="primary", flat=True),
                         Button("Diff", id="mem-diff-btn", variant="primary", flat=True, disabled=True),
+                        Button("Reset", id="mem-reset-btn", variant="warning", flat=True, disabled=True),
                         Static("Snapshots: 0/2", id="mem-snapshot-status"),
                         id="mem-diff-controls",
                     ),
@@ -189,8 +190,8 @@ class MemoryView(Container):
                     with Horizontal(id="mem-references-controls"):
                         yield Static("Type:", classes="input-label")
                         yield Input(value="", placeholder="dict", id="mem-type-input")
-                        yield Button("Referrers", id="mem-referrers-btn", variant="default")
-                        yield Button("Referents", id="mem-referents-btn", variant="default")
+                        yield Button("Referrers", id="mem-referrers-btn", variant="default", flat=True)
+                        yield Button("Referents", id="mem-referents-btn", variant="default", flat=True)
                     yield Tree("No data", id="mem-ref-tree")
 
     async def on_mount(self) -> None:
@@ -220,7 +221,7 @@ class MemoryView(Container):
         elif event.button.id == "mem-track-btn":
             await self._toggle_tracking()
         elif event.button.id == "gc-btn":
-            await self._gc_collect()
+            await self._gc_stats_action()
         elif event.button.id == "mem-dump-btn":
             await self._dump_memory()
         elif event.button.id == "mem-auto-btn":
@@ -229,6 +230,8 @@ class MemoryView(Container):
             self.run_worker(self._take_snapshot(), thread=False)
         elif event.button.id == "mem-diff-btn":
             self.run_worker(self._diff_snapshots(), thread=False)
+        elif event.button.id == "mem-reset-btn":
+            self.run_worker(self._reset_diff(), thread=False)
         elif event.button.id == "mem-referrers-btn":
             self.run_worker(self._find_referrers(), thread=False)
         elif event.button.id == "mem-referents-btn":
@@ -529,6 +532,7 @@ class MemoryView(Container):
 
                 track_btn = self.query_one("#mem-track-btn", Button)
                 track_btn.label = "Track"
+                track_btn.variant = "default"
 
                 await self._refresh_overview()
             else:
@@ -556,6 +560,7 @@ class MemoryView(Container):
 
                 track_btn = self.query_one("#mem-track-btn", Button)
                 track_btn.label = "Stop"
+                track_btn.variant = "success"
 
                 await self._refresh_overview()
             else:
@@ -564,7 +569,7 @@ class MemoryView(Container):
                     severity="error",
                 )
 
-    async def _gc_collect(self) -> None:
+    async def _gc_stats_action(self) -> None:
         client = self._own_client or self._client
         if not client:
             return
@@ -585,14 +590,14 @@ class MemoryView(Container):
         if response.get("status") == "success":
             total_objects = response.get("total_objects", 0)
             self.app.notify(
-                f"GC completed. Total objects: {total_objects:,}",
+                f"GC stats collected. Total objects: {total_objects:,}",
                 severity="information",
             )
 
             await self._refresh_overview()
         else:
             self.app.notify(
-                f"Failed to collect garbage: {response.get('error', 'Unknown error')}",
+                f"Failed to get GC stats: {response.get('error', 'Unknown error')}",
                 severity="error",
             )
 
@@ -658,7 +663,16 @@ class MemoryView(Container):
             diff_btn = self.query_one("#mem-diff-btn", Button)
             diff_btn.disabled = (self._snapshot_count < 2)
             
+            # Enable Reset button after first snapshot
+            if self._snapshot_count > 0:
+                reset_btn = self.query_one("#mem-reset-btn", Button)
+                reset_btn.disabled = False
+            
             self.app.notify(f"Snapshot taken ({self._snapshot_count}/2)", severity="information")
+            
+            # Auto-diff when we have 2 snapshots
+            if self._snapshot_count >= 2:
+                await self._diff_snapshots()
         else:
             self.app.notify(
                 f"Failed to take snapshot: {response.get('error', 'Unknown error')}",
@@ -718,6 +732,29 @@ class MemoryView(Container):
                 f"Failed to diff snapshots: {response.get('error', 'Unknown error')}",
                 severity="error",
             )
+
+    async def _reset_diff(self) -> None:
+        """Reset diff state to allow taking new snapshots."""
+        self._snapshot_count = 0
+        
+        # Update snapshot status
+        status_widget = self.query_one("#mem-snapshot-status", Static)
+        status_widget.update("Snapshots: 0/2")
+        
+        # Disable Diff button
+        diff_btn = self.query_one("#mem-diff-btn", Button)
+        diff_btn.disabled = True
+        
+        # Disable Reset button
+        reset_btn = self.query_one("#mem-reset-btn", Button)
+        reset_btn.disabled = True
+        
+        # Clear diff table
+        diff_table = self.query_one("#mem-diff-table", DataTable)
+        diff_table.clear()
+        
+        # Notify user
+        self.app.notify("Diff reset. Take 2 new snapshots.", severity="information")
 
     def _apply_sort_to_table(self, table: DataTable) -> None:
         """Sort the table by the current sort column and update column labels."""
