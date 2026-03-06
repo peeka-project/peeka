@@ -19,7 +19,7 @@ class MemoryView(Container):
     BINDINGS = [
         Binding("r", "refresh", "Refresh"),
         Binding("a", "toggle_auto", "Auto"),
-        Binding("t", "toggle_tracking", "Track"),
+        Binding("T", "toggle_tracking", "Track"),
         Binding("g", "gc_collect", "GC"),
     ]
 
@@ -107,6 +107,7 @@ class MemoryView(Container):
     async def action_refresh(self) -> None:
         """Refresh memory data (triggered by r key)."""
         await self._refresh_overview()
+        await self._refresh_allocations()
 
     async def action_toggle_tracking(self) -> None:
         """Toggle memory tracking (triggered by t key)."""
@@ -166,7 +167,7 @@ class MemoryView(Container):
             with TabPane("Allocations", id="mem-allocations-pane"):
                 yield Vertical(
                     Static(
-                        "Start tracking to see top allocations (press 't')",
+                        "Start tracking to see top allocations (press 'T')",
                         id="mem-alloc-placeholder",
                     ),
                     DataTable(id="mem-alloc-table", show_header=True, zebra_stripes=True),

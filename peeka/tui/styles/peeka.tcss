@@ -385,13 +385,11 @@ TabPane {
 }
 
 #mem-allocations-content {
-    height: 100%;
-    display: block;
+    height: 1fr;
 }
 
 #mem-alloc-table {
     height: 1fr;
-    display: block;
 }
 
 #mem-alloc-placeholder {
