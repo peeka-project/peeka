@@ -87,7 +87,6 @@ TabPane {
 #trace-container,
 #stack-container,
 #monitor-container,
-#memory-container,
 #logger-container,
 #inspect-container,
 #thread-container,
@@ -323,6 +322,11 @@ TabPane {
    MEMORY VIEW
    ============================================================================ */
 
+#memory-container {
+    height: auto;
+    padding: 0 1;
+}
+
 #memory-controls {
     height: auto;
     margin-bottom: 1;
@@ -376,8 +380,8 @@ TabPane {
 }
 
 #mem-overview-content {
-    height: 100%;
-    display: block;
+    height: 1fr;
+    layout: horizontal;
 }
 
 #mem-allocations-content {
