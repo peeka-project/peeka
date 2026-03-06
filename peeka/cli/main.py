@@ -340,7 +340,7 @@ Examples:
     memory_parser.add_argument(
         "--action",
         type=str,
-        choices=["overview", "start", "stop", "top", "dump", "gc"],
+        choices=["overview", "start", "stop", "top", "dump", "gc", "snapshot", "diff", "referrers", "referents"],
         default="overview",
         help="Memory action (default: overview)",
     )
@@ -368,6 +368,26 @@ Examples:
         "--filename",
         type=str,
         help="Output filename for dump action",
+    )
+    memory_parser.add_argument(
+        "--type-name",
+        dest="type_name",
+        type=str,
+        help="Type name for referrers/referents actions (e.g., 'dict', 'MyClass')",
+    )
+    memory_parser.add_argument(
+        "--max-depth",
+        dest="max_depth",
+        type=int,
+        default=2,
+        help="Max recursion depth for referrers/referents (1-3, default: 2)",
+    )
+    memory_parser.add_argument(
+        "--max-per-level",
+        dest="max_per_level",
+        type=int,
+        default=10,
+        help="Max items per level for referrers/referents (1-20, default: 10)",
     )
 
     inspect_parser = subparsers.add_parser(
@@ -898,6 +918,9 @@ def cmd_memory(args) -> int:
         "limit": args.limit,
         "group_by": args.group_by,
         "filename": args.filename,
+        "type_name": args.type_name,
+        "max_depth": args.max_depth,
+        "max_per_level": args.max_per_level,
     }
 
     response = streaming_client.send_command(command)
