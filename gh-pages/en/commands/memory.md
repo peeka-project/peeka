@@ -10,31 +10,53 @@ permalink: /en/commands/memory
 
 ## Overview
 
-The `memory` command is used to analyze **memory usage** in running Python processes, providing 6 diagnostic operations: memory overview, trace control, allocation analysis, snapshot export, and GC statistics. This is Peeka's core memory diagnostic tool, suitable for memory leak troubleshooting and performance optimization in production environments.
+The `memory` command is used to analyze **memory usage** in running Python processes, providing 10 diagnostic operations: memory overview, trace control, allocation analysis, snapshot management, snapshot comparison, reference chain queries, snapshot export, and GC statistics. This is Peeka's core memory diagnostic tool, suitable for memory leak troubleshooting and performance optimization in production environments.
 
 **Design Inspiration**: Peeka's `memory` command is inspired by [Arthas](https://arthas.aliyun.com/)'s `memory` command, implemented for Python using `tracemalloc` and `gc` modules.
 
 ## TUI Usage
 
-In TUI mode, press **`e`** key to switch to **Memory View**, providing the following interactive features:
+In TUI mode, press **`e`** key to switch to **Memory View**, providing 4 tabs and rich interactive features:
 
-- **Memory Overview Display**: Shows current memory state
-  - Process RSS (physical memory) usage
-  - tracemalloc status (enabled/disabled) and memory usage
-  - GC object statistics (object count per generation)
-- **Trace Control**: Start/stop tracemalloc tracing
-  - Quick launch/stop tracemalloc tracing
-  - Configurable call stack depth (nframe)
-- **Allocation Analysis**: View memory allocation hotspots
-  - Top N memory allocation hotspots
-  - Display grouped by filename or line number
-  - Real-time refresh of allocation data
-- **Quick Operations**:
-  - Press `s` to start tracemalloc
-  - Press `t` to show Top allocations
-  - Press `g` to show GC statistics
-  - Press `d` to export snapshot
+#### Overview Tab (Memory Overview)
 
+- Process RSS (physical memory) display in MB
+- RSS trend Sparkline chart (last 100 sample points)
+- tracemalloc current tracked memory / peak memory
+- GC three-generation counts (gen0, gen1, gen2)
+- **Top Objects by Size** table: type, count, Δcount, size, Δsize
+  - Auto-calculated deltas on each refresh (red = growth, green = decrease)
+  - Sortable column headers
+
+#### Allocations Tab (Allocation Hotspots)
+
+- Requires Track to be started first
+- Shows Top N memory allocations: Rank, Size, Count, Location (file:line)
+- Syncs with auto-refresh updates
+
+#### Diff Tab (Snapshot Comparison)
+
+- **Snap button**: Take tracemalloc snapshot (max 2, FIFO)
+- **Diff button**: Compare two snapshots, table shows Location, Size Δ, New, Old, Count Δ
+- Delta data color-coded (red = growth, green = decrease)
+
+#### References Tab (Reference Chain Analysis)
+
+- Enter type name (e.g., `dict`, `MyClass`)
+- **Referrers button**: Tree view of who references objects of that type (find leak root cause)
+- **Referents button**: Tree view of what objects of that type reference (analyze object structure)
+
+#### Controls and Keybindings
+
+| Control | Keybinding | Function |
+|---------|:----------:|----------|
+| Refresh | `r` | Manual refresh overview + allocations |
+| Track | `T` | Start/stop tracemalloc tracing |
+| GC | `g` | Trigger GC statistics refresh |
+| Dump | — | Export snapshot file to disk |
+| Auto | `a` | Auto-refresh (5-second interval) |
+| nframe input | — | Set tracemalloc stack depth (1-50) |
+| limit input | — | Set GC/allocation display count (1-100) |
 **CLI Equivalent Commands**: All examples below use CLI commands for demonstration. TUI provides the same functionality with a graphical interface.
 ## Use Cases
 
@@ -60,6 +82,9 @@ peeka-cli memory <pid> [options]
 | `--group-by` | Allocation grouping method | `lineno` | `--group-by filename` |
 | `--limit` | Result count limit | `20` | `--limit 50` |
 | `--filename` | Snapshot file name | Auto-generated | `--filename snapshot1` |
+| `--type-name` | Type name (for referrers/referents) | - | `--type-name dict` |
+| `--max-depth` | Reference chain recursion depth | `2` | `--max-depth 3` |
+| `--max-per-level` | Max entries per level | `10` | `--max-per-level 20` |
 
 ### action Operation Types
 
@@ -71,6 +96,10 @@ peeka-cli memory <pid> [options]
 | **top** | Top N allocations | ✅ Yes | View memory allocation hotspots (by code location) |
 | **dump** | Export snapshot | ✅ Yes | Save snapshot for offline analysis |
 | **gc** | GC statistics | ❌ No | Count object type quantities |
+| **snapshot** | Memory snapshot | ✅ Yes | Save in-memory snapshot (FIFO, max 2) |
+| **diff** | Snapshot comparison | ✅ Yes | Compare latest two snapshots for memory change |
+| **referrers** | Referrer query | ❌ No | Find who holds objects of specified type (leak investigation) |
+| **referents** | Referent query | ❌ No | Find what objects of specified type reference (structure analysis) |
 
 ## Basic Usage
 
@@ -450,6 +479,191 @@ peeka-cli memory --action gc --limit 50
 | **What it doesn't tell** | Object types | How much memory each object uses |
 | **Data source** | `tracemalloc` | `gc.get_objects()` |
 
+
+### 7. Memory Snapshot (snapshot)
+
+Save a tracemalloc snapshot in memory for subsequent diff comparison (**requires start first**).
+
+```bash
+# Take a snapshot (max 2 stored, FIFO)
+peeka-cli memory --action snapshot
+```
+
+**Output Example**:
+
+```json
+{
+  "status": "success",
+  "action": "snapshot",
+  "snapshot_count": 1,
+  "timestamp": 1738328400.0
+}
+```
+
+**Usage Notes**:
+
+- Snapshots are stored in Agent memory (not written to disk), max 2 stored
+- When exceeding 2, the oldest snapshot is automatically discarded (FIFO)
+- Used with `diff` to analyze memory changes over a period of time
+- To persist snapshots to disk, use `dump` instead
+
+### 8. Snapshot Comparison (diff)
+
+Compare memory changes between the latest two snapshots (**requires at least 2 snapshots taken first**).
+
+```bash
+# Take two snapshots first
+peeka-cli memory --action snapshot
+# ... wait some time ...
+peeka-cli memory --action snapshot
+
+# Compare differences
+peeka-cli memory --action diff
+```
+
+**Output Example**:
+
+```json
+{
+  "status": "success",
+  "action": "diff",
+  "diffs": [
+    {
+      "location": "/app/models.py:145",
+      "size_diff": 1048576,
+      "size_new": 2097152,
+      "size_old": 1048576,
+      "count_diff": 512,
+      "count_new": 1024,
+      "count_old": 512
+    },
+    {
+      "location": "/app/cache.py:89",
+      "size_diff": -524288,
+      "size_new": 524288,
+      "size_old": 1048576,
+      "count_diff": -256,
+      "count_new": 256,
+      "count_old": 512
+    }
+  ]
+}
+```
+
+**Field Descriptions**:
+
+| Field | Description |
+|-------|-------------|
+| `location` | Code location (filename:lineno) |
+| `size_diff` | Memory size change (positive = growth, negative = decrease) |
+| `size_new` | Memory size in the new snapshot |
+| `size_old` | Memory size in the old snapshot |
+| `count_diff` | Allocation block count change |
+| `count_new` | Allocation block count in the new snapshot |
+| `count_old` | Allocation block count in the old snapshot |
+
+**Important Notes**:
+
+- Results are grouped by `lineno`, max 50 entries returned
+- `size_diff > 0` indicates memory growth — key focus for leak investigation
+- Unlike `dump` offline comparison, `diff` completes online without exporting files
+
+### 9. Referrer Query (referrers)
+
+Find who holds objects of the specified type (**no need for start**). Useful for tracing object references when investigating memory leaks.
+
+```bash
+# Find who references dict type objects
+peeka-cli memory --action referrers --type-name dict
+
+# Increase recursion depth and per-level count
+peeka-cli memory --action referrers --type-name MyClass --max-depth 3 --max-per-level 15
+```
+
+**Output Example**:
+
+```json
+{
+  "status": "success",
+  "action": "referrers",
+  "target": {
+    "type": "MyClass",
+    "repr_short": "<MyClass object at 0x7f...>",
+    "count": 500
+  },
+  "referrers": [
+    {
+      "type": "dict",
+      "repr_short": "{'user': <MyClass object at 0x7f...>, ...}",
+      "referrers": [
+        {
+          "type": "list",
+          "repr_short": "[{'user': <MyClass ...>}, ...] (len=500)"
+        }
+      ]
+    }
+  ]
+}
+```
+
+**Parameter Descriptions**:
+
+| Parameter | Description | Range | Default |
+|-----------|-------------|-------|---------|
+| `--type-name` | Target object type name | Any type name | **Required** |
+| `--max-depth` | Recursive search depth | 1-3 | 2 |
+| `--max-per-level` | Max referrers per level | 1-20 | 10 |
+
+**Use Cases**:
+
+- After discovering abnormal object count growth, use `referrers` to trace who holds those objects
+- Use with `gc` command: first use `gc` to find abnormal types, then use `referrers` to trace the reference chain
+
+### 10. Referent Query (referents)
+
+Find what objects of the specified type reference (**no need for start**). Useful for analyzing internal object structure and holdings.
+
+```bash
+# Find what dict type objects reference
+peeka-cli memory --action referents --type-name dict
+
+# Custom depth
+peeka-cli memory --action referents --type-name MyCache --max-depth 3
+```
+
+**Output Example**:
+
+```json
+{
+  "status": "success",
+  "action": "referents",
+  "target": {
+    "type": "MyCache",
+    "repr_short": "<MyCache object at 0x7f...>",
+    "count": 1
+  },
+  "referents": [
+    {
+      "type": "dict",
+      "repr_short": "{'items': [...], 'max_size': 10000}",
+      "referents": [
+        {
+          "type": "list",
+          "repr_short": "[<Item ...>, <Item ...>, ...] (len=9500)"
+        }
+      ]
+    }
+  ]
+}
+```
+
+**Difference from referrers**:
+
+| Dimension | `referrers` | `referents` |
+|-----------|-------------|-------------|
+| **Direction** | Upward: who references me | Downward: what I reference |
+| **Purpose** | Investigate leak root cause | Analyze object structure |
+| **Typical Question** | Why isn't this object collected? | What does this object hold internally? |
 ## Complete Diagnostic Workflow
 
 ### Scenario 1: Memory Leak Troubleshooting
@@ -458,32 +672,38 @@ peeka-cli memory --action gc --limit 50
 # 1. View current memory state
 peeka-cli memory --action overview
 
-# 2. Start tracing
-peeka-cli memory --action start --nframe 50
-
-# 3. Wait some time (let issue reproduce)
-sleep 300  # 5 minutes
-
-# 4. Export first snapshot
-peeka-cli memory --action dump --filename snapshot_before
-
-# 5. Continue waiting
-sleep 300
-
-# 6. Export second snapshot
-peeka-cli memory --action dump --filename snapshot_after
-
-# 7. View top allocations
-peeka-cli memory --action top --limit 30
-
-# 8. View object statistics
+# 2. Check object counts for anomalies with GC stats
 peeka-cli memory --action gc --limit 50
 
-# 9. Stop tracing
-peeka-cli memory --action stop
+# 3. Start tracing
+peeka-cli memory --action start --nframe 50
 
-# 10. Offline snapshot comparison (Python script)
-python analyze_snapshots.py snapshot_before.snapshot snapshot_after.snapshot
+# 4. Wait some time (let issue reproduce)
+sleep 300  # 5 minutes
+
+# 5. Take first memory snapshot
+peeka-cli memory --action snapshot
+
+# 6. Continue waiting
+sleep 300
+
+# 7. Take second memory snapshot
+peeka-cli memory --action snapshot
+
+# 8. Online comparison of two snapshots (no file export needed)
+peeka-cli memory --action diff
+
+# 9. View top allocation hotspots
+peeka-cli memory --action top --limit 30
+
+# 10. Trace reference chain for suspicious types
+peeka-cli memory --action referrers --type-name MyClass --max-depth 3
+
+# 11. Export snapshot for offline analysis (optional)
+peeka-cli memory --action dump --filename snapshot_leak
+
+# 12. Stop tracing
+peeka-cli memory --action stop
 ```
 
 ### Scenario 2: Performance Optimization
@@ -786,8 +1006,10 @@ while True:
 | **Heap Memory Analysis** | ✅ tracemalloc | ✅ JVM heap | Different implementation |
 | **GC Statistics** | ✅ gc module | ✅ JVM GC | Same functionality |
 | **Snapshot Export** | ✅ .snapshot format | ✅ heap dump | Different formats |
+| **In-memory Snapshot Comparison** | ✅ snapshot + diff | ❌ Requires offline | Online comparison without file export |
 | **Memory Allocation Hotspots** | ✅ top command | ✅ memory command | Similar functionality |
 | **Object Statistics** | ✅ gc command | ✅ dashboard | Similar functionality |
+| **Reference Chain Query** | ✅ referrers/referents | ⏳ Partial (heap dump analysis) | Peeka supports online reference chain tracing |
 | **Off-heap Memory** | ⏳ Partial support (RSS vs tracemalloc) | ✅ Full support | Python has no off-heap concept |
 | **Real-time Monitoring** | ❌ Requires polling | ✅ dashboard | Peeka planned feature |
 
@@ -803,4 +1025,4 @@ while True:
 
 | Version | Date | Updates |
 |---------|------|---------|
-| 0.1.0 | 2026-01 | Initial release, supports 6 memory operations |
+| 0.1.0 | 2026-01 | Initial release, supports 10 memory operations |
