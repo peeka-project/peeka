@@ -9,7 +9,7 @@ nav_order: 7
 
 ## 简介
 
-`memory` 命令用于分析运行中 Python 进程的**内存使用情况**，提供 6 种诊断操作：内存概览、追踪控制、分配分析、快照导出和 GC 统计。这是 Peeka 的核心内存诊断工具，适用于生产环境的内存泄漏排查和性能优化。
+`memory` 命令用于分析运行中 Python 进程的**内存使用情况**，提供 10 种诊断操作：内存概览、追踪控制、分配分析、快照管理、快照对比、引用链查询、快照导出和 GC 统计。这是 Peeka 的核心内存诊断工具，适用于生产环境的内存泄漏排查和性能优化。
 
 **设计灵感**：Peeka 的 `memory` 命令借鉴了 [Arthas](https://arthas.aliyun.com/) 的 `memory` 命令，针对 Python 语言特性使用 `tracemalloc` 和 `gc` 模块实现。
 
@@ -23,25 +23,47 @@ nav_order: 7
 
 ## TUI 使用
 
-在 TUI 模式下，按 **`e`** 键切换到 **Memory 视图**，提供以下交互式功能：
+在 TUI 模式下，按 **`e`** 键切换到 **Memory 视图**，提供 4 个 Tab 页和丰富的交互式功能：
 
-- **内存概览显示**：
-  - 进程 RSS（物理内存）使用情况
-  - tracemalloc 状态（启用/停用）和内存使用
-  - GC 对象统计（各代对象数量）
-- **追踪控制**：
-  - 快捷启动/停止 tracemalloc 追踪
-  - 可配置调用栈深度（nframe）
-- **分配分析**：
-  - Top N 内存分配热点展示
-  - 按文件名/行号分组显示
-  - 实时刷新分配数据
-- **快捷操作**：
-  - 按 `s` 启动 tracemalloc
-  - 按 `t` 显示 Top 分配
-  - 按 `g` 显示 GC 统计
-  - 按 `d` 导出快照
+#### Overview Tab（内存概览）
 
+- 进程 RSS（物理内存）显示，单位 MB
+- RSS 趋势 Sparkline 图表（最近 100 个采样点）
+- tracemalloc 当前追踪内存 / 峰值内存
+- GC 三代计数（gen0, gen1, gen2）
+- **Top Objects by Size** 表格：类型、数量、Δ数量、大小、Δ大小
+  - 每次刷新自动计算增量（红色 = 增长，绿色 = 减少）
+  - 支持点击列头排序
+
+#### Allocations Tab（分配热点）
+
+- 需要先启动 Track 追踪
+- 展示 Top N 内存分配：Rank、Size、Count、Location（文件:行号）
+- 自动刷新时同步更新
+
+#### Diff Tab（快照对比）
+
+- **Snap 按钮**：拍摄 tracemalloc 快照（最多 2 个，FIFO）
+- **Diff 按钮**：对比两个快照，表格展示 Location、Size Δ、New、Old、Count Δ
+- 增量数据带颜色标记（红色增长、绿色减少）
+
+#### References Tab（引用链分析）
+
+- 输入类型名（如 `dict`、`MyClass`）
+- **Referrers 按钮**：树形展示谁引用了该类型对象（排查泄漏根因）
+- **Referents 按钮**：树形展示该类型对象引用了什么（分析对象结构）
+
+#### 控制栏和快捷键
+
+| 控件 | 快捷键 | 功能 |
+|------|:------:|------|
+| Refresh | `r` | 手动刷新 overview + allocations |
+| Track | `T` | 启动/停止 tracemalloc 追踪 |
+| GC | `g` | 触发 GC 统计刷新 |
+| Dump | — | 导出 snapshot 文件到磁盘 |
+| Auto | `a` | 自动刷新（5 秒间隔） |
+| nframe 输入框 | — | 设置 tracemalloc 栈深度（1-50） |
+| limit 输入框 | — | 设置 GC/allocation 显示条数（1-100） |
 **CLI 等效命令**：下文所有示例使用 CLI 命令演示，TUI 提供了相同功能的图形化界面。
 ## 命令格式
 
@@ -62,6 +84,9 @@ peeka-cli memory [options]
 | `--group-by` | 分配分组方式 | `lineno` | `--group-by filename` |
 | `--limit` | 结果数量限制 | `20` | `--limit 50` |
 | `--filename` | 快照文件名 | 自动生成 | `--filename snapshot1` |
+| `--type-name` | 类型名（referrers/referents 用） | - | `--type-name dict` |
+| `--max-depth` | 引用链递归深度 | `2` | `--max-depth 3` |
+| `--max-per-level` | 每层最大条目数 | `10` | `--max-per-level 20` |
 
 ### action 操作类型
 
@@ -72,7 +97,11 @@ peeka-cli memory [options]
 | **stop** | 停止追踪 | ❌ 否 | 关闭 tracemalloc，释放追踪开销 |
 | **top** | Top N 分配 | ✅ 是 | 查看内存分配热点（按代码位置） |
 | **dump** | 导出快照 | ✅ 是 | 保存快照供离线分析 |
-| **gc** | GC 统计 | ❌ 否 | 统计对象类型数量 |
+| **gc** | GC 统计 | ❌ 否 | 统计对象类型数量和大小 |
+| **snapshot** | 内存快照 | ✅ 是 | 在内存中保存快照（FIFO，最多 2 个） |
+| **diff** | 快照对比 | ✅ 是 | 对比最近两个 snapshot，查看内存增量变化 |
+| **referrers** | 引用者查询 | ❌ 否 | 查找谁持有指定类型的对象（排查泄漏） |
+| **referents** | 被引用者查询 | ❌ 否 | 查找指定类型对象引用了什么（分析结构） |
 
 ## 基本用法
 
@@ -452,6 +481,192 @@ peeka-cli memory --action gc --limit 50
 | **不能知道什么** | 对象类型 | 每个对象占多少内存 |
 | **数据来源** | `tracemalloc` | `gc.get_objects()` |
 
+
+### 7. 内存快照（snapshot）
+
+在内存中保存 tracemalloc 快照，用于后续 diff 对比（**需要先 start**）。
+
+```bash
+# 拍摄快照（最多保存 2 个，FIFO）
+peeka-cli memory --action snapshot
+```
+
+**输出示例**：
+
+```json
+{
+  "status": "success",
+  "action": "snapshot",
+  "snapshot_count": 1,
+  "timestamp": 1738328400.0
+}
+```
+
+**使用说明**：
+
+- 快照保存在 Agent 内存中（不写入磁盘），最多保存 2 个
+- 当超过 2 个时，自动丢弃最旧的快照（FIFO）
+- 配合 `diff` 使用，用于分析一段时间内的内存变化
+- 如需持久化快照到磁盘，请使用 `dump`
+
+### 8. 快照对比（diff）
+
+对比最近两个 snapshot 的内存变化（**需要先拍摄至少 2 个 snapshot**）。
+
+```bash
+# 先拍摄两个快照
+peeka-cli memory --action snapshot
+# ... 等待一段时间 ...
+peeka-cli memory --action snapshot
+
+# 对比差异
+peeka-cli memory --action diff
+```
+
+**输出示例**：
+
+```json
+{
+  "status": "success",
+  "action": "diff",
+  "diffs": [
+    {
+      "location": "/app/models.py:145",
+      "size_diff": 1048576,
+      "size_new": 2097152,
+      "size_old": 1048576,
+      "count_diff": 512,
+      "count_new": 1024,
+      "count_old": 512
+    },
+    {
+      "location": "/app/cache.py:89",
+      "size_diff": -524288,
+      "size_new": 524288,
+      "size_old": 1048576,
+      "count_diff": -256,
+      "count_new": 256,
+      "count_old": 512
+    }
+  ]
+}
+```
+
+**字段说明**：
+
+| 字段 | 说明 |
+|------|------|
+| `location` | 代码位置（文件名:行号） |
+| `size_diff` | 内存大小变化（正 = 增长，负 = 减少） |
+| `size_new` | 新快照中的内存大小 |
+| `size_old` | 旧快照中的内存大小 |
+| `count_diff` | 分配块数变化 |
+| `count_new` | 新快照中的分配块数 |
+| `count_old` | 旧快照中的分配块数 |
+
+**注意事项**：
+
+- 结果按 `lineno` 分组，最多返回 50 条
+- `size_diff > 0` 表示内存增长，是排查泄漏的重点
+- 与 `dump` 离线对比不同，`diff` 在线完成，无需导出文件
+
+### 9. 引用者查询（referrers）
+
+查找谁持有指定类型的对象（**无需 start**）。适用于排查内存泄漏时追踪对象被谁引用。
+
+```bash
+# 查找谁引用了 dict 类型对象
+peeka-cli memory --action referrers --type-name dict
+
+# 增加递归深度和每层数量
+peeka-cli memory --action referrers --type-name MyClass --max-depth 3 --max-per-level 15
+```
+
+**输出示例**：
+
+```json
+{
+  "status": "success",
+  "action": "referrers",
+  "target": {
+    "type": "MyClass",
+    "repr_short": "<MyClass object at 0x7f...>",
+    "count": 500
+  },
+  "referrers": [
+    {
+      "type": "dict",
+      "repr_short": "{'user': <MyClass object at 0x7f...>, ...}",
+      "referrers": [
+        {
+          "type": "list",
+          "repr_short": "[{'user': <MyClass ...>}, ...] (len=500)"
+        }
+      ]
+    }
+  ]
+}
+```
+
+**参数说明**：
+
+| 参数 | 说明 | 范围 | 默认值 |
+|------|------|------|--------|
+| `--type-name` | 目标对象类型名 | 任意类型名 | **必填** |
+| `--max-depth` | 递归查找深度 | 1-3 | 2 |
+| `--max-per-level` | 每层最大引用者数 | 1-20 | 10 |
+
+**使用场景**：
+
+- 发现某类型对象数量异常增长后，用 `referrers` 追踪是谁持有这些对象
+- 结合 `gc` 命令使用：先用 `gc` 发现异常类型，再用 `referrers` 追踪引用链
+
+### 10. 被引用者查询（referents）
+
+查找指定类型的对象引用了什么（**无需 start**）。适用于分析对象内部结构和持有关系。
+
+```bash
+# 查找 dict 类型对象引用了什么
+peeka-cli memory --action referents --type-name dict
+
+# 自定义深度
+peeka-cli memory --action referents --type-name MyCache --max-depth 3
+```
+
+**输出示例**：
+
+```json
+{
+  "status": "success",
+  "action": "referents",
+  "target": {
+    "type": "MyCache",
+    "repr_short": "<MyCache object at 0x7f...>",
+    "count": 1
+  },
+  "referents": [
+    {
+      "type": "dict",
+      "repr_short": "{'items': [...], 'max_size': 10000}",
+      "referents": [
+        {
+          "type": "list",
+          "repr_short": "[<Item ...>, <Item ...>, ...] (len=9500)"
+        }
+      ]
+    }
+  ]
+}
+```
+
+**与 referrers 的区别**：
+
+| 维度 | `referrers` | `referents` |
+|------|------------|------------|
+| **方向** | 向上：谁引用了我 | 向下：我引用了谁 |
+| **用途** | 排查泄漏根因 | 分析对象结构 |
+| **典型问题** | 为什么对象没被回收？ | 对象内部持有了什么？ |
+
 ## 完整诊断流程
 
 ### 场景 1：内存泄漏排查
@@ -460,32 +675,38 @@ peeka-cli memory --action gc --limit 50
 # 1. 查看当前内存状态
 peeka-cli memory --action overview
 
-# 2. 启动追踪
-peeka-cli memory --action start --nframe 50
-
-# 3. 等待一段时间（让问题复现）
-sleep 300  # 5 分钟
-
-# 4. 导出第一个快照
-peeka-cli memory --action dump --filename snapshot_before
-
-# 5. 继续等待
-sleep 300
-
-# 6. 导出第二个快照
-peeka-cli memory --action dump --filename snapshot_after
-
-# 7. 查看 top 分配
-peeka-cli memory --action top --limit 30
-
-# 8. 查看对象统计
+# 2. 用 GC 统计检查对象数量是否异常
 peeka-cli memory --action gc --limit 50
 
-# 9. 停止追踪
-peeka-cli memory --action stop
+# 3. 启动追踪
+peeka-cli memory --action start --nframe 50
 
-# 10. 离线对比快照（Python 脚本）
-python analyze_snapshots.py snapshot_before.snapshot snapshot_after.snapshot
+# 4. 等待一段时间（让问题复现）
+sleep 300  # 5 分钟
+
+# 5. 拍摄第一个内存快照
+peeka-cli memory --action snapshot
+
+# 6. 继续等待
+sleep 300
+
+# 7. 拍摄第二个内存快照
+peeka-cli memory --action snapshot
+
+# 8. 在线对比两个快照（无需导出文件）
+peeka-cli memory --action diff
+
+# 9. 查看 top 分配热点
+peeka-cli memory --action top --limit 30
+
+# 10. 针对可疑类型追踪引用链
+peeka-cli memory --action referrers --type-name MyClass --max-depth 3
+
+# 11. 导出快照供离线分析（可选）
+peeka-cli memory --action dump --filename snapshot_leak
+
+# 12. 停止追踪
+peeka-cli memory --action stop
 ```
 
 ### 场景 2：性能优化
@@ -805,5 +1026,5 @@ while True:
 
 | 版本 | 日期 | 更新内容 |
 |------|------|----------|
-| 0.1.0 | 2026-01 | 初始版本，支持 6 种 memory 操作 |
+| 0.1.0 | 2026-01 | 初始版本，支持 10 种 memory 操作 |
 
