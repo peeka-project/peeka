@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Optional, Any, Dict, List, Sequence
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Vertical, Horizontal
-from textual.widgets import Static, DataTable, Button, TabbedContent, TabPane, Sparkline, Input, Tree
+from textual.widgets import Static, DataTable, Button, TabbedContent, TabPane, Sparkline, Input, Tree, Switch
 
 if TYPE_CHECKING:
     from peeka.core.client import StreamingAgentClient
@@ -119,8 +119,8 @@ class MemoryView(Container):
 
     def action_toggle_auto(self) -> None:
         """Toggle auto-refresh on/off (triggered by 'a' key)."""
-        button = self.query_one("#mem-auto-btn", Button)
-        button.action_press()  # Trigger button press programmatically
+        switch = self.query_one("#mem-auto-switch", Switch)
+        switch.toggle()  # Fires Switch.Changed → goes through on_switch_changed
 
     def compose(self) -> ComposeResult:
         # Overview tab content (existing widgets)
@@ -145,14 +145,14 @@ class MemoryView(Container):
         with Container(id="memory-container"):
             yield Horizontal(
                 Button("Refresh", id="mem-refresh-btn", variant="primary", flat=True),
-                Button(
-                    "Track", id="mem-track-btn", variant="default", flat=True
-                ),
-                Button("GC Stats", id="gc-btn", variant="warning", flat=True),
-                Button("Dump", id="mem-dump-btn", variant="primary", flat=True),
-                Button("Auto", id="mem-auto-btn", variant="default", flat=True),
+                Static("Track", classes="switch-label"),
+                Switch(value=False, id="mem-track-switch", animate=True),
                 Static("nframe:", classes="input-label"),
                 Input(value="10", id="mem-nframe-input", max_length=3, tooltip="Stack frames to capture (1-50)"),
+                Button("GC Stats", id="gc-btn", variant="warning", flat=True),
+                Button("Dump", id="mem-dump-btn", variant="primary", flat=True),
+                Static("Auto", classes="switch-label"),
+                Switch(value=False, id="mem-auto-switch", animate=True),
                 Static("limit:", classes="input-label"),
                 Input(value="20", id="mem-limit-input", max_length=3, tooltip="Max rows to display (1-100)"),
                 id="memory-controls",
@@ -210,6 +210,11 @@ class MemoryView(Container):
         if self._client:
             await self._refresh_overview()
 
+    async def on_switch_changed(self, event: Switch.Changed) -> None:
+        if event.switch.id == "mem-track-switch":
+            await self._toggle_tracking()
+        elif event.switch.id == "mem-auto-switch":
+            self._toggle_auto_polling()
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if not self._own_client and not self._client:
             self.app.notify("Not connected to agent", severity="warning")
@@ -218,14 +223,10 @@ class MemoryView(Container):
         if event.button.id == "mem-refresh-btn":
             await self._refresh_overview()
             await self._refresh_allocations()
-        elif event.button.id == "mem-track-btn":
-            await self._toggle_tracking()
         elif event.button.id == "gc-btn":
             await self._gc_stats_action()
         elif event.button.id == "mem-dump-btn":
             await self._dump_memory()
-        elif event.button.id == "mem-auto-btn":
-            self._toggle_auto_polling()
         elif event.button.id == "mem-snap-btn":
             self.run_worker(self._take_snapshot(), thread=False)
         elif event.button.id == "mem-diff-btn":
@@ -330,14 +331,16 @@ class MemoryView(Container):
             )
             self._tracking_enabled = True
 
-            track_btn = self.query_one("#mem-track-btn", Button)
-            track_btn.label = "Stop"
+            track_switch = self.query_one("#mem-track-switch", Switch)
+            with self.prevent(Switch.Changed):
+                track_switch.value = True
         else:
             self.query_one("#mem-total", Static).update("Traced: Not tracking")
             self._tracking_enabled = False
 
-            track_btn = self.query_one("#mem-track-btn", Button)
-            track_btn.label = "Track"
+            track_switch = self.query_one("#mem-track-switch", Switch)
+            with self.prevent(Switch.Changed):
+                track_switch.value = False
 
         gc_data = data.get("gc", {})
         gc_counts = gc_data.get("counts", [0, 0, 0])
@@ -406,7 +409,6 @@ class MemoryView(Container):
 
     def _toggle_auto_polling(self) -> None:
         """Toggle auto-refresh timer on/off."""
-        button = self.query_one("#mem-auto-btn", Button)
         
         if self._auto_polling:
             # Stop auto-refresh
@@ -414,15 +416,17 @@ class MemoryView(Container):
                 self._auto_timer.stop()
                 self._auto_timer = None
             self._auto_polling = False
-            button.variant = "default"
-            button.label = "Auto"
+            switch = self.query_one("#mem-auto-switch", Switch)
+            with self.prevent(Switch.Changed):
+                switch.value = False
             self.app.notify("Auto-refresh stopped", severity="information")
         else:
             # Start auto-refresh
             self._auto_timer = self.set_interval(5.0, self._auto_refresh_callback)
             self._auto_polling = True
-            button.variant = "success"
-            button.label = "Auto✓"
+            switch = self.query_one("#mem-auto-switch", Switch)
+            with self.prevent(Switch.Changed):
+                switch.value = True
             self.app.notify("Auto-refresh started (5s interval)", severity="information")
 
     def _auto_refresh_callback(self) -> None:
@@ -530,9 +534,9 @@ class MemoryView(Container):
                 self.app.notify("Memory tracking stopped", severity="information")
                 self._tracking_enabled = False
 
-                track_btn = self.query_one("#mem-track-btn", Button)
-                track_btn.label = "Track"
-                track_btn.variant = "default"
+                track_switch = self.query_one("#mem-track-switch", Switch)
+                with self.prevent(Switch.Changed):
+                    track_switch.value = False
 
                 await self._refresh_overview()
             else:
@@ -558,9 +562,9 @@ class MemoryView(Container):
                 self.app.notify("Memory tracking started", severity="information")
                 self._tracking_enabled = True
 
-                track_btn = self.query_one("#mem-track-btn", Button)
-                track_btn.label = "Stop"
-                track_btn.variant = "success"
+                track_switch = self.query_one("#mem-track-switch", Switch)
+                with self.prevent(Switch.Changed):
+                    track_switch.value = True
 
                 await self._refresh_overview()
             else:
