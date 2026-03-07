@@ -567,6 +567,7 @@ class MemoryView(Container):
                     track_switch.value = True
 
                 await self._refresh_overview()
+                await self._refresh_allocations()
             else:
                 self.app.notify(
                     f"Failed to start tracking: {response.get('error', 'Unknown error')}",
