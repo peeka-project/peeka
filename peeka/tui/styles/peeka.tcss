@@ -380,11 +380,6 @@ TabPane {
     max-width: 14;
 }
 
-#mem-gc-controls Input,
-#mem-alloc-controls Input {
-    width: 1fr;
-    margin-right: 1;
-}
 
 #mem-objects-table {
     height: 100%;
