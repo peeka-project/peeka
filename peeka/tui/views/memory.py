@@ -94,8 +94,7 @@ class MemoryView(Container):
         # socket contention with other views sharing the same client.
         self._connect_own_client()
         if self._mounted:
-            self.run_worker(self._refresh_overview(), thread=False)
-            self.run_worker(self._refresh_gc_objects(), thread=False)
+            self.run_worker(self._initial_refresh(), thread=False)
 
     def _connect_own_client(self) -> None:
         """Create a dedicated StreamingAgentClient for memory data fetching."""
@@ -108,6 +107,11 @@ class MemoryView(Container):
         if result.get("status") != "success":
             self._log.warning("Memory dedicated client failed: %s", result.get("error"))
             self._own_client = None
+
+    async def _initial_refresh(self) -> None:
+        """Serial refresh of overview + GC objects on initial connect."""
+        await self._refresh_overview()
+        await self._refresh_gc_objects()
 
     async def action_refresh(self) -> None:
         """Refresh all visible data (triggered by r key)."""
@@ -266,8 +270,7 @@ class MemoryView(Container):
         self._update_track_dependent_visibility()
 
         if self._client:
-            await self._refresh_overview()
-            await self._refresh_gc_objects()
+            await self._initial_refresh()
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if not self._own_client and not self._client:
