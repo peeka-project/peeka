@@ -95,6 +95,7 @@ class MemoryView(Container):
         self._connect_own_client()
         if self._mounted:
             self.run_worker(self._refresh_overview(), thread=False)
+            self.run_worker(self._refresh_gc_objects(), thread=False)
 
     def _connect_own_client(self) -> None:
         """Create a dedicated StreamingAgentClient for memory data fetching."""
@@ -128,6 +129,7 @@ class MemoryView(Container):
                 Static("Traced: Not tracking", id="mem-total"),
                 Static("│", classes="separator"),
                 Static("GC: calculating...", id="mem-gc"),
+                Static("", classes="spacer"),
                 # Right side: nframe + Track/Stop
                 Static("nframe:", classes="input-label"),
                 Input(
@@ -136,8 +138,8 @@ class MemoryView(Container):
                     max_length=3,
                     tooltip="Stack frames to capture (1-50)",
                 ),
-                Button("Track", id="mem-track-btn", variant="success"),
-                Button("Stop", id="mem-stop-btn", variant="error"),
+                Button("Track", id="mem-track-btn", variant="success", flat=True),
+                Button("Stop", id="mem-stop-btn", variant="error", flat=True),
                 id="memory-status-bar",
             )
             # === Tabs (no Overview tab) ===
@@ -155,6 +157,7 @@ class MemoryView(Container):
                             "Refresh",
                             id="mem-gc-refresh-btn",
                             variant="primary",
+                            flat=True,
                         ),
                         id="mem-gc-controls",
                     )
@@ -177,11 +180,13 @@ class MemoryView(Container):
                                 "Refresh",
                                 id="mem-alloc-refresh-btn",
                                 variant="primary",
+                                flat=True,
                             ),
                             Button(
                                 "Dump",
                                 id="mem-dump-btn",
                                 variant="warning",
+                                flat=True,
                             ),
                             id="mem-alloc-controls",
                         ),
@@ -260,6 +265,7 @@ class MemoryView(Container):
 
         if self._client:
             await self._refresh_overview()
+            await self._refresh_gc_objects()
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if not self._own_client and not self._client:
