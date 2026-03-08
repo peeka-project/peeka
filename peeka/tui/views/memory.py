@@ -153,6 +153,7 @@ class MemoryView(Container):
                             max_length=3,
                             tooltip="Max rows to display (1-100)",
                         ),
+                        Static("", classes="spacer"),
                         Button(
                             "Refresh",
                             id="mem-gc-refresh-btn",
@@ -176,6 +177,7 @@ class MemoryView(Container):
                                 max_length=3,
                                 tooltip="Max rows to display (1-100)",
                             ),
+                            Static("", classes="spacer"),
                             Button(
                                 "Refresh",
                                 id="mem-alloc-refresh-btn",
