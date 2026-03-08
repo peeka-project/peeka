@@ -363,6 +363,10 @@ TabPane {
     margin: 0 1;
 }
 
+.spacer {
+    width: 1fr;
+}
+
 #mem-gc-controls,
 #mem-alloc-controls {
     height: auto;
@@ -374,6 +378,12 @@ TabPane {
     margin-left: 1;
     min-width: 8;
     max-width: 14;
+}
+
+#mem-gc-controls Input,
+#mem-alloc-controls Input {
+    width: 1fr;
+    margin-right: 1;
 }
 
 #mem-objects-table {
