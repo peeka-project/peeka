@@ -3,7 +3,7 @@ Memory View - Memory analysis interface.
 """
 
 import logging
-from typing import TYPE_CHECKING, Optional, Any, Dict, List, Sequence
+from typing import TYPE_CHECKING, Optional, Any, Dict, List
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -14,21 +14,17 @@ from textual.widgets import (
     Button,
     TabbedContent,
     TabPane,
-    Sparkline,
     Input,
     Tree,
-    Switch,
 )
 
 if TYPE_CHECKING:
     from peeka.core.client import StreamingAgentClient
-    from textual.timer import Timer
 
 
 class MemoryView(Container):
     BINDINGS = [
         Binding("r", "refresh", "Refresh"),
-        Binding("a", "toggle_auto", "Auto"),
         Binding("T", "toggle_tracking", "Track"),
     ]
 
@@ -48,13 +44,9 @@ class MemoryView(Container):
         self._sort_column: Optional[str] = None
         self._sort_reverse: bool = False
         self._gc_column_keys: List[Any] = []  # Store column keys for sorting
-        self._mem_history: List[float] = []  # RSS MB history (max 100 points)
         self._nframe: int = 10  # Frame depth for tracemalloc tracking
         self._gc_limit: int = 20  # Limit for GC stats display
         self._alloc_limit: int = 20  # Limit for allocations display
-        self._auto_polling: bool = False
-        self._auto_timer: Optional["Timer"] = None
-        self._refreshing: bool = False
 
     def _format_size(self, bytes: int) -> str:
         """Format bytes as human-readable size."""
@@ -117,54 +109,26 @@ class MemoryView(Container):
             self._own_client = None
 
     async def action_refresh(self) -> None:
-        """Refresh memory data (triggered by r key)."""
+        """Refresh all visible data (triggered by r key)."""
         await self._refresh_overview()
-        await self._refresh_allocations()
+        await self._refresh_gc_objects()
+        if self._tracking_enabled:
+            await self._refresh_allocations()
 
     async def action_toggle_tracking(self) -> None:
-        """Toggle memory tracking (triggered by t key)."""
+        """Toggle memory tracking (triggered by T key)."""
         await self._toggle_tracking()
 
-    def action_toggle_auto(self) -> None:
-        """Toggle auto-refresh on/off (triggered by 'a' key)."""
-        switch = self.query_one("#mem-auto-switch", Switch)
-        switch.toggle()  # Fires Switch.Changed → goes through on_switch_changed
-
     def compose(self) -> ComposeResult:
-        # Overview tab content (existing widgets)
-        mem_overview = Vertical(
-            Static("Total: calculating...", id="mem-total"),
-            Static("RSS: calculating...", id="mem-rss"),
-            Static("GC: calculating...", id="mem-gc"),
-            Static("RSS Trend (last 100 samples)", id="mem-sparkline-label"),
-            Sparkline(data=[], summary_function=max, id="mem-sparkline"),
-            id="mem-overview",
-            classes="panel dashboard-card",
-        )
-        mem_overview.border_title = "Memory Overview"
-
-        mem_objects = Vertical(
-            Horizontal(
-                Static("limit:", classes="input-label"),
-                Input(
-                    value="20",
-                    id="mem-gc-limit-input",
-                    max_length=3,
-                    tooltip="Max rows to display (1-100)",
-                ),
-                id="mem-gc-limit-controls",
-            ),
-            DataTable(id="mem-objects-table"),
-            id="mem-objects",
-            classes="panel dashboard-card",
-        )
-        mem_objects.border_title = "Top Objects by Size"
-
         with Container(id="memory-container"):
+            # === One-line status bar (top) ===
             yield Horizontal(
-                # Group 1: Tracking (always visible)
-                Static("Track", classes="switch-label"),
-                Switch(value=False, id="mem-track-switch", animate=True),
+                Static("RSS: calculating...", id="mem-rss"),
+                Static("│", classes="separator"),
+                Static("Traced: Not tracking", id="mem-total"),
+                Static("│", classes="separator"),
+                Static("GC: calculating...", id="mem-gc"),
+                # Right side: nframe + Track/Stop
                 Static("nframe:", classes="input-label"),
                 Input(
                     value="10",
@@ -172,99 +136,108 @@ class MemoryView(Container):
                     max_length=3,
                     tooltip="Stack frames to capture (1-50)",
                 ),
-                Static("│", classes="separator"),
-                # Group 2: Refresh (Refresh always, Auto track-dependent)
-                Button("Refresh", id="mem-refresh-btn", variant="primary", flat=True),
-                Static("Auto", classes="switch-label track-dependent"),
-                Switch(
-                    value=False,
-                    id="mem-auto-switch",
-                    animate=True,
-                    classes="track-dependent",
-                ),
-                Static("│", classes="separator track-dependent"),
-                # Group 3: Export (track-dependent)
-                Button(
-                    "Dump",
-                    id="mem-dump-btn",
-                    variant="primary",
-                    flat=True,
-                    classes="track-dependent",
-                ),
-                id="memory-controls",
+                Button("Track", id="mem-track-btn", variant="success"),
+                Button("Stop", id="mem-stop-btn", variant="error"),
+                id="memory-status-bar",
             )
-        with TabbedContent(id="mem-tabs"):
-            with TabPane("Overview", id="mem-overview-pane"):
-                yield Vertical(
-                    mem_overview,
-                    mem_objects,
-                    id="mem-overview-content",
-                )
-            with TabPane("Allocations", id="mem-allocations-pane"):
-                yield Vertical(
-                    Static(
-                        "Start tracking to see top allocations (press 'T')",
-                        id="mem-alloc-placeholder",
-                    ),
-                    Horizontal(
+            # === Tabs (no Overview tab) ===
+            with TabbedContent(id="mem-tabs"):
+                with TabPane("GC Objects", id="mem-gc-pane"):
+                    yield Horizontal(
                         Static("limit:", classes="input-label"),
                         Input(
                             value="20",
-                            id="mem-alloc-limit-input",
+                            id="mem-gc-limit-input",
                             max_length=3,
                             tooltip="Max rows to display (1-100)",
                         ),
-                        id="mem-alloc-limit-controls",
-                    ),
-                    DataTable(
-                        id="mem-alloc-table", show_header=True, zebra_stripes=True
-                    ),
-                    id="mem-allocations-content",
-                )
-            with TabPane("Diff", id="mem-diff-pane"):
-                yield Vertical(
-                    Horizontal(
-                        Button("Snap", id="mem-snap-btn", variant="primary", flat=True),
                         Button(
-                            "Diff",
-                            id="mem-diff-btn",
+                            "Refresh",
+                            id="mem-gc-refresh-btn",
                             variant="primary",
-                            flat=True,
-                            disabled=True,
                         ),
-                        Button(
-                            "Reset",
-                            id="mem-reset-btn",
-                            variant="warning",
-                            flat=True,
-                            disabled=True,
+                        id="mem-gc-controls",
+                    )
+                    yield DataTable(id="mem-objects-table")
+                with TabPane("Allocations", id="mem-allocations-pane"):
+                    yield Vertical(
+                        Static(
+                            "Start tracking to see top allocations (press Track)",
+                            id="mem-alloc-placeholder",
                         ),
-                        Static("Snapshots: 0/2", id="mem-snapshot-status"),
-                        id="mem-diff-controls",
-                    ),
-                    DataTable(
-                        id="mem-diff-table", show_header=True, zebra_stripes=True
-                    ),
-                    id="mem-diff-content",
-                )
-            with TabPane("References", id="mem-references-pane"):
-                with Vertical(id="mem-references-content"):
-                    with Horizontal(id="mem-references-controls"):
-                        yield Static("Type:", classes="input-label")
-                        yield Input(value="", placeholder="dict", id="mem-type-input")
-                        yield Button(
-                            "Referrers",
-                            id="mem-referrers-btn",
-                            variant="default",
-                            flat=True,
-                        )
-                        yield Button(
-                            "Referents",
-                            id="mem-referents-btn",
-                            variant="default",
-                            flat=True,
-                        )
-                    yield Tree("No data", id="mem-ref-tree")
+                        Horizontal(
+                            Static("limit:", classes="input-label"),
+                            Input(
+                                value="20",
+                                id="mem-alloc-limit-input",
+                                max_length=3,
+                                tooltip="Max rows to display (1-100)",
+                            ),
+                            Button(
+                                "Refresh",
+                                id="mem-alloc-refresh-btn",
+                                variant="primary",
+                            ),
+                            Button(
+                                "Dump",
+                                id="mem-dump-btn",
+                                variant="warning",
+                            ),
+                            id="mem-alloc-controls",
+                        ),
+                        DataTable(
+                            id="mem-alloc-table", show_header=True, zebra_stripes=True
+                        ),
+                        id="mem-allocations-content",
+                    )
+                with TabPane("Diff", id="mem-diff-pane"):
+                    yield Vertical(
+                        Horizontal(
+                            Button(
+                                "Snap", id="mem-snap-btn", variant="primary", flat=True
+                            ),
+                            Button(
+                                "Diff",
+                                id="mem-diff-btn",
+                                variant="primary",
+                                flat=True,
+                                disabled=True,
+                            ),
+                            Button(
+                                "Reset",
+                                id="mem-reset-btn",
+                                variant="warning",
+                                flat=True,
+                                disabled=True,
+                            ),
+                            Static("Snapshots: 0/2", id="mem-snapshot-status"),
+                            id="mem-diff-controls",
+                        ),
+                        DataTable(
+                            id="mem-diff-table", show_header=True, zebra_stripes=True
+                        ),
+                        id="mem-diff-content",
+                    )
+                with TabPane("References", id="mem-references-pane"):
+                    with Vertical(id="mem-references-content"):
+                        with Horizontal(id="mem-references-controls"):
+                            yield Static("Type:", classes="input-label")
+                            yield Input(
+                                value="", placeholder="dict", id="mem-type-input"
+                            )
+                            yield Button(
+                                "Referrers",
+                                id="mem-referrers-btn",
+                                variant="default",
+                                flat=True,
+                            )
+                            yield Button(
+                                "Referents",
+                                id="mem-referents-btn",
+                                variant="default",
+                                flat=True,
+                            )
+                        yield Tree("No data", id="mem-ref-tree")
 
     async def on_mount(self) -> None:
         container = self.query_one("#memory-container", Container)
@@ -282,37 +255,37 @@ class MemoryView(Container):
         diff_table.add_columns("Location", "Size Δ", "New", "Old", "Count Δ")
         self._mounted = True
 
-        # Hide track-dependent controls initially
+        # Set initial visibility state
         self._update_track_dependent_visibility()
 
         if self._client:
             await self._refresh_overview()
-
-    async def on_switch_changed(self, event: Switch.Changed) -> None:
-        if event.switch.id == "mem-track-switch":
-            await self._toggle_tracking()
-        elif event.switch.id == "mem-auto-switch":
-            self._toggle_auto_polling()
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if not self._own_client and not self._client:
             self.app.notify("Not connected to agent", severity="warning")
             return
 
-        if event.button.id == "mem-refresh-btn":
-            await self._refresh_overview()
+        button_id = event.button.id
+        if button_id == "mem-track-btn":
+            await self._toggle_tracking()
+        elif button_id == "mem-stop-btn":
+            await self._toggle_tracking()
+        elif button_id == "mem-gc-refresh-btn":
+            await self._refresh_gc_objects()
+        elif button_id == "mem-alloc-refresh-btn":
             await self._refresh_allocations()
-        elif event.button.id == "mem-dump-btn":
+        elif button_id == "mem-dump-btn":
             await self._dump_memory()
-        elif event.button.id == "mem-snap-btn":
+        elif button_id == "mem-snap-btn":
             self.run_worker(self._take_snapshot(), thread=False)
-        elif event.button.id == "mem-diff-btn":
+        elif button_id == "mem-diff-btn":
             self.run_worker(self._diff_snapshots(), thread=False)
-        elif event.button.id == "mem-reset-btn":
+        elif button_id == "mem-reset-btn":
             self.run_worker(self._reset_diff(), thread=False)
-        elif event.button.id == "mem-referrers-btn":
+        elif button_id == "mem-referrers-btn":
             self.run_worker(self._find_referrers(), thread=False)
-        elif event.button.id == "mem-referents-btn":
+        elif button_id == "mem-referents-btn":
             self.run_worker(self._find_referents(), thread=False)
 
     def on_input_changed(self, event: Input.Changed) -> None:
@@ -369,12 +342,40 @@ class MemoryView(Container):
             self._apply_sort_to_table(table)
 
     def _update_track_dependent_visibility(self) -> None:
-        """Show/hide track-dependent controls based on tracking state."""
-        display = "block" if self._tracking_enabled else "none"
-        for widget in self.query(".track-dependent"):
-            widget.styles.display = display
+        """Show/hide controls based on tracking state.
+
+        - Track/Stop buttons: mutually exclusive visibility
+        - Allocations tab: placeholder vs controls+table
+        """
+        tracking = self._tracking_enabled
+
+        # Track/Stop button mutual exclusivity
+        try:
+            track_btn = self.query_one("#mem-track-btn", Button)
+            stop_btn = self.query_one("#mem-stop-btn", Button)
+            track_btn.styles.display = "none" if tracking else "block"
+            stop_btn.styles.display = "block" if tracking else "none"
+        except Exception:
+            pass  # Not mounted yet
+
+        # Allocations tab: placeholder vs content
+        try:
+            placeholder = self.query_one("#mem-alloc-placeholder", Static)
+            alloc_controls = self.query_one("#mem-alloc-controls", Horizontal)
+            alloc_table = self.query_one("#mem-alloc-table", DataTable)
+            if tracking:
+                placeholder.styles.display = "none"
+                alloc_controls.styles.display = "block"
+                alloc_table.styles.display = "block"
+            else:
+                placeholder.styles.display = "block"
+                alloc_controls.styles.display = "none"
+                alloc_table.styles.display = "none"
+        except Exception:
+            pass  # Not mounted yet
 
     async def _refresh_overview(self) -> None:
+        """Lightweight overview: update status bar with RSS, traced memory, GC counts."""
         client = self._own_client or self._client
         if not client:
             return
@@ -401,15 +402,6 @@ class MemoryView(Container):
         rss_bytes = data.get("rss_bytes", 0)
         rss_mb = rss_bytes / (1024 * 1024)
 
-        # Update RSS history for sparkline (FIFO, max 100 points)
-        self._mem_history.append(rss_mb)
-        if len(self._mem_history) > 100:
-            self._mem_history.pop(0)
-
-        # Update sparkline widget
-        sparkline = self.query_one("#mem-sparkline", Sparkline)
-        sparkline.data = self._mem_history
-
         tracemalloc_data = data.get("tracemalloc", {})
         tracemalloc_enabled = tracemalloc_data.get("enabled", False)
 
@@ -425,18 +417,10 @@ class MemoryView(Container):
             )
             self._tracking_enabled = True
             self._update_track_dependent_visibility()
-
-            track_switch = self.query_one("#mem-track-switch", Switch)
-            with self.prevent(Switch.Changed):
-                track_switch.value = True
         else:
             self.query_one("#mem-total", Static).update("Traced: Not tracking")
             self._tracking_enabled = False
             self._update_track_dependent_visibility()
-
-            track_switch = self.query_one("#mem-track-switch", Switch)
-            with self.prevent(Switch.Changed):
-                track_switch.value = False
 
         gc_data = data.get("gc", {})
         gc_counts = gc_data.get("counts", [0, 0, 0])
@@ -444,15 +428,21 @@ class MemoryView(Container):
             f"GC: gen0={gc_counts[0]}, gen1={gc_counts[1]}, gen2={gc_counts[2]}"
         )
 
-        gc_worker = self.run_worker(
+    async def _refresh_gc_objects(self) -> None:
+        """Fetch GC objects by type and populate the GC Objects table."""
+        client = self._own_client or self._client
+        if not client:
+            return
+
+        worker = self.run_worker(
             lambda: client.send_command(
                 {"type": "memory", "action": "gc", "limit": self._gc_limit}
             ),
             thread=True,
         )
-        await gc_worker.wait()
+        await worker.wait()
         try:
-            gc_response = gc_worker.result
+            gc_response = worker.result
         except Exception:
             return
 
@@ -499,62 +489,6 @@ class MemoryView(Container):
             # Re-apply sort if a sort column is selected
             if self._sort_column:
                 self._apply_sort_to_table(table)
-
-        self.app.notify("Memory overview refreshed", severity="information")
-
-    def _toggle_auto_polling(self) -> None:
-        """Toggle auto-refresh timer on/off."""
-
-        if self._auto_polling:
-            # Stop auto-refresh
-            if self._auto_timer is not None:
-                self._auto_timer.stop()
-                self._auto_timer = None
-            self._auto_polling = False
-            switch = self.query_one("#mem-auto-switch", Switch)
-            with self.prevent(Switch.Changed):
-                switch.value = False
-            self.app.notify("Auto-refresh stopped", severity="information")
-        else:
-            # Start auto-refresh
-            self._auto_timer = self.set_interval(5.0, self._auto_refresh_callback)
-            self._auto_polling = True
-            switch = self.query_one("#mem-auto-switch", Switch)
-            with self.prevent(Switch.Changed):
-                switch.value = True
-            self.app.notify(
-                "Auto-refresh started (5s interval)", severity="information"
-            )
-
-    def _auto_refresh_callback(self) -> None:
-        """Periodic callback for auto-refresh. Guard against concurrent refreshes."""
-        if self._refreshing:
-            return  # Skip if previous refresh still in-flight
-
-        self._refreshing = True
-
-        # Refresh overview
-        self.run_worker(self._refresh_overview_safe(), thread=False)
-
-    async def _refresh_overview_safe(self) -> None:
-        """Wrapper to refresh overview and reset refreshing flag."""
-        try:
-            await self._refresh_overview()
-
-            # Also refresh allocations if tracking enabled
-            if self._tracking_enabled:
-                await self._refresh_allocations()
-        finally:
-            self._refreshing = False
-
-    def on_unmount(self) -> None:
-        """Cleanup timer and dedicated client on view removal."""
-        if self._auto_timer is not None:
-            self._auto_timer.stop()
-            self._auto_timer = None
-        if self._own_client:
-            self._own_client.disconnect()
-            self._own_client = None
 
     async def _refresh_allocations(self) -> None:
         client = self._own_client or self._client
@@ -634,14 +568,6 @@ class MemoryView(Container):
                 self._tracking_enabled = False
                 self._update_track_dependent_visibility()
 
-                # Stop auto-polling when tracking stops
-                if self._auto_polling:
-                    self._toggle_auto_polling()
-
-                track_switch = self.query_one("#mem-track-switch", Switch)
-                with self.prevent(Switch.Changed):
-                    track_switch.value = False
-
                 await self._refresh_overview()
             else:
                 self.app.notify(
@@ -667,10 +593,6 @@ class MemoryView(Container):
                 self._tracking_enabled = True
                 self._update_track_dependent_visibility()
 
-                track_switch = self.query_one("#mem-track-switch", Switch)
-                with self.prevent(Switch.Changed):
-                    track_switch.value = True
-
                 await self._refresh_overview()
                 await self._refresh_allocations()
             else:
@@ -678,6 +600,12 @@ class MemoryView(Container):
                     f"Failed to start tracking: {response.get('error', 'Unknown error')}",
                     severity="error",
                 )
+
+    def on_unmount(self) -> None:
+        """Cleanup dedicated client on view removal."""
+        if self._own_client:
+            self._own_client.disconnect()
+            self._own_client = None
 
     async def _dump_memory(self) -> None:
         client = self._own_client or self._client

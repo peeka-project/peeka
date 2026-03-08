@@ -15,6 +15,7 @@ class ActionRoutingClient:
         self.action_responses = action_responses
         self.connected = False
         self.commands_received = []
+        self.socket_path = "/tmp/peeka_mock.sock"
 
     def connect(self):
         self.connected = True
@@ -86,6 +87,7 @@ class TestMemoryView:
                 self.connected = False
                 self.commands_received = []
                 self.tracking_started = False
+                self.socket_path = "/tmp/peeka_mock.sock"
 
             def connect(self):
                 self.connected = True
@@ -145,8 +147,11 @@ class TestMemoryView:
             commands = [cmd.get("action") for cmd in tracking_client.commands_received]
             assert "start" in commands
 
+            # After tracking starts: Track button hidden, Stop button visible
             track_btn = memory_view.query_one("#mem-track-btn", Button)
-            assert "Stop Tracking" in str(track_btn.label)
+            stop_btn = memory_view.query_one("#mem-stop-btn", Button)
+            assert track_btn.styles.display == "none"
+            assert stop_btn.styles.display == "block"
 
     @pytest.mark.asyncio
     @pytest.mark.tui
@@ -194,13 +199,16 @@ class TestMemoryView:
             commands = [cmd.get("action") for cmd in tracking_client.commands_received]
             assert "stop" in commands
 
+            # After tracking stops: Track button visible, Stop button hidden
             track_btn = memory_view.query_one("#mem-track-btn", Button)
-            assert "Start Tracking" in str(track_btn.label)
+            stop_btn = memory_view.query_one("#mem-stop-btn", Button)
+            assert track_btn.styles.display == "block"
+            assert stop_btn.styles.display == "none"
 
     @pytest.mark.asyncio
     @pytest.mark.tui
-    async def test_gc_collect(self):
-        """GC collect sends gc command and displays results."""
+    async def test_gc_objects_refresh(self):
+        """GC objects refresh sends gc command and populates table."""
         gc_client = ActionRoutingClient(
             action_responses={
                 "overview": {
@@ -233,21 +241,20 @@ class TestMemoryView:
             memory_view = app.screen.query_one("MemoryView", MemoryView)
             memory_view.set_client(gc_client)
 
-            await memory_view._gc_collect()
+            await memory_view._refresh_gc_objects()
             await pilot.pause()
             await pilot.pause()
 
             commands = [cmd.get("action") for cmd in gc_client.commands_received]
             assert "gc" in commands
 
-            gc_widget = memory_view.query_one("#mem-gc", Static)
-            rendered = gc_widget.render().plain
-            assert "gen0=300" in rendered or "GC:" in rendered
+            table = memory_view.query_one("#mem-objects-table", DataTable)
+            assert table.row_count > 0
 
     @pytest.mark.asyncio
     @pytest.mark.tui
-    async def test_memory_top_display(self):
-        """Memory overview populates allocations table with top objects."""
+    async def test_gc_objects_table_populated(self):
+        """GC objects table is populated with type data from gc command."""
         top_client = ActionRoutingClient(
             action_responses={
                 "overview": {
@@ -280,7 +287,7 @@ class TestMemoryView:
             memory_view = app.screen.query_one("MemoryView", MemoryView)
             memory_view.set_client(top_client)
 
-            await memory_view._refresh_overview()
+            await memory_view._refresh_gc_objects()
             await pilot.pause()
             await pilot.pause()
 
@@ -334,12 +341,13 @@ class TestMemoryView:
             total_widget = memory_view.query_one("#mem-total", Static)
 
             assert "calculating" in rss_widget.render().plain
-            assert "calculating" in total_widget.render().plain
+            # When not tracking, mem-total shows "Not tracking" instead of "calculating"
+            assert "Not tracking" in total_widget.render().plain
 
     @pytest.mark.asyncio
     @pytest.mark.tui
     async def test_action_refresh_triggers_refresh(self):
-        """Calling action_refresh() triggers data refresh."""
+        """Calling action_refresh() triggers overview and gc_objects refresh."""
         refresh_client = ActionRoutingClient(
             action_responses={
                 "overview": {
@@ -370,10 +378,11 @@ class TestMemoryView:
 
             initial_count = len(refresh_client.commands_received)
 
-            await memory_view._refresh_overview()
+            await memory_view.action_refresh()
             await pilot.pause()
             await pilot.pause()
 
             assert len(refresh_client.commands_received) > initial_count
             commands = [cmd.get("action") for cmd in refresh_client.commands_received]
             assert "overview" in commands
+            assert "gc" in commands
