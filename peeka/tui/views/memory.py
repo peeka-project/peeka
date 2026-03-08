@@ -454,52 +454,59 @@ class MemoryView(Container):
         await worker.wait()
         try:
             gc_response = worker.result
-        except Exception:
+        except Exception as e:
+            self.app.notify(f"Connection error: {e}", severity="error")
             return
 
-        if gc_response.get("status") == "success":
-            table = self.query_one("#mem-objects-table", DataTable)
-            table.clear()
+        if gc_response.get("status") != "success":
+            self.app.notify(
+                f"Failed to get GC objects: {gc_response.get('error', 'Unknown error')}",
+                severity="error",
+            )
+            return
 
-            objects = gc_response.get("objects_by_type", [])
+        table = self.query_one("#mem-objects-table", DataTable)
+        table.clear()
 
-            # Build lookup dict from previous stats
-            prev_lookup = {}
-            if self._prev_gc_stats is not None:
-                prev_lookup = {obj["type"]: obj for obj in self._prev_gc_stats}
+        objects = gc_response.get("objects_by_type", [])
 
-            for obj in objects:
-                obj_type = obj.get("type", "unknown")
-                count = obj.get("count", 0)
-                size_bytes = obj.get("size_bytes", 0)
+        # Build lookup dict from previous stats
+        prev_lookup = {}
+        if self._prev_gc_stats is not None:
+            prev_lookup = {obj["type"]: obj for obj in self._prev_gc_stats}
 
-                # Compute deltas
-                if obj_type in prev_lookup:
-                    count_delta = count - prev_lookup[obj_type].get("count", 0)
-                    size_delta = size_bytes - prev_lookup[obj_type].get("size_bytes", 0)
+        for obj in objects:
+            obj_type = obj.get("type", "unknown")
+            count = obj.get("count", 0)
+            size_bytes = obj.get("size_bytes", 0)
 
-                    # Format with color: red for growth, green for shrinkage
-                    count_delta_str = self._format_delta(count_delta, is_count=True)
-                    size_delta_str = self._format_delta(size_delta, is_count=False)
-                else:
-                    # First time seeing this type
-                    count_delta_str = "—"
-                    size_delta_str = "—"
+            # Compute deltas
+            if obj_type in prev_lookup:
+                count_delta = count - prev_lookup[obj_type].get("count", 0)
+                size_delta = size_bytes - prev_lookup[obj_type].get("size_bytes", 0)
 
-                table.add_row(
-                    obj_type,
-                    str(count),
-                    count_delta_str,
-                    self._format_size(size_bytes) if size_bytes > 0 else "N/A",
-                    size_delta_str,
-                )
+                # Format with color: red for growth, green for shrinkage
+                count_delta_str = self._format_delta(count_delta, is_count=True)
+                size_delta_str = self._format_delta(size_delta, is_count=False)
+            else:
+                # First time seeing this type
+                count_delta_str = "—"
+                size_delta_str = "—"
 
-            # Store current stats for next comparison
-            self._prev_gc_stats = objects
+            table.add_row(
+                obj_type,
+                str(count),
+                count_delta_str,
+                self._format_size(size_bytes) if size_bytes > 0 else "N/A",
+                size_delta_str,
+            )
 
-            # Re-apply sort if a sort column is selected
-            if self._sort_column:
-                self._apply_sort_to_table(table)
+        # Store current stats for next comparison
+        self._prev_gc_stats = objects
+
+        # Re-apply sort if a sort column is selected
+        if self._sort_column:
+            self._apply_sort_to_table(table)
 
     async def _refresh_allocations(self) -> None:
         client = self._own_client or self._client
