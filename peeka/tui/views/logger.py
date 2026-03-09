@@ -3,7 +3,7 @@ Logger View - Dynamic logger configuration interface.
 """
 
 import logging
-from typing import Optional, TYPE_CHECKING
+from typing import Any, Dict, Optional, TYPE_CHECKING
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -33,7 +33,7 @@ class LoggerView(Container):
     def set_client(self, client: "StreamingAgentClient") -> None:
         self._client = client
         if self._mounted:
-            self.run_worker(self._refresh_loggers(), thread=False)
+            self.app.call_later(self._refresh_loggers)
 
     def compose(self) -> ComposeResult:
         yield Container(
@@ -62,7 +62,7 @@ class LoggerView(Container):
             id="logger-container",
         )
 
-    async def on_mount(self) -> None:
+    def on_mount(self) -> None:
         container = self.query_one("#logger-container", Container)
         container.border_title = "Logger"
 
@@ -75,19 +75,20 @@ class LoggerView(Container):
         self._mounted = True
 
         if self._client:
-            await self._refresh_loggers()
+            self._refresh_loggers()
 
-    async def on_button_pressed(self, event: Button.Pressed) -> None:
+    def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "logger-refresh-btn":
-            await self._refresh_loggers()
+            self._refresh_loggers()
         elif event.button.id == "set-level-btn":
-            await self._set_logger_level()
+            self._set_logger_level()
 
-    async def action_refresh(self) -> None:
+    def action_refresh(self) -> None:
         """Refresh logger list (triggered by r key)."""
-        await self._refresh_loggers()
+        self._refresh_loggers()
 
-    async def _refresh_loggers(self) -> None:
+    def _refresh_loggers(self) -> None:
+        """Fetch loggers in thread worker, update table on main thread."""
         if not self._client:
             self.app.notify("Not connected to agent", severity="error")
             return
@@ -95,24 +96,28 @@ class LoggerView(Container):
         filter_input = self.query_one("#logger-filter", Input)
         pattern = filter_input.value.strip() if filter_input.value else ""
 
-        command = {
+        command: Dict[str, Any] = {
             "type": "logger",
             "action": "list",
         }
         if pattern:
             command["pattern"] = pattern
 
-        worker = self.run_worker(
-            lambda: self._client.send_command(command),
-            thread=True,
-        )
-        await worker.wait()
-        try:
-            response = worker.result
-        except Exception as e:
-            self.app.notify(f"Connection error: {e}", severity="error")
-            return
+        def worker_fn() -> None:
+            if not self._client:
+                return
+            try:
+                response = self._client.send_command(command)
+                self.app.call_from_thread(self._update_loggers_ui, response)
+            except Exception as e:
+                self.app.call_from_thread(
+                    self.app.notify, f"Connection error: {e}", severity="error"
+                )
 
+        self.run_worker(worker_fn, thread=True, exclusive=False)
+
+    def _update_loggers_ui(self, response: Dict[str, Any]) -> None:
+        """Update logger table with response data (runs on main thread)."""
         if response.get("status") != "success":
             self.app.notify(
                 f"Failed to list loggers: {response.get('error', 'Unknown error')}",
@@ -132,7 +137,8 @@ class LoggerView(Container):
 
         self.app.notify(f"Loaded {len(loggers)} logger(s)", severity="information")
 
-    async def _set_logger_level(self) -> None:
+    def _set_logger_level(self) -> None:
+        """Set logger level via thread worker."""
         if not self._client:
             self.app.notify("Not connected to agent", severity="error")
             return
@@ -151,24 +157,32 @@ class LoggerView(Container):
 
         level = str(level_select.value)
 
-        command = {
+        command: Dict[str, Any] = {
             "type": "logger",
             "action": "set",
             "logger": logger_name,
             "level": level,
         }
 
-        worker = self.run_worker(
-            lambda: self._client.send_command(command),
-            thread=True,
-        )
-        await worker.wait()
-        try:
-            response = worker.result
-        except Exception as e:
-            self.app.notify(f"Connection error: {e}", severity="error")
-            return
+        def worker_fn() -> None:
+            if not self._client:
+                return
+            try:
+                response = self._client.send_command(command)
+                self.app.call_from_thread(
+                    self._on_set_level_complete, response, logger_name, level
+                )
+            except Exception as e:
+                self.app.call_from_thread(
+                    self.app.notify, f"Connection error: {e}", severity="error"
+                )
 
+        self.run_worker(worker_fn, thread=True, exclusive=False)
+
+    def _on_set_level_complete(
+        self, response: Dict[str, Any], logger_name: str, level: str
+    ) -> None:
+        """Handle set level response (runs on main thread)."""
         if response.get("status") != "success":
             self.app.notify(
                 f"Failed to set logger level: {response.get('error', 'Unknown error')}",
@@ -177,5 +191,4 @@ class LoggerView(Container):
             return
 
         self.app.notify(f"Set {logger_name} to {level}", severity="information")
-
-        await self._refresh_loggers()
+        self._refresh_loggers()

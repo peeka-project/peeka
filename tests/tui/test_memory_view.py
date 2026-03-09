@@ -71,7 +71,8 @@ class TestMemoryView:
             memory_view = app.screen.query_one("MemoryView", MemoryView)
             memory_view.set_client(memory_client)
 
-            await memory_view._refresh_overview()
+            memory_view._refresh_overview()
+            await pilot.pause()
             await pilot.pause()
 
             rss_widget = memory_view.query_one("#mem-rss", Static)
@@ -140,7 +141,7 @@ class TestMemoryView:
 
             assert memory_view._tracking_enabled is False
 
-            await memory_view._toggle_tracking()
+            memory_view._toggle_tracking()
             await pilot.pause()
             await pilot.pause()
 
@@ -192,7 +193,7 @@ class TestMemoryView:
 
             memory_view._tracking_enabled = True
 
-            await memory_view._toggle_tracking()
+            memory_view._toggle_tracking()
             await pilot.pause()
             await pilot.pause()
 
@@ -241,7 +242,7 @@ class TestMemoryView:
             memory_view = app.screen.query_one("MemoryView", MemoryView)
             memory_view.set_client(gc_client)
 
-            await memory_view._refresh_gc_objects()
+            memory_view._refresh_gc_objects()
             await pilot.pause()
             await pilot.pause()
 
@@ -287,7 +288,7 @@ class TestMemoryView:
             memory_view = app.screen.query_one("MemoryView", MemoryView)
             memory_view.set_client(top_client)
 
-            await memory_view._refresh_gc_objects()
+            memory_view._refresh_gc_objects()
             await pilot.pause()
             await pilot.pause()
 
@@ -316,7 +317,8 @@ class TestMemoryView:
             memory_view = app.screen.query_one("MemoryView", MemoryView)
             memory_view.set_client(error_client)
 
-            await memory_view._refresh_overview()
+            memory_view._refresh_overview()
+            await pilot.pause()
             await pilot.pause()
 
             rss_widget = memory_view.query_one("#mem-rss", Static)
@@ -378,7 +380,7 @@ class TestMemoryView:
 
             initial_count = len(refresh_client.commands_received)
 
-            await memory_view.action_refresh()
+            memory_view.action_refresh()
             await pilot.pause()
             await pilot.pause()
 
