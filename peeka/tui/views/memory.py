@@ -94,8 +94,7 @@ class MemoryView(Container):
         # socket contention with other views sharing the same client.
         self._connect_own_client()
         if self._mounted:
-            self.run_worker(self._initial_refresh(), thread=False)
-
+            self._initial_refresh()
     def _connect_own_client(self) -> None:
         """Create a dedicated StreamingAgentClient for memory data fetching."""
         if not self._socket_path:
@@ -108,22 +107,60 @@ class MemoryView(Container):
             self._log.warning("Memory dedicated client failed: %s", result.get("error"))
             self._own_client = None
 
-    async def _initial_refresh(self) -> None:
-        """Serial refresh of overview + GC objects on initial connect."""
-        await self._refresh_overview()
-        await self._refresh_gc_objects()
+    def _initial_refresh(self) -> None:
+        """Serial refresh of overview + GC objects on initial connect.
 
-    async def action_refresh(self) -> None:
+        Fetches data in a background thread, then marshals UI updates
+        back to the main thread via call_from_thread (Dashboard pattern).
+        """
+        client = self._own_client or self._client
+        if not client:
+            return
+
+        def worker_fn() -> None:
+            c = self._own_client or self._client
+            if not c:
+                return
+            # Fetch overview
+            overview_resp = c.send_command({"type": "memory", "action": "overview"})
+            self.app.call_from_thread(self._update_overview_ui, overview_resp)
+            # Fetch GC objects
+            gc_resp = c.send_command(
+                {"type": "memory", "action": "gc", "limit": self._gc_limit}
+            )
+            self.app.call_from_thread(self._update_gc_objects_ui, gc_resp)
+
+        self.run_worker(worker_fn, thread=True, exclusive=False)
+
+    def action_refresh(self) -> None:
         """Refresh all visible data (triggered by r key)."""
-        await self._refresh_overview()
-        await self._refresh_gc_objects()
-        if self._tracking_enabled:
-            await self._refresh_allocations()
+        client = self._own_client or self._client
+        if not client:
+            return
 
-    async def action_toggle_tracking(self) -> None:
+        tracking = self._tracking_enabled
+
+        def worker_fn() -> None:
+            c = self._own_client or self._client
+            if not c:
+                return
+            overview_resp = c.send_command({"type": "memory", "action": "overview"})
+            self.app.call_from_thread(self._update_overview_ui, overview_resp)
+            gc_resp = c.send_command(
+                {"type": "memory", "action": "gc", "limit": self._gc_limit}
+            )
+            self.app.call_from_thread(self._update_gc_objects_ui, gc_resp)
+            if tracking:
+                alloc_resp = c.send_command(
+                    {"type": "memory", "action": "top", "limit": self._alloc_limit}
+                )
+                self.app.call_from_thread(self._update_allocations_ui, alloc_resp)
+
+        self.run_worker(worker_fn, thread=True, exclusive=False)
+
+    def action_toggle_tracking(self) -> None:
         """Toggle memory tracking (triggered by T key)."""
-        await self._toggle_tracking()
-
+        self._toggle_tracking()
     def compose(self) -> ComposeResult:
         with Container(id="memory-container"):
             # === One-line status bar (top) ===
@@ -250,7 +287,7 @@ class MemoryView(Container):
                             )
                         yield Tree("No data", id="mem-ref-tree")
 
-    async def on_mount(self) -> None:
+    def on_mount(self) -> None:
         container = self.query_one("#memory-container", Container)
         container.border_title = "Memory"
 
@@ -270,34 +307,33 @@ class MemoryView(Container):
         self._update_track_dependent_visibility()
 
         if self._client:
-            await self._initial_refresh()
-
-    async def on_button_pressed(self, event: Button.Pressed) -> None:
+            self._initial_refresh()
+    def on_button_pressed(self, event: Button.Pressed) -> None:
         if not self._own_client and not self._client:
             self.app.notify("Not connected to agent", severity="warning")
             return
 
         button_id = event.button.id
         if button_id == "mem-track-btn":
-            await self._toggle_tracking()
+            self._toggle_tracking()
         elif button_id == "mem-stop-btn":
-            await self._toggle_tracking()
+            self._toggle_tracking()
         elif button_id == "mem-gc-refresh-btn":
-            await self._refresh_gc_objects()
+            self._refresh_gc_objects()
         elif button_id == "mem-alloc-refresh-btn":
-            await self._refresh_allocations()
+            self._refresh_allocations()
         elif button_id == "mem-dump-btn":
-            await self._dump_memory()
+            self._dump_memory()
         elif button_id == "mem-snap-btn":
-            self.run_worker(self._take_snapshot(), thread=False)
+            self._take_snapshot()
         elif button_id == "mem-diff-btn":
-            self.run_worker(self._diff_snapshots(), thread=False)
+            self._diff_snapshots()
         elif button_id == "mem-reset-btn":
-            self.run_worker(self._reset_diff(), thread=False)
+            self._reset_diff()
         elif button_id == "mem-referrers-btn":
-            self.run_worker(self._find_referrers(), thread=False)
+            self._find_referrers()
         elif button_id == "mem-referents-btn":
-            self.run_worker(self._find_referents(), thread=False)
+            self._find_referents()
 
     def on_input_changed(self, event: Input.Changed) -> None:
         """Handle Input widget changes with validation."""
@@ -385,23 +421,28 @@ class MemoryView(Container):
         except Exception:
             pass  # Not mounted yet
 
-    async def _refresh_overview(self) -> None:
-        """Lightweight overview: update status bar with RSS, traced memory, GC counts."""
+    def _refresh_overview(self) -> None:
+        """Lightweight overview: launch thread worker to fetch data."""
         client = self._own_client or self._client
         if not client:
             return
 
-        worker = self.run_worker(
-            lambda: client.send_command({"type": "memory", "action": "overview"}),
-            thread=True,
-        )
-        await worker.wait()
-        try:
-            response = worker.result
-        except Exception as e:
-            self.app.notify(f"Connection error: {e}", severity="error")
-            return
+        def worker_fn() -> None:
+            c = self._own_client or self._client
+            if not c:
+                return
+            try:
+                response = c.send_command({"type": "memory", "action": "overview"})
+                self.app.call_from_thread(self._update_overview_ui, response)
+            except Exception as e:
+                self.app.call_from_thread(
+                    self.app.notify, f"Connection error: {e}", severity="error"
+                )
 
+        self.run_worker(worker_fn, thread=True, exclusive=False)
+
+    def _update_overview_ui(self, response: Dict[str, Any]) -> None:
+        """Update status bar with overview data (runs on main thread)."""
         if response.get("status") != "success":
             self.app.notify(
                 f"Failed to get memory overview: {response.get('error', 'Unknown error')}",
@@ -439,25 +480,32 @@ class MemoryView(Container):
             f"GC: gen0={gc_counts[0]}, gen1={gc_counts[1]}, gen2={gc_counts[2]}"
         )
 
-    async def _refresh_gc_objects(self) -> None:
-        """Fetch GC objects by type and populate the GC Objects table."""
+    def _refresh_gc_objects(self) -> None:
+        """Fetch GC objects in thread worker, update table on main thread."""
         client = self._own_client or self._client
         if not client:
             return
 
-        worker = self.run_worker(
-            lambda: client.send_command(
-                {"type": "memory", "action": "gc", "limit": self._gc_limit}
-            ),
-            thread=True,
-        )
-        await worker.wait()
-        try:
-            gc_response = worker.result
-        except Exception as e:
-            self.app.notify(f"Connection error: {e}", severity="error")
-            return
+        gc_limit = self._gc_limit  # capture for thread
 
+        def worker_fn() -> None:
+            c = self._own_client or self._client
+            if not c:
+                return
+            try:
+                gc_response = c.send_command(
+                    {"type": "memory", "action": "gc", "limit": gc_limit}
+                )
+                self.app.call_from_thread(self._update_gc_objects_ui, gc_response)
+            except Exception as e:
+                self.app.call_from_thread(
+                    self.app.notify, f"Connection error: {e}", severity="error"
+                )
+
+        self.run_worker(worker_fn, thread=True, exclusive=False)
+
+    def _update_gc_objects_ui(self, gc_response: Dict[str, Any]) -> None:
+        """Populate GC Objects table with response data (runs on main thread)."""
         if gc_response.get("status") != "success":
             self.app.notify(
                 f"Failed to get GC objects: {gc_response.get('error', 'Unknown error')}",
@@ -490,8 +538,8 @@ class MemoryView(Container):
                 size_delta_str = self._format_delta(size_delta, is_count=False)
             else:
                 # First time seeing this type
-                count_delta_str = "—"
-                size_delta_str = "—"
+                count_delta_str = "\u2014"
+                size_delta_str = "\u2014"
 
             table.add_row(
                 obj_type,
@@ -508,37 +556,52 @@ class MemoryView(Container):
         if self._sort_column:
             self._apply_sort_to_table(table)
 
-    async def _refresh_allocations(self) -> None:
+    def _refresh_allocations(self) -> None:
+        """Fetch allocations in thread worker, update table on main thread."""
         client = self._own_client or self._client
         if not client:
             return
 
-        placeholder = self.query_one("#mem-alloc-placeholder", Static)
-        alloc_table = self.query_one("#mem-alloc-table", DataTable)
-
         if not self._tracking_enabled:
-            placeholder.styles.display = "block"
-            alloc_table.styles.display = "none"
+            try:
+                placeholder = self.query_one("#mem-alloc-placeholder", Static)
+                alloc_table = self.query_one("#mem-alloc-table", DataTable)
+                placeholder.styles.display = "block"
+                alloc_table.styles.display = "none"
+            except Exception:
+                pass
             return
 
-        placeholder.styles.display = "none"
-        alloc_table.styles.display = "block"
+        alloc_limit = self._alloc_limit  # capture for thread
 
-        worker = self.run_worker(
-            lambda: client.send_command(
-                {"type": "memory", "action": "top", "limit": self._alloc_limit}
-            ),
-            thread=True,
-        )
-        await worker.wait()
-        try:
-            response = worker.result
-        except Exception as e:
-            self.app.notify(f"Connection error: {e}", severity="error")
-            return
+        def worker_fn() -> None:
+            c = self._own_client or self._client
+            if not c:
+                return
+            try:
+                response = c.send_command(
+                    {"type": "memory", "action": "top", "limit": alloc_limit}
+                )
+                self.app.call_from_thread(self._update_allocations_ui, response)
+            except Exception as e:
+                self.app.call_from_thread(
+                    self.app.notify, f"Connection error: {e}", severity="error"
+                )
 
+        self.run_worker(worker_fn, thread=True, exclusive=False)
+
+    def _update_allocations_ui(self, response: Dict[str, Any]) -> None:
+        """Populate allocations table with response data (runs on main thread)."""
         if response.get("status") != "success":
             self.app.notify(f"Failed: {response.get('error')}", severity="error")
+            return
+
+        try:
+            placeholder = self.query_one("#mem-alloc-placeholder", Static)
+            alloc_table = self.query_one("#mem-alloc-table", DataTable)
+            placeholder.styles.display = "none"
+            alloc_table.styles.display = "block"
+        except Exception:
             return
 
         alloc_table.clear()
@@ -563,89 +626,93 @@ class MemoryView(Container):
                 str(count),
                 location,
             )
-
-    async def _toggle_tracking(self) -> None:
+    def _toggle_tracking(self) -> None:
+        """Toggle memory tracking via thread worker."""
         client = self._own_client or self._client
         if not client:
             return
 
-        if self._tracking_enabled:
-            worker = self.run_worker(
-                lambda: client.send_command({"type": "memory", "action": "stop"}),
-                thread=True,
-            )
-            await worker.wait()
-            try:
-                response = worker.result
-            except Exception as e:
-                self.app.notify(f"Connection error: {e}", severity="error")
+        was_tracking = self._tracking_enabled
+        nframe = self._nframe  # capture for thread
+
+        def worker_fn() -> None:
+            c = self._own_client or self._client
+            if not c:
                 return
-
-            if response.get("status") == "success":
-                self.app.notify("Memory tracking stopped", severity="information")
-                self._tracking_enabled = False
-                self._update_track_dependent_visibility()
-
-                await self._refresh_overview()
-            else:
-                self.app.notify(
-                    f"Failed to stop tracking: {response.get('error', 'Unknown error')}",
-                    severity="error",
+            try:
+                if was_tracking:
+                    response = c.send_command({"type": "memory", "action": "stop"})
+                    self.app.call_from_thread(self._on_tracking_stopped, response)
+                else:
+                    response = c.send_command(
+                        {"type": "memory", "action": "start", "nframe": nframe}
+                    )
+                    self.app.call_from_thread(self._on_tracking_started, response)
+            except Exception as e:
+                self.app.call_from_thread(
+                    self.app.notify, f"Connection error: {e}", severity="error"
                 )
+
+        self.run_worker(worker_fn, thread=True, exclusive=False)
+
+    def _on_tracking_stopped(self, response: Dict[str, Any]) -> None:
+        """Handle tracking stop response (runs on main thread)."""
+        if response.get("status") == "success":
+            self.app.notify("Memory tracking stopped", severity="information")
+            self._tracking_enabled = False
+            self._update_track_dependent_visibility()
+            self._refresh_overview()
         else:
-            worker = self.run_worker(
-                lambda: client.send_command(
-                    {"type": "memory", "action": "start", "nframe": self._nframe}
-                ),
-                thread=True,
+            self.app.notify(
+                f"Failed to stop tracking: {response.get('error', 'Unknown error')}",
+                severity="error",
             )
-            await worker.wait()
-            try:
-                response = worker.result
-            except Exception as e:
-                self.app.notify(f"Connection error: {e}", severity="error")
-                return
 
-            if response.get("status") == "success":
-                self.app.notify("Memory tracking started", severity="information")
-                self._tracking_enabled = True
-                self._update_track_dependent_visibility()
-
-                await self._refresh_overview()
-                await self._refresh_allocations()
-            else:
-                self.app.notify(
-                    f"Failed to start tracking: {response.get('error', 'Unknown error')}",
-                    severity="error",
-                )
-
+    def _on_tracking_started(self, response: Dict[str, Any]) -> None:
+        """Handle tracking start response (runs on main thread)."""
+        if response.get("status") == "success":
+            self.app.notify("Memory tracking started", severity="information")
+            self._tracking_enabled = True
+            self._update_track_dependent_visibility()
+            self._refresh_overview()
+            self._refresh_allocations()
+        else:
+            self.app.notify(
+                f"Failed to start tracking: {response.get('error', 'Unknown error')}",
+                severity="error",
+            )
     def on_unmount(self) -> None:
         """Cleanup dedicated client on view removal."""
         if self._own_client:
             self._own_client.disconnect()
             self._own_client = None
 
-    async def _dump_memory(self) -> None:
+    def _dump_memory(self) -> None:
+        """Dump memory snapshot via thread worker."""
         client = self._own_client or self._client
         if not client:
             return
 
-        worker = self.run_worker(
-            lambda: client.send_command({"type": "memory", "action": "dump"}),
-            thread=True,
-        )
-        await worker.wait()
-        try:
-            response = worker.result
-        except Exception as e:
-            self.app.notify(f"Connection error: {e}", severity="error")
-            return
+        def worker_fn() -> None:
+            c = self._own_client or self._client
+            if not c:
+                return
+            try:
+                response = c.send_command({"type": "memory", "action": "dump"})
+                self.app.call_from_thread(self._on_dump_complete, response)
+            except Exception as e:
+                self.app.call_from_thread(
+                    self.app.notify, f"Connection error: {e}", severity="error"
+                )
 
+        self.run_worker(worker_fn, thread=True, exclusive=False)
+
+    def _on_dump_complete(self, response: Dict[str, Any]) -> None:
+        """Handle dump response (runs on main thread)."""
         if response.get("status") == "success":
             file_path = response.get("file_path", "unknown")
             size_bytes = response.get("size_bytes", 0)
             size_kb = size_bytes / 1024
-
             self.app.notify(
                 f"Memory snapshot saved to {file_path} ({size_kb:.1f} KB)",
                 severity="information",
@@ -655,24 +722,28 @@ class MemoryView(Container):
                 f"Failed to dump memory: {response.get('error', 'Unknown error')}",
                 severity="error",
             )
-
-    async def _take_snapshot(self) -> None:
-        """Take a tracemalloc snapshot."""
+    def _take_snapshot(self) -> None:
+        """Take a tracemalloc snapshot via thread worker."""
         client = self._own_client or self._client
         if not client:
             return
 
-        worker = self.run_worker(
-            lambda: client.send_command({"type": "memory", "action": "snapshot"}),
-            thread=True,
-        )
-        await worker.wait()
-        try:
-            response = worker.result
-        except Exception as e:
-            self.app.notify(f"Connection error: {e}", severity="error")
-            return
+        def worker_fn() -> None:
+            c = self._own_client or self._client
+            if not c:
+                return
+            try:
+                response = c.send_command({"type": "memory", "action": "snapshot"})
+                self.app.call_from_thread(self._on_snapshot_complete, response)
+            except Exception as e:
+                self.app.call_from_thread(
+                    self.app.notify, f"Connection error: {e}", severity="error"
+                )
 
+        self.run_worker(worker_fn, thread=True, exclusive=False)
+
+    def _on_snapshot_complete(self, response: Dict[str, Any]) -> None:
+        """Handle snapshot response (runs on main thread)."""
         if response.get("status") == "success":
             self._snapshot_count = response.get("snapshot_count", 0)
 
@@ -698,30 +769,34 @@ class MemoryView(Container):
 
             # Auto-diff when we have 2 snapshots
             if self._snapshot_count >= 2:
-                await self._diff_snapshots()
+                self._diff_snapshots()
         else:
             self.app.notify(
                 f"Failed to take snapshot: {response.get('error', 'Unknown error')}",
                 severity="error",
             )
-
-    async def _diff_snapshots(self) -> None:
-        """Compare last two snapshots and display results."""
+    def _diff_snapshots(self) -> None:
+        """Compare last two snapshots via thread worker."""
         client = self._own_client or self._client
         if not client:
             return
 
-        worker = self.run_worker(
-            lambda: client.send_command({"type": "memory", "action": "diff"}),
-            thread=True,
-        )
-        await worker.wait()
-        try:
-            response = worker.result
-        except Exception as e:
-            self.app.notify(f"Connection error: {e}", severity="error")
-            return
+        def worker_fn() -> None:
+            c = self._own_client or self._client
+            if not c:
+                return
+            try:
+                response = c.send_command({"type": "memory", "action": "diff"})
+                self.app.call_from_thread(self._on_diff_complete, response)
+            except Exception as e:
+                self.app.call_from_thread(
+                    self.app.notify, f"Connection error: {e}", severity="error"
+                )
 
+        self.run_worker(worker_fn, thread=True, exclusive=False)
+
+    def _on_diff_complete(self, response: Dict[str, Any]) -> None:
+        """Handle diff response (runs on main thread)."""
         if response.get("status") == "success":
             diffs = response.get("diffs", [])
             table = self.query_one("#mem-diff-table", DataTable)
@@ -733,8 +808,6 @@ class MemoryView(Container):
                 size_new = diff.get("size_new", 0)
                 size_old = diff.get("size_old", 0)
                 count_diff = diff.get("count_diff", 0)
-                count_new = diff.get("count_new", 0)
-                count_old = diff.get("count_old", 0)
 
                 # Format deltas with color
                 size_delta_str = self._format_delta(size_diff, is_count=False)
@@ -760,8 +833,7 @@ class MemoryView(Container):
                 f"Failed to diff snapshots: {response.get('error', 'Unknown error')}",
                 severity="error",
             )
-
-    async def _reset_diff(self) -> None:
+    def _reset_diff(self) -> None:
         """Reset diff state to allow taking new snapshots."""
         self._snapshot_count = 0
 
@@ -783,7 +855,6 @@ class MemoryView(Container):
 
         # Notify user
         self.app.notify("Diff reset. Take 2 new snapshots.", severity="information")
-
     def _apply_sort_to_table(self, table: DataTable) -> None:
         """Sort the table by the current sort column and update column labels."""
         if not self._sort_column or not self._prev_gc_stats:
@@ -860,8 +931,8 @@ class MemoryView(Container):
         # so we can't display the sort indicator. The sorting is still applied to the data.
         pass
 
-    async def _find_referrers(self) -> None:
-        """Find referrers for type."""
+    def _find_referrers(self) -> None:
+        """Find referrers for type via thread worker."""
         client = self._own_client or self._client
         if not client:
             return
@@ -874,26 +945,31 @@ class MemoryView(Container):
             return
 
         command = {"type": "memory", "action": "referrers", "type_name": type_name}
-        worker = self.run_worker(
-            lambda: client.send_command(command),
-            thread=True,
-        )
-        await worker.wait()
-        try:
-            response = worker.result
-        except Exception as e:
-            self.app.notify(f"Error: {e}", severity="error")
-            return
 
+        def worker_fn() -> None:
+            c = self._own_client or self._client
+            if not c:
+                return
+            try:
+                response = c.send_command(command)
+                self.app.call_from_thread(self._on_referrers_complete, response)
+            except Exception as e:
+                self.app.call_from_thread(
+                    self.app.notify, f"Error: {e}", severity="error"
+                )
+
+        self.run_worker(worker_fn, thread=True, exclusive=False)
+
+    def _on_referrers_complete(self, response: Dict[str, Any]) -> None:
+        """Handle referrers response (runs on main thread)."""
         if response.get("status") == "error":
             self.app.notify(response["error"], severity="error")
             return
-
         tree = self.query_one("#mem-ref-tree", Tree)
         self._populate_tree(tree, response, "referrers")
 
-    async def _find_referents(self) -> None:
-        """Find referents for type."""
+    def _find_referents(self) -> None:
+        """Find referents for type via thread worker."""
         client = self._own_client or self._client
         if not client:
             return
@@ -906,24 +982,28 @@ class MemoryView(Container):
             return
 
         command = {"type": "memory", "action": "referents", "type_name": type_name}
-        worker = self.run_worker(
-            lambda: client.send_command(command),
-            thread=True,
-        )
-        await worker.wait()
-        try:
-            response = worker.result
-        except Exception as e:
-            self.app.notify(f"Error: {e}", severity="error")
-            return
 
+        def worker_fn() -> None:
+            c = self._own_client or self._client
+            if not c:
+                return
+            try:
+                response = c.send_command(command)
+                self.app.call_from_thread(self._on_referents_complete, response)
+            except Exception as e:
+                self.app.call_from_thread(
+                    self.app.notify, f"Error: {e}", severity="error"
+                )
+
+        self.run_worker(worker_fn, thread=True, exclusive=False)
+
+    def _on_referents_complete(self, response: Dict[str, Any]) -> None:
+        """Handle referents response (runs on main thread)."""
         if response.get("status") == "error":
             self.app.notify(response["error"], severity="error")
             return
-
         tree = self.query_one("#mem-ref-tree", Tree)
         self._populate_tree(tree, response, "referents")
-
     def _populate_tree(self, tree: Tree, data: Dict[str, Any], relation: str) -> None:
         """Populate tree with referrer/referent data."""
         tree.clear()
