@@ -379,16 +379,34 @@ TabPane {
 }
 
 #mem-gc-controls,
-#mem-alloc-controls {
+#mem-alloc-controls,
+#mem-diff-controls {
     height: auto;
     margin-bottom: 1;
 }
 
 #mem-gc-controls Button,
-#mem-alloc-controls Button {
+#mem-alloc-controls Button,
+#mem-diff-controls Button {
     margin-left: 1;
     min-width: 8;
     max-width: 14;
+}
+
+#mem-diff-controls .spacer {
+    width: 1fr;
+    padding: 0;
+}
+
+#mem-diff-controls Static {
+    width: auto;
+    height: 3;
+    content-align: center middle;
+    padding: 0 1;
+}
+
+.hint-text {
+    color: $text-muted;
 }
 
 

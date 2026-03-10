@@ -243,6 +243,9 @@ class MemoryView(Container):
                 with TabPane("Diff", id="mem-diff-pane"):
                     yield Vertical(
                         Horizontal(
+                            Static("Snapshots: 0/2", id="mem-snapshot-status"),
+                            Static("Take 2 snapshots, then diff", classes="hint-text"),
+                            Static("", classes="spacer"),
                             Button(
                                 "Snap", id="mem-snap-btn", variant="primary", flat=True
                             ),
@@ -260,7 +263,6 @@ class MemoryView(Container):
                                 flat=True,
                                 disabled=True,
                             ),
-                            Static("Snapshots: 0/2", id="mem-snapshot-status"),
                             id="mem-diff-controls",
                         ),
                         DataTable(
@@ -750,10 +752,16 @@ class MemoryView(Container):
 
             # Update snapshot count indicator
             status_widget = self.query_one("#mem-snapshot-status", Static)
-            status_text = f"Snapshots: {self._snapshot_count}/2"
-            if self._snapshot_count == 2:
-                status_text += " (ready to diff)"
-            status_widget.update(status_text)
+            status_widget.update(f"Snapshots: {self._snapshot_count}/2")
+
+            # Update hint text
+            hint_widget = self.query_one(".hint-text", Static)
+            if self._snapshot_count == 0:
+                hint_widget.update("Take 2 snapshots, then diff")
+            elif self._snapshot_count == 1:
+                hint_widget.update("Take 1 more snapshot")
+            else:
+                hint_widget.update("Ready to diff")
 
             # Enable/disable Diff button based on snapshot count
             diff_btn = self.query_one("#mem-diff-btn", Button)
@@ -841,6 +849,10 @@ class MemoryView(Container):
         # Update snapshot status
         status_widget = self.query_one("#mem-snapshot-status", Static)
         status_widget.update("Snapshots: 0/2")
+
+        # Reset hint text
+        hint_widget = self.query_one(".hint-text", Static)
+        hint_widget.update("Take 2 snapshots, then diff")
 
         # Disable Diff button
         diff_btn = self.query_one("#mem-diff-btn", Button)
