@@ -389,6 +389,14 @@ TabPane {
     height: 1fr;
 }
 
+#mem-tabs ContentSwitcher {
+    height: 1fr;
+}
+
+#mem-tabs TabPane {
+    height: 1fr;
+}
+
 #mem-allocations-content {
     height: 1fr;
 }
