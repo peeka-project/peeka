@@ -328,6 +328,7 @@ TabPane {
 }
 
 #memory-status-bar {
+    width: 1fr;
     height: auto;
     margin-bottom: 1;
 }
@@ -370,6 +371,11 @@ TabPane {
 
 .spacer {
     width: 1fr;
+}
+
+#memory-status-bar .spacer {
+    width: 1fr;
+    padding: 0;
 }
 
 #mem-gc-controls,
