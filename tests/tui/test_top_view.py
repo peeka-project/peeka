@@ -108,12 +108,12 @@ class TestTopView:
             main_screen.action_switch_tab("top")
             await pilot.pause()
 
-            # Check footer text
+            # Check header text
             top_view = app.screen.query_one(TopView)
-            footer = top_view.query_one("#top-footer", Static)
-            footer_text = footer.render().plain
+            header = top_view.query_one("#top-header", Static)
+            header_text = header.render().plain
 
-            assert "Start" in footer_text or "reset" in footer_text
+            assert "Stopped" in header_text
 
     @pytest.mark.asyncio
     @pytest.mark.tui
@@ -181,14 +181,12 @@ class TestTopView:
             # Assert all required widgets exist
             header = top_view.query_one("#top-header", Static)
             table = top_view.query_one("#top-table", DataTable)
-            footer = top_view.query_one("#top-footer", Static)
             start_btn = top_view.query_one("#top-start-btn", Button)
             stop_btn = top_view.query_one("#top-stop-btn", Button)
             reset_btn = top_view.query_one("#top-reset-btn", Button)
 
             assert header is not None
             assert table is not None
-            assert footer is not None
             assert start_btn is not None
             assert stop_btn is not None
             assert reset_btn is not None
