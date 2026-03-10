@@ -40,16 +40,14 @@ class TopView(Container):
         """Compose the Top view layout."""
         with Vertical():
             yield Horizontal(
+                Static("Stopped", id="top-header"),
+                Static("", classes="spacer"),
                 Button("Start", id="top-start-btn", variant="success", flat=True),
                 Button("Stop", id="top-stop-btn", variant="error", flat=True),
                 Button("Reset", id="top-reset-btn", variant="warning", flat=True),
                 id="top-controls",
             )
-            yield Static("Top View - Stopped", id="top-header")
             yield DataTable(id="top-table")
-            yield Static(
-                "Press Start to begin profiling | r to reset stats", id="top-footer"
-            )
 
     def set_client(self, client: "StreamingAgentClient") -> None:
         """Set the agent client (does NOT auto-start profiling).
