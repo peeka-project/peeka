@@ -121,15 +121,17 @@ class MemoryView(Container):
             c = self._own_client or self._client
             if not c:
                 return
-            # Fetch overview
-            overview_resp = c.send_command({"type": "memory", "action": "overview"})
-            self.app.call_from_thread(self._update_overview_ui, overview_resp)
-            # Fetch GC objects
-            gc_resp = c.send_command(
-                {"type": "memory", "action": "gc", "limit": self._gc_limit}
-            )
-            self.app.call_from_thread(self._update_gc_objects_ui, gc_resp)
-
+            try:
+                # Fetch overview
+                overview_resp = c.send_command({"type": "memory", "action": "overview"})
+                self.app.call_from_thread(self._update_overview_ui, overview_resp)
+                # Fetch GC objects
+                gc_resp = c.send_command(
+                    {"type": "memory", "action": "gc", "limit": self._gc_limit}
+                )
+                self.app.call_from_thread(self._update_gc_objects_ui, gc_resp)
+            except Exception as e:
+                self._log.debug("Initial memory refresh failed: %s", e)
         self.run_worker(worker_fn, thread=True, exclusive=False)
 
     def action_refresh(self) -> None:
@@ -289,7 +291,6 @@ class MemoryView(Container):
 
     def on_mount(self) -> None:
         container = self.query_one("#memory-container", Container)
-        container.border_title = "Memory"
 
         table = self.query_one("#mem-objects-table", DataTable)
         self._gc_column_keys = table.add_columns(
