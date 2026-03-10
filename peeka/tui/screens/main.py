@@ -48,7 +48,6 @@ class MainScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Header()
         with Container(id="main-container"):
-            yield Static(f"Attached to PID: {self.pid}", id="pid-status")
             with TabbedContent(
                 initial="dashboard",
                 id="main-content",
@@ -79,6 +78,7 @@ class MainScreen(Screen):
         await self._connect()
 
         if self._client:
+            self.app.sub_title = f"Attached to PID {self.pid}"
             dashboard_view = self.query_one(DashboardView)
             dashboard_view.set_client(self._client)
 
@@ -162,6 +162,7 @@ class MainScreen(Screen):
 
     def action_go_back(self) -> None:
         self._cleanup_all_views()
+        self.app.sub_title = "Python Runtime Diagnostics"
         self.app.pop_screen()
 
     def _cleanup_all_views(self) -> None:

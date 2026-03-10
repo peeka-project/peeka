@@ -263,11 +263,8 @@ class TestDashboardViewE2E:
             await pilot.pause()
             await pilot.pause()
 
-            # Dashboard is the default tab - verify PID is shown
-            pid_status = app.screen.query_one("#pid-status")
-            status_text = pid_status.render().plain
-
-            assert str(attached_target["pid"]) in status_text
+            # Dashboard is the default tab - verify PID is shown in title
+            assert str(attached_target["pid"]) in app.sub_title
 
 
 class TestTabSwitchingE2E:
