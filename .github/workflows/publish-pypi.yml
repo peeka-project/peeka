@@ -1,0 +1,72 @@
+name: Publish to PyPI
+
+# Trigger on tag push matching v* pattern (e.g., v0.1.0)
+# This workflow publishes to PyPI using Trusted Publishing (OIDC)
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  # id-token: write is REQUIRED for OIDC-based Trusted Publishing
+  # Allows GitHub Actions to obtain an OIDC token for PyPI authentication
+  id-token: write
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      
+      - name: Install dependencies
+        run: |
+          pip install -e ".[dev]" || pip install -e .
+          pip install pytest pytest-timeout
+      
+      - name: Run unit tests
+        run: pytest tests/ -v --tb=short -m "not e2e and not container" --timeout=30
+  
+  publish:
+    name: Build and Publish to PyPI
+    needs: test
+    runs-on: ubuntu-latest
+    
+    # environment: pypi tells GitHub Actions to use the PyPI environment
+    # which is configured in repo settings with OIDC trusted publishers
+    environment: pypi
+    
+    permissions:
+      # id-token: write is REQUIRED for OIDC authentication
+      # Allows this job to request an OIDC token from GitHub
+      id-token: write
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      
+      - name: Install build tools
+        run: pip install --upgrade pip build
+      
+      - name: Clean dist directory
+        run: rm -rf dist/
+      
+      - name: Build package
+        run: python -m build
+      
+      - name: Verify wheel contents
+        run: |
+          # Sanity check: wheel should contain >= 10 peeka/ entries (subpackages)
+          unzip -l dist/*.whl | grep -c 'peeka/' | xargs test 10 -le || exit 1
+      
+      - name: Publish to PyPI
+        # Uses pypa/gh-action-pypi-publish with Trusted Publishing
+        # NO API tokens or secrets needed - authentication via OIDC
+        uses: pypa/gh-action-pypi-publish@release/v1
