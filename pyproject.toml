@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "peeka"
 version = "0.1.0"
@@ -19,8 +23,12 @@ dev = [
 peeka-cli = "peeka.cli:main"
 peeka = "peeka.tui:main"
 
-[tool.setuptools]
-packages = ["peeka"]
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["peeka*"]
+
+[tool.setuptools.package-data]
+peeka = ["tui/styles/*.tcss"]
 
 [tool.uv]
 dev-dependencies = [
