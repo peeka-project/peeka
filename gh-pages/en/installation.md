@@ -283,4 +283,3 @@ If you encounter problems during installation:
 
 1. Check [Troubleshooting]({{ site.baseurl }}{% link en/troubleshooting.md %})
 2. Ask questions on [GitHub Issues](https://github.com/wwulfric/peeka/issues)
-3. Check [FAQ]({{ site.baseurl }}{% link faq.md %})

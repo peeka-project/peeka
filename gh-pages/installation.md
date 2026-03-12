@@ -282,4 +282,3 @@ Error: Unable to find Mach task port for process-id
 
 1. 查看 [故障排除]({{ site.baseurl }}{% link troubleshooting.md %})
 2. 在 [GitHub Issues](https://github.com/wwulfric/peeka/issues) 提问
-3. 查看 [常见问题 FAQ]({{ site.baseurl }}{% link faq.md %})

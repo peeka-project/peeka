@@ -3,7 +3,7 @@ title: Peeka
 description: Python 运行时诊断工具 - 基于 PEP 768 的非侵入式函数观测
 baseurl: "/peeka"
 url: "https://wwulfric.github.io"
-remote_theme: just-the-docs/just-the-docs
+theme: just-the-docs
 color_scheme: light
 
 # Logo and favicon
