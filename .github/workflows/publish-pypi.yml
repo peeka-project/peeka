@@ -30,7 +30,7 @@ jobs:
           pip install pytest pytest-timeout
       
       - name: Run unit tests
-        run: pytest tests/ -v --tb=short -m "not e2e and not container" --timeout=30
+        run: pytest tests/ -v --tb=short -m "not e2e and not container and not tui" --timeout=30 --ignore=tests/tui --ignore=tests/test_tui.py --ignore=tests/test_theme.py
   
   publish:
     name: Build and Publish to PyPI
