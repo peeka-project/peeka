@@ -8,8 +8,9 @@ on:
 
 permissions:
   # id-token: write is REQUIRED for OIDC-based Trusted Publishing
-  # Allows GitHub Actions to obtain an OIDC token for PyPI authentication
+  # contents: write is REQUIRED for creating GitHub Releases
   id-token: write
+  contents: write
 
 jobs:
   test:
@@ -70,3 +71,23 @@ jobs:
         # Uses pypa/gh-action-pypi-publish with Trusted Publishing
         # NO API tokens or secrets needed - authentication via OIDC
         uses: pypa/gh-action-pypi-publish@release/v1
+
+  release:
+    name: Create GitHub Release
+    needs: publish
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: write
+    
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for release notes generation
+      
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
