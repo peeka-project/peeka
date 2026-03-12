@@ -1,187 +1,172 @@
+<p align="right">
+  <a href="README.zh-CN.md">中文</a> | <strong>English</strong>
+</p>
+
 # Peeka
 
-基于 Python 3.14 远程调试协议（PEP 768）的运行时诊断工具，提供类似 Java Arthas 的非侵入式函数观测能力。
+Runtime diagnostic tool for Python applications, inspired by [Alibaba Arthas](https://github.com/alibaba/arthas). Non-invasive function observation with zero code changes.
 
-## 项目背景
+Uses [PEP 768](https://peps.python.org/pep-0768/) (`sys.remote_exec`) on Python 3.14+, with a GDB + ptrace fallback for Python 3.9–3.13.
 
-Peeka 是一个为 Python 开发者提供生产环境实时诊断能力的工具。传统的 Python 调试方法通常需要在代码中显式插入调试语句，或使用
-IDE 断点调试，这些方法在开发环境有效，但在生产环境难以应用。
+## Key Features
 
-生产环境的诊断需求具有其特殊性：
+- **Non-invasive** — Inject observation logic at runtime, fully restored on detach
+- **Real-time streaming** — Millisecond-latency data via Unix domain sockets
+- **Production-safe** — < 5% overhead, fixed-size memory buffers, graceful error recovery
+- **Secure filtering** — [simpleeval](https://github.com/danthedeckie/simpleeval)-based condition expressions, blocks all code injection
+- **Dual interface** — CLI (JSONL output, pipe-friendly) and interactive TUI
 
-- **不能停止服务**：避免影响用户体验和业务连续性
-- **间歇性问题**：需要在真实生产负载下观测
-- **高效诊断**：应对生产环境的高数据量和调用频率
+## Quick Start
 
-Peeka 正是为解决这些生产环境诊断难题而设计，提供非侵入式诊断能力，在不修改目标代码的情况下实时观测和诊断应用行为。
-
-## 核心特性
-
-### 非侵入式观测
-
-- 无需修改目标代码
-- 运行时动态注入观测逻辑
-- 诊断结束后完全恢复原状
-
-### 实时诊断
-
-- 毫秒级数据传输延迟
-- 流式观测数据推送
-- 支持 JSON 格式输出，便于与其他工具集成
-
-### 生产可用
-
-- 性能开销 < 5%
-- 完善的异常捕获和恢复机制
-- 固定内存缓冲，防止内存膨胀
-
-### 条件过滤
-
-- 支持安全的表达式过滤（基于 simpleeval）
-- 灵活的过滤语法（参数、返回值、执行时间等）
-- 阻止所有代码注入攻击（`__import__`、`eval`、`exec` 等）
-
-## 设计目标
-
-Peeka Agent 的设计遵循以下核心目标：
-
-### 低侵入性
-
-Agent 的运行不显著影响目标进程的性能和功能。根据业界经验，生产环境诊断工具的性能开销应控制在 5% 以内。Peeka
-通过精心设计的装饰器注入机制和观测数据缓冲策略，确保诊断操作对目标进程的影响最小化。
-
-### 高可靠性
-
-Agent 必须在各种异常情况下保持稳定运行，不因自身错误导致目标进程崩溃或异常。设计时特别关注资源管理问题，包括内存使用、文件描述符、线程等系统资源的正确释放，避免资源泄漏导致的长期稳定性问题。
-
-### 实时性
-
-诊断数据能够实时传输到客户端，使开发者立即观察到目标进程的行为变化。这对于定位间歇性问题尤为重要。Peeka 采用基于 Unix
-Domain Socket 的流式通信协议，实现了毫秒级的数据传输延迟。
-
-### 可扩展性
-
-Agent 架构能够方便地支持新的诊断命令和功能扩展，而不需要大规模重构现有代码。采用模块化设计，将通信、命令执行、观测等关注点分离，通过清晰定义的接口进行交互。
-
-## 技术基础
-
-### Python 3.14 远程调试协议（PEP 768）
-
-核心的 `sys.remote_exec(pid, script_path)` 函数是整个系统运作的关键，它封装了复杂的进程附加、代码注入和执行调度逻辑。通过这一函数，Peeka
-能够将 Agent 代码安全地注入到目标进程中，并启动监听服务准备接收诊断命令。
-
-**Python < 3.14 降级方案**：对于旧版本 Python，使用 GDB + ptrace 机制（参考 pyrasite）：
-
-1. GDB 通过 ptrace 附加到目标进程
-2. 调用 `PyGILState_Ensure()` 获取 GIL
-3. 调用 `PyRun_SimpleString()` 执行 Agent 代码
-4. 调用 `PyGILState_Release()` 释放 GIL
-5. GDB 分离，进程继续运行
-
-**要求**：
-
-- GDB 7.3+
-- Python 调试符号（python3-dbg 或 python3-debuginfo）
-- CAP_SYS_PTRACE 或相同 UID
-- ptrace_scope <= 1
-
-### Unix Domain Socket
-
-采用 Unix Domain Socket 作为进程间通信的主要机制。相比网络套接字，Unix Domain Socket 具有：
-
-- **更高传输效率**：不需要经过网络协议栈
-- **更强安全性**：仅限本地进程使用
-- **简单可靠**：长度前缀 + JSON 格式
-
-### 安全的条件表达式评估
-
-基于 simpleeval 库实现安全的条件过滤：
-
-- **AST 白名单**：只允许安全操作（比较、算术、逻辑）
-- **属性保护**：阻止 `__class__`、`__subclasses__` 等反射攻击
-- **函数黑名单**：禁用 `eval`、`compile`、`open`、`exec`、`__import__`
-
-## 快速开始
-
-### 安装
+### Install
 
 ```bash
-pip install peeka
+pip install peeka          # CLI only
+pip install peeka[tui]     # CLI + TUI
 ```
 
-### 基本使用
-
-1. **附加到目标进程**
+### Basic Usage
 
 ```bash
+# 1. Attach to a running Python process
 peeka-cli attach <pid>
+
+# 2. Watch function calls
+peeka-cli watch "module.Class.method" -n 5
+
+# 3. Watch with condition filter
+peeka-cli watch "module.func" --condition "params[0] > 100"
+
+# 4. Trace call tree with timing
+peeka-cli trace "module.func" -d 3
+
+# 5. Capture call stack
+peeka-cli stack "module.func" -n 3
+
+# 6. Launch TUI
+peeka
 ```
 
-2. **观测函数调用**
+### Pipe-Friendly Output (JSONL)
+
+All CLI output is JSONL — one JSON object per line with a `type` field:
 
 ```bash
-# 观测 5 次调用
-peeka-cli watch "module.Class.method" --times 5
+# Filter observations with jq
+peeka-cli watch "module.func" | jq 'select(.type == "observation")'
 
-# 条件过滤
-peeka-cli watch "module.Class.method" --condition "len(params) > 2"
+# Find slow calls
+peeka-cli watch "module.func" | jq 'select(.type == "observation" and .data.duration_ms > 100)'
 
-# 实时流式观测
-peeka-cli watch "module.Class.method"
-```
-
-3. **数据处理**
-
-```bash
-# 使用 jq 提取结果
-peeka-cli watch "module.func" | jq 'select(.type == "observation") | .data.result'
-
-# 筛选慢调用
-peeka-cli watch "module.func" | jq 'select(.type == "observation" and .data.duration_ms > 1)'
-
-# 保存到文件
+# Save to file
 peeka-cli watch "module.func" > observations.jsonl
 ```
 
-## 输出格式规范
+## Commands
 
-Peeka 所有命令均输出 **JSONL 格式**（每行一个 JSON 对象），每个对象包含 `type` 字段用于标识消息类型。
+| Command   | Description                                 |
+|-----------|---------------------------------------------|
+| `attach`  | Attach to a running Python process          |
+| `watch`   | Observe function calls (args, return, time) |
+| `trace`   | Trace call tree with timing breakdown       |
+| `stack`   | Capture call stack at function entry        |
+| `monitor` | Periodic performance statistics             |
+| `logger`  | Adjust log levels at runtime                |
+| `memory`  | Memory usage analysis                       |
+| `inspect` | Runtime object inspection                   |
+| `sc`/`sm` | Search classes / search methods             |
+| `reset`   | Remove all injected enhancements            |
+| `detach`  | Detach from target process                  |
 
-### 消息类型
+### watch
 
-| 类型 | 说明 | 示例命令 |
-|------|------|----------|
-| `status` | 状态/进度信息（非关键） | attach |
-| `success` | 命令成功完成 | attach, detach |
-| `error` | 命令失败，包含错误详情 | 所有命令 |
-| `event` | 控制事件（started, stopped 等） | watch, stack, monitor |
-| `observation` | 实时观测数据（函数调用） | watch, stack, monitor |
-| `result` | 查询结果（非流式命令） | logger, memory, sc, sm, reset |
+```bash
+peeka-cli watch <pattern> [options]
+```
 
-### 输出格式示例
+| Option             | Description                             | Default |
+|--------------------|-----------------------------------------|---------|
+| `-x, --depth`      | Output depth for nested objects          | 2       |
+| `-n, --times`      | Number of observations (-1 = infinite)  | -1      |
+| `--condition`       | Filter expression (supports `cost` var) | —       |
+| `-b, --before`      | Observe at function entry               | false   |
+| `-s, --success`     | Observe on success only                 | false   |
+| `-e, --exception`   | Observe on exception only               | false   |
+| `-f, --finish`      | Observe on both success and exception   | true    |
 
-#### status - 状态信息
+**Pattern format**: `module.Class.method` or `module.function`
+
+### trace
+
+```bash
+peeka-cli trace <pattern> [options]
+```
+
+| Option             | Description                                | Default |
+|--------------------|--------------------------------------------|---------|
+| `-d, --depth`      | Max call tree depth                        | 3       |
+| `-n, --times`      | Number of observations (-1 = infinite)     | -1      |
+| `--condition`       | Filter expression (supports `cost` var)    | —       |
+| `--skip-builtin`    | Skip stdlib/built-in functions             | true    |
+| `--min-duration`    | Minimum duration filter (ms)               | 0       |
+
+**Output example:**
+
+```
+`---[125.3ms] calculator.Calculator.calculate()
+    +---[2.1ms] calculator.Calculator._validate()
+    +---[98.2ms] calculator.Calculator._compute()
+    |   `---[95.1ms] math.sqrt()
+    `---[15.7ms] calculator.Logger.info()
+```
+
+### stack
+
+```bash
+peeka-cli stack <pattern> [options]
+```
+
+| Option             | Description                                | Default |
+|--------------------|--------------------------------------------|---------|
+| `-n, --times`      | Number of captures (-1 = infinite)         | -1      |
+| `--condition`       | Filter expression                          | —       |
+| `--depth`           | Stack depth limit                          | 10      |
+
+## Condition Expressions
+
+Powered by [simpleeval](https://github.com/danthedeckie/simpleeval) for safe evaluation:
+
+```python
+params[0] > 100              # Positional argument check
+len(params) > 2              # Argument count
+kwargs.get('debug') == True  # Keyword argument check
+cost > 50                    # Execution time in ms (watch/trace)
+str(x).startswith('prefix')  # String operations
+x + y > 10                   # Arithmetic
+```
+
+**Security**: Only safe operations (comparisons, arithmetic, logic) are allowed. `eval`, `exec`, `__import__`, `open`, `compile` and reflection via `__class__`/`__subclasses__` are all blocked.
+
+## Output Format
+
+Every line is a JSON object with a `type` field:
+
+| Type          | Description                         | Commands               |
+|---------------|-------------------------------------|------------------------|
+| `status`      | Progress/info messages              | attach                 |
+| `success`     | Command completed successfully      | attach, detach         |
+| `error`       | Command failed                      | all                    |
+| `event`       | Control events (started/stopped)    | watch, stack, monitor  |
+| `observation` | Real-time observation data          | watch, stack, monitor  |
+| `result`      | Query results (non-streaming)       | logger, memory, sc, sm |
+
+<details>
+<summary>Output examples</summary>
+
 ```json
 {"type": "status", "level": "info", "message": "Attaching to process 12345"}
-```
-
-#### success - 成功响应
-```json
 {"type": "success", "command": "attach", "data": {"pid": 12345, "socket": "/tmp/peeka_xxx.sock"}}
-```
-
-#### error - 错误响应
-```json
-{"type": "error", "command": "watch", "error": "Cannot find target: invalid.pattern"}
-```
-
-#### event - 控制事件
-```json
 {"type": "event", "event": "watch_started", "data": {"watch_id": "watch_001", "pattern": "module.func"}}
-```
-
-#### observation - 观测数据
-```json
 {
   "type": "observation",
   "watch_id": "watch_001",
@@ -194,391 +179,103 @@ Peeka 所有命令均输出 **JSONL 格式**（每行一个 JSON 对象），每
   "duration_ms": 0.123,
   "count": 1
 }
+{"type": "error", "command": "watch", "error": "Cannot find target: invalid.pattern"}
 ```
 
-#### result - 查询结果
-```json
-{"type": "result", "command": "logger", "data": {"status": "success", "loggers": [...]}}
-```
+</details>
 
-### 解析输出示例
+## Python Version Support
 
-#### Python 解析
-```python
-import json
-import subprocess
+| Python Version | Attach Mechanism              | Requirements                      |
+|----------------|-------------------------------|-----------------------------------|
+| 3.14+          | PEP 768 `sys.remote_exec()`  | Same UID or `CAP_SYS_PTRACE`     |
+| 3.9–3.13       | GDB + ptrace fallback         | GDB 7.3+, ptrace_scope ≤ 1       |
 
-proc = subprocess.Popen(
-    ["peeka", "watch", "12345", "module.func"],
-    stdout=subprocess.PIPE,
-    text=True
-)
+### Python < 3.14 Setup
 
-for line in proc.stdout:
-    msg = json.loads(line)
-    
-    if msg["type"] == "observation":
-        print(f"Call #{msg['count']}: {msg['func_name']} -> {msg.get('result')}")
-    elif msg["type"] == "error":
-        print(f"Error: {msg['error']}")
-        break
-```
-
-#### Bash + jq 解析
-```bash
-# 只显示观测数据
-peeka-cli watch "module.func" | jq 'select(.type == "observation")'
-
-# 提取函数返回值
-peeka-cli watch "module.func" | jq 'select(.type == "observation") | .result'
-
-# 过滤慢调用（>10ms）
-peeka-cli watch "module.func" | jq 'select(.type == "observation" and .duration_ms > 10)'
-
-# 统计成功率
-peeka-cli watch "module.func" | \
-  jq -r 'select(.type == "observation") | if .success then "OK" else "ERROR" end' | \
-  uniq -c
-
-# 只显示错误信息
-peeka-cli watch "module.func" | jq 'select(.type == "error")'
-```
-
-## 使用示例
-
-### 观测函数调用
+GDB is required. Debug symbols are **strongly recommended** — some distros include them by default, but if GDB reports "no symbol" errors, install them:
 
 ```bash
-# 启动演示应用
-$ python examples/demo.py --mode loop
-当前进程 PID: 12345
-
-# 在另一个终端观测
-$ peeka-cli attach 12345
-{"type":"status","level":"info","message":"Attaching to process 12345"}
-{"type":"success","command":"attach","data":{"pid":12345,"socket":"/tmp/peeka_xxx.sock"}}
-
-$ peeka-cli watch "demo.Calculator.add" --times 5
-{"type":"event","event":"watch_started","data":{"watch_id":"watch_001","pattern":"demo.Calculator.add"}}
-{"type":"observation","watch_id":"watch_001","timestamp":1705586200.123,"func_name":"demo.Calculator.add","args":[1,2],"result":3,"success":true,"duration_ms":0.123,"count":1}
-{"type":"observation","watch_id":"watch_001","timestamp":1705586200.456,"func_name":"demo.Calculator.add","args":[3,4],"result":7,"success":true,"duration_ms":0.087,"count":2}
-...
-```
-
-### 条件过滤
-
-```bash
-# 只观测第一个参数大于 100 的调用
-$ peeka-cli watch "demo.Calculator.multiply" --condition "params[0] > 100"
-```
-
-支持的条件语法：
-
-```python
-len(params) > 2  # 参数数量
-kwargs.get('debug') == True  # 关键字参数
-x + y > 10  # 算术表达式
-str(x).startswith('prefix')  # 字符串操作
-params[0] == 'value'  # 索引访问
-```
-
-### 与其他工具集成
-
-```bash
-# 统计调用次数（只计算观测数据）
-$ peeka-cli watch "module.func" | jq 'select(.type == "observation")' | wc -l
-
-# 分析耗时分布
-$ peeka-cli watch "module.func" | \
-  jq 'select(.type == "observation") | .duration_ms' | \
-  awk '{sum+=$1; count++} END {print "avg:", sum/count}'
-
-# 实时监控错误率
-$ peeka-cli watch "module.func" | \
-  jq -r 'select(.type == "observation") | if .success then "OK" else "ERROR" end' | \
-  uniq -c
-```
-
-## 命令参考
-
-Peeka 提供多个强大的诊断命令，每个命令都有详细的使用文档。
-
-### 命令概览
-
-| 命令        | 功能                  | 文档链接                    |
-|-----------|---------------------|-------------------------|
-| `attach`  | 附加到目标进程             | 见下方                     |
-| `watch`   | 观测函数调用（参数、返回值、执行时间） | [详细文档](docs/watch.md)   |
-| `trace`   | 追踪函数调用链和执行耗时      | [详细文档](docs/trace.md)   |
-| `stack`   | 追踪函数调用栈             | [详细文档](docs/stack.md)   |
-| `reset`   | 重置增强恢复原函数           | [详细文档](docs/reset.md)   |
-| `logger`  | 动态调整日志级别            | [详细文档](docs/logger.md)  |
-| `monitor` | 性能统计监控              | [详细文档](docs/monitor.md) |
-| `memory`  | 内存分析                | [详细文档](docs/memory.md)  |
-| `inspect` | 运行时对象检查             | [详细文档](docs/inspect.md) |
-| `sc`      | 搜索类                 | [详细文档](docs/search.md)  |
-| `sm`      | 搜索方法                | [详细文档](docs/search.md)  |
-
-### attach - 附加到目标进程
-
-```bash
-peeka-cli attach <pid>
-```
-
-### watch - 观测函数调用
-
-```bash
-peeka-cli watch <pattern> [options]
-```
-
-**参数**：
-
-| 参数            | 说明             | 默认值 |
-|---------------|----------------|-----|
-| `--depth, -x` | 输出深度           | 2   |
-| `--times, -n` | 观测次数 (-1 表示无限) | -1  |
-| `--condition-express` | 条件表达式（支持 `cost` 变量） | 无   |
-| `-b, --before` | 在函数入口观测（AtEnter） | false |
-| `-s, --success` | 仅在成功时观测（AtExit） | false |
-| `-e, --exception` | 仅在异常时观测（AtExceptionExit） | false |
-| `-f, --finish` | 观测成功和异常（默认） | true |
-
-**pattern 格式**：`module.Class.method` 或 `module.function`
-
-**注意**：使用 watch 前，必须先用 `peeka-cli attach <pid>` 附加到目标进程。
-
-**更多详情**：参见 [watch 命令详解](docs/watch.md)
-
-### trace - 追踪函数调用链
-
-```bash
-peeka-cli trace <pattern> [options]
-```
-
-追踪目标函数的完整调用链和执行耗时，以树形结构展示方法调用的层次关系。类似于 Arthas 的 trace 命令。
-
-**参数**：
-
-| 参数            | 说明             | 默认值 |
-|---------------|----------------|-----|
-| `--depth, -d` | 追踪深度（最大调用层数）  | 3   |
-| `--times, -n` | 观测次数 (-1 表示无限) | -1  |
-| `--condition-express` | 条件表达式（支持 `cost` 变量） | 无   |
-| `--skip-builtin` | 跳过内置函数和标准库 | true |
-| `--min-duration` | 最小耗时过滤（毫秒） | 0 |
-
-**输出示例**：
-
-```
-`---[125.3ms] calculator.Calculator.calculate()
-    +---[2.1ms] calculator.Calculator._validate()
-    +---[98.2ms] calculator.Calculator._compute()
-    |   `---[95.1ms] math.sqrt()
-    `---[15.7ms] calculator.Logger.info()
-```
-
-**TUI 可视化**：
-
-在 TUI 模式下，trace 命令提供交互式可视化界面：
-- 按 `T` 键切换到 Trace 视图
-- 树形结构展示调用层次
-- 颜色编码的耗时信息（绿色 < 10ms，黄色 10-100ms，红色 >= 100ms）
-- 实时流式更新
-- 可展开/折叠的树节点
-
-**更多详情**：参见 [trace 命令详解](docs/trace.md)
-
-### stack - 追踪调用栈
-
-```bash
-peeka-cli stack <pattern> [options]
-```
-
-捕获函数被调用时的完整调用栈，用于追踪调用来源。
-
-**更多详情**：参见 [stack 命令详解](docs/stack.md)
-
-### logger - 动态调整日志级别
-
-```bash
-peeka-cli logger [--action {list,get,set}] [options]
-```
-
-运行时查看和修改 logger 的日志级别，无需重启进程。
-
-**更多详情**：参见 [logger 命令详解](docs/logger.md)
-
-### monitor - 性能统计
-
-```bash
-peeka-cli monitor <pattern> [--interval SECONDS] [-c CYCLES]
-```
-
-定期输出函数性能统计（调用次数、成功率、响应时间）。
-
-**更多详情**：参见 [monitor 命令详解](docs/monitor.md)
-
-### memory - 内存分析
-
-```bash
-peeka-cli memory [--action {overview,start,stop,top,dump,gc}] [options]
-```
-
-分析进程内存使用情况和内存分配。
-
-**更多详情**：参见 [memory 命令详解](docs/memory.md)
-
-### sc / sm - 搜索类和方法
-
-```bash
-peeka-cli sc <pattern>  # 搜索类
-peeka-cli sm <pattern>  # 搜索方法
-```
-
-在运行中的进程中搜索类和方法，用于代码探索。
-
-**更多详情**：参见 [search 命令详解](docs/search.md)
-
-## 与 Arthas 功能对比
-
-Peeka 的设计深受 [Alibaba Arthas](https://github.com/alibaba/arthas) 启发，为 Python 生态系统带来了类似的诊断能力。以下是功能对比：
-
-### ✅ 已实现的 Arthas 功能
-
-| 功能 | Peeka | Arthas | 说明 |
-|------|-------|--------|------|
-| **watch 命令** | ✅ | ✅ | 观测函数调用、参数、返回值 |
-| 观测点控制 | `-b/-e/-s/-f` | `-b/-e/-s/-f` | AtEnter/AtExit/AtExceptionExit |
-| 条件过滤 | `--condition-express` | `--condition-express` | 支持表达式过滤 |
-| 耗时过滤 | `cost > 100` | `#cost>100` | 基于执行时间过滤 |
-| 输出字段 | `params/returnObj/throwExp/cost/target` | 相同 | Arthas 兼容字段名 |
-| **trace 命令** | ✅ | ✅ | 追踪函数调用链和耗时 |
-| 调用树展示 | ✅ 树形结构 | ✅ 树形结构 | 可视化调用关系 |
-| 深度限制 | `-d, --depth` | `-n` | 控制追踪深度 |
-| 跳过内置函数 | `--skip-builtin` | `--skipJDKMethod` | 减少输出噪音 |
-| 最小耗时 | `--min-duration` | - | 过滤耗时较小的调用 |
-| **stack 命令** | ✅ | ✅ | 捕获函数调用栈 |
-| **monitor 命令** | ✅ | ✅ | 性能统计监控 |
-| **logger 命令** | ✅ | ✅ | 动态调整日志级别 |
-| **sc/sm 命令** | ✅ | ✅ | 搜索类和方法 |
-
-### ⏳ 计划中的功能
-
-| 功能 | Peeka | Arthas | 优先级 |
-|------|-------|--------|--------|
-| 通配符匹配 | 计划中 | ✅ `module.*` | 中 |
-| 自定义输出表达式 | 计划中 | ✅ `-x '{params, returnObj}'` | 低 |
-| Thread 命令 | 计划中 | ✅ | 中 |
-| JVM 命令 | N/A | ✅ | - |
-| Profiler | 计划中 | ✅ | 高 |
-
-### 🎯 Python 特有优势
-
-- **原生 JSON 输出**：所有命令输出 JSONL 格式，便于自动化集成
-- **simpleeval 安全沙箱**：条件表达式使用 AST 白名单，完全防御代码注入
-- **Python 3.12+ 性能优化**：trace 命令使用 `sys.monitoring` API，性能开销 < 5%
-- **轻量级部署**：无需 Java 运行时，pip 一键安装
-
-### 📊 性能对比
-
-| 场景 | Peeka (Python 3.12+) | Peeka (Python 3.9-3.11) | Arthas (Java) |
-|------|---------------------|------------------------|---------------|
-| watch 命令开销 | < 1% | < 1% | < 5% |
-| trace 命令开销 | < 5% | < 20% | < 5% |
-| 内存占用 | ~10MB | ~10MB | ~30MB |
-
-## 环境变量
-
-| 变量                  | 说明       | 默认值     |
-|---------------------|----------|---------|
-| `PEEKA_SOCKET_DIR`  | 套接字文件目录  | `/tmp`  |
-| `PEEKA_TIMEOUT`     | 命令超时（秒）  | `30`    |
-| `PEEKA_BUFFER_SIZE` | 观测数据缓冲大小 | `10000` |
-
-## 安全考虑
-
-### 进程附加权限
-
-**Python 3.14+**:
-
-- 使用 PEP 768 `sys.remote_exec()`
-- 需要相同 UID 或 CAP_SYS_PTRACE
-
-**Python < 3.14**:
-
-- 使用 GDB + ptrace 降级方案
-- 需要 GDB 和 Python 调试符号
-- 需要相同 UID 或 CAP_SYS_PTRACE
-- ptrace_scope 必须 <= 1
-
-**Docker 容器**:
-
-```bash
-docker run --cap-add=SYS_PTRACE your-image
-```
-
-
-**Docker 容器内运行 TUI**:
-
-Peeka 测试镜像已内置 `TERM=xterm-256color` 和 `COLORTERM=truecolor` 环境变量，`docker exec` 进入容器后 TUI 可直接使用，无需额外设置。
-
-**临时放宽 ptrace 限制**（测试用）:
-```bash
-echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope
-```
-
-## 故障排除
-
-### 附加失败（权限不足）
-
-```bash
-# Python < 3.14 使用 GDB 需要额外安装调试符号
 # Debian/Ubuntu
 sudo apt-get install gdb python3-dbg
 
 # RHEL/Fedora
 sudo yum install gdb python3-debuginfo
 
-# 临时放宽 ptrace 限制
+# Arch
+sudo pacman -S gdb
+```
+
+### Docker
+
+```bash
+docker run --cap-add=SYS_PTRACE your-image
+```
+
+### ptrace Restrictions
+
+```bash
+# Check current setting
+cat /proc/sys/kernel/yama/ptrace_scope
+
+# Temporarily allow (for testing)
 echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope
 
-# SELinux 系统（Fedora/RHEL）
+# SELinux (Fedora/RHEL)
 sudo setsebool -P deny_ptrace=off
 ```
 
-### 观测不到数据
+## Environment Variables
 
-- 检查函数名是否正确（使用完整限定名）
-- 确认函数是否被调用
-- 检查条件表达式是否过于严格
+| Variable             | Description                  | Default  |
+|----------------------|------------------------------|----------|
+| `PEEKA_SOCKET_DIR`   | Socket file directory        | `/tmp`   |
+| `PEEKA_TIMEOUT`      | Command timeout (seconds)    | `30`     |
+| `PEEKA_BUFFER_SIZE`  | Observation buffer size      | `10000`  |
 
-### 目标进程行为异常
+## Troubleshooting
+
+### Attach fails (permission denied)
+
+- Ensure same UID or `CAP_SYS_PTRACE`
+- Check `ptrace_scope` (see above)
+- For GDB fallback: install debug symbols if "no symbol" error appears
+
+### No observation data
+
+- Verify function name (use fully qualified name: `module.Class.method`)
+- Confirm the function is actually being called
+- Check if condition expression is too restrictive
+
+### Target process behaving abnormally
 
 ```bash
-# 停止观测
+# Stop observation
 peeka-cli watch --action stop <watch_id>
 
-# 如果持续异常，重启目标进程
+# If issues persist, restart target process
 ```
 
-## 架构文档
+## Architecture
 
-详细架构设计见 [AGENTS.md](AGENTS.md)
+```
+CLI/TUI  →  AgentClient  →  Unix Socket  →  PeekaAgent (injected in target)
+                                              ├─ CommandRouter → BaseCommand subclasses
+                                              ├─ DecoratorInjector (function wrapping)
+                                              └─ ObservationManager (buffered streaming)
+```
 
-## 开发计划
+- **Attach**: PEP 768 `sys.remote_exec()` on 3.14+, GDB + ptrace on 3.9–3.13
+- **Observe**: Decorator injection wraps target functions, captures args/return/exceptions/timing
+- **Stream**: Real-time observation data via Unix domain socket (length-prefixed JSON)
+- **Commands**: Modular `BaseCommand` subclasses, registered in `PeekaAgent._register_handlers()`
 
-- [ ] 线程诊断 (`ThreadCommand`)
-- [ ] 内存分析 (`MemoryCommand`)
-- [ ] 对象观测（跟踪对象生命周期）
-- [ ] 火焰图生成
-- [ ] Web UI
-
-## 许可证
+## License
 
 MIT License
 
-## 致谢
+## Acknowledgments
 
-- 灵感来源：[Alibaba Arthas](https://github.com/alibaba/arthas)
-- 安全评估：[simpleeval](https://github.com/danthedeckie/simpleeval)
-- 远程调试协议：[PEP 768](https://peps.python.org/pep-0768/)
+- Inspired by [Alibaba Arthas](https://github.com/alibaba/arthas)
+- Safe evaluation: [simpleeval](https://github.com/danthedeckie/simpleeval)
+- Remote debugging protocol: [PEP 768](https://peps.python.org/pep-0768/)
