@@ -3,7 +3,7 @@ TUI Component Tests using Textual's testing framework.
 
 Tests verify:
 1. ProcessSelectorScreen renders with correct widgets
-2. MainScreen has all 8 tabs with correct labels
+2. MainScreen has all 10 tabs with correct labels
 3. Tab switching works and updates active state
 4. All view inputs have descriptive labels
 5. CompletionSource is correctly typed and synchronous
@@ -68,7 +68,9 @@ class TestMainScreen:
             from textual.widgets import TabbedContent, TabPane
 
             tabbed = app.screen.query_one("#main-content", TabbedContent)
-            panes = list(tabbed.query(TabPane))
+            from textual.widgets import ContentSwitcher
+            switcher = tabbed.query_one(ContentSwitcher)
+            panes = [c for c in switcher.children if isinstance(c, TabPane)]
             assert len(panes) == 10
 
     @pytest.mark.asyncio
@@ -83,7 +85,9 @@ class TestMainScreen:
             from textual.widgets import TabbedContent, TabPane
 
             tabbed = app.screen.query_one("#main-content", TabbedContent)
-            panes = list(tabbed.query(TabPane))
+            from textual.widgets import ContentSwitcher
+            switcher = tabbed.query_one(ContentSwitcher)
+            panes = [c for c in switcher.children if isinstance(c, TabPane)]
             pane_ids = [pane.id for pane in panes]
             expected = [
                 "dashboard",
@@ -233,14 +237,14 @@ class TestWorkerCallable:
 
     @pytest.mark.asyncio
     async def test_stack_view_callable_wrapper(self):
-        """Verify _stream_traces is wrapped in lambda for run_worker."""
+        """Verify _stream_stacks is wrapped in lambda for run_worker."""
         from peeka.tui.views.stack import StackView
 
         view = StackView(pid=12345)
         # Verify the method exists and is not a coroutine
-        assert hasattr(view, "_stream_traces")
+        assert hasattr(view, "_stream_stacks")
         # The lambda wrapper ensures the method is called inside the worker thread
-        assert callable(view._stream_traces)
+        assert callable(view._stream_stacks)
 
     @pytest.mark.asyncio
     async def test_trace_view_callable_wrapper(self):
