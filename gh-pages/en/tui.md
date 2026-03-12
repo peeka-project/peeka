@@ -133,7 +133,7 @@ After starting TUI, the interface is divided into the following areas:
 **Interactive Operations**:
 - Enter function pattern (e.g., `module.Class.method`)
 - Set observation count (-n parameter)
-- Set condition expression (--condition-express)
+- Set condition expression (--condition)
 - Press Enter to start observation
 - Press Delete to stop observation
 

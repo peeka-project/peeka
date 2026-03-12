@@ -39,7 +39,7 @@ Peeka 的设计深受 [Alibaba Arthas](https://github.com/alibaba/arthas) 启发
 |------|-------|--------|------|
 | **watch 命令** | ✅ | ✅ | 观测函数调用、参数、返回值 |
 | 观测点控制 | `-b/-e/-s/-f` | `-b/-e/-s/-f` | AtEnter/AtExit/AtExceptionExit |
-| 条件过滤 | `--condition-express` | `--condition-express` | 支持表达式过滤 |
+| 条件过滤 | `--condition` | `--condition` | 支持表达式过滤 |
 | 耗时过滤 | `cost > 100` | `#cost>100` | 基于执行时间过滤 |
 | 输出字段 | `params/returnObj/throwExp/cost` | 相同 | Arthas 兼容字段名 |
 | **trace 命令** | ✅ | ✅ | 追踪函数调用链和耗时 |
@@ -67,7 +67,7 @@ Peeka 的设计深受 [Alibaba Arthas](https://github.com/alibaba/arthas) 启发
 | **attach 命令** | ✅ | ✅ | 附加到目标进程 |
 | **watch 命令** | ✅ | ✅ | 观测函数调用 |
 | 观测点控制 | `-b/-e/-s/-f` | `-b/-e/-s/-f` | AtEnter/AtExit/AtExceptionExit |
-| 条件过滤 | `--condition` | `--condition-express` | 支持表达式过滤 |
+| 条件过滤 | `--condition` | `--condition` | 支持表达式过滤 |
 | 耗时过滤 | `cost > 100` | `#cost>100` | 基于执行时间过滤 |
 | 输出字段 | `params/returnObj/throwExp/cost/target` | 相同 | Arthas 兼容字段名 |
 | **trace 命令** | ✅ | ✅ | 追踪函数调用链和耗时 |
@@ -131,7 +131,7 @@ watch module.func -x 2 | grep "result" | awk '{print $3}'
 --condition "params[0] > 100 and cost > 50"
 
 # ⚠️ Arthas - OGNL 可能的安全风险
---condition-express '#cost > 50'
+--condition '#cost > 50'
 ```
 
 ### 3. Python 3.12+ 性能优化

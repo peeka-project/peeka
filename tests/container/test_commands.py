@@ -562,7 +562,7 @@ class TestDiagnosticCommands:
 
         exit_code, output = exec_in_container(
             container,
-            "python -m peeka.cli.main trace '__main__.Calculator.add' --condition-express \"cost >= 0\" -n 1",
+            "python -m peeka.cli.main trace '__main__.Calculator.add' --condition \"cost >= 0\" -n 1",
             timeout=30,
         )
 

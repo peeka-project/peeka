@@ -133,7 +133,7 @@ peeka --list-themes
 **交互操作**：
 - 输入函数模式（如 `module.Class.method`）
 - 设置观测次数（-n 参数）
-- 设置条件表达式（--condition-express）
+- 设置条件表达式（--condition）
 - 按 Enter 启动观测
 - 按 Delete 停止观测
 

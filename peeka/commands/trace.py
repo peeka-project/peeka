@@ -16,19 +16,19 @@ class TraceCommand(BaseCommand):
     Trace command - traces function call tree and timing (Arthas-compatible)
 
     Usage:
-        trace <module.class.method> [-d depth] [-n times] [--condition-express expr] [--skip-builtin] [--min-duration ms]
+        trace <module.class.method> [-d depth] [-n times] [--condition expr] [--skip-builtin] [--min-duration ms]
 
     Parameters:
         -d, --depth: Trace depth (max call levels, default: 3)
         -n, --times: Observation limit, -1 for unlimited (default: -1)
-        --condition-express: Filter expression (e.g., "cost > 50")
+        --condition: Filter expression (e.g., "cost > 50")
         --skip-builtin: Skip built-in functions and standard library (default: True)
         --min-duration: Minimum duration in ms to record child calls (default: 0)
 
     Examples:
         trace mymodule.MyClass.my_method
         trace mymodule.my_function -d 5 -n 10
-        trace mymodule.func --condition-express "cost > 50"
+        trace mymodule.func --condition "cost > 50"
         trace mymodule.func --skip-builtin=false
         trace mymodule.func --min-duration 10
     """

@@ -146,7 +146,7 @@ def demo_loop():
     print()
     print(f"  # Filter by execution time (cost variable)")
     print(f"  peeka-cli attach {os.getpid()}")
-    print(f"  peeka-cli watch 'demo.slow_operation' --condition-express 'cost > 15'")
+    print(f"  peeka-cli watch 'demo.slow_operation' --condition 'cost > 15'")
     print()
     print(f"  # Observe entry and exit (-b -s flags)")
     print(f"  peeka-cli attach {os.getpid()}")
@@ -242,7 +242,7 @@ def main():
     print("Examples:")
     print("  $ peeka-cli watch 'demo.Calculator.add' -b")
     print("  $ peeka-cli watch 'demo.Calculator.divide' -e")
-    print("  $ peeka-cli watch 'demo.slow_operation' --condition-express 'cost > 15'")
+    print("  $ peeka-cli watch 'demo.slow_operation' --condition 'cost > 15'")
     print()
 
 

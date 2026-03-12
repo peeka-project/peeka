@@ -54,7 +54,7 @@ peeka-cli trace <pattern> [options]
 | `pattern` | Function matching pattern | - | `module.Class.method` |
 | `-d, --depth` | Trace depth (max call levels) | `3` | `-d 5` |
 | `-n, --times` | Observation count (-1 for unlimited) | `-1` | `-n 10` |
-| `--condition-express` | Condition expression (supports `cost` variable) | None | `--condition-express "cost > 50"` |
+| `--condition` | Condition expression (supports `cost` variable) | None | `--condition "cost > 50"` |
 | `--skip-builtin` | Skip built-in and stdlib functions | `true` | `--skip-builtin=false` |
 | `--min-duration` | Minimum duration filter (milliseconds) | `0` | `--min-duration 10` |
 
@@ -227,10 +227,10 @@ process() → validate() → check_type() → isinstance()
 
 ```bash
 # Only trace calls exceeding 50ms
-peeka-cli trace "api.handler" --condition-express "cost > 50"
+peeka-cli trace "api.handler" --condition "cost > 50"
 
 # Combine parameters and timing conditions
-peeka-cli trace "service.query" --condition-express "cost > 100 and params[0] > 1000"
+peeka-cli trace "service.query" --condition "cost > 100 and params[0] > 1000"
 ```
 
 ### 5. Skip Built-in Functions
@@ -312,7 +312,7 @@ Peeka's `trace` command automatically selects the optimal implementation based o
 3. **Use conditional filtering**
    ```bash
    # Only trace slow calls
-   peeka-cli trace "func" --condition-express "cost > 100"
+   peeka-cli trace "func" --condition "cost > 100"
    ```
 
 4. **Limit observation count**
@@ -333,7 +333,7 @@ Peeka's `trace` command automatically selects the optimal implementation based o
 
 ```bash
 # Trace slow endpoints, find sub-calls with longest duration
-peeka-cli trace "api.handler.process_request" --condition-express "cost > 100"
+peeka-cli trace "api.handler.process_request" --condition "cost > 100"
 ```
 
 **Output**:
@@ -546,7 +546,7 @@ peeka-cli trace "module.func" --skip-builtin
 peeka-cli trace "module.func" --min-duration 10
 
 # Use conditional filtering
-peeka-cli trace "module.func" --condition-express "cost > 50"
+peeka-cli trace "module.func" --condition "cost > 50"
 ```
 
 ### 3. Excessive Performance Overhead
@@ -563,7 +563,7 @@ peeka-cli trace "module.func" -d 2
 peeka-cli trace "module.func" -n 10
 
 # 3. Use conditional filtering, trace only slow calls
-peeka-cli trace "module.func" --condition-express "cost > 100"
+peeka-cli trace "module.func" --condition "cost > 100"
 
 # 4. Consider upgrading to Python 3.12+ for better performance
 ```
