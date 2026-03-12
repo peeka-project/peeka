@@ -16,12 +16,12 @@ class WatchCommand(BaseCommand):
     Watch command - monitors function execution (Arthas-compatible)
 
     Usage:
-        watch <module.class.method> [-x depth] [-n times] [--condition-express expr] [-b] [-e] [-s] [-f]
+        watch <module.class.method> [-x depth] [-n times] [--condition expr] [-b] [-e] [-s] [-f]
 
     Parameters:
         -x, --depth: Output depth (default: 2)
         -n, --times: Observation limit, -1 for unlimited (default: -1)
-        --condition-express: Filter expression (e.g., "params[0] > 100" or "cost > 50")
+        --condition: Filter expression (e.g., "params[0] > 100" or "cost > 50")
         -b, --before: Observe before function execution (AtEnter)
         -e, --exception: Observe on exception (AtExceptionExit)
         -s, --success: Observe on success (AtExit)
@@ -30,10 +30,10 @@ class WatchCommand(BaseCommand):
     Examples:
         watch mymodule.MyClass.my_method
         watch mymodule.my_function -x 2 -n 5
-        watch mymodule.func --condition-express "params[0] > 100"
+        watch mymodule.func --condition "params[0] > 100"
         watch mymodule.func -b -s
         watch mymodule.func -e
-        watch mymodule.func --condition-express "cost > 50"
+        watch mymodule.func --condition "cost > 50"
     """
 
     def __init__(self, agent: "PeekaAgent"):

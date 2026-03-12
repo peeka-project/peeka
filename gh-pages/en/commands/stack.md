@@ -115,7 +115,7 @@ peeka-cli stack "myapp.utils.recursive_func" --depth 20
 ```bash
 # Only capture stack when user_id is 999
 peeka-cli stack "myapp.auth.check_permission" \
-  --condition-express "params[0] == 999"
+  --condition "params[0] == 999"
 ```
 
 ### 4. Analyzing Hot Call Paths
@@ -153,7 +153,7 @@ peeka-cli stack [--pid PID | --name NAME] <pattern> [options]
 
 **Optional Parameters**:
 - `-n, --times`: Number of captures (-1 for unlimited, default -1)
-- `--condition-express`: Condition expression (capture only when condition is met)
+- `--condition`: Condition expression (capture only when condition is met)
 - `--depth`: Stack depth limit (default 10)
 
 ---
@@ -194,7 +194,7 @@ peeka-cli stack "myapp.func" -n 1
 peeka-cli stack "myapp.func" -n 50
 ```
 
-### --condition-express - Condition Expression
+### --condition - Condition Expression
 
 Captures stack only when condition is met, avoiding irrelevant data.
 
@@ -214,18 +214,18 @@ Captures stack only when condition is met, avoiding irrelevant data.
 **Examples**:
 ```bash
 # Only capture when first argument is greater than 100
-peeka-cli stack "myapp.func" --condition-express "params[0] > 100"
+peeka-cli stack "myapp.func" --condition "params[0] > 100"
 
 # Only capture when number of parameters is greater than 2
-peeka-cli stack "myapp.func" --condition-express "len(params) > 2"
+peeka-cli stack "myapp.func" --condition "len(params) > 2"
 
 # Only capture when user ID is specified value
 peeka-cli stack "myapp.check_permission" \
-  --condition-express "kwargs.get('user_id') == 999"
+  --condition "kwargs.get('user_id') == 999"
 
 # Compound condition
 peeka-cli stack "myapp.process" \
-  --condition-express "params[0] > 10 and len(params) < 5"
+  --condition "params[0] > 10 and len(params) < 5"
 ```
 
 **Security**:
@@ -392,7 +392,7 @@ peeka-cli stack "myapp.pricing.calculate_price"
 
 ```bash
 peeka-cli stack "myapp.utils.process_value" \
-  --condition-express "params[0] < 0" \
+  --condition "params[0] < 0" \
   -n 10
 ```
 
@@ -515,12 +515,12 @@ peeka-cli stack "myapp.shared.resource.access" -n 50 | \
 ```bash
 # Step 1: Start tracing (only capture calls with exception parameters)
 peeka-cli stack "myapp.payment.charge" \
-  --condition-express "params[0] <= 0" \
+  --condition "params[0] <= 0" \
   -n 20
 
 # Step 2: Wait for issue reproduction (continuous output to file)
 peeka-cli stack "myapp.payment.charge" \
-  --condition-express "params[0] <= 0" > stack_trace.jsonl
+  --condition "params[0] <= 0" > stack_trace.jsonl
 
 # Step 3: Analyze call paths
 jq -r '.stack[] | "\(.filename):\(.lineno) - \(.function)"' stack_trace.jsonl
@@ -605,7 +605,7 @@ process_tree at /app/myapp/api/views.py:123
 **Total Overhead**: Approximately 1-3ms per capture (high-frequency functions may accumulate to 5-10% CPU)
 
 **Optimization Recommendations**:
-- Use `--condition-express` to reduce capture frequency
+- Use `--condition` to reduce capture frequency
 - Set reasonable `--depth` (default 10 levels usually sufficient)
 - Avoid tracing ultra-high frequency functions (e.g., functions called tens of thousands of times per second)
 - Use `-n` to limit capture count (stop immediately after debugging)
@@ -823,7 +823,7 @@ call_path_count{path="/app/api/orders.py:67"} 78
 | Feature | Arthas (Java) | Peeka (Python) | Notes |
 |---------|---------------|----------------|-------|
 | Call stack capture | ✅ `stack` | ✅ `stack` | Core functionality identical |
-| Conditional filtering | ✅ `#cost>100` | ✅ `--condition-express` | Syntax slightly different |
+| Conditional filtering | ✅ `#cost>100` | ✅ `--condition` | Syntax slightly different |
 | Stack depth limit | ❌ None | ✅ `--depth` | Peeka can control output length |
 | Capture count limit | ✅ `-n` | ✅ `-n` | Identical |
 | Thread information | ✅ | ✅ | Both supported |
@@ -840,7 +840,7 @@ stack com.example.MyClass myMethod -n 10 '#cost>100'
 **Peeka (Python)**:
 ```bash
 peeka-cli stack "myapp.MyClass.myMethod" -n 10 \
-  --condition-express "cost > 100"
+  --condition "cost > 100"
 ```
 
 **Main Differences**:

@@ -54,7 +54,7 @@ peeka-cli trace <pattern> [options]
 | `pattern`             | 函数匹配模式                | -       | `module.Class.method`                   |
 | `-d, --depth`         | 追踪深度（最大调用层数）          | `3`     | `-d 5`                                  |
 | `-n, --times`         | 观测次数（-1 表示无限）         | `-1`    | `-n 10`                                 |
-| `--condition-express` | 条件表达式（支持 `cost` 变量）   | 无       | `--condition-express "cost > 50"`       |
+| `--condition` | 条件表达式（支持 `cost` 变量）   | 无       | `--condition "cost > 50"`       |
 | `--skip-builtin`      | 跳过内置函数和标准库函数          | `true`  | `--skip-builtin=false`                  |
 | `--min-duration`      | 最小耗时过滤（毫秒）            | `0`     | `--min-duration 10`                     |
 
@@ -227,10 +227,10 @@ process() → validate() → check_type() → isinstance()
 
 ```bash
 # 只追踪耗时超过 50ms 的调用
-peeka-cli trace "api.handler" --condition-express "cost > 50"
+peeka-cli trace "api.handler" --condition "cost > 50"
 
 # 组合参数和耗时条件
-peeka-cli trace "service.query" --condition-express "cost > 100 and params[0] > 1000"
+peeka-cli trace "service.query" --condition "cost > 100 and params[0] > 1000"
 ```
 
 ### 5. 跳过内置函数
@@ -310,7 +310,7 @@ Peeka 的 `trace` 命令根据 Python 版本自动选择最优实现方案：
 3. **使用条件过滤**
    ```bash
    # 只追踪慢调用
-   peeka-cli trace "func" --condition-express "cost > 100"
+   peeka-cli trace "func" --condition "cost > 100"
    ```
 
 4. **限制观测次数**
@@ -331,7 +331,7 @@ Peeka 的 `trace` 命令根据 Python 版本自动选择最优实现方案：
 
 ```bash
 # 追踪慢接口，找出耗时最长的子调用
-peeka-cli trace "api.handler.process_request" --condition-express "cost > 100"
+peeka-cli trace "api.handler.process_request" --condition "cost > 100"
 ```
 
 **输出**：
@@ -544,7 +544,7 @@ peeka-cli trace "module.func" --skip-builtin
 peeka-cli trace "module.func" --min-duration 10
 
 # 使用条件过滤
-peeka-cli trace "module.func" --condition-express "cost > 50"
+peeka-cli trace "module.func" --condition "cost > 50"
 ```
 
 ### 3. 性能开销过大
@@ -561,7 +561,7 @@ peeka-cli trace "module.func" -d 2
 peeka-cli trace "module.func" -n 10
 
 # 3. 使用条件过滤，只追踪慢调用
-peeka-cli trace "module.func" --condition-express "cost > 100"
+peeka-cli trace "module.func" --condition "cost > 100"
 
 # 4. 考虑升级到 Python 3.12+ 获得更好性能
 ```

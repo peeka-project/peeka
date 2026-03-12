@@ -17,17 +17,17 @@ class StackCommand(BaseCommand):
     Stack command - captures call trace when function is invoked (Arthas-compatible)
 
     Usage:
-        stack <module.class.method> [-n times] [--condition-express expr] [--depth stack_depth]
+        stack <module.class.method> [-n times] [--condition expr] [--depth stack_depth]
 
     Parameters:
         -n, --times: Observation limit, -1 for unlimited (default: -1)
-        --condition-express: Filter expression (e.g., "params[0] > 100")
+        --condition: Filter expression (e.g., "params[0] > 100")
         --depth: Stack trace depth limit (default: 10)
 
     Examples:
         stack mymodule.MyClass.my_method
         stack mymodule.my_function --depth 5
-        stack mymodule.func -n 3 --condition-express "params[0] > 100"
+        stack mymodule.func -n 3 --condition "params[0] > 100"
     """
 
     def __init__(self, agent: "PeekaAgent"):

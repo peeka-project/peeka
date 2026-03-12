@@ -52,7 +52,7 @@ peeka-cli watch <pattern> [options]
 | `pattern`             | 函数匹配模式                     | -       | `module.Class.method`                   |
 | `-x, --depth`         | 输出对象深度                     | `2`     | `-x 3`                                  |
 | `-n, --times`         | 观测次数（-1 表示无限）              | `-1`    | `-n 10`                                 |
-| `--condition-express` | 条件表达式（支持 `cost` 变量）        | 无       | `--condition-express "params[0] > 100"` |
+| `--condition` | 条件表达式（支持 `cost` 变量）        | 无       | `--condition "params[0] > 100"` |
 | `-b, --before`        | 在函数调用前观测（AtEnter）          | `false` | `-b`                                    |
 | `-e, --exception`     | 仅在抛出异常时观测（AtExceptionExit） | `false` | `-e`                                    |
 | `-s, --success`       | 仅在成功返回时观测（AtExit）          | `false` | `-s`                                    |
@@ -61,7 +61,7 @@ peeka-cli watch <pattern> [options]
 **注意**：
 
 - 如果不指定 `-b/-e/-s/-f` 任何标志，默认为 `-f`（观测所有结束情况）
-- `--condition` 参数仍然支持（为了向后兼容），但推荐使用 `--condition-express`
+- `--condition` 参数仍然支持（为了向后兼容），但推荐使用 `--condition`
 
 ### 函数匹配模式 (pattern)
 
@@ -392,40 +392,40 @@ Peeka 使用 **simpleeval** 库实现安全的条件表达式评估，支持以�
 
 ```bash
 # 只观测第一个参数 > 100 的调用
-peeka-cli watch "calculator.multiply" --condition-express "params[0] > 100"
+peeka-cli watch "calculator.multiply" --condition "params[0] > 100"
 
 # 参数数量过滤
-peeka-cli watch "api.handler" --condition-express "len(params) > 3"
+peeka-cli watch "api.handler" --condition "len(params) > 3"
 
 # 多条件组合
-peeka-cli watch "service.query" --condition-express "params[0] > 10 and params[1] < 100"
+peeka-cli watch "service.query" --condition "params[0] > 10 and params[1] < 100"
 ```
 
 #### 2. 关键字参数过滤
 
 ```bash
 # 只观测带 debug 参数的调用
-peeka-cli watch "logger.log" --condition-express "kwargs.get('debug') == True"
+peeka-cli watch "logger.log" --condition "kwargs.get('debug') == True"
 
 # 检查参数是否存在
-peeka-cli watch "api.request" --condition-express "'user_id' in kwargs"
+peeka-cli watch "api.request" --condition "'user_id' in kwargs"
 ```
 
 #### 3. 字符串匹配
 
 ```bash
 # 参数以特定前缀开头
-peeka-cli watch "db.query" --condition-express "str(params[0]).startswith('SELECT')"
+peeka-cli watch "db.query" --condition "str(params[0]).startswith('SELECT')"
 
 # 参数包含特定子串
-peeka-cli watch "handler.process" --condition-express "'error' in str(params[0])"
+peeka-cli watch "handler.process" --condition "'error' in str(params[0])"
 ```
 
 #### 4. 类型检查
 
 ```bash
 # 参数类型过滤
-peeka-cli watch "converter.convert" --condition-express "isinstance(params[0], dict)"
+peeka-cli watch "converter.convert" --condition "isinstance(params[0], dict)"
 ```
 
 #### 5. 复杂条件
@@ -433,24 +433,24 @@ peeka-cli watch "converter.convert" --condition-express "isinstance(params[0], d
 ```bash
 # 组合多个条件
 peeka-cli watch "service.process" \
-  --condition-express "len(params) > 2 and params[0] > 100 and 'debug' in kwargs"
+  --condition "len(params) > 2 and params[0] > 100 and 'debug' in kwargs"
 
 # 字符串操作
 peeka-cli watch "parser.parse" \
-  --condition-express "len(str(params[0])) > 50 and str(params[0]).endswith('.json')"
+  --condition "len(str(params[0])) > 50 and str(params[0]).endswith('.json')"
 ```
 
 #### 6. 性能过滤（cost 变量）
 
 ```bash
 # 只观测执行时间超过 100ms 的调用（类似 Arthas #cost）
-peeka-cli watch "database.query" --condition-express "cost > 100"
+peeka-cli watch "database.query" --condition "cost > 100"
 
 # 组合性能和参数条件
-peeka-cli watch "api.handler" --condition-express "cost > 50 and len(params) > 0"
+peeka-cli watch "api.handler" --condition "cost > 50 and len(params) > 0"
 
 # 观测慢调用的返回值
-peeka-cli watch "service.process" -s --condition-express "cost > 200"
+peeka-cli watch "service.process" -s --condition "cost > 200"
 ```
 
 **注意**：
@@ -464,7 +464,7 @@ peeka-cli watch "service.process" -s --condition-express "cost > 200"
 # 只观测特定对象状态的调用（仅实例方法）
 # 注意：当前版本 target 可用，但不支持属性导航（target.attr）
 # 可以在条件中检查 target 是否存在
-peeka-cli watch "service.UserService.update" --condition-express "params[0] > 0"
+peeka-cli watch "service.UserService.update" --condition "params[0] > 0"
 ```
 
 **限制**：
@@ -492,7 +492,7 @@ peeka-cli watch "mymodule.func" -n 1
 # {"args": [100, "test"], "kwargs": {"debug": true}, ...}
 
 # 然后根据实际输出编写条件
-peeka-cli watch "mymodule.func" --condition-express "params[0] > 50"
+peeka-cli watch "mymodule.func" --condition "params[0] > 50"
 ```
 
 ## 输出格式
@@ -769,7 +769,7 @@ peeka-cli watch --action stop <watch_id>
 | **观察对象**           | ✅ `params`, `kwargs`, `target`    | `params`, `target`, `returnObj` | **已实现** target 支持       |
 | **字段命名**           | ✅ `returnObj`, `throwExp`, `cost` | 相同                              | **已实现** Arthas 兼容       |
 | **耗时过滤**           | ✅ `cost > 100`                    | `#cost>100`                     | **已实现** cost 变量         |
-| **condition 参数**   | ✅ `--condition-express`           | `--condition-express`           | **已实现**                 |
+| **condition 参数**   | ✅ `--condition`           | `--condition`           | **已实现**                 |
 | **正则匹配**           | ⏳ 未实现                             | ✓ (通配符 + 正则)                    | 计划支持                    |
 | **ClassLoader 选择** | N/A                               | ✓ (`-c` 参数)                     | Python 无 ClassLoader 概念 |
 | **子类匹配**           | ✗                                 | ✓ (默认匹配子类)                      | Python 动态绑定已自动处理        |
@@ -906,7 +906,7 @@ peeka-cli watch "obj.MyClass.method"
 
 # ✅ 支持：target 变量在条件中可用
 # 可以检查 target 是否存在
-peeka-cli watch "obj.method" --condition-express "len(params) > 0"
+peeka-cli watch "obj.method" --condition "len(params) > 0"
 
 # ⏳ 限制：不支持属性导航
 # 无法在条件中使用 target.field_name

@@ -212,7 +212,7 @@ class TestContainerTrace:
         # Trace with condition filter (cost > 0 should always match)
         exit_code, trace_output = exec_in_container(
             container,
-            'python -m peeka.cli.main trace "__main__.Calculator.add" --condition-express "cost >= 0" -n 2',
+            'python -m peeka.cli.main trace "__main__.Calculator.add" --condition "cost >= 0" -n 2',
             timeout=30,
         )
 

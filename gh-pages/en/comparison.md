@@ -40,7 +40,7 @@ Peeka's design is deeply inspired by [Alibaba Arthas](https://github.com/alibaba
 |------|-------|--------|------|
 | **watch command** | ✅ | ✅ | Observe function calls, parameters, return values |
 | Observation point control | `-b/-e/-s/-f` | `-b/-e/-s/-f` | AtEnter/AtExit/AtExceptionExit |
-| Conditional filtering | `--condition-express` | `--condition-express` | Support expression filtering |
+| Conditional filtering | `--condition` | `--condition` | Support expression filtering |
 | Cost filtering | `cost > 100` | `#cost>100` | Based on execution time filtering |
 | Output fields | `params/returnObj/throwExp/cost` | Same | Arthas-compatible field names |
 | **trace command** | ✅ | ✅ | Trace function call chain and timing |
@@ -68,7 +68,7 @@ Peeka's design is deeply inspired by [Alibaba Arthas](https://github.com/alibaba
 | **attach command** | ✅ | ✅ | Attach to target process |
 | **watch command** | ✅ | ✅ | Observe function calls, parameters, return values |
 | Observation point control | `-b/-e/-s/-f` | `-b/-e/-s/-f` | AtEnter/AtExit/AtExceptionExit |
-| Conditional filtering | `--condition-express` | `--condition-express` | Support expression filtering |
+| Conditional filtering | `--condition` | `--condition` | Support expression filtering |
 | Cost filtering | `cost > 100` | `#cost>100` | Based on execution time filtering |
 | Output fields | `params/returnObj/throwExp/cost` | Same | Arthas-compatible field names |
 | **trace command** | ✅ | ✅ | Trace function call chain and timing |
@@ -137,7 +137,7 @@ Conditional expressions use AST whitelist, completely defending against code inj
 --condition "params[0] > 100 and cost > 50"
 
 # ⚠️ Arthas - Potential OGNL security risks
---condition-express '#cost > 50'
+--condition '#cost > 50'
 ```
 
 ### 3. Python 3.12+ Performance Optimization

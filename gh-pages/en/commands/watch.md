@@ -50,7 +50,7 @@ peeka-cli watch <pattern> [options]
 | `pattern` | Function matching pattern | - | `module.Class.method` |
 | `-x, --depth` | Output object depth | `2` | `-x 3` |
 | `-n, --times` | Number of observations (-1 for infinite) | `-1` | `-n 10` |
-| `--condition-express` | Condition expression (supports `cost` variable) | None | `--condition-express "params[0] > 100"` |
+| `--condition` | Condition expression (supports `cost` variable) | None | `--condition "params[0] > 100"` |
 | `-b, --before` | Observe before function call (AtEnter) | `false` | `-b` |
 | `-e, --exception` | Only observe when exception thrown (AtExceptionExit) | `false` | `-e` |
 | `-s, --success` | Only observe on successful return (AtExit) | `false` | `-s` |
@@ -59,7 +59,7 @@ peeka-cli watch <pattern> [options]
 **Note**:
 
 - If no `-b/-e/-s/-f` flags are specified, defaults to `-f` (observe all completion cases)
-- `--condition` parameter is still supported (for backward compatibility), but `--condition-express` is recommended
+- `--condition` parameter is still supported (for backward compatibility), but `--condition` is recommended
 
 ### Function Matching Pattern (pattern)
 
@@ -390,40 +390,40 @@ Peeka uses the **simpleeval** library to implement safe condition expression eva
 
 ```bash
 # Only observe calls where first parameter > 100
-peeka-cli watch "calculator.multiply" --condition-express "params[0] > 100"
+peeka-cli watch "calculator.multiply" --condition "params[0] > 100"
 
 # Parameter count filtering
-peeka-cli watch "api.handler" --condition-express "len(params) > 3"
+peeka-cli watch "api.handler" --condition "len(params) > 3"
 
 # Multiple conditions combined
-peeka-cli watch "service.query" --condition-express "params[0] > 10 and params[1] < 100"
+peeka-cli watch "service.query" --condition "params[0] > 10 and params[1] < 100"
 ```
 
 #### 2. Keyword Argument Filtering
 
 ```bash
 # Only observe calls with debug parameter
-peeka-cli watch "logger.log" --condition-express "kwargs.get('debug') == True"
+peeka-cli watch "logger.log" --condition "kwargs.get('debug') == True"
 
 # Check if parameter exists
-peeka-cli watch "api.request" --condition-express "'user_id' in kwargs"
+peeka-cli watch "api.request" --condition "'user_id' in kwargs"
 ```
 
 #### 3. String Matching
 
 ```bash
 # Parameter starts with specific prefix
-peeka-cli watch "db.query" --condition-express "str(params[0]).startswith('SELECT')"
+peeka-cli watch "db.query" --condition "str(params[0]).startswith('SELECT')"
 
 # Parameter contains specific substring
-peeka-cli watch "handler.process" --condition-express "'error' in str(params[0])"
+peeka-cli watch "handler.process" --condition "'error' in str(params[0])"
 ```
 
 #### 4. Type Checking
 
 ```bash
 # Parameter type filtering
-peeka-cli watch "converter.convert" --condition-express "isinstance(params[0], dict)"
+peeka-cli watch "converter.convert" --condition "isinstance(params[0], dict)"
 ```
 
 #### 5. Complex Conditions
@@ -431,24 +431,24 @@ peeka-cli watch "converter.convert" --condition-express "isinstance(params[0], d
 ```bash
 # Combine multiple conditions
 peeka-cli watch "service.process" \
-  --condition-express "len(params) > 2 and params[0] > 100 and 'debug' in kwargs"
+  --condition "len(params) > 2 and params[0] > 100 and 'debug' in kwargs"
 
 # String operations
 peeka-cli watch "parser.parse" \
-  --condition-express "len(str(params[0])) > 50 and str(params[0]).endswith('.json')"
+  --condition "len(str(params[0])) > 50 and str(params[0]).endswith('.json')"
 ```
 
 #### 6. Performance Filtering (cost variable)
 
 ```bash
 # Only observe calls exceeding 100ms execution time (similar to Arthas #cost)
-peeka-cli watch "database.query" --condition-express "cost > 100"
+peeka-cli watch "database.query" --condition "cost > 100"
 
 # Combine performance and parameter conditions
-peeka-cli watch "api.handler" --condition-express "cost > 50 and len(params) > 0"
+peeka-cli watch "api.handler" --condition "cost > 50 and len(params) > 0"
 
 # Observe return values of slow calls
-peeka-cli watch "service.process" -s --condition-express "cost > 200"
+peeka-cli watch "service.process" -s --condition "cost > 200"
 ```
 
 **Note**:
@@ -462,7 +462,7 @@ peeka-cli watch "service.process" -s --condition-express "cost > 200"
 # Only observe calls with specific object state (instance methods only)
 # Note: Current version has target available but doesn't support property navigation (target.attr)
 # Can check if target exists in condition
-peeka-cli watch "service.UserService.update" --condition-express "params[0] > 0"
+peeka-cli watch "service.UserService.update" --condition "params[0] > 0"
 ```
 
 **Limitations**:
@@ -490,7 +490,7 @@ peeka-cli watch "mymodule.func" -n 1
 # {"args": [100, "test"], "kwargs": {"debug": true}, ...}
 
 # Then write condition based on actual output
-peeka-cli watch "mymodule.func" --condition-express "params[0] > 50"
+peeka-cli watch "mymodule.func" --condition "params[0] > 50"
 ```
 
 ## Output Format
@@ -767,7 +767,7 @@ peeka-cli watch --action stop <watch_id>
 | **Observation Objects** | ✅ `params`, `kwargs`, `target` | `params`, `target`, `returnObj` | **Implemented** target support |
 | **Field Naming** | ✅ `returnObj`, `throwExp`, `cost` | Same | **Implemented** Arthas compatible |
 | **Duration Filtering** | ✅ `cost > 100` | `#cost>100` | **Implemented** cost variable |
-| **condition Parameter** | ✅ `--condition-express` | `--condition-express` | **Implemented** |
+| **condition Parameter** | ✅ `--condition` | `--condition` | **Implemented** |
 | **Regex Matching** | ⏳ Not implemented | ✓ (wildcard + regex) | Planned |
 | **ClassLoader Selection** | N/A | ✓ (`-c` parameter) | Python has no ClassLoader concept |
 | **Subclass Matching** | ✗ | ✓ (matches subclasses by default) | Python dynamic binding already handles |
@@ -904,7 +904,7 @@ peeka-cli watch "obj.MyClass.method"
 
 # ✅ Supports: target variable available in conditions
 # Can check if target exists
-peeka-cli watch "obj.method" --condition-express "len(params) > 0"
+peeka-cli watch "obj.method" --condition "len(params) > 0"
 
 # ⏳ Limitation: Doesn't support property navigation
 # Cannot use target.field_name in conditions

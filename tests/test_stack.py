@@ -137,7 +137,7 @@ class TestStackCommand:
         assert len(obs["stack"]) == 10  # Should be capped at default
 
     def test_stack_with_condition(self, stack_cmd, test_module):
-        """--condition-express should filter when to capture stack."""
+        """--condition should filter when to capture stack."""
         params = {
             "action": "start",
             "pattern": "test_stack_module.inner_function",

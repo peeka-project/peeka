@@ -114,7 +114,7 @@ peeka-cli stack "myapp.utils.recursive_func" --depth 20
 ```bash
 # 仅在 user_id 为 999 时捕获调用栈
 peeka-cli stack "myapp.auth.check_permission" \
-  --condition-express "params[0] == 999"
+  --condition "params[0] == 999"
 ```
 
 ### 4. 分析热点调用路径
@@ -147,7 +147,7 @@ peeka-cli stack "myapp.api.handle_request"
 
 **可选参数**：
 - `-n, --times`：捕获次数（-1 表示无限，默认 -1）
-- `--condition-express`：条件表达式（仅在满足条件时捕获）
+- `--condition`：条件表达式（仅在满足条件时捕获）
 - `--depth`：栈深度限制（默认 10）
 
 ---
@@ -188,7 +188,7 @@ peeka-cli stack "myapp.func" -n 1
 peeka-cli stack "myapp.func" -n 50
 ```
 
-### --condition-express - 条件表达式
+### --condition - 条件表达式
 
 仅在满足条件时捕获调用栈，避免输出无关数据。
 
@@ -208,18 +208,18 @@ peeka-cli stack "myapp.func" -n 50
 **示例**：
 ```bash
 # 仅当第一个参数大于 100 时捕获
-peeka-cli stack "myapp.func" --condition-express "params[0] > 100"
+peeka-cli stack "myapp.func" --condition "params[0] > 100"
 
 # 仅当参数个数大于 2 时捕获
-peeka-cli stack "myapp.func" --condition-express "len(params) > 2"
+peeka-cli stack "myapp.func" --condition "len(params) > 2"
 
 # 仅当用户 ID 为指定值时捕获
 peeka-cli stack "myapp.check_permission" \
-  --condition-express "kwargs.get('user_id') == 999"
+  --condition "kwargs.get('user_id') == 999"
 
 # 复合条件
 peeka-cli stack "myapp.process" \
-  --condition-express "params[0] > 10 and len(params) < 5"
+  --condition "params[0] > 10 and len(params) < 5"
 ```
 
 **安全性**：
@@ -386,7 +386,7 @@ peeka-cli stack "myapp.pricing.calculate_price"
 
 ```bash
 peeka-cli stack "myapp.utils.process_value" \
-  --condition-express "params[0] < 0" \
+  --condition "params[0] < 0" \
   -n 10
 ```
 
@@ -509,12 +509,12 @@ peeka-cli stack "myapp.shared.resource.access" -n 50 | \
 ```bash
 # 步骤 1：启动追踪（仅捕获异常参数的调用）
 peeka-cli stack "myapp.payment.charge" \
-  --condition-express "params[0] <= 0" \
+  --condition "params[0] <= 0" \
   -n 20
 
 # 步骤 2：等待问题复现（持续输出到文件）
 peeka-cli stack "myapp.payment.charge" \
-  --condition-express "params[0] <= 0" > stack_trace.jsonl
+  --condition "params[0] <= 0" > stack_trace.jsonl
 
 # 步骤 3：分析调用路径
 jq -r '.stack[] | "\(.filename):\(.lineno) - \(.function)"' stack_trace.jsonl
@@ -599,7 +599,7 @@ process_tree at /app/myapp/api/views.py:123
 **总体开销**：约 1-3ms/次（高频函数可能累积到 5-10% CPU）
 
 **优化建议**：
-- 使用 `--condition-express` 减少捕获次数
+- 使用 `--condition` 减少捕获次数
 - 合理设置 `--depth`（默认 10 层通常足够）
 - 避免追踪超高频函数（如每秒调用上万次的函数）
 - 使用 `-n` 限制捕获次数（完成调试后立即停止）
@@ -817,7 +817,7 @@ call_path_count{path="/app/api/orders.py:67"} 78
 | 功能 | Arthas (Java) | Peeka (Python) | 说明 |
 |------|---------------|----------------|------|
 | 调用栈捕获 | ✅ `stack` | ✅ `stack` | 核心功能一致 |
-| 条件过滤 | ✅ `#cost>100` | ✅ `--condition-express` | 语法略有不同 |
+| 条件过滤 | ✅ `#cost>100` | ✅ `--condition` | 语法略有不同 |
 | 栈深度限制 | ❌ 无 | ✅ `--depth` | Peeka 可控制输出长度 |
 | 捕获次数限制 | ✅ `-n` | ✅ `-n` | 一致 |
 | 线程信息 | ✅ | ✅ | 都支持 |
@@ -834,7 +834,7 @@ stack com.example.MyClass myMethod -n 10 '#cost>100'
 **Peeka (Python)**：
 ```bash
 peeka-cli stack "myapp.MyClass.myMethod" -n 10 \
-  --condition-express "cost > 100"
+  --condition "cost > 100"
 ```
 
 **主要区别**：

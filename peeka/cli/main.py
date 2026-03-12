@@ -148,7 +148,7 @@ Examples:
         help="Observe on finish (both success and exception) (default: True)",
     )
     watch_parser.add_argument(
-        "--condition-express",
+        "--condition",
         dest="condition_express",
         type=str,
         help='Condition expression (e.g., "params[0] > 100")',
@@ -175,7 +175,7 @@ Examples:
         help="Number of times to capture (-1 for infinite)",
     )
     trace_parser.add_argument(
-        "--condition-express",
+        "--condition",
         dest="condition_express",
         type=str,
         help='Condition expression (e.g., "cost > 50")',
@@ -209,7 +209,7 @@ Examples:
         help="Number of times to capture (-1 for infinite)",
     )
     stack_parser.add_argument(
-        "--condition-express",
+        "--condition",
         dest="condition_express",
         type=str,
         help='Condition expression (e.g., "params[0] > 100")',

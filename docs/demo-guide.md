@@ -242,7 +242,7 @@ watch 是 Peeka 最核心的命令，支持在函数入口（AtEnter）、正常
 > **当**：使用条件表达式过滤耗时 > 15ms 的 slow_operation 调用
 >
 > ```bash
-> peeka-cli watch 'demo.slow_operation' --condition-express 'cost > 15' -n 2
+> peeka-cli watch 'demo.slow_operation' --condition 'cost > 15' -n 2
 > ```
 >
 > **那么**：只输出 cost > 15ms 的调用（slow_operation 内部 sleep 20ms，应全部命中）
@@ -265,7 +265,7 @@ watch 是 Peeka 最核心的命令，支持在函数入口（AtEnter）、正常
 > **当**：使用条件表达式过滤第一个参数 > 50 的 add 调用
 >
 > ```bash
-> peeka-cli watch 'demo.Calculator.add' --condition-express 'params[0] > 50' -n 1
+> peeka-cli watch 'demo.Calculator.add' --condition 'params[0] > 50' -n 1
 > ```
 >
 > **那么**：等待约 25 秒（counter 达到 51），输出匹配的调用
@@ -426,7 +426,7 @@ stack 命令捕获函数被调用时的完整调用栈，用于回答"这个函�
 > **当**：只捕获参数满足条件的调用栈
 >
 > ```bash
-> peeka-cli stack 'demo.Calculator.divide' --condition-express 'params[1] == 0' -n 1 --depth 10
+> peeka-cli stack 'demo.Calculator.divide' --condition 'params[1] == 0' -n 1 --depth 10
 > ```
 >
 > **那么**：只捕获除数为 0 的调用栈，帮助定位异常调用来源
@@ -898,8 +898,8 @@ logger 命令可以在不重启进程的情况下查看和修改 Python 日志�
 - [ ] `-b` 模式：观测到 AtEnter 数据，`returnObj` 为 null
 - [ ] `-e` 模式：只捕获异常调用，`throwExp` 包含异常信息
 - [ ] `-b -s` 模式：同一调用产生 AtEnter + AtExit 两条数据
-- [ ] `--condition-express 'cost > 15'`：只输出慢调用
-- [ ] `--condition-express 'params[0] > 50'`：只输出参数满足条件的调用
+- [ ] `--condition 'cost > 15'`：只输出慢调用
+- [ ] `--condition 'params[0] > 50'`：只输出参数满足条件的调用
 - [ ] `-n` 限制：达到指定次数后自动停止
 - [ ] `target` 字段：实例方法显示 self 对象（含 `__class__` 和 `__attrs__`）
 - [ ] `target` 字段：模块级函数为 null
@@ -964,7 +964,7 @@ logger 命令可以在不重启进程的情况下查看和修改 Python 日志�
 
 1. 确认函数名格式正确：`demo.Calculator.add` 或 `__main__.Calculator.add`
 2. 确认函数确实被调用（loop 模式下大部分函数每 0.5 秒调用一次）
-3. 检查 `--condition-express` 是否过于严格
+3. 检查 `--condition` 是否过于严格
 4. 使用 `sm '*add*'` 搜索确认函数存在
 
 ### Q: 条件表达式中可以使用哪些变量？
