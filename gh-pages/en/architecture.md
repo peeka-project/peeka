@@ -58,13 +58,20 @@ The agent architecture can easily support new diagnostic commands and feature ex
 │         │ /tmp/peeka_<pid>.sock      │      │       │       │
 │         └────────────────────────────┼──────┘       │       │
 │                                      │              │       │
-│  ┌─────────────────┐                 │ ┌──────────┐ │       │
 │  │ AgentClient     │←────JSON────────┤ │ Commands │ │       │
 │  │                 │                 │ │          │ │       │
 │  │ - send_command  │                 │ │ - watch  │ │       │
 │  │ - recv_response │                 │ │ - trace  │ │       │
 │  └─────────────────┘                 │ │ - stack  │ │       │
 │                                      │ │ - monitor│ │       │
+│                                      │ │ - logger │ │       │
+│                                      │ │ - memory │ │       │
+│                                      │ │ - inspect│ │       │
+│                                      │ │ - thread │ │       │
+│                                      │ │ - top    │ │       │
+│                                      │ │ - sc/sm  │ │       │
+│                                      │ │ - reset  │ │       │
+│                                      │ │ - detach │ │       │
 │                                      │ └──────────┘ │       │
 │                                      │              │       │
 │                                      │ ┌──────────┐ │       │

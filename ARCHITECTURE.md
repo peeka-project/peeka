@@ -77,8 +77,17 @@ Peeka 是基于 Python 3.14 远程调试协议（PEP 768）开发的运行时诊
 #### 4. 命令处理器
 
 - `WatchCommand`: 启动/停止函数观测
-- `ThreadCommand`: 线程诊断（规划中）
-- `MemoryCommand`: 内存分析（规划中）
+- `TraceCommand`: 调用链追踪（含耗时分析）
+- `StackCommand`: 函数调用栈捕获
+- `MonitorCommand`: 周期性性能统计
+- `LoggerCommand`: 运行时日志级别调整
+- `MemoryCommand`: 内存使用分析
+- `InspectCommand`: 运行时对象检查
+- `SearchCommand`: 类/方法搜索（sc/sm）
+- `ThreadCommand`: 线程诊断
+- `TopCommand`: 线程 CPU 占用排行
+- `ResetCommand`: 移除所有注入的增强
+- `DetachCommand`: 从目标进程分离
 
 统一接口：`BaseCommand.execute(params) -> result`
 
