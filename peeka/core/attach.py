@@ -11,9 +11,35 @@ import tempfile
 import time
 import uuid
 import warnings
-from importlib import resources
 from pathlib import Path
 from typing import Optional
+
+# Python 3.9+ uses importlib.resources.files(), Python 3.8 uses read_text()
+try:
+    from importlib.resources import files as resource_files
+except ImportError:
+    # Python 3.8 compatibility
+    resource_files = None
+    from importlib import resources as legacy_resources
+
+
+def _read_agent_code() -> str:
+    """
+    Read agent.py content in a Python 3.8+ compatible way.
+
+    Returns:
+        str: Content of agent.py
+    """
+    if resource_files is not None:
+        # Python 3.9+ - use new Traversable API
+        return (
+            resource_files("peeka.core")
+            .joinpath("agent.py")
+            .read_text(encoding="utf-8")
+        )
+    else:
+        # Python 3.8 - use legacy API
+        return legacy_resources.read_text("peeka.core", "agent.py", encoding="utf-8")
 
 
 class ProcessAttacher:
@@ -137,12 +163,7 @@ class ProcessAttacher:
 
     def _attach_pep768(self) -> bool:
         """Attach using PEP 768 sys.remote_exec()"""
-        # from peeka.core.agent import AGENT_CODE
-        agent_code = (
-            resources.files("peeka.core")
-            .joinpath("agent.py")
-            .read_text(encoding="utf-8")
-        )
+        agent_code = _read_agent_code()
 
         # Create agent script
         self.agent_script = self._create_agent_script(agent_code)
@@ -196,11 +217,7 @@ class ProcessAttacher:
         self._check_gdb_available()
         self._check_ptrace_permissions()
 
-        agent_code = (
-            resources.files("peeka.core")
-            .joinpath("agent.py")
-            .read_text(encoding="utf-8")
-        )
+        agent_code = _read_agent_code()
 
         agent_script = self._create_agent_script(agent_code)
 

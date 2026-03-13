@@ -6,7 +6,7 @@
 
 Runtime diagnostic tool for Python applications, inspired by [Alibaba Arthas](https://github.com/alibaba/arthas). Non-invasive function observation with zero code changes.
 
-Uses [PEP 768](https://peps.python.org/pep-0768/) (`sys.remote_exec`) on Python 3.14+, with a GDB + ptrace fallback for Python 3.9–3.13.
+Uses [PEP 768](https://peps.python.org/pep-0768/) (`sys.remote_exec`) on Python 3.14+, with a GDB + ptrace fallback for Python 3.8–3.13.
 
 ## Key Features
 
@@ -189,7 +189,7 @@ Every line is a JSON object with a `type` field:
 | Python Version | Attach Mechanism              | Requirements                      |
 |----------------|-------------------------------|-----------------------------------|
 | 3.14+          | PEP 768 `sys.remote_exec()`  | Same UID or `CAP_SYS_PTRACE`     |
-| 3.9–3.13       | GDB + ptrace fallback         | GDB 7.3+, ptrace_scope ≤ 1       |
+| 3.8–3.13       | GDB + ptrace fallback         | GDB 7.3+, ptrace_scope ≤ 1       |
 
 ### Python < 3.14 Setup
 
@@ -265,7 +265,7 @@ CLI/TUI  →  AgentClient  →  Unix Socket  →  PeekaAgent (injected in target
                                               └─ ObservationManager (buffered streaming)
 ```
 
-- **Attach**: PEP 768 `sys.remote_exec()` on 3.14+, GDB + ptrace on 3.9–3.13
+- **Attach**: PEP 768 `sys.remote_exec()` on 3.14+, GDB + ptrace on 3.8–3.13
 - **Observe**: Decorator injection wraps target functions, captures args/return/exceptions/timing
 - **Stream**: Real-time observation data via Unix domain socket (length-prefixed JSON)
 - **Commands**: Modular `BaseCommand` subclasses, registered in `PeekaAgent._register_handlers()`
