@@ -499,6 +499,6 @@ python -m peeka.analyze --baseline baseline.jsonl --current current.jsonl
 
 ## 更多资源
 
-- [命令参考]({{ site.baseurl }}{% link commands/index.md %}) - 详细命令文档
-- [架构设计]({{ site.baseurl }}{% link architecture.md %}) - 了解实现原理
-- [故障排除]({{ site.baseurl }}{% link troubleshooting.md %}) - 常见问题解决
+- [命令参考]({% link commands/index.md %}) - 详细命令文档
+- [架构设计]({% link architecture.md %}) - 了解实现原理
+- [故障排除]({% link troubleshooting.md %}) - 常见问题解决

@@ -316,9 +316,9 @@ ps -p 12345 -o stat=
 
 ## 相关命令
 
-- [detach]({{ site.baseurl }}{% link commands/detach.md %}) - 从进程分离
-- [watch]({{ site.baseurl }}{% link commands/watch.md %}) - 观测函数调用
-- [reset]({{ site.baseurl }}{% link commands/reset.md %}) - 重置增强
+- [detach]({% link commands/detach.md %}) - 从进程分离
+- [watch]({% link commands/watch.md %}) - 观测函数调用
+- [reset]({% link commands/reset.md %}) - 重置增强
 
 ---
 

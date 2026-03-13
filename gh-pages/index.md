@@ -131,7 +131,7 @@ peeka-cli watch "module.func" | jq 'select(.type == "observation" and .data.dura
 | `top` | 函数级性能采样 | ✅ |
 | `detach` | 安全断开连接 | ✅ |
 
-[查看完整命令参考]({{ site.baseurl }}{% link commands/index.md %}){: .btn .btn-outline }
+[查看完整命令参考]({% link commands/index.md %}){: .btn .btn-outline }
 
 ### 🎨 TUI 交互式界面
 {: .text-delta }
@@ -152,7 +152,7 @@ peeka
 # d/w/t/s/m/l/e/i/h/F8
 ```
 
-[查看 TUI 完整使用指南]({{ site.baseurl }}{% link tui.md %}){: .btn .btn-outline }
+[查看 TUI 完整使用指南]({% link tui.md %}){: .btn .btn-outline }
 
 ---
 
@@ -167,7 +167,7 @@ Peeka 的设计深受 [Alibaba Arthas](https://github.com/alibaba/arthas) 启发
 - **Python 3.12+ 性能优化** - trace 命令使用 `sys.monitoring` API，性能开销 < 5%
 - **轻量级部署** - 无需 Java 运行时，pip 一键安装
 
-[详细功能对比]({{ site.baseurl }}{% link comparison.md %}){: .btn .btn-outline }
+[详细功能对比]({% link comparison.md %}){: .btn .btn-outline }
 
 ---
 
@@ -195,7 +195,7 @@ Peeka 的设计深受 [Alibaba Arthas](https://github.com/alibaba/arthas) 启发
 - 属性保护 - 阻止反射攻击
 - 函数黑名单 - 禁用危险函数
 
-[了解架构设计]({{ site.baseurl }}{% link architecture.md %}){: .btn .btn-outline }
+[了解架构设计]({% link architecture.md %}){: .btn .btn-outline }
 
 ---
 

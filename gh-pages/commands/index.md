@@ -18,19 +18,19 @@ Peeka 提供了一系列强大的诊断命令，每个命令都专注于特定�
 
 | 命令 | 功能 | 适用场景 |
 |------|------|---------|
-| [attach]({{ site.baseurl }}{% link commands/attach.md %}) | 附加到目标进程 | 所有场景的第一步 |
-| [watch]({{ site.baseurl }}{% link commands/watch.md %}) | 观测函数调用 | 查看参数、返回值、执行时间 |
-| [trace]({{ site.baseurl }}{% link commands/trace.md %}) | 追踪调用链 | 分析函数调用关系和耗时分布 |
-| [stack]({{ site.baseurl }}{% link commands/stack.md %}) | 追踪调用栈 | 追踪函数被谁调用 |
-| [monitor]({{ site.baseurl }}{% link commands/monitor.md %}) | 性能统计 | 实时监控函数性能指标 |
-| [logger]({{ site.baseurl }}{% link commands/logger.md %}) | 日志管理 | 动态调整日志级别 |
-| [memory]({{ site.baseurl }}{% link commands/memory.md %}) | 内存分析 | 分析内存使用和泄漏 |
-| [inspect]({{ site.baseurl }}{% link commands/inspect.md %}) | 对象检查 | 运行时检查对象属性 |
-| [search]({{ site.baseurl }}{% link commands/search.md %}) | 搜索类和方法 (sc/sm) | 代码探索和发现 |
-| [thread]({{ site.baseurl }}{% link commands/thread.md %}) | 线程分析 | 枚举线程和查看线程栈 |
-| [top]({{ site.baseurl }}{% link commands/top.md %}) | 函数性能采样 | 函数级性能热点分析 |
-| [detach]({{ site.baseurl }}{% link commands/detach.md %}) | 断开连接 | 安全退出诊断会话 |
-| [reset]({{ site.baseurl }}{% link commands/reset.md %}) | 重置增强 | 恢复被观测的函数 |
+| [attach]({% link commands/attach.md %}) | 附加到目标进程 | 所有场景的第一步 |
+| [watch]({% link commands/watch.md %}) | 观测函数调用 | 查看参数、返回值、执行时间 |
+| [trace]({% link commands/trace.md %}) | 追踪调用链 | 分析函数调用关系和耗时分布 |
+| [stack]({% link commands/stack.md %}) | 追踪调用栈 | 追踪函数被谁调用 |
+| [monitor]({% link commands/monitor.md %}) | 性能统计 | 实时监控函数性能指标 |
+| [logger]({% link commands/logger.md %}) | 日志管理 | 动态调整日志级别 |
+| [memory]({% link commands/memory.md %}) | 内存分析 | 分析内存使用和泄漏 |
+| [inspect]({% link commands/inspect.md %}) | 对象检查 | 运行时检查对象属性 |
+| [search]({% link commands/search.md %}) | 搜索类和方法 (sc/sm) | 代码探索和发现 |
+| [thread]({% link commands/thread.md %}) | 线程分析 | 枚举线程和查看线程栈 |
+| [top]({% link commands/top.md %}) | 函数性能采样 | 函数级性能热点分析 |
+| [detach]({% link commands/detach.md %}) | 断开连接 | 安全退出诊断会话 |
+| [reset]({% link commands/reset.md %}) | 重置增强 | 恢复被观测的函数 |
 
 ---
 
@@ -114,7 +114,7 @@ peeka
 # F8 - Top 函数热点视图
 ```
 
-详见 [TUI 使用指南]({{ site.baseurl }}{% link tui.md %})。
+详见 [TUI 使用指南]({% link tui.md %})。
 
 ---
 
@@ -189,18 +189,18 @@ peeka
 
 选择您需要的命令查看详细文档：
 
-- [attach - 附加到进程]({{ site.baseurl }}{% link commands/attach.md %}) 
-- [watch - 观测函数调用]({{ site.baseurl }}{% link commands/watch.md %})
-- [trace - 追踪调用链]({{ site.baseurl }}{% link commands/trace.md %})
-- [stack - 追踪调用栈]({{ site.baseurl }}{% link commands/stack.md %})
-- [monitor - 性能监控]({{ site.baseurl }}{% link commands/monitor.md %})
-- [logger - 日志管理]({{ site.baseurl }}{% link commands/logger.md %})
-- [memory - 内存分析]({{ site.baseurl }}{% link commands/memory.md %})
-- [inspect - 对象检查]({{ site.baseurl }}{% link commands/inspect.md %})
-- [search - 搜索类和方法]({{ site.baseurl }}{% link commands/search.md %})
-- [reset - 重置增强]({{ site.baseurl }}{% link commands/reset.md %})
-- [thread - 线程分析]({{ site.baseurl }}{% link commands/thread.md %})
-- [top - 函数性能采样]({{ site.baseurl }}{% link commands/top.md %})
-- [detach - 断开连接]({{ site.baseurl }}{% link commands/detach.md %})
+- [attach - 附加到进程]({% link commands/attach.md %}) 
+- [watch - 观测函数调用]({% link commands/watch.md %})
+- [trace - 追踪调用链]({% link commands/trace.md %})
+- [stack - 追踪调用栈]({% link commands/stack.md %})
+- [monitor - 性能监控]({% link commands/monitor.md %})
+- [logger - 日志管理]({% link commands/logger.md %})
+- [memory - 内存分析]({% link commands/memory.md %})
+- [inspect - 对象检查]({% link commands/inspect.md %})
+- [search - 搜索类和方法]({% link commands/search.md %})
+- [reset - 重置增强]({% link commands/reset.md %})
+- [thread - 线程分析]({% link commands/thread.md %})
+- [top - 函数性能采样]({% link commands/top.md %})
+- [detach - 断开连接]({% link commands/detach.md %})
 
-或查看 [快速开始]({{ site.baseurl }}{% link quickstart.md %}) 了解基本使用方法。
+或查看 [快速开始]({% link quickstart.md %}) 了解基本使用方法。

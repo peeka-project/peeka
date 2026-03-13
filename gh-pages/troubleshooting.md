@@ -612,6 +612,6 @@ python -c "import peeka; print(peeka.__version__)"
 
 ## 相关文档
 
-- [安装指南]({{ site.baseurl }}{% link installation.md %})
-- [快速开始]({{ site.baseurl }}{% link quickstart.md %})
-- [命令参考]({{ site.baseurl }}{% link commands/index.md %})
+- [安装指南]({% link installation.md %})
+- [快速开始]({% link quickstart.md %})
+- [命令参考]({% link commands/index.md %})

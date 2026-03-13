@@ -270,9 +270,9 @@ Error: Unable to find Mach task port for process-id
 
 安装完成后，您可以：
 
-- [快速开始]({{ site.baseurl }}{% link quickstart.md %}) - 学习基本使用
-- [命令参考]({{ site.baseurl }}{% link commands/index.md %}) - 查看所有可用命令
-- [示例教程]({{ site.baseurl }}{% link examples.md %}) - 实际应用场景
+- [快速开始]({% link quickstart.md %}) - 学习基本使用
+- [命令参考]({% link commands/index.md %}) - 查看所有可用命令
+- [示例教程]({% link examples.md %}) - 实际应用场景
 
 ---
 
@@ -280,5 +280,5 @@ Error: Unable to find Mach task port for process-id
 
 如果您在安装过程中遇到问题：
 
-1. 查看 [故障排除]({{ site.baseurl }}{% link troubleshooting.md %})
+1. 查看 [故障排除]({% link troubleshooting.md %})
 2. 在 [GitHub Issues](https://github.com/wwulfric/peeka/issues) 提问

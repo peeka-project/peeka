@@ -271,9 +271,9 @@ Refer to [GDB on macOS](https://sourceware.org/gdb/wiki/PermissionsDarwin) for c
 
 After installation, you can:
 
-- [Quick Start]({{ site.baseurl }}{% link quickstart.md %}) - Learn basic usage
-- [Command Reference]({{ site.baseurl }}{% link commands/index.md %}) - View all available commands
-- [Examples]({{ site.baseurl }}{% link examples.md %}) - Real-world application scenarios
+- [Quick Start]({% link quickstart.md %}) - Learn basic usage
+- [Command Reference]({% link commands/index.md %}) - View all available commands
+- [Examples]({% link examples.md %}) - Real-world application scenarios
 
 ---
 
@@ -281,5 +281,5 @@ After installation, you can:
 
 If you encounter problems during installation:
 
-1. Check [Troubleshooting]({{ site.baseurl }}{% link troubleshooting.md %})
+1. Check [Troubleshooting]({% link troubleshooting.md %})
 2. Ask questions on [GitHub Issues](https://github.com/wwulfric/peeka/issues)
