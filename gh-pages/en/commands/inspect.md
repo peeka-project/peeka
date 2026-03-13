@@ -3,7 +3,7 @@ layout: default
 title: inspect Command
 parent: Command Reference
 nav_order: 8
-permalink: /en/commands/inspect
+permalink: /commands/inspect
 ---
 
 # inspect Command

@@ -3,7 +3,7 @@ layout: default
 title: Peeka Monitor Command Reference
 parent: Command Reference
 nav_order: 5
-permalink: /en/commands/monitor
+permalink: /commands/monitor
 ---
 
 # Peeka Monitor Command Reference

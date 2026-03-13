@@ -2,7 +2,7 @@
 layout: default
 title: Examples
 nav_order: 5
-permalink: /en/examples
+permalink: /examples
 ---
 
 # Examples

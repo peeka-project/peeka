@@ -3,7 +3,7 @@ layout: default
 title: Command Reference
 nav_order: 4
 has_children: true
-permalink: /en/commands
+permalink: /commands
 ---
 
 # Command Reference

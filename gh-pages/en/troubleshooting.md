@@ -2,7 +2,7 @@
 layout: default
 title: Troubleshooting
 nav_order: 9
-permalink: /en/troubleshooting
+permalink: /troubleshooting
 ---
 
 # Troubleshooting

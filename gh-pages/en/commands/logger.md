@@ -3,7 +3,7 @@ layout: default
 title: Peeka Logger Command Guide
 parent: Command Reference
 nav_order: 6
-permalink: /en/commands/logger
+permalink: /commands/logger
 ---
 
 # Peeka Logger Command Guide
