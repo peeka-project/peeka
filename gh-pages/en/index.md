@@ -131,7 +131,7 @@ peeka-cli watch "module.func" | jq 'select(.type == "observation" and .data.dura
 | `top` | Function-level performance sampling | ✅ |
 | `detach` | Safely exit diagnostic session | ✅ |
 
-[View Complete Command Reference]({{ site.baseurl }}{% link commands/index.md %}){: .btn .btn-outline }
+[View Complete Command Reference]({% link commands/index.md %}){: .btn .btn-outline }
 
 ### 🎨 Interactive TUI Interface
 {: .text-delta }
@@ -152,7 +152,7 @@ peeka
 # d/w/t/s/m/l/e/i/h/F8
 ```
 
-[View Complete TUI Usage Guide]({{ site.baseurl }}{% link tui.md %}){: .btn .btn-outline }
+[View Complete TUI Usage Guide]({% link tui.md %}){: .btn .btn-outline }
 
 ---
 
@@ -167,7 +167,7 @@ Peeka's design is deeply inspired by [Alibaba Arthas](https://github.com/alibaba
 - **Python 3.12+ Performance Optimization** - trace command uses `sys.monitoring` API with < 5% overhead
 - **Lightweight Deployment** - No Java runtime required, one-click pip installation
 
-[Detailed Feature Comparison]({{ site.baseurl }}{% link comparison.md %}){: .btn .btn-outline }
+[Detailed Feature Comparison]({% link comparison.md %}){: .btn .btn-outline }
 
 ---
 
@@ -195,7 +195,7 @@ Implements safe conditional filtering based on simpleeval library:
 - Attribute protection - Blocks reflection attacks
 - Function blacklist - Disables dangerous functions
 
-[Learn Architecture Design]({{ site.baseurl }}{% link architecture.md %}){: .btn .btn-outline }
+[Learn Architecture Design]({% link architecture.md %}){: .btn .btn-outline }
 
 ---
 

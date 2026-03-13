@@ -114,7 +114,7 @@ peeka
 # F8 - Top view
 ```
 
-See [TUI Usage Guide]({{ site.baseurl }}{% link tui.md %}) for details.
+See [TUI Usage Guide]({% link tui.md %}) for details.
 
 
 ---
@@ -191,20 +191,20 @@ Conditional expressions use `simpleeval` library for safe evaluation, not suppor
 
 Select the command you need for detailed documentation:
 
-- [attach - Attach to target process]({{ site.baseurl }}{% link commands/attach.md %})
-- [watch - Observe function calls]({{ site.baseurl }}{% link commands/watch.md %})
-- [trace - Trace call chain]({{ site.baseurl }}{% link commands/trace.md %})
-- [stack - Trace call stack]({{ site.baseurl }}{% link commands/stack.md %})
-- [monitor - Performance monitoring]({{ site.baseurl }}{% link commands/monitor.md %})
-- [logger - Log management]({{ site.baseurl }}{% link commands/logger.md %})
-- [memory - Memory analysis]({{ site.baseurl }}{% link commands/memory.md %})
-- [inspect - Object inspection]({{ site.baseurl }}{% link commands/inspect.md %})
-- [search - Search classes and methods]({{ site.baseurl }}{% link commands/search.md %})
-- [reset - Reset enhancements]({{ site.baseurl }}{% link commands/reset.md %})
-- [thread - Thread analysis]({{ site.baseurl }}{% link commands/thread.md %})
-- [top - Function profiling]({{ site.baseurl }}{% link commands/top.md %})
-- [detach - Disconnect]({{ site.baseurl }}{% link commands/detach.md %})
+- [attach - Attach to target process]({% link commands/attach.md %})
+- [watch - Observe function calls]({% link commands/watch.md %})
+- [trace - Trace call chain]({% link commands/trace.md %})
+- [stack - Trace call stack]({% link commands/stack.md %})
+- [monitor - Performance monitoring]({% link commands/monitor.md %})
+- [logger - Log management]({% link commands/logger.md %})
+- [memory - Memory analysis]({% link commands/memory.md %})
+- [inspect - Object inspection]({% link commands/inspect.md %})
+- [search - Search classes and methods]({% link commands/search.md %})
+- [reset - Reset enhancements]({% link commands/reset.md %})
+- [thread - Thread analysis]({% link commands/thread.md %})
+- [top - Function profiling]({% link commands/top.md %})
+- [detach - Disconnect]({% link commands/detach.md %})
 
 > **Note**: Detailed English documentation for individual commands is being prepared. Currently, command documentation is available in Chinese. Please refer to the Chinese version for complete command documentation.
 
-Or view [Quick Start]({{ site.baseurl }}{% link quickstart.md %}) to learn basic usage methods.
+Or view [Quick Start]({% link quickstart.md %}) to learn basic usage methods.

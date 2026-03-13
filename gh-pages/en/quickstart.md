@@ -273,7 +273,7 @@ peeka
 | `?` | Show help |
 | `q` | Quit |
 
-For more TUI usage details, please refer to [TUI User Guide]({{ site.baseurl }}{% link tui.md %}).
+For more TUI usage details, please refer to [TUI User Guide]({% link tui.md %}).
 
 ---
 
@@ -382,7 +382,7 @@ peeka-cli trace "app.api.slow_func" --depth 5
 
 ## Next Steps
 
-- [Command Reference]({{ site.baseurl }}{% link commands/index.md %}) - Learn detailed usage of all commands
-- [Examples]({{ site.baseurl }}{% link examples.md %}) - More real-world scenarios
-- [Architecture]({{ site.baseurl }}{% link architecture.md %}) - Understand Peeka's design principles
-- [Troubleshooting]({{ site.baseurl }}{% link troubleshooting.md %}) - Solutions when encountering problems
+- [Command Reference]({% link commands/index.md %}) - Learn detailed usage of all commands
+- [Examples]({% link examples.md %}) - More real-world scenarios
+- [Architecture]({% link architecture.md %}) - Understand Peeka's design principles
+- [Troubleshooting]({% link troubleshooting.md %}) - Solutions when encountering problems
