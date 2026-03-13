@@ -51,13 +51,6 @@ pip install peeka
 ```bash
 pip install peeka[tui]
 ```
-
-#### Development Version
-
-```bash
-pip install peeka[dev]
-```
-
 ### Install with uv
 
 ```bash
@@ -67,8 +60,8 @@ uv pip install peeka
 # Full version (with TUI)
 uv pip install "peeka[tui]"
 
-# Development version
-uv pip install "peeka[dev]"
+# Development environment (from source)
+uv sync --dev
 ```
 
 ### Install from Source
@@ -84,8 +77,8 @@ uv pip install -e .
 # Install (with TUI)
 uv pip install -e ".[tui]"
 
-# Install (development version)
-uv pip install -e ".[dev]"
+# Development environment (full dependencies)
+uv sync --dev
 ```
 
 ---
