@@ -51,12 +51,6 @@ pip install peeka
 pip install peeka[tui]
 ```
 
-#### 开发版本
-
-```bash
-pip install peeka[dev]
-```
-
 ### 使用 uv 安装
 
 ```bash
@@ -66,8 +60,8 @@ uv pip install peeka
 # 完整版本（包含 TUI）
 uv pip install "peeka[tui]"
 
-# 开发版本
-uv pip install "peeka[dev]"
+# 开发环境（从源码）
+uv sync --dev
 ```
 
 ### 从源码安装
@@ -83,8 +77,8 @@ uv pip install -e .
 # 安装（包含 TUI）
 uv pip install -e ".[tui]"
 
-# 安装（开发版本）
-uv pip install -e ".[dev]"
+# 开发环境（完整依赖）
+uv sync --dev
 ```
 
 ---

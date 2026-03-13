@@ -7,8 +7,7 @@ Runtime diagnostic tool for Python 3.8-3.14+ using PEP 768 remote debugging.
 ```bash
 uv pip install -e .                 # Core only
 uv pip install -e ".[tui]"         # With TUI (textual)
-uv pip install -e ".[dev]"         # Dev (pytest, textual)
-uv sync --dev                      # Dev with testcontainers, docker, pytest-cov, pytest-timeout
+uv sync --dev                      # Dev (pytest, textual, testcontainers, docker, pytest-cov, pytest-timeout)
 
 pytest tests/ -v                                          # All tests
 pytest tests/ -v -m "not e2e and not container"           # CI-safe (no ptrace/docker)
