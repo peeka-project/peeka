@@ -3,7 +3,7 @@ layout: default
 title: watch Command
 parent: Command Reference
 nav_order: 2
-permalink: /en/commands/watch
+permalink: /commands/watch
 ---
 
 # watch Command

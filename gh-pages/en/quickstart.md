@@ -2,7 +2,7 @@
 layout: default
 title: Quick Start
 nav_order: 3
-permalink: /en/quickstart
+permalink: /quickstart
 ---
 
 # Quick Start

@@ -3,7 +3,7 @@ layout: default
 title: memory Command
 parent: Command Reference
 nav_order: 7
-permalink: /en/commands/memory
+permalink: /commands/memory
 ---
 
 # memory Command

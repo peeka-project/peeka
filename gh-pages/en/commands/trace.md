@@ -3,7 +3,7 @@ layout: default
 title: trace Command
 parent: Command Reference
 nav_order: 3
-permalink: /en/commands/trace
+permalink: /commands/trace
 ---
 
 # trace Command

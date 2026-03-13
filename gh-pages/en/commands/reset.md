@@ -3,7 +3,7 @@ layout: default
 title: reset Command
 parent: Command Reference
 nav_order: 10
-permalink: /en/commands/reset
+permalink: /commands/reset
 ---
 
 # reset Command

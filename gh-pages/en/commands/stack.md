@@ -3,7 +3,7 @@ layout: default
 title: Peeka Stack Command Reference
 parent: Command Reference
 nav_order: 4
-permalink: /en/commands/stack
+permalink: /commands/stack
 ---
 
 # Peeka Stack Command Reference

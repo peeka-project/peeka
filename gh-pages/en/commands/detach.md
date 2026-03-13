@@ -3,7 +3,7 @@ layout: default
 title: detach Command
 parent: Command Reference
 nav_order: 13
-permalink: /en/commands/detach
+permalink: /commands/detach
 ---
 
 # detach Command

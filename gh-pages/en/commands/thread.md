@@ -3,7 +3,7 @@ layout: default
 title: thread Command
 parent: Command Reference
 nav_order: 11
-permalink: /en/commands/thread
+permalink: /commands/thread
 ---
 
 # thread Command

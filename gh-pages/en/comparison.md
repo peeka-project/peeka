@@ -2,7 +2,7 @@
 layout: default
 title: Comparison with Arthas
 nav_order: 7
-permalink: /en/comparison
+permalink: /comparison
 ---
 
 # Comparison with Arthas

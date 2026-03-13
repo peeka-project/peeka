@@ -3,7 +3,7 @@ layout: default
 title: Home
 nav_order: 1
 description: "Peeka - Python Runtime Diagnostic Tool with Non-Invasive Function Observation based on PEP 768"
-permalink: /en/
+permalink: /
 ---
 
 # Peeka

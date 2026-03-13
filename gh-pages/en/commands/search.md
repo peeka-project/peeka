@@ -3,7 +3,7 @@ layout: default
 title: Peeka Search Command Reference (sc / sm)
 parent: Command Reference
 nav_order: 9
-permalink: /en/commands/search
+permalink: /commands/search
 ---
 
 # Peeka Search Command Reference (sc / sm)

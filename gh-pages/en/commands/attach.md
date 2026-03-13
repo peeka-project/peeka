@@ -3,7 +3,7 @@ layout: default
 title: attach
 parent: Command Reference
 nav_order: 1
-permalink: /en/commands/attach
+permalink: /commands/attach
 ---
 
 # attach - Attach to Target Process
