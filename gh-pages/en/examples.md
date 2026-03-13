@@ -501,5 +501,5 @@ python -m peeka.analyze --baseline baseline.jsonl --current current.jsonl
 ## More Resources
 
 - [Command Reference]({{ site.baseurl }}{% link commands/index.md %}) - Detailed command documentation
-- [Architecture]({{ site.baseurl }}{% link en/architecture.md %}) - Understand implementation principles
-- [Troubleshooting]({{ site.baseurl }}{% link en/troubleshooting.md %}) - Common problem solutions
+- [Architecture]({{ site.baseurl }}{% link architecture.md %}) - Understand implementation principles
+- [Troubleshooting]({{ site.baseurl }}{% link troubleshooting.md %}) - Common problem solutions

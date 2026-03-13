@@ -2,6 +2,7 @@
 layout: default
 title: TUI User Guide
 nav_order: 6
+permalink: /en/tui
 ---
 
 # TUI User Guide

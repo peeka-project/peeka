@@ -613,6 +613,6 @@ If none of the above solutions resolve your issue:
 
 ## Related Documentation
 
-- [Installation Guide]({{ site.baseurl }}{% link en/installation.md %})
-- [Quick Start]({{ site.baseurl }}{% link en/quickstart.md %})
+- [Installation Guide]({{ site.baseurl }}{% link installation.md %})
+- [Quick Start]({{ site.baseurl }}{% link quickstart.md %})
 - [Command Reference]({{ site.baseurl }}{% link commands/index.md %})

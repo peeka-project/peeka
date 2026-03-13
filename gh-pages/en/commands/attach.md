@@ -318,9 +318,9 @@ ps -p 12345 -o stat=
 
 ## Related Commands
 
-- [detach]({{ site.baseurl }}{% link en/commands/detach.md %}) - Detach from process
-- [watch]({{ site.baseurl }}{% link en/commands/watch.md %}) - Observe function calls
-- [reset]({{ site.baseurl }}{% link en/commands/reset.md %}) - Reset enhancements
+- [detach]({{ site.baseurl }}{% link commands/detach.md %}) - Detach from process
+- [watch]({{ site.baseurl }}{% link commands/watch.md %}) - Observe function calls
+- [reset]({{ site.baseurl }}{% link commands/reset.md %}) - Reset enhancements
 
 ---
 
