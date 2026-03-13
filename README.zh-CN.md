@@ -6,7 +6,7 @@
 
 Python 应用运行时诊断工具，灵感来源于 [Alibaba Arthas](https://github.com/alibaba/arthas)。无需修改代码，即可非侵入式观测函数行为。
 
-Python 3.14+ 使用 [PEP 768](https://peps.python.org/pep-0768/)（`sys.remote_exec`），Python 3.9–3.13 使用 GDB + ptrace 降级方案。
+Python 3.14+ 使用 [PEP 768](https://peps.python.org/pep-0768/)（`sys.remote_exec`），Python 3.8–3.13 使用 GDB + ptrace 降级方案。
 
 ## 核心特性
 
@@ -189,7 +189,7 @@ x + y > 10                   # 算术表达式
 | Python 版本  | 附加机制                        | 要求                               |
 |-------------|--------------------------------|-----------------------------------|
 | 3.14+       | PEP 768 `sys.remote_exec()`   | 相同 UID 或 `CAP_SYS_PTRACE`      |
-| 3.9–3.13    | GDB + ptrace 降级方案           | GDB 7.3+，ptrace_scope ≤ 1       |
+| 3.8–3.13    | GDB + ptrace 降级方案           | GDB 7.3+，ptrace_scope ≤ 1       |
 
 ### Python < 3.14 配置
 
@@ -265,7 +265,7 @@ CLI/TUI  →  AgentClient  →  Unix Socket  →  PeekaAgent（注入到目标�
                                               └─ 观测管理器（缓冲流式传输）
 ```
 
-- **进程附加**：Python 3.14+ 使用 PEP 768 `sys.remote_exec()`，3.9–3.13 使用 GDB + ptrace
+- **进程附加**：Python 3.14+ 使用 PEP 768 `sys.remote_exec()`，3.8–3.13 使用 GDB + ptrace
 - **观测机制**：装饰器注入包装目标函数，捕获参数/返回值/异常/耗时
 - **数据传输**：通过 Unix Domain Socket 实时流式传输观测数据（长度前缀 + JSON）
 - **命令系统**：模块化 `BaseCommand` 子类，在 `PeekaAgent._register_handlers()` 中注册
