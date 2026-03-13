@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "peeka"
 version = "0.1.1"
 description = "A Python dynamic debugger inspired by Arthas, using Python 3.14's safe external debugger interface"
-requires-python = ">=3.9"
+requires-python = ">=3.8"
 dependencies = []
 
 [project.optional-dependencies]

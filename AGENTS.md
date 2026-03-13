@@ -1,6 +1,6 @@
 # Peeka Developer Guide (for AI Coding Agents)
 
-Runtime diagnostic tool for Python 3.9-3.14+ using PEP 768 remote debugging.
+Runtime diagnostic tool for Python 3.8-3.14+ using PEP 768 remote debugging.
 
 ## Build & Test Commands
 
@@ -190,7 +190,7 @@ Dynamic test modules: insert into `sys.modules`, clean up in teardown.
 | Version  | Attach Mechanism          | Requirements                     |
 |----------|---------------------------|----------------------------------|
 | 3.14+    | PEP 768 `sys.remote_exec` | None                             |
-| 3.9-3.13 | GDB + ptrace fallback     | GDB, python3-dbg, CAP_SYS_PTRACE |
+| 3.8-3.13 | GDB + ptrace fallback     | GDB, python3-dbg, CAP_SYS_PTRACE |
 
 ## Docker Test Images
 
