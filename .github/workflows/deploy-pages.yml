@@ -54,9 +54,15 @@ jobs:
         run: |
           bundle install
 
-      - name: Build with Jekyll
+      - name: Build Chinese site
         working-directory: gh-pages
         run: bundle exec jekyll build --baseurl "/peeka"
+        env:
+          JEKYLL_ENV: production
+
+      - name: Build English site
+        working-directory: gh-pages
+        run: bundle exec jekyll build --config _config_en.yml --source en --destination _site/en --baseurl "/peeka"
         env:
           JEKYLL_ENV: production
 

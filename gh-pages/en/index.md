@@ -131,7 +131,7 @@ peeka-cli watch "module.func" | jq 'select(.type == "observation" and .data.dura
 | `top` | Function-level performance sampling | ✅ |
 | `detach` | Safely exit diagnostic session | ✅ |
 
-[View Complete Command Reference]({{ site.baseurl }}{% link en/commands/index.md %}){: .btn .btn-outline }
+[View Complete Command Reference]({{ site.baseurl }}{% link commands/index.md %}){: .btn .btn-outline }
 
 ### 🎨 Interactive TUI Interface
 {: .text-delta }

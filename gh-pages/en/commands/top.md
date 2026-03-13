@@ -3,6 +3,7 @@ layout: default
 title: top Command
 parent: Command Reference
 nav_order: 12
+permalink: /en/commands/top
 ---
 
 # top Command
