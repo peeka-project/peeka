@@ -12,7 +12,6 @@ gh-pages/
 ├── quickstart.md        # Quick start guide (Chinese)
 ├── examples.md          # Usage examples (Chinese)
 ├── architecture.md      # Architecture documentation (Chinese)
-├── comparison.md        # Comparison with Arthas (Chinese)
 ├── troubleshooting.md   # Troubleshooting guide (Chinese)
 ├── commands/            # Command reference pages (Chinese)
 │   ├── index.md         # Commands overview
@@ -143,7 +142,6 @@ Pages are sorted by `nav_order` in the front matter:
 - 3: 快速开始 (Quick Start)
 - 4: 命令参考 (Commands)
 - 5: 示例教程 (Examples)
-- 7: 与 Arthas 对比 (Comparison)
 - 8: 架构设计 (Architecture)
 - 9: 故障排除 (Troubleshooting)
 

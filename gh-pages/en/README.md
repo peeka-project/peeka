@@ -23,7 +23,6 @@ Planned translations:
 - ⏳ Installation guide
 - ⏳ Quick start guide
 - ⏳ Architecture documentation
-- ⏳ Comparison with Arthas
 - ⏳ Troubleshooting guide
 
 ## Contributing Translations

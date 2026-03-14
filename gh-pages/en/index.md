@@ -167,8 +167,6 @@ Peeka's design is deeply inspired by [Alibaba Arthas](https://github.com/alibaba
 - **Python 3.12+ Performance Optimization** - trace command uses `sys.monitoring` API with < 5% overhead
 - **Lightweight Deployment** - No Java runtime required, one-click pip installation
 
-[Detailed Feature Comparison]({% link comparison.md %}){: .btn .btn-outline }
-
 ---
 
 ## Technical Highlights
