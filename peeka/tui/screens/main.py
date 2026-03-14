@@ -52,25 +52,25 @@ class MainScreen(Screen):
                 initial="dashboard",
                 id="main-content",
             ):
-                with TabPane("Dashboard", id="dashboard"):
+                with TabPane("[bold underline]1[/]·Dashboard", id="dashboard"):
                     yield DashboardView(self.pid)
-                with TabPane("Watch", id="watch"):
+                with TabPane("[bold underline]2[/]·Watch", id="watch"):
                     yield WatchView(self.pid)
-                with TabPane("Trace", id="trace"):
+                with TabPane("[bold underline]3[/]·Trace", id="trace"):
                     yield TraceView(self.pid)
-                with TabPane("Stack", id="stack"):
+                with TabPane("[bold underline]4[/]·Stack", id="stack"):
                     yield StackView(self.pid)
-                with TabPane("Monitor", id="monitor"):
+                with TabPane("[bold underline]5[/]·Monitor", id="monitor"):
                     yield MonitorView(self.pid)
-                with TabPane("Memory", id="memory"):
+                with TabPane("[bold underline]6[/]·Memory", id="memory"):
                     yield MemoryView(self.pid)
-                with TabPane("Logger", id="logger"):
+                with TabPane("[bold underline]7[/]·Logger", id="logger"):
                     yield LoggerView(self.pid)
-                with TabPane("Inspect", id="inspect"):
+                with TabPane("[bold underline]8[/]·Inspect", id="inspect"):
                     yield InspectView(self.pid)
-                with TabPane("Threads", id="threads"):
+                with TabPane("[bold underline]9[/]·Threads", id="threads"):
                     yield ThreadView(self.pid)
-                with TabPane("Top", id="top"):
+                with TabPane("[bold underline]0[/]·Top", id="top"):
                     yield TopView(self.pid)
         yield Footer()
 

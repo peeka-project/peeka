@@ -87,7 +87,7 @@ HELP_TEXT = """
 
 ## Tips
 
-- Use number keys 1-9, 0 to switch between tabs
+- Tab labels show their shortcut number (e.g. 1·Dashboard) for quick reference
 - Use fuzzy search in input fields (type partial names)
 - Observations stream in real-time
 - Use `jq` patterns from CLI for advanced filtering
