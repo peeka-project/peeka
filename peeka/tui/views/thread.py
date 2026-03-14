@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, TYPE_CHECKING
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
-from textual.widgets import Static, DataTable, Tree
+from textual.widgets import Button, Static, DataTable, Tree
 from textual.worker import Worker, get_current_worker
 
 if TYPE_CHECKING:
@@ -47,11 +47,13 @@ class ThreadView(Container):
             self._start_refresh_worker()
 
     def compose(self) -> ComposeResult:
+        yield Horizontal(
+            Static("", id="thread-summary"),
+            Static("", classes="spacer"),
+            Button("Refresh", id="thread-refresh-btn", variant="default", flat=True),
+            id="thread-controls",
+        )
         yield Container(
-            Horizontal(
-                Static("", id="thread-summary"),
-                id="thread-header",
-            ),
             Horizontal(
                 Vertical(
                     DataTable(id="threads-table"),
@@ -97,6 +99,10 @@ class ThreadView(Container):
         if self._client:
             self._refresh_threads()
 
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button presses."""
+        if event.button.id == "thread-refresh-btn":
+            self.action_refresh()
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         """When a thread row is highlighted, fetch and show its stack trace."""
         if event.row_key is None:

@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
-from textual.widgets import DataTable, Static
+from textual.widgets import Button, DataTable, Static
 from textual.worker import Worker, get_current_worker
 
 if TYPE_CHECKING:
@@ -76,7 +76,7 @@ class DashboardView(Container):
             self._log.warning("Dashboard dedicated client failed: %s", result.get("error"))
             self._own_client = None
     def compose(self) -> ComposeResult:
-        # -- Thread summary bar (py-spy top style) --
+        # -- Controls bar (status + refresh button) --
         thread_summary = Static(
             "Threads: - total | - runnable | - waiting | - timed | - daemon",
             id="dash-thread-summary",
@@ -84,7 +84,6 @@ class DashboardView(Container):
 
         # -- Thread table (Arthas: dominant top section) --
         thread_section = Vertical(
-            thread_summary,
             DataTable(id="dash-thread-table"),
             id="dash-thread-section",
             classes="panel",
@@ -115,6 +114,12 @@ class DashboardView(Container):
         )
         runtime_section.border_title = "Runtime"
 
+        yield Horizontal(
+            thread_summary,
+            Static("", classes="spacer"),
+            Button("Refresh", id="dash-refresh-btn", variant="default", flat=True),
+            id="dash-controls",
+        )
         yield Container(
             thread_section,
             Horizontal(
@@ -156,6 +161,11 @@ class DashboardView(Container):
         """Refresh dashboard data."""
         if self._client:
             self._refresh_dashboard_sync()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button presses."""
+        if event.button.id == "dash-refresh-btn":
+            self.action_refresh()
 
     # -- Periodic refresh -------------------------------------------------------
 
