@@ -133,7 +133,7 @@ class TestWatchView:
                 MainScreen(pid=12345, session_id="test", socket_path="/tmp/fake.sock")
             )
             await pilot.pause()
-            await pilot.press("w")
+            await pilot.press("2")
             await pilot.pause()
 
             labels = app.screen.query("Static.input-label")
@@ -150,7 +150,7 @@ class TestWatchView:
                 MainScreen(pid=12345, session_id="test", socket_path="/tmp/fake.sock")
             )
             await pilot.pause()
-            await pilot.press("w")
+            await pilot.press("2")
             await pilot.pause()
             from textual.widgets import Input
 
@@ -166,7 +166,7 @@ class TestWatchView:
                 MainScreen(pid=12345, session_id="test", socket_path="/tmp/fake.sock")
             )
             await pilot.pause()
-            await pilot.press("w")
+            await pilot.press("2")
             await pilot.pause()
             from textual.widgets import Button
 
@@ -189,12 +189,12 @@ class TestInputLabels:
 
             # Check each tab that should have labels
             tab_label_counts = {
-                "w": 2,  # Watch: Pattern, Condition
-                "t": 3,  # Trace: Pattern, Depth, Condition
-                "s": 1,  # Stack: Pattern
-                "m": 2,  # Monitor: Pattern, Interval
-                "l": 2,  # Logger: Filter, Logger
-                "i": 1,  # Inspect: Object Path
+                "2": 2,  # Watch: Pattern, Condition
+                "3": 3,  # Trace: Pattern, Depth, Condition
+                "4": 1,  # Stack: Pattern
+                "5": 2,  # Monitor: Pattern, Interval
+                "7": 2,  # Logger: Filter, Logger
+                "8": 1,  # Inspect: Object Path
             }
 
             for key, expected_count in tab_label_counts.items():
