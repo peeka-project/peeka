@@ -167,8 +167,6 @@ Peeka 的设计深受 [Alibaba Arthas](https://github.com/alibaba/arthas) 启发
 - **Python 3.12+ 性能优化** - trace 命令使用 `sys.monitoring` API，性能开销 < 5%
 - **轻量级部署** - 无需 Java 运行时，pip 一键安装
 
-[详细功能对比]({% link comparison.md %}){: .btn .btn-outline }
-
 ---
 
 ## 技术亮点
