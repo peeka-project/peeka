@@ -11,6 +11,12 @@ permalink: /commands
 
 Peeka 提供了一系列强大的诊断命令，每个命令都专注于特定的诊断场景。本文档涵盖了 13 个核心命令。
 {: .fs-6 .fw-300 }
+## 目录
+{: .no_toc .text-delta }
+
+1. TOC
+{:toc}
+
 
 ---
 

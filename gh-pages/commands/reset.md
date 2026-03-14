@@ -6,6 +6,14 @@ nav_order: 10
 ---
 
 # reset 命令
+{: .no_toc }
+
+## 目录
+{: .no_toc .text-delta }
+
+1. TOC
+{:toc}
+
 
 ## 简介
 

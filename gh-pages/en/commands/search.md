@@ -7,22 +7,13 @@ permalink: /commands/search
 ---
 
 # Peeka Search Command Reference (sc / sm)
+{: .no_toc }
 
 ## Table of Contents
+{: .no_toc .text-delta }
 
-- [Command Overview](#command-overview)
-- [Use Cases](#use-cases)
-- [Command Format](#command-format)
-- [sc Command - Search Classes](#sc-command---search-classes)
-- [sm Command - Search Methods](#sm-command---search-methods)
-- [Pattern Syntax](#pattern-syntax)
-- [Output Format](#output-format)
-- [Usage Examples](#usage-examples)
-- [Complete Exploration Workflows](#complete-exploration-workflows)
-- [Important Notes](#important-notes)
-- [FAQ](#faq)
-- [Advanced Techniques](#advanced-techniques)
-- [Comparison with Arthas](#comparison-with-arthas)
+1. TOC
+{:toc}
 
 ---
 

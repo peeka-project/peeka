@@ -7,21 +7,13 @@ permalink: /commands/logger
 ---
 
 # Peeka Logger Command Guide
+{: .no_toc }
 
 ## Table of Contents
+{: .no_toc .text-delta }
 
-- [Command Overview](#command-overview)
-- [Use Cases](#use-cases)
-- [Command Format](#command-format)
-- [Actions](#actions)
-- [Parameters](#parameters)
-- [Output Format](#output-format)
-- [Usage Examples](#usage-examples)
-- [Complete Diagnostic Workflow](#complete-diagnostic-workflow)
-- [Important Notes](#important-notes)
-- [FAQ](#faq)
-- [Advanced Techniques](#advanced-techniques)
-- [Comparison with Arthas](#comparison-with-arthas)
+1. TOC
+{:toc}
 
 ---
 

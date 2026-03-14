@@ -7,21 +7,13 @@ permalink: /commands/inspect
 ---
 
 # inspect Command
+{: .no_toc }
 
 ## Table of Contents
+{: .no_toc .text-delta }
 
-- [Overview](#overview)
-- [Use Cases](#use-cases)
-- [Command Format](#command-format)
-- [Parameter Descriptions](#parameter-descriptions)
-- [Output Format](#output-format)
-- [Usage Examples](#usage-examples)
-- [Complete Diagnostic Workflow](#complete-diagnostic-workflow)
-- [Important Notes](#important-notes)
-- [Common Issues](#common-issues)
-- [Advanced Tips](#advanced-tips)
-- [Comparison with Arthas](#comparison-with-arthas)
-- [Summary](#summary)
+1. TOC
+{:toc}
 
 ---
 

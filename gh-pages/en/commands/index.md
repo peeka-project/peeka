@@ -12,8 +12,6 @@ permalink: /commands
 Peeka provides a series of powerful diagnostic commands, each focused on specific diagnostic scenarios. This documentation covers 13 core commands.
 {: .fs-6 .fw-300 }
 
-{: .no_toc }
-
 ## Table of Contents
 {: .no_toc .text-delta }
 

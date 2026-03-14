@@ -6,7 +6,6 @@ permalink: /tui
 ---
 
 # TUI User Guide
-
 {: .no_toc }
 
 ## Table of Contents

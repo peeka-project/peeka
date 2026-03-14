@@ -7,21 +7,13 @@ permalink: /commands/monitor
 ---
 
 # Peeka Monitor Command Reference
+{: .no_toc }
 
 ## Table of Contents
+{: .no_toc .text-delta }
 
-- [Command Overview](#command-overview)
-- [Use Cases](#use-cases)
-- [Command Format](#command-format)
-- [Parameter Reference](#parameter-reference)
-- [Metrics Description](#metrics-description)
-- [Output Format](#output-format)
-- [Usage Examples](#usage-examples)
-- [Complete Monitoring Workflows](#complete-monitoring-workflows)
-- [Important Notes](#important-notes)
-- [FAQ](#faq)
-- [Advanced Techniques](#advanced-techniques)
-- [Comparison with Arthas](#comparison-with-arthas)
+1. TOC
+{:toc}
 
 ---
 
