@@ -543,7 +543,7 @@ class MyView(Static):
 ```python
 # peeka/tui/screens/main.py
 BINDINGS = [
-    ("m", "show_myview", "My View"),
+    ("5", "show_myview", "My View"),
 ]
 ```
 

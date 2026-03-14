@@ -254,7 +254,7 @@ In TUI mode, the `top` command provides a visual performance profiling interface
 
 2. Connect to the target process (enter PID or select process)
 
-3. Press **`F8`** key to switch to **Top View**
+3. Press **`0`** key to switch to **Top View**
 
 4. Features:
    - Real-time display of function performance rankings

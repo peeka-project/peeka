@@ -107,17 +107,17 @@ peeka-cli reset "module.func"
 # Launch TUI
 peeka
 
-# Use shortcuts to switch views
-# d - Dashboard
-# w - Watch view
-# t - Trace view
-# s - Stack view
-# m - Monitor view
-# l - Logger view
-# e - Memory view
-# i - Inspect view
-# h - Threads view
-# F8 - Top view
+# Use number keys to switch views
+# 1 - Dashboard
+# 2 - Watch view
+# 3 - Trace view
+# 4 - Stack view
+# 5 - Monitor view
+# 6 - Memory view
+# 7 - Logger view
+# 8 - Inspect view
+# 9 - Threads view
+# 0 - Top view
 ```
 
 See [TUI Usage Guide]({% link tui.md %}) for details.

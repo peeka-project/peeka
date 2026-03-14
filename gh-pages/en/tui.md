@@ -470,7 +470,7 @@ Watch / Trace / Stack views support auto-scrolling:
 
 ### 1. Quick View Switching
 
-Use single-letter shortcuts to quickly switch between views without returning to Dashboard:
+Use number keys to quickly switch between views without returning to Dashboard:
 
 ```
 Press 2 → Watch view

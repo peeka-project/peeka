@@ -148,8 +148,8 @@ In addition to CLI commands, Peeka also provides a feature-complete TUI (Text Us
 # Launch TUI
 peeka
 
-# Use shortcuts to switch views
-# d/w/t/s/m/l/e/i/h/F8
+# Use number keys to switch views
+# 1/2/3/4/5/6/7/8/9/0
 ```
 
 [View Complete TUI Usage Guide]({% link tui.md %}){: .btn .btn-outline }

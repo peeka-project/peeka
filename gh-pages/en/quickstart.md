@@ -244,32 +244,31 @@ peeka
 ### TUI Features
 
 1. **Process Selection** - Automatically discover and select target processes
-2. **Dashboard View** (d) - Real-time display of process information
-3. **Watch View** (w) - Interactive function observation
-4. **Trace View** (t) - Visualize call tree
-5. **Stack View** (s) - Call stack tracing
-6. **Monitor View** (m) - Performance monitoring
-7. **Logger View** (l) - Log management
-8. **Memory View** (e) - Memory analysis
-9. **Inspect View** (i) - Runtime object inspection
-10. **Threads View** (h) - Thread analysis
-11. **Top View** (F8) - Function-level performance sampling
+2. **Dashboard View** (`1`) - Real-time display of process information
+3. **Watch View** (`2`) - Interactive function observation
+4. **Trace View** (`3`) - Visualize call tree
+5. **Stack View** (`4`) - Call stack tracing
+6. **Monitor View** (`5`) - Performance monitoring
+7. **Memory View** (`6`) - Memory analysis
+8. **Logger View** (`7`) - Log management
+9. **Inspect View** (`8`) - Runtime object inspection
+10. **Threads View** (`9`) - Thread analysis
+11. **Top View** (`0`) - Function-level performance sampling
 
 ### TUI Shortcuts
 
 | Shortcut | Function |
 |-------|------|
-| `d` | Switch to Dashboard view |
-| `w` | Switch to Watch view |
-| `t` | Switch to Trace view |
-| `s` | Switch to Stack view |
-| `m` | Switch to Monitor view |
-| `l` | Switch to Logger view |
-| `e` | Switch to Memory view |
-| `i` | Switch to Inspect view |
-| `h` | Switch to Threads view |
-| `F8` | Switch to Top view |
-| `:` | Open command input mode |
+| `1` | Switch to Dashboard view |
+| `2` | Switch to Watch view |
+| `3` | Switch to Trace view |
+| `4` | Switch to Stack view |
+| `5` | Switch to Monitor view |
+| `6` | Switch to Memory view |
+| `7` | Switch to Logger view |
+| `8` | Switch to Inspect view |
+| `9` | Switch to Threads view |
+| `0` | Switch to Top view |
 | `?` | Show help |
 | `q` | Quit |
 
