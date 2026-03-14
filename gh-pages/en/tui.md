@@ -76,7 +76,7 @@ After starting TUI, the interface is divided into the following areas:
 │ └─────────────────────────────────────────────────────┘ │
 │                                                         │
 ├─────────────────────────────────────────────────────────┤
-│ Footer - Keybinding Hints (d)Dashboard (w)Watch ...     │
+│ Footer - Keybinding Hints (1)Dashboard (2)Watch (3)Trace (4)Stack (5)Monitor (6)Memory (7)Logger (8)Inspect (9)Threads (0)Top     │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -92,22 +92,22 @@ After starting TUI, the interface is divided into the following areas:
 
 | Shortcut     | Function           | Description                                          |
 |--------------|--------------------|----------------------------------------------------- |
-| `d`          | Dashboard View     | Switch to dashboard                                  |
-| `w`          | Watch View         | Switch to function observation                       |
-| `t`          | Trace View         | Switch to call chain tracing                         |
-| `s`          | Stack View         | Switch to call stack capture                         |
-| `m`          | Monitor View       | Switch to performance monitoring                     |
-| `e`          | Memory View        | Switch to memory analysis                            |
-| `l`          | Logger View        | Switch to logger management                          |
-| `i`          | Inspect View       | Switch to object inspection                          |
-| `h`          | Threads View       | Switch to thread management                          |
-| `F8`         | Top View           | Switch to performance profiler                       |
+| `1`          | Dashboard View     | Switch to dashboard                                  |
+| `2`          | Watch View         | Switch to function observation                       |
+| `3`          | Trace View         | Switch to call chain tracing                         |
+| `4`          | Stack View         | Switch to call stack capture                         |
+| `5`          | Monitor View       | Switch to performance monitoring                     |
+| `6`          | Memory View        | Switch to memory analysis                            |
+| `7`          | Logger View        | Switch to logger management                          |
+| `8`          | Inspect View       | Switch to object inspection                          |
+| `9`          | Threads View       | Switch to thread management                          |
+| `0`          | Top View           | Switch to performance profiler                       |
 | `?`          | Help               | Show help information (available in some views)      |
 | `escape` / `q` | Back / Exit      | Exit in Dashboard, return to Dashboard in other views |
 
 ## Ten Major Views Explained
 
-### 1. Dashboard View (`d` key)
+### 1. Dashboard View (`1` key)
 
 **Function**: Command input and execution center
 
@@ -127,7 +127,7 @@ After starting TUI, the interface is divided into the following areas:
 
 ---
 
-### 2. Watch View (`w` key)
+### 2. Watch View (`2` key)
 
 **Function**: Observe function call parameters, return values, exceptions, timing
 
@@ -151,7 +151,7 @@ After starting TUI, the interface is divided into the following areas:
 
 ---
 
-### 3. Trace View (`t` key)
+### 3. Trace View (`3` key)
 
 **Function**: Trace function call chains, showing hierarchical relationships and timing of method calls
 
@@ -184,7 +184,7 @@ After starting TUI, the interface is divided into the following areas:
 
 ---
 
-### 4. Stack View (`s` key)
+### 4. Stack View (`4` key)
 
 **Function**: Capture complete call stack when function is called
 
@@ -207,7 +207,7 @@ After starting TUI, the interface is divided into the following areas:
 
 ---
 
-### 5. Monitor View (`m` key)
+### 5. Monitor View (`5` key)
 
 **Function**: Periodically output function performance statistics (call count, success rate, response time)
 
@@ -240,7 +240,7 @@ Function: module.func
 
 ---
 
-### 6. Memory View (`e` key)
+### 6. Memory View (`6` key)
 
 **Function**: Analyze process memory usage and memory allocation
 
@@ -265,7 +265,7 @@ Function: module.func
 
 ---
 
-### 7. Logger View (`l` key)
+### 7. Logger View (`7` key)
 
 **Function**: Dynamically adjust Python logger log levels
 
@@ -296,7 +296,7 @@ Logger: myapp.api
 
 ---
 
-### 8. Inspect View (`i` key)
+### 8. Inspect View (`8` key)
 
 **Function**: Runtime object inspection and expression evaluation
 
@@ -319,7 +319,7 @@ Logger: myapp.api
 
 ---
 
-### 9. Threads View (`h` key)
+### 9. Threads View (`9` key)
 
 **Function**: List all threads, inspect thread status and stacks
 
@@ -347,7 +347,7 @@ Logger: myapp.api
 
 ---
 
-### 10. Top View (`F8` key)
+### 10. Top View (`0` key)
 
 **Function**: Function-level sampling performance profiler (similar to `py-spy top`)
 
@@ -473,19 +473,19 @@ Watch / Trace / Stack views support auto-scrolling:
 Use single-letter shortcuts to quickly switch between views without returning to Dashboard:
 
 ```
-Press w → Watch view
-Press t → Trace view
-Press m → Monitor view
-Press F8 → Top view
+Press 2 → Watch view
+Press 3 → Trace view
+Press 5 → Monitor view
+Press 0 → Top view
 ```
 
 ### 2. Combined Use of Multiple Views
 
 Different views can work concurrently (each view uses an independent client):
 
-1. Start observation in Watch view (press `w`, enter command, press Enter)
-2. Switch to Monitor view to start monitoring (press `m`, enter command, press Enter)
-3. Switch to Top view to start performance profiling (press `F8`, enter command, press Enter)
+1. Start observation in Watch view (press `2`, enter command, press Enter)
+2. Switch to Monitor view to start monitoring (press `5`, enter command, press Enter)
+3. Switch to Top view to start performance profiling (press `0`, enter command, press Enter)
 4. Switch between views to view real-time data
 
 ### 3. Use Command History
@@ -603,4 +603,4 @@ Start using TUI:
 peeka
 ```
 
-Press `?` to view help, press `d/w/t/s/m/e/l/i/h/F8` to switch views, and start your diagnostic journey!
+Press `?` to view help, press `1/2/3/4/5/6/7/8/9/0` to switch views, and start your diagnostic journey!
