@@ -95,13 +95,22 @@ TabPane {
    THREAD VIEW
    ============================================================================ */
 
-#thread-header {
+#thread-controls {
     height: auto;
     margin-bottom: 1;
 }
 
-#thread-summary {
+#thread-controls Static,
+#dash-controls Static {
+    width: auto;
+    height: 3;
+    content-align: center middle;
     padding: 0 1;
+}
+
+#thread-controls .spacer {
+    width: 1fr;
+    padding: 0;
 }
 
 #thread-content {
@@ -129,15 +138,19 @@ TabPane {
    DASHBOARD VIEW
    ============================================================================ */
 
-#dash-thread-summary {
+#dash-controls {
     height: auto;
-    padding: 0 1;
-    margin-bottom: 0;
+    margin-bottom: 1;
 }
 
 #dash-thread-section {
     height: 1fr;
     min-height: 10;
+}
+
+#dash-controls .spacer {
+    width: 1fr;
+    padding: 0;
 }
 
 #dash-thread-table {
@@ -208,7 +221,9 @@ TabPane {
 #monitor-controls Button,
 #logger-controls Button,
 #inspect-controls Button,
-#top-controls Button {
+#top-controls Button,
+#dash-controls Button,
+#thread-controls Button {
     margin-left: 1;
     min-width: 8;
     max-width: 14;
