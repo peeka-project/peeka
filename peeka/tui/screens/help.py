@@ -24,14 +24,16 @@ HELP_TEXT = """
 
 | Key | Tab |
 |-----|-----|
-| `D` | Dashboard - Process overview |
-| `W` | Watch - Function observation |
-| `T` | Trace - Call tree tracing |
-| `S` | Stack - Call stack tracing |
-| `M` | Monitor - Performance stats |
-| `E` | Memory - Memory analysis |
-| `L` | Logger - Logger management |
-| `I` | Inspect - Object inspection |
+| `1` | Dashboard - Process overview |
+| `2` | Watch - Function observation |
+| `3` | Trace - Call tree tracing |
+| `4` | Stack - Call stack tracing |
+| `5` | Monitor - Performance stats |
+| `6` | Memory - Memory analysis |
+| `7` | Logger - Logger management |
+| `8` | Inspect - Object inspection |
+| `9` | Threads - Thread management |
+| `0` | Top - Top processes |
 
 ## Process Selector
 
@@ -41,26 +43,51 @@ HELP_TEXT = """
 | `Enter` | Attach to selected process |
 | `↑/↓` | Navigate processes |
 
-## Watch View
+## View-Specific Bindings
 
-- Enter a function pattern like `module.Class.method`
-- Optionally add a condition like `params[0] > 10`
-- Click Watch or press Enter to start
+### Dashboard View
+- `r` - Refresh
 
-## Trace View
+### Watch View
+- `Enter` - Start Watch
+- `Delete` - Stop All
 
-- Enter a function pattern like `module.Class.method`
-- Set trace depth (1-5, default: 3)
-- Optionally add a condition like `cost > 50`
-- View call tree with color-coded timing:
+### Trace View
+- `Enter` - Start Trace
+- `Delete` - Stop All
+- `c` - Clear Tree
+- Color-coded timing:
   - 🟢 Green: < 10ms
   - 🟡 Yellow: 10-100ms
   - 🔴 Red: >= 100ms
-- Press `C` to clear tree
-- Press `Delete` to stop all traces
+
+### Stack View
+- `Enter` - Start Stack
+- `Delete` - Stop All
+
+### Monitor View
+- `Enter` - Start Monitor
+- `Delete` - Stop All
+
+### Memory View
+- `r` - Refresh
+- `T` (Shift+T) - Toggle Tracking
+
+### Logger View
+- `r` - Refresh
+
+### Inspect View
+- `Enter` - Inspect
+
+### Threads View
+- `r` - Refresh
+
+### Top View
+- `r` - Reset Stats
 
 ## Tips
 
+- Use number keys 1-9, 0 to switch between tabs
 - Use fuzzy search in input fields (type partial names)
 - Observations stream in real-time
 - Use `jq` patterns from CLI for advanced filtering
