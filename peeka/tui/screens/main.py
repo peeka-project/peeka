@@ -24,17 +24,17 @@ class MainScreen(Screen):
     """Main screen with tabbed interface for different diagnostic views."""
 
     BINDINGS = [
-        Binding("d", "switch_tab('dashboard')", "Dashboard", priority=True),
-        Binding("w", "switch_tab('watch')", "Watch", priority=True),
-        Binding("t", "switch_tab('trace')", "Trace", priority=True),
-        Binding("s", "switch_tab('stack')", "Stack", priority=True),
-        Binding("m", "switch_tab('monitor')", "Monitor", priority=True),
-        Binding("e", "switch_tab('memory')", "Memory", priority=True),
-        Binding("l", "switch_tab('logger')", "Logger", priority=True),
-        Binding("i", "switch_tab('inspect')", "Inspect", priority=True),
+        Binding("1", "switch_tab('dashboard')", "Dashboard"),
+        Binding("2", "switch_tab('watch')", "Watch"),
+        Binding("3", "switch_tab('trace')", "Trace"),
+        Binding("4", "switch_tab('stack')", "Stack"),
+        Binding("5", "switch_tab('monitor')", "Monitor"),
+        Binding("6", "switch_tab('memory')", "Memory"),
+        Binding("7", "switch_tab('logger')", "Logger"),
+        Binding("8", "switch_tab('inspect')", "Inspect"),
         Binding("escape", "go_back", "Back", priority=True),
-        Binding("h", "switch_tab('threads')", "Threads", priority=True),
-        Binding("F8", "switch_tab('top')", "Top", priority=True),
+        Binding("9", "switch_tab('threads')", "Threads"),
+        Binding("0", "switch_tab('top')", "Top"),
         Binding("q", "go_back", "Back"),
     ]
 
