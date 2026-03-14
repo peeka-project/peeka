@@ -7,6 +7,14 @@ permalink: /tui
 
 # TUI User Guide
 
+{: .no_toc }
+
+## Table of Contents
+{: .no_toc .text-delta }
+
+1. TOC
+{:toc}
+
 ## Overview
 
 Peeka provides a fully-featured **Text User Interface (TUI)** built on the [Textual](https://textual.textualize.io/) framework. TUI mode offers a more intuitive interactive experience than CLI, supporting real-time data streaming, interactive operations, colored output, and keyboard navigation.
