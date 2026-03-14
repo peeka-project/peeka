@@ -148,8 +148,8 @@ peeka-cli watch "module.func" | jq 'select(.type == "observation" and .data.dura
 # 启动 TUI
 peeka
 
-# 使用快捷键切换视图
-# d/w/t/s/m/l/e/i/h/F8
+# 使用数字键切换视图
+# 1/2/3/4/5/6/7/8/9/0
 ```
 
 [查看 TUI 完整使用指南]({% link tui.md %}){: .btn .btn-outline }

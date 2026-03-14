@@ -107,17 +107,17 @@ peeka-cli reset "module.func"
 # 启动 TUI
 peeka
 
-# 使用快捷键切换视图
-# d - Dashboard 仪表盘
-# w - Watch 观测视图
-# t - Trace 追踪视图
-# s - Stack 调用栈视图
-# m - Monitor 性能监控视图
-# l - Logger 日志管理视图
-# e - Memory 内存分析视图
-# i - Inspect 对象检查视图
-# h - Threads 线程分析视图
-# F8 - Top 函数热点视图
+# 使用数字键切换视图
+# 1 - Dashboard 仪表盘
+# 2 - Watch 观测视图
+# 3 - Trace 追踪视图
+# 4 - Stack 调用栈视图
+# 5 - Monitor 性能监控视图
+# 6 - Memory 内存分析视图
+# 7 - Logger 日志管理视图
+# 8 - Inspect 对象检查视图
+# 9 - Threads 线程分析视图
+# 0 - Top 函数热点视图
 ```
 
 详见 [TUI 使用指南]({% link tui.md %})。
