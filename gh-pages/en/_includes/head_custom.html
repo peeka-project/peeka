@@ -1,0 +1,128 @@
+<!-- Floating back-to-top button -->
+<button class="back-to-top-btn" id="back-to-top-btn" aria-label="Back to top" title="Back to top">
+  <svg viewBox="0 0 24 24"><polyline points="18 15 12 9 6 15"></polyline></svg>
+</button>
+
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+  // =========================================================================
+  // Back-to-top button
+  // =========================================================================
+  var btn = document.getElementById("back-to-top-btn");
+  if (btn) {
+    window.addEventListener("scroll", function() {
+      if (window.scrollY > 300) {
+        btn.classList.add("visible");
+      } else {
+        btn.classList.remove("visible");
+      }
+    });
+    btn.addEventListener("click", function() {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    });
+  }
+
+  // =========================================================================
+  // Right-side sticky TOC — generated from page headings
+  // =========================================================================
+  var mainContent = document.getElementById("main-content");
+  if (!mainContent) return;
+
+  // Collect h2 and h3 headings (skip .no_toc)
+  var headings = mainContent.querySelectorAll("h2, h3");
+  var tocItems = [];
+  for (var i = 0; i < headings.length; i++) {
+    var h = headings[i];
+    if (h.classList.contains("no_toc")) continue;
+    if (!h.id) continue;
+    // Extract heading text: clone node, remove anchor-heading links, get clean text
+    var clone = h.cloneNode(true);
+    var anchors = clone.querySelectorAll('.anchor-heading');
+    for (var ai = 0; ai < anchors.length; ai++) anchors[ai].remove();
+    tocItems.push({
+      id: h.id,
+      text: clone.textContent.trim(),
+      level: h.tagName.toLowerCase()
+    });
+  }
+
+  // Don't create side TOC if fewer than 3 headings
+  if (tocItems.length < 3) return;
+
+  // Build side TOC element
+  var toc = document.createElement("nav");
+  toc.className = "side-toc";
+  toc.setAttribute("aria-label", "On this page");
+
+  var title = document.createElement("p");
+  title.className = "side-toc-title";
+  // Detect language from html lang or page content
+  var isEnglish = window.location.pathname.indexOf("/en/") !== -1;
+  title.textContent = isEnglish ? "On This Page" : "本页目录";
+  toc.appendChild(title);
+
+  var ul = document.createElement("ul");
+  for (var j = 0; j < tocItems.length; j++) {
+    var item = tocItems[j];
+    var li = document.createElement("li");
+    if (item.level === "h3") {
+      li.className = "toc-h3";
+    }
+    var a = document.createElement("a");
+    a.href = "#" + item.id;
+    a.textContent = item.text;
+    a.setAttribute("title", item.text);
+    li.appendChild(a);
+    ul.appendChild(li);
+  }
+  toc.appendChild(ul);
+  document.body.appendChild(toc);
+
+  // Scroll spy — highlight the current section
+  var tocLinks = toc.querySelectorAll("a");
+  var headingElements = [];
+  for (var k = 0; k < tocItems.length; k++) {
+    headingElements.push(document.getElementById(tocItems[k].id));
+  }
+
+  function updateActiveLink() {
+    var scrollPos = window.scrollY + 80; // offset for header
+    var activeIndex = -1;
+
+    for (var m = 0; m < headingElements.length; m++) {
+      if (headingElements[m] && headingElements[m].offsetTop <= scrollPos) {
+        activeIndex = m;
+      }
+    }
+
+    for (var n = 0; n < tocLinks.length; n++) {
+      tocLinks[n].classList.remove("active");
+    }
+    if (activeIndex >= 0 && tocLinks[activeIndex]) {
+      tocLinks[activeIndex].classList.add("active");
+      // Scroll the active link into view within the TOC if needed
+      var activeEl = tocLinks[activeIndex];
+      var tocRect = toc.getBoundingClientRect();
+      var linkRect = activeEl.getBoundingClientRect();
+      if (linkRect.top < tocRect.top || linkRect.bottom > tocRect.bottom) {
+        activeEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      }
+    }
+  }
+
+  // Throttle scroll handler
+  var ticking = false;
+  window.addEventListener("scroll", function() {
+    if (!ticking) {
+      requestAnimationFrame(function() {
+        updateActiveLink();
+        ticking = false;
+      });
+      ticking = true;
+    }
+  });
+
+  // Initial highlight
+  updateActiveLink();
+});
+</script>
