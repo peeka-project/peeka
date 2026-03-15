@@ -9,13 +9,14 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container
 from textual.screen import Screen
-from textual.widgets import DataTable, Header, Footer, Input
+from textual.widgets import DataTable, Header, Footer, Input, Static
 
 
 class ProcessSelectorScreen(Screen):
     """Screen for selecting a Python process to attach to."""
 
     _attaching: bool = False
+    MIN_WIDTH: int = 80
 
     BINDINGS = [
         Binding("r", "refresh", "Refresh"),
@@ -38,6 +39,15 @@ class ProcessSelectorScreen(Screen):
 
     def on_mount(self) -> None:
         """Initialize the process table."""
+        if self.app.size.width < self.MIN_WIDTH:
+            warning = Static(
+                f" ⚠ Terminal width ({self.app.size.width} cols) is below "
+                f"recommended {self.MIN_WIDTH}. Some views may not display properly.",
+                id="width-warning",
+            )
+            selector = self.query_one("#process-selector")
+            filter_input = self.query_one("#filter")
+            selector.mount(warning, before=filter_input)
         table = self.query_one("#process-table", DataTable)
         table.add_columns("PID", "User", "CPU%", "MEM%", "Command")
         table.cursor_type = "row"
