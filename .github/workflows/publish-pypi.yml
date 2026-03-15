@@ -85,9 +85,37 @@ jobs:
         with:
           fetch-depth: 0  # Full history for release notes generation
       
+      - name: Generate release notes from commits
+        id: notes
+        run: |
+          TAG="${{ github.ref_name }}"
+          # Find previous tag
+          PREV_TAG=$(git tag --sort=-v:refname | grep -A1 "^${TAG}$" | tail -1)
+          if [ "$PREV_TAG" = "$TAG" ]; then
+            # First release, use all commits
+            COMMITS=$(git log --oneline --no-merges "${TAG}")
+          else
+            COMMITS=$(git log --oneline --no-merges "${PREV_TAG}..${TAG}")
+          fi
+          
+          # Build markdown body from commit messages
+          BODY="## Changes\n\n"
+          while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            # Strip commit hash, keep message
+            MSG=$(echo "$line" | sed 's/^[a-f0-9]\+ //')
+            # Skip version bump commits
+            echo "$MSG" | grep -q '^chore(release):' && continue
+            BODY+="- ${MSG}\n"
+          done <<< "$COMMITS"
+          
+          # Write to file to preserve newlines
+          echo -e "$BODY" > /tmp/release_notes.md
+      
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          body_path: /tmp/release_notes.md
           generate_release_notes: true
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
