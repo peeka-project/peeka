@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="gh-pages/assets/images/logo.png" alt="Peeka" width="128">
+</p>
+
 <p align="right">
   <a href="README.zh-CN.md">中文</a> | <strong>English</strong>
 </p>
