@@ -4,6 +4,8 @@
 
 # Peeka
 
+> *Peek-a-boo!* — 名字取自躲猫猫游戏。诊断工具发现隐藏 bug 的那一刻，像极了捉迷藏时突然现身的惊喜。
+
 Python 应用运行时诊断工具，灵感来源于 [Alibaba Arthas](https://github.com/alibaba/arthas)。无需修改代码，即可非侵入式观测函数行为。
 
 Python 3.14+ 使用 [PEP 768](https://peps.python.org/pep-0768/)（`sys.remote_exec`），Python 3.8–3.13 使用 GDB + ptrace 降级方案。
@@ -272,7 +274,7 @@ CLI/TUI  →  AgentClient  →  Unix Socket  →  PeekaAgent（注入到目标�
 
 ## 许可证
 
-MIT License
+Apache License 2.0
 
 ## 致谢
 

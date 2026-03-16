@@ -9,6 +9,8 @@ permalink: /
 # Peeka
 {: .fs-9 }
 
+> *Peek-a-boo!* — 名字取自躲猫猫游戏。诊断工具发现隐藏 bug 的那一刻，像极了捉迷藏时突然现身的惊喜。
+
 基于 Python 3.14 远程调试协议（PEP 768）的运行时诊断工具，提供类似 Java Arthas 的非侵入式函数观测能力。
 {: .fs-6 .fw-300 }
 
@@ -208,7 +210,7 @@ Peeka 的设计深受 [Alibaba Arthas](https://github.com/alibaba/arthas) 启发
 
 ## 开源协议
 
-Peeka 基于 [MIT License](https://github.com/wwulfric/peeka/blob/main/LICENSE) 开源。
+Peeka 基于 [Apache License 2.0](https://github.com/wwulfric/peeka/blob/main/LICENSE) 开源。
 
 ---
 

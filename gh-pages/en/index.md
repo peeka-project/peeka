@@ -9,6 +9,8 @@ permalink: /
 # Peeka
 {: .fs-9 }
 
+> *Peek-a-boo!* — The name comes from the children's game. A diagnostic tool finding a hidden bug feels just like that moment of surprise when someone is found in hide-and-seek.
+
 A runtime diagnostic tool based on Python 3.14 remote debugging protocol (PEP 768), providing non-invasive function observation capabilities similar to Java Arthas.
 {: .fs-6 .fw-300 }
 
@@ -208,7 +210,7 @@ Implements safe conditional filtering based on simpleeval library:
 
 ## License
 
-Peeka is open source under [MIT License](https://github.com/wwulfric/peeka/blob/main/LICENSE).
+Peeka is open source under [Apache License 2.0](https://github.com/wwulfric/peeka/blob/main/LICENSE).
 
 ---
 

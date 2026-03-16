@@ -4,6 +4,8 @@
 
 # Peeka
 
+> *Peek-a-boo!* — The name comes from the children's game. A diagnostic tool finding a hidden bug feels just like that moment of surprise when someone is found in hide-and-seek.
+
 Runtime diagnostic tool for Python applications, inspired by [Alibaba Arthas](https://github.com/alibaba/arthas). Non-invasive function observation with zero code changes.
 
 Uses [PEP 768](https://peps.python.org/pep-0768/) (`sys.remote_exec`) on Python 3.14+, with a GDB + ptrace fallback for Python 3.8–3.13.
@@ -272,7 +274,7 @@ CLI/TUI  →  AgentClient  →  Unix Socket  →  PeekaAgent (injected in target
 
 ## License
 
-MIT License
+Apache License 2.0
 
 ## Acknowledgments
 
