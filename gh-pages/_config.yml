@@ -4,7 +4,7 @@ description: Python 运行时诊断工具 - 基于 PEP 768 的非侵入式函数
 baseurl: "/peeka"
 url: "https://wwulfric.github.io"
 theme: just-the-docs
-color_scheme: peeka
+color_scheme: light
 
 # Logo and favicon
 logo: "/assets/images/logo.png"
