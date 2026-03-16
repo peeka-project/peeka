@@ -3,7 +3,7 @@ description: "Peeka - Python Runtime Diagnostic Tool with Non-Invasive Function 
 baseurl: "/peeka"
 url: "https://wwulfric.github.io"
 theme: just-the-docs
-color_scheme: light
+color_scheme: peeka
 
 destination: "_site_en"
 

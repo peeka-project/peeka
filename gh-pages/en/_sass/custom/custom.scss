@@ -59,12 +59,12 @@
     white-space: nowrap;
 
     &:hover {
-      color: #7253ed;
+      color: #2888a8;
     }
 
     &.active {
-      color: #7253ed;
-      border-left-color: #7253ed;
+      color: #2888a8;
+      border-left-color: #2888a8;
       font-weight: 500;
     }
   }
@@ -113,7 +113,7 @@
   width: 40px;
   height: 40px;
   border-radius: 50%;
-  background-color: #7253ed;
+  background-color: #2888a8;
   color: #fff;
   border: none;
   cursor: pointer;
@@ -127,7 +127,7 @@
   box-shadow: 0 2px 8px rgba(0,0,0,0.2);
 
   &:hover {
-    background-color: #5e3fd6;
+    background-color: #1e6e8a;
   }
 
   &.visible {
