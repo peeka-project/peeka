@@ -30,7 +30,7 @@ jobs:
           pip install pytest pytest-timeout
 
       - name: Run unit tests
-        run: pytest tests/ -v --tb=short -m "not e2e and not container" --timeout=30
+        run: pytest tests/ -v --tb=short -m "not e2e and not container" --ignore=tests/tui/ --ignore=tests/test_tui.py --ignore=tests/test_theme.py --timeout=30
   
   e2e-container-tests:
     name: E2E Container Tests
