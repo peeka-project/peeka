@@ -2,6 +2,15 @@
   <img src="gh-pages/assets/images/logo.png" alt="Peeka" width="128">
 </p>
 
+<p align="center">
+  <a href="https://pypi.org/project/peeka/"><img src="https://img.shields.io/pypi/v/peeka?color=2888a8" alt="PyPI"></a>
+  <a href="https://pypi.org/project/peeka/"><img src="https://img.shields.io/pypi/pyversions/peeka?color=2888a8" alt="Python"></a>
+  <a href="https://github.com/wwulfric/peeka/releases/latest"><img src="https://img.shields.io/github/v/release/wwulfric/peeka?color=2888a8" alt="Release"></a>
+  <a href="https://github.com/wwulfric/peeka/actions"><img src="https://img.shields.io/github/actions/workflow/status/wwulfric/peeka/e2e-tests.yml?label=tests" alt="Tests"></a>
+  <a href="https://github.com/wwulfric/peeka/blob/master/LICENSE"><img src="https://img.shields.io/github/license/wwulfric/peeka?color=2888a8" alt="License"></a>
+  <a href="https://wwulfric.github.io/peeka/"><img src="https://img.shields.io/badge/docs-gh--pages-2888a8" alt="Docs"></a>
+</p>
+
 <p align="right">
   <strong>中文</strong> | <a href="README.md">English</a>
 </p>
@@ -27,8 +36,8 @@ Python 3.14+ 使用 [PEP 768](https://peps.python.org/pep-0768/)（`sys.remote_e
 ### 安装
 
 ```bash
-pip install peeka          # 仅 CLI
-pip install peeka[tui]     # CLI + TUI
+pip install peeka          # 仅 CLI（Python 3.8+）
+pip install peeka[tui]     # CLI + TUI（Python 3.9+）
 ```
 
 ### 基本使用
@@ -81,6 +90,8 @@ peeka-cli watch "module.func" > observations.jsonl
 | `memory`  | 内存使用分析                   |
 | `inspect` | 运行时对象检查                 |
 | `sc`/`sm` | 搜索类 / 搜索方法              |
+| `thread`  | 线程分析与诊断                 |
+| `top`     | 函数级性能采样                 |
 | `reset`   | 移除所有注入的增强              |
 | `detach`  | 从目标进程分离                 |
 
@@ -192,10 +203,13 @@ x + y > 10                   # 算术表达式
 
 ## Python 版本支持
 
-| Python 版本  | 附加机制                        | 要求                               |
-|-------------|--------------------------------|-----------------------------------|
-| 3.14+       | PEP 768 `sys.remote_exec()`   | 相同 UID 或 `CAP_SYS_PTRACE`      |
-| 3.8–3.13    | GDB + ptrace 降级方案           | GDB 7.3+，ptrace_scope ≤ 1       |
+| Python 版本  | CLI | TUI | 附加机制                        | 要求                               |
+|-------------|:---:|:---:|--------------------------------|-----------------------------------|
+| 3.14+       | ✅  | ✅  | PEP 768 `sys.remote_exec()`   | 相同 UID 或 `CAP_SYS_PTRACE`      |
+| 3.9–3.13    | ✅  | ✅  | GDB + ptrace 降级方案           | GDB 7.3+，ptrace_scope ≤ 1       |
+| 3.8         | ✅  | ❌  | GDB + ptrace 降级方案           | GDB 7.3+，ptrace_scope ≤ 1       |
+
+TUI 依赖 [Textual](https://github.com/Textualize/textual)，需要 Python ≥ 3.9。
 
 ### Python < 3.14 配置
 
@@ -231,13 +245,6 @@ echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope
 sudo setsebool -P deny_ptrace=off
 ```
 
-## 环境变量
-
-| 变量                | 说明           | 默认值    |
-|---------------------|---------------|----------|
-| `PEEKA_SOCKET_DIR`  | 套接字文件目录  | `/tmp`   |
-| `PEEKA_TIMEOUT`     | 命令超时（秒）  | `30`     |
-| `PEEKA_BUFFER_SIZE` | 观测数据缓冲大小 | `10000`  |
 
 ## 故障排除
 
@@ -256,17 +263,21 @@ sudo setsebool -P deny_ptrace=off
 ### 目标进程行为异常
 
 ```bash
-# 停止观测
-peeka-cli watch --action stop <watch_id>
+# 移除特定函数的观测
+peeka-cli reset "module.func"
 
-# 如果持续异常，重启目标进程
+# 移除所有注入的增强
+peeka-cli reset --all
+
+# 如果持续异常，断开连接并重启目标进程
+peeka-cli detach <pid>
 ```
 
 ## 架构概览
 
 ```
 CLI/TUI  →  AgentClient  →  Unix Socket  →  PeekaAgent（注入到目标进程）
-                                              ├─ 命令路由器 → BaseCommand 子类
+                                              ├─ _register_handlers() → BaseCommand 子类
                                               ├─ 装饰器注入器（函数包装）
                                               └─ 观测管理器（缓冲流式传输）
 ```
