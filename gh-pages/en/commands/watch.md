@@ -940,7 +940,7 @@ Implementation status of Arthas features in Peeka:
 - [x] **Multiple observation points** (`-b/-e/-s/-f`) —— ✅ Fully implemented
 - [x] **cost variable** (execution time filtering) —— ✅ Implemented
 - [x] **target variable** (target object) —— ✅ Implemented (included in output)
-- [ ] **Wildcard matching** (`module.*`) —— ⏳ Planned
+- [x] **Wildcard matching** (`module.*`) —— ✅ Implemented
 - [ ] **Regular expression matching** (`-E`) —— ⏳ Planned
 - [ ] **Object property navigation** (`target.field`) —— ⏳ Planned
 - [ ] **Static field access** (`@Class@field`) —— ⏳ Planned
