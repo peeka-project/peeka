@@ -671,10 +671,6 @@ peeka-cli watch "db.query" | \
 
 - **Buffer size**: Default 10000 observation records (approximately 10-50MB)
 - **Auto-eviction**: Automatically discards old data when limit exceeded
-- **Environment variable configuration**:
-  ```bash
-  export PEEKA_BUFFER_SIZE=5000  # Reduce buffer size
-  ```
 
 ## FAQ
 
