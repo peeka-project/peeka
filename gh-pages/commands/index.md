@@ -55,9 +55,10 @@ module.ClassName.method_name
 # 模块函数
 module.function_name
 
-# 支持通配符（计划中）
+# 支持通配符
 module.ClassName.*
 module.*
+*.method_name
 ```
 
 ### 输出格式

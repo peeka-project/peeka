@@ -55,9 +55,10 @@ module.ClassName.method_name
 # Module function
 module.function_name
 
-# Wildcard support (planned)
+# Wildcard support
 module.ClassName.*
 module.*
+*.method_name
 ```
 
 ### Output Format
