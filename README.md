@@ -2,6 +2,15 @@
   <img src="gh-pages/assets/images/logo.png" alt="Peeka" width="128">
 </p>
 
+<p align="center">
+  <a href="https://pypi.org/project/peeka/"><img src="https://img.shields.io/pypi/v/peeka?color=2888a8" alt="PyPI"></a>
+  <a href="https://pypi.org/project/peeka/"><img src="https://img.shields.io/pypi/pyversions/peeka?color=2888a8" alt="Python"></a>
+  <a href="https://github.com/wwulfric/peeka/releases/latest"><img src="https://img.shields.io/github/v/release/wwulfric/peeka?color=2888a8" alt="Release"></a>
+  <a href="https://github.com/wwulfric/peeka/actions"><img src="https://img.shields.io/github/actions/workflow/status/wwulfric/peeka/e2e-tests.yml?label=tests" alt="Tests"></a>
+  <a href="https://github.com/wwulfric/peeka/blob/master/LICENSE"><img src="https://img.shields.io/github/license/wwulfric/peeka?color=2888a8" alt="License"></a>
+  <a href="https://wwulfric.github.io/peeka/"><img src="https://img.shields.io/badge/docs-gh--pages-2888a8" alt="Docs"></a>
+</p>
+
 <p align="right">
   <a href="README.zh-CN.md">中文</a> | <strong>English</strong>
 </p>
@@ -27,8 +36,8 @@ Uses [PEP 768](https://peps.python.org/pep-0768/) (`sys.remote_exec`) on Python 
 ### Install
 
 ```bash
-pip install peeka          # CLI only
-pip install peeka[tui]     # CLI + TUI
+pip install peeka          # CLI only (Python 3.8+)
+pip install peeka[tui]     # CLI + TUI (Python 3.9+)
 ```
 
 ### Basic Usage
@@ -81,6 +90,8 @@ peeka-cli watch "module.func" > observations.jsonl
 | `memory`  | Memory usage analysis                       |
 | `inspect` | Runtime object inspection                   |
 | `sc`/`sm` | Search classes / search methods             |
+| `thread`  | Thread analysis and diagnostics             |
+| `top`     | Function-level performance sampling         |
 | `reset`   | Remove all injected enhancements            |
 | `detach`  | Detach from target process                  |
 
@@ -192,10 +203,13 @@ Every line is a JSON object with a `type` field:
 
 ## Python Version Support
 
-| Python Version | Attach Mechanism              | Requirements                      |
-|----------------|-------------------------------|-----------------------------------|
-| 3.14+          | PEP 768 `sys.remote_exec()`  | Same UID or `CAP_SYS_PTRACE`     |
-| 3.8–3.13       | GDB + ptrace fallback         | GDB 7.3+, ptrace_scope ≤ 1       |
+| Python Version | CLI | TUI | Attach Mechanism              | Requirements                      |
+|----------------|:---:|:---:|-------------------------------|-----------------------------------|
+| 3.14+          | ✅  | ✅  | PEP 768 `sys.remote_exec()`  | Same UID or `CAP_SYS_PTRACE`     |
+| 3.9–3.13       | ✅  | ✅  | GDB + ptrace fallback         | GDB 7.3+, ptrace_scope ≤ 1       |
+| 3.8            | ✅  | ❌  | GDB + ptrace fallback         | GDB 7.3+, ptrace_scope ≤ 1       |
+
+TUI requires [Textual](https://github.com/Textualize/textual) which needs Python ≥ 3.9.
 
 ### Python < 3.14 Setup
 
@@ -231,13 +245,6 @@ echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope
 sudo setsebool -P deny_ptrace=off
 ```
 
-## Environment Variables
-
-| Variable             | Description                  | Default  |
-|----------------------|------------------------------|----------|
-| `PEEKA_SOCKET_DIR`   | Socket file directory        | `/tmp`   |
-| `PEEKA_TIMEOUT`      | Command timeout (seconds)    | `30`     |
-| `PEEKA_BUFFER_SIZE`  | Observation buffer size      | `10000`  |
 
 ## Troubleshooting
 
@@ -256,17 +263,21 @@ sudo setsebool -P deny_ptrace=off
 ### Target process behaving abnormally
 
 ```bash
-# Stop observation
-peeka-cli watch --action stop <watch_id>
+# Remove observation on specific function
+peeka-cli reset "module.func"
 
-# If issues persist, restart target process
+# Remove all injected enhancements
+peeka-cli reset --all
+
+# If issues persist, detach and restart target process
+peeka-cli detach <pid>
 ```
 
 ## Architecture
 
 ```
 CLI/TUI  →  AgentClient  →  Unix Socket  →  PeekaAgent (injected in target)
-                                              ├─ CommandRouter → BaseCommand subclasses
+                                              ├─ _register_handlers() → BaseCommand subclasses
                                               ├─ DecoratorInjector (function wrapping)
                                               └─ ObservationManager (buffered streaming)
 ```

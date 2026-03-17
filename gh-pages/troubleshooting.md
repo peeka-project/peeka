@@ -550,14 +550,14 @@ peeka-cli attach 12345 --socket-dir /tmp/my_peeka
 **解决方案**:
 
 ```bash
-# 设置更小的缓冲区
-export PEEKA_BUFFER_SIZE=1000
-
-# 或限制观测次数
+# 限制观测次数
 peeka-cli watch "func" --times 100
 
 # 定期重置观测
 peeka-cli reset "func"
+
+# 或断开连接
+peeka-cli detach <pid>
 ```
 
 ### 找不到模块

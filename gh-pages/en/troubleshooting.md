@@ -551,14 +551,14 @@ peeka-cli attach 12345 --socket-dir /tmp/my_peeka
 **Solutions**:
 
 ```bash
-# Set smaller buffer
-export PEEKA_BUFFER_SIZE=1000
-
-# Or limit observation count
+# Limit observation count
 peeka-cli watch "func" --times 100
 
 # Periodically reset observations
 peeka-cli reset "func"
+
+# Or detach from process
+peeka-cli detach <pid>
 ```
 
 ### Module Not Found
