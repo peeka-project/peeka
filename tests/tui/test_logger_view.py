@@ -67,7 +67,7 @@ class TestLoggerView:
             logger_view = app.screen.query_one("LoggerView", LoggerView)
             logger_view.set_client(logger_client)
 
-            await logger_view._refresh_loggers()
+            logger_view._refresh_loggers()
             await pilot.pause()
 
             commands = [cmd.get("action") for cmd in logger_client.commands_received]
@@ -114,7 +114,7 @@ class TestLoggerView:
             level_select = logger_view.query_one("#logger-level-select", Select)
             level_select.value = "DEBUG"
 
-            await logger_view._set_logger_level()
+            logger_view._set_logger_level()
             await pilot.pause()
             await pilot.pause()
 
@@ -132,7 +132,11 @@ class TestLoggerView:
     @pytest.mark.tui
     async def test_set_level_validates_inputs(self):
         """Set level without logger name or level shows warning."""
-        logger_client = ActionRoutingLoggerClient(action_responses={})
+        logger_client = ActionRoutingLoggerClient(
+            action_responses={
+                "list": {"status": "success", "loggers": []},
+            }
+        )
         logger_client.connect()
 
         app = PeekaApp()
@@ -145,14 +149,17 @@ class TestLoggerView:
 
             logger_view = app.screen.query_one("LoggerView", LoggerView)
             logger_view.set_client(logger_client)
+            await pilot.pause()  # Wait for auto-refresh from set_client
 
             name_input = logger_view.query_one("#logger-name", Input)
             name_input.value = ""
 
-            await logger_view._set_logger_level()
+            initial_count = len(logger_client.commands_received)
+            logger_view._set_logger_level()
             await pilot.pause()
 
-            assert len(logger_client.commands_received) == 0
+            # No new "set" commands should be sent
+            assert len(logger_client.commands_received) == initial_count
 
     @pytest.mark.asyncio
     @pytest.mark.tui
@@ -184,7 +191,7 @@ class TestLoggerView:
             filter_input = logger_view.query_one("#logger-filter", Input)
             filter_input.value = "peeka.*"
 
-            await logger_view._refresh_loggers()
+            logger_view._refresh_loggers()
             await pilot.pause()
 
             list_commands = [
@@ -220,7 +227,7 @@ class TestLoggerView:
             logger_view = app.screen.query_one("LoggerView", LoggerView)
             logger_view.set_client(logger_client)
 
-            await logger_view._refresh_loggers()
+            logger_view._refresh_loggers()
             await pilot.pause()
 
             table = logger_view.query_one("#logger-table", DataTable)
@@ -248,7 +255,7 @@ class TestLoggerView:
             logger_view = app.screen.query_one("LoggerView", LoggerView)
             logger_view.set_client(error_client)
 
-            await logger_view._refresh_loggers()
+            logger_view._refresh_loggers()
             await pilot.pause()
 
             table = logger_view.query_one("#logger-table", DataTable)
@@ -282,7 +289,7 @@ class TestLoggerView:
             level_select = logger_view.query_one("#logger-level-select", Select)
             level_select.value = "ERROR"
 
-            await logger_view._set_logger_level()
+            logger_view._set_logger_level()
             await pilot.pause()
 
             commands = [cmd.get("action") for cmd in error_client.commands_received]
@@ -302,7 +309,7 @@ class TestLoggerView:
 
             logger_view = app.screen.query_one("LoggerView", LoggerView)
 
-            await logger_view._refresh_loggers()
+            logger_view._refresh_loggers()
             await pilot.pause()
 
             table = logger_view.query_one("#logger-table", DataTable)
@@ -337,7 +344,7 @@ class TestLoggerView:
 
             initial_count = len(logger_client.commands_received)
 
-            await logger_view.action_refresh()
+            logger_view.action_refresh()
             await pilot.pause()
 
             assert len(logger_client.commands_received) > initial_count
@@ -378,7 +385,7 @@ class TestLoggerView:
             level_select = logger_view.query_one("#logger-level-select", Select)
             level_select.value = "ERROR"
 
-            await logger_view._set_logger_level()
+            logger_view._set_logger_level()
             await pilot.pause()
             await pilot.pause()
 
