@@ -382,7 +382,7 @@ class TestStackViewCleanup:
             mock_worker1 = MagicMock()
             mock_worker2 = MagicMock()
             stack_view._workers = {"s1": mock_worker1, "s2": mock_worker2}
-            stack_view._trace_counts = {"s1": 5, "s2": 3}
+            stack_view._stack_counts = {"s1": 5, "s2": 3}
 
             stream_client = mock_client_factory()
             stream_client.connect()
@@ -413,7 +413,7 @@ class TestStackViewCleanup:
 
             # State cleared
             assert len(stack_view._workers) == 0
-            assert len(stack_view._trace_counts) == 0
+            assert len(stack_view._stack_counts) == 0
             assert not stream_client.connected
             assert stack_view._stream_client is None
 

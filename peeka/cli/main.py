@@ -9,7 +9,7 @@ import os
 import signal
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 from peeka.core.attach import ProcessAttacher
 from peeka.core.client import StreamingAgentClient
@@ -72,7 +72,7 @@ def _find_active_session() -> Optional[str]:
     return None
 
 
-def _check_agent_attached() -> tuple[str, int]:
+def _check_agent_attached() -> Tuple[str, int]:
     """
     Check if agent is attached to any process.
     Returns (socket_path, pid) tuple.

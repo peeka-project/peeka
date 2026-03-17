@@ -6,7 +6,7 @@ import json
 import logging
 import threading
 from collections import deque
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Deque, Dict, Optional
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -125,7 +125,7 @@ class WatchView(Container):
     def __init__(self, pid: int) -> None:
         super().__init__()
         self.pid = pid
-        self._active_watches: dict[
+        self._active_watches: Dict[
             str, dict
         ] = {}  # watch_id -> {pattern, count, worker}
         self._completion_source: Optional[CompletionSource] = None
@@ -133,7 +133,7 @@ class WatchView(Container):
         self._stream_client: Optional["StreamingAgentClient"] = None
         self._stream_client_lock: threading.Lock = threading.Lock()
         self._socket_path: Optional[str] = None
-        self._observations: deque[dict] = deque(maxlen=self.MAX_OBSERVATIONS)
+        self._observations: Deque[dict] = deque(maxlen=self.MAX_OBSERVATIONS)
         self._obs_counter: int = 0
         self._auto_follow: bool = True
         self._log = logging.getLogger(__name__)

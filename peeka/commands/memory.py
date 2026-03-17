@@ -14,7 +14,7 @@ import sys
 import time
 import tracemalloc
 from collections import defaultdict
-from typing import Dict, Any, Optional, Tuple, List, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Set, Tuple, TYPE_CHECKING
 
 from peeka.commands.base import BaseCommand
 
@@ -536,7 +536,7 @@ class MemoryCommand(BaseCommand):
             except Exception:
                 return "<repr error>"
         
-        def traverse(o: Any, depth: int, visited: set[int]) -> List[Dict[str, Any]]:
+        def traverse(o: Any, depth: int, visited: Set[int]) -> List[Dict[str, Any]]:
             """Recursively traverse referrers."""
             if depth >= max_depth:
                 return []
@@ -608,7 +608,7 @@ class MemoryCommand(BaseCommand):
             except Exception:
                 return "<repr error>"
         
-        def traverse(o: Any, depth: int, visited: set[int]) -> List[Dict[str, Any]]:
+        def traverse(o: Any, depth: int, visited: Set[int]) -> List[Dict[str, Any]]:
             """Recursively traverse referents."""
             if depth >= max_depth:
                 return []
