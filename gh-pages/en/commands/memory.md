@@ -20,7 +20,7 @@ permalink: /commands/memory
 
 The `memory` command is used to analyze **memory usage** in running Python processes, providing 10 diagnostic operations: memory overview, trace control, allocation analysis, snapshot management, snapshot comparison, reference chain queries, snapshot export, and GC statistics. This is Peeka's core memory diagnostic tool, suitable for memory leak troubleshooting and performance optimization in production environments.
 
-**Design Inspiration**: Peeka's `memory` command is inspired by [Arthas](https://arthas.aliyun.com/)'s `memory` command, implemented for Python using `tracemalloc` and `gc` modules.
+
 
 ## TUI Usage
 
@@ -1005,27 +1005,10 @@ while True:
     time.sleep(15)
 ```
 
-## Comparison with Arthas Memory
-
-| Feature | Peeka | Arthas | Notes |
-|---------|-------|--------|-------|
-| **Target Language** | Python | Java | Core difference |
-| **RSS View** | ✅ procfs/resource | ✅ System API | Same functionality |
-| **Heap Memory Analysis** | ✅ tracemalloc | ✅ JVM heap | Different implementation |
-| **GC Statistics** | ✅ gc module | ✅ JVM GC | Same functionality |
-| **Snapshot Export** | ✅ .snapshot format | ✅ heap dump | Different formats |
-| **In-memory Snapshot Comparison** | ✅ snapshot + diff | ❌ Requires offline | Online comparison without file export |
-| **Memory Allocation Hotspots** | ✅ top command | ✅ memory command | Similar functionality |
-| **Object Statistics** | ✅ gc command | ✅ dashboard | Similar functionality |
-| **Reference Chain Query** | ✅ referrers/referents | ⏳ Partial (heap dump analysis) | Peeka supports online reference chain tracing |
-| **Off-heap Memory** | ⏳ Partial support (RSS vs tracemalloc) | ✅ Full support | Python has no off-heap concept |
-| **Real-time Monitoring** | ❌ Requires polling | ✅ dashboard | Peeka planned feature |
-
 ## References
 
 - [Python tracemalloc Documentation](https://docs.python.org/3/library/tracemalloc.html)
 - [Python gc Module Documentation](https://docs.python.org/3/library/gc.html)
-- [Arthas Memory Documentation](https://arthas.aliyun.com/doc/memory.html)
 - [Peeka Architecture Design](../ARCHITECTURE.md)
 - [Peeka Developer Guide](../AGENTS.md)
 

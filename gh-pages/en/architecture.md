@@ -553,5 +553,4 @@ BINDINGS = [
 
 - [PEP 768 - Safe External Debugger](https://peps.python.org/pep-0768/)
 - [PEP 669 - Low Overhead Monitoring](https://peps.python.org/pep-0669/)
-- [Alibaba Arthas Architecture](https://arthas.aliyun.com/doc/arch.html)
 - [simpleeval Documentation](https://github.com/danthedeckie/simpleeval)

@@ -20,7 +20,7 @@ permalink: /commands/thread
 
 The `thread` command is used to list all threads in the target process and inspect call stack information for specific threads. This command helps developers quickly locate thread states, diagnose deadlock issues, analyze thread blocking causes, and more.
 
-**Design Inspiration**: Peeka's `thread` command draws from [Arthas](https://arthas.aliyun.com/)'s design philosophy, providing similar thread diagnostic capabilities while being deeply optimized for Python language characteristics.
+
 
 ## Use Cases
 

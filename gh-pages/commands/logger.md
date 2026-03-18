@@ -970,59 +970,6 @@ echo "DEBUG enabled. Will auto-restore in $DURATION seconds..."
 
 ---
 
-## 与 Arthas 对比
-
-### 功能对比
-
-| 功能 | Arthas (Java) | Peeka (Python) | 说明 |
-|------|---------------|----------------|------|
-| 列出 logger | ✅ `logger` | ✅ `logger list` | 一致 |
-| 查询 logger | ✅ `logger -n name` | ✅ `logger get --logger name` | 语法略有不同 |
-| 修改级别 | ✅ `logger --name x --level DEBUG` | ✅ `logger set --logger x --level DEBUG` | 一致 |
-| 通配符过滤 | ✅ | ✅ `--pattern` | 一致 |
-| 级别选项 | TRACE, DEBUG, INFO, WARN, ERROR | DEBUG, INFO, WARNING, ERROR, CRITICAL | Python 标准级别 |
-| 修改 appender | ✅ | ❌ | Peeka 不支持 |
-| 查看 handler | ✅ | ❌ | Peeka 不支持 |
-
-### 命令对比
-
-**Arthas (Java)**：
-```bash
-# 列出所有 logger
-logger
-
-# 查询特定 logger
-logger -n com.example.MyClass
-
-# 修改级别
-logger --name com.example.MyClass --level DEBUG
-```
-
-**Peeka (Python)**：
-```bash
-# 列出所有 logger
-peeka-cli logger --action list
-
-# 查询特定 logger
-peeka-cli logger --action get --logger myapp.MyClass
-
-# 修改级别
-peeka-cli logger --action set --logger myapp.MyClass --level DEBUG
-```
-
-### 优势对比
-
-**Peeka 优势**：
-- JSON 输出，易于程序化处理
-- fnmatch 模式匹配，更灵活
-- 与 `jq` 等工具无缝集成
-
-**Arthas 优势**：
-- 支持修改 appender/handler
-- 支持查看 logger 的完整配置（包括 handler、formatter）
-- 内置 Web UI
-
----
 
 ## 总结
 

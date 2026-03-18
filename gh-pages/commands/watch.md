@@ -20,8 +20,6 @@ nav_order: 2
 `watch` 命令用于观测指定 Python 函数的执行情况，能够捕获函数的**入参**、**返回值**、**异常信息**、**执行耗时**等数据。这是
 Peeka 最核心的诊断命令，适用于生产环境的实时故障排查和性能分析。
 
-**设计灵感**：Peeka 的 `watch` 命令借鉴了 [Arthas](https://arthas.aliyun.com/) 的设计理念，提供了类似的函数观测能力，但针对
-Python 语言特性进行了深度优化。
 
 ## TUI 使用
 
@@ -130,7 +128,7 @@ peeka-cli watch "calculator.Calculator.add" -n 5
 }
 ```
 
-**字段说明**（Arthas 兼容）：
+**字段说明**：
 
 | 字段            | 说明                 | 示例值                                            |
 |---------------|--------------------|------------------------------------------------|
@@ -138,13 +136,13 @@ peeka-cli watch "calculator.Calculator.add" -n 5
 | `timestamp`   | 时间戳                | `1705586200.123`                               |
 | `location`    | 观测位置               | `"AtEnter"` / `"AtExit"` / `"AtExceptionExit"` |
 | `func_name`   | 函数名                | `"module.Class.method"`                        |
-| `params`      | 位置参数（Arthas 兼容）    | `[10, 20]`                                     |
+| `params`      | 位置参数                | `[10, 20]`                                     |
 | `kwargs`      | 关键字参数              | `{"debug": true}`                              |
 | `target`      | 目标对象（self，仅实例方法）   | `{"__attrs__": {...}}`                         |
-| `returnObj`   | 返回值（Arthas 兼容）     | `30`                                           |
+| `returnObj`   | 返回值                  | `30`                                           |
 | `success`     | 是否成功               | `true` / `false`                               |
-| `throwExp`    | 异常信息（Arthas 兼容）    | `"ValueError: ..."`                            |
-| `cost`        | 执行耗时（毫秒，Arthas 兼容） | `0.045`                                        |
+| `throwExp`    | 异常信息                | `"ValueError: ..."`                            |
+| `cost`        | 执行耗时（毫秒）        | `0.045`                                        |
 | `thread_id`   | 线程 ID              | `140234567890`                                 |
 | `thread_name` | 线程名                | `"MainThread"`                                 |
 
@@ -206,9 +204,9 @@ peeka-cli watch "utils.Helper.static_method"
 peeka-cli watch "models.User.from_dict"
 ```
 
-## 观测时机控制（Arthas 兼容）
+## 观测时机控制
 
-Peeka 支持 Arthas 风格的观测时机控制，可以在函数执行的不同阶段进行观测。
+Peeka 支持多种观测时机控制，可以在函数执行的不同阶段进行观测。
 
 ### 观测时机标志
 
@@ -451,7 +449,7 @@ peeka-cli watch "parser.parse" \
 #### 6. 性能过滤（cost 变量）
 
 ```bash
-# 只观测执行时间超过 100ms 的调用（类似 Arthas #cost）
+# 只观测执行时间超过 100ms 的调用
 peeka-cli watch "database.query" --condition "cost > 100"
 
 # 组合性能和参数条件
@@ -507,7 +505,7 @@ peeka-cli watch "mymodule.func" --condition "params[0] > 50"
 
 ### JSON 字段说明
 
-每次函数调用会输出一条 JSON 记录（Arthas 兼容格式）：
+每次函数调用会输出一条 JSON 记录：
 
 ```json
 {
@@ -529,21 +527,21 @@ peeka-cli watch "mymodule.func" --condition "params[0] > 50"
 
 **字段说明**：
 
-| 字段            | 类型      | 说明                                   | Arthas 兼容 |
-|---------------|---------|--------------------------------------|-----------|
-| `watch_id`    | string  | 观测会话 ID                              | -         |
-| `timestamp`   | float   | 调用时间戳（Unix 时间）                       | -         |
-| `location`    | string  | 观测位置（AtEnter/AtExit/AtExceptionExit） | ✅         |
-| `func_name`   | string  | 函数完整名称                               | -         |
-| `params`      | array   | 位置参数列表                               | ✅         |
-| `kwargs`      | object  | 关键字参数字典                              | -         |
-| `target`      | object  | 目标对象（self，仅实例方法）                     | ✅         |
-| `returnObj`   | any     | 返回值（成功时）                             | ✅         |
-| `success`     | boolean | 是否成功执行                               | -         |
-| `throwExp`    | string  | 异常信息（失败时）                            | ✅         |
-| `cost`        | float   | 执行耗时（毫秒）                             | ✅         |
-| `thread_id`   | int     | 线程 ID                                | -         |
-| `thread_name` | string  | 线程名称                                 | -         |
+| 字段            | 类型      | 说明                                   |
+|---------------|---------|--------------------------------------|
+| `watch_id`    | string  | 观测会话 ID                              |
+| `timestamp`   | float   | 调用时间戳（Unix 时间）                       |
+| `location`    | string  | 观测位置（AtEnter/AtExit/AtExceptionExit） |
+| `func_name`   | string  | 函数完整名称                               |
+| `params`      | array   | 位置参数列表                               |
+| `kwargs`      | object  | 关键字参数字典                              |
+| `target`      | object  | 目标对象（self，仅实例方法）                     |
+| `returnObj`   | any     | 返回值（成功时）                             |
+| `success`     | boolean | 是否成功执行                               |
+| `throwExp`    | string  | 异常信息（失败时）                            |
+| `cost`        | float   | 执行耗时（毫秒）                             |
+| `thread_id`   | int     | 线程 ID                                |
+| `thread_name` | string  | 线程名称                                 |
 
 ### 异常捕获
 
@@ -762,201 +760,6 @@ peeka-cli reset "pattern"
 # 当前 CLI 不直接支持，需要通过 Ctrl+C 停止当前会话
 ```
 
-## 与 Arthas Watch 的对比
-
-| 特性                 | Peeka                             | Arthas                          | 说明                      |
-|--------------------|-----------------------------------|---------------------------------|-------------------------|
-| **目标语言**           | Python                            | Java                            | 核心差异                    |
-| **观测点**            | ✅ `-b/-e/-s/-f` 完整支持              | `-b/-e/-s/-f`                   | **已实现** Arthas 兼容       |
-| **location 字段**    | ✅ AtEnter/AtExit/AtExceptionExit  | 相同                              | **已实现**                 |
-| **表达式语言**          | Python + simpleeval               | OGNL                            | Peeka 更安全但功能较少          |
-| **观察对象**           | ✅ `params`, `kwargs`, `target`    | `params`, `target`, `returnObj` | **已实现** target 支持       |
-| **字段命名**           | ✅ `returnObj`, `throwExp`, `cost` | 相同                              | **已实现** Arthas 兼容       |
-| **耗时过滤**           | ✅ `cost > 100`                    | `#cost>100`                     | **已实现** cost 变量         |
-| **condition 参数**   | ✅ `--condition`           | `--condition`           | **已实现**                 |
-| **正则匹配**           | ⏳ 未实现                             | ✓ (通配符 + 正则)                    | 计划支持                    |
-| **ClassLoader 选择** | N/A                               | ✓ (`-c` 参数)                     | Python 无 ClassLoader 概念 |
-| **子类匹配**           | ✗                                 | ✓ (默认匹配子类)                      | Python 动态绑定已自动处理        |
-| **排除类**            | ✗                                 | ✓ (`--exclude-class-pattern`)   | Peeka 未实现               |
-| **静态字段访问**         | ✗                                 | ✓ (`@ClassName@field`)          | Arthas 支持 OGNL 静态访问     |
-| **输出格式**           | JSON                              | 文本 + 表格                         | Peeka 更适合自动化处理          |
-| **实时流式**           | ✓                                 | ✓                               | 两者都支持                   |
-| **观测次数限制**         | ✓ (`-n`)                          | ✓ (`-n`)                        | 功能一致                    |
-| **深度控制**           | ✓ (`-x`, 最大4)                     | ✓ (`-x`, 最大4)                   | 功能一致                    |
-
-### 核心差异分析
-
-#### 1. **观测时机（✅ 已实现）**
-
-**Arthas**（支持 4 个观测点）：
-
-- `-b`：函数调用前（此时无返回值/异常）
-- `-e`：函数异常后
-- `-s`：函数返回后
-- `-f`：函数结束后（默认，包含正常返回和异常）
-
-**Peeka**（✅ 已完整支持 4 个观测点）：
-
-- `-b, --before`：函数调用前（AtEnter）
-- `-e, --exception`：函数异常后（AtExceptionExit）
-- `-s, --success`：函数返回后（AtExit）
-- `-f, --finish`：函数结束后（默认，AtExit 或 AtExceptionExit）
-
-**实现状态**：
-
-- ✅ **完全兼容** Arthas 的观测时机控制
-- ✅ 支持观测"调用前"和"调用后"的对象状态变化
-- ✅ 可以判断参数在函数执行过程中是否被修改
-- ✅ 输出包含 `location` 字段标识观测位置
-- ✅ 支持组合使用多个标志（如 `-b -s` 同时观测入口和出口）
-
-#### 2. **表达式能力差异**
-
-**Arthas OGNL**（功能强大）：
-
-```java
-// 访问静态字段
-'{@MyClass@staticField}'
-
-// 访问当前对象属性
-'target.fieldName'
-
-// 复杂导航
-'params[0].user.address.city'
-
-// 调用方法
-'params[0].toString().length() > 10'
-
-// 特殊变量
-'#cost>200'  // 执行耗时
-```
-
-**Peeka simpleeval**（安全受限，部分兼容）：
-
-```python
-# 访问参数
-params[0] > 100
-
-# 调用安全函数
-len(params) > 2
-
-# 字符串操作
-str(params[0]).startswith('test')
-
-# ✅ 支持：cost 变量（类似 Arthas #cost）
-cost > 200
-
-# ✅ 支持：target 变量（可访问但不支持属性导航）
-# 当前可以检查 target 是否存在，但不支持 target.field
-
-# ✗ 不支持：导航对象属性（params[0].user.name）
-# ✗ 不支持：静态字段访问
-```
-
-**设计权衡**：
-
-- Peeka 优先保证**安全性**（防止代码注入）
-- Arthas 优先提供**表达能力**（Java 类型安全提供保障）
-- ✅ Peeka 已实现 `cost` 和 `target` 变量，缩小了差距
-
-#### 3. **模式匹配差异**
-
-**Arthas**（灵活匹配）：
-
-```bash
-# 通配符
-watch demo.* primeFactors
-
-# 正则表达式 (-E)
-watch -E 'demo\\.Math.*' 'prime.*'
-
-# 排除特定类
-watch MyClass * --exclude-class-pattern 'MyClass$Inner'
-```
-
-**Peeka**（精确匹配）：
-
-```bash
-# 只支持完整路径
-peeka-cli watch "demo.MathGame.primeFactors"
-
-# ✗ 不支持通配符
-# ✗ 不支持正则表达式
-```
-
-**原因**：
-
-- Python 的动态特性使得模式匹配实现复杂
-- 当前版本优先实现核心功能，后续可扩展
-
-#### 4. **目标对象访问（✅ 部分实现）**
-
-**Arthas**（支持 `target` 关键字）：
-
-```bash
-# 访问 this 对象
-watch demo.MathGame primeFactors 'target'
-
-# 访问 this 的属性
-watch demo.MathGame primeFactors 'target.illegalArgumentCount'
-```
-
-**Peeka**（✅ 支持 `target` 但不支持属性导航）：
-
-```python
-# ✅ 支持：输出包含 target 对象
-# 观测实例方法时，输出会包含 target 字段（self 对象）
-peeka-cli watch "obj.MyClass.method"
-
-# ✅ 支持：target 变量在条件中可用
-# 可以检查 target 是否存在
-peeka-cli watch "obj.method" --condition "len(params) > 0"
-
-# ⏳ 限制：不支持属性导航
-# 无法在条件中使用 target.field_name
-# 解决方案：观测返回值包含对象状态的方法
-```
-
-**实现状态**：
-
-- ✅ 输出中包含 `target` 字段（格式化后的 self 对象）
-- ✅ 条件表达式中 `target` 变量可用
-- ⏳ 不支持属性导航（simpleeval 限制）
-- 计划在未来版本扩展支持
-
-# 解决方案：观测返回值包含对象状态的函数
-
-peeka-cli watch "obj.get_state" -x 3
-
-```
-
-**影响**：
-- 无法在条件表达式中使用对象属性
-- 需要通过观测返回值间接获取对象状态
-
-### 功能对比总结
-
-| 能力维度 | Peeka | Arthas | 推荐场景 |
-|---------|-------|--------|----------|
-| **易用性** | ⭐⭐⭐⭐ | ⭐⭐⭐ | Peeka 命令更简洁 |
-| **表达能力** | ⭐⭐ | ⭐⭐⭐⭐⭐ | Arthas OGNL 功能强大 |
-| **安全性** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | Peeka 严格防注入 |
-| **灵活性** | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | Arthas 观测点/模式匹配更灵活 |
-| **自动化集成** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | Peeka JSON 输出更易处理 |
-| **性能开销** | < 5% | < 5% | 两者相当 |
-
-### Peeka 实现进展
-
-以下 Arthas 功能在 Peeka 中的实现状态：
-
-- [x] **多观测点**（`-b/-e/-s/-f`）—— ✅ 已完整实现
-- [x] **cost 变量**（执行耗时过滤）—— ✅ 已实现
-- [x] **target 变量**（目标对象）—— ✅ 已实现（输出中包含）
-- [x] **通配符匹配**（`module.*`）—— ✅ 已实现
-- [ ] **正则表达式匹配**（`-E`）—— ⏳ 计划中
-- [ ] **对象属性导航**（`target.field`）—— ⏳ 计划中
-- [ ] **静态字段访问**（`@Class@field`）—— ⏳ 计划中
-
 ## 高级技巧
 
 ### 1. 多进程观测
@@ -1011,7 +814,6 @@ for line in sys.stdin:
 
 ## 参考资料
 
-- [Arthas Watch 文档](https://arthas.aliyun.com/doc/watch.html)
 - [simpleeval 文档](https://github.com/danthedeckie/simpleeval)
 - [Peeka 架构设计](../ARCHITECTURE.md)
 - [Peeka 开发指南](../AGENTS.md)

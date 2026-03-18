@@ -11,7 +11,7 @@ permalink: /
 
 > *Peek-a-boo!* — The name comes from the children's game. A diagnostic tool finding a hidden bug feels just like that moment of surprise when someone is found in hide-and-seek.
 
-A runtime diagnostic tool based on Python 3.14 remote debugging protocol (PEP 768), providing non-invasive function observation capabilities similar to Java Arthas.
+A runtime diagnostic tool based on Python 3.14 remote debugging protocol (PEP 768), providing non-invasive function observation capabilities.
 {: .fs-6 .fw-300 }
 
 [Quick Start](#quick-start){: .btn .btn-primary .fs-5 .mb-4 .mb-md-0 .mr-2 }
@@ -158,17 +158,6 @@ peeka
 
 ---
 
-## Comparison with Arthas
-
-Peeka's design is deeply inspired by [Alibaba Arthas](https://github.com/alibaba/arthas), bringing similar diagnostic capabilities to the Python ecosystem.
-
-### Python-Specific Advantages
-
-- **Native JSON Output** - All commands output JSONL format for easy automation integration
-- **simpleeval Security Sandbox** - Conditional expressions use AST whitelist, fully defending against code injection
-- **Python 3.12+ Performance Optimization** - trace command uses `sys.monitoring` API with < 5% overhead
-- **Lightweight Deployment** - No Java runtime required, one-click pip installation
-
 ---
 
 ## Technical Highlights
@@ -216,6 +205,6 @@ Peeka is open source under [Apache License 2.0](https://github.com/wwulfric/peek
 
 ## Acknowledgments
 
-- Inspiration: [Alibaba Arthas](https://github.com/alibaba/arthas)
+- Security evaluation: [simpleeval](https://github.com/danthedeckie/simpleeval)
 - Security evaluation: [simpleeval](https://github.com/danthedeckie/simpleeval)
 - Remote debugging protocol: [PEP 768](https://peps.python.org/pep-0768/)

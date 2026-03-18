@@ -553,5 +553,4 @@ BINDINGS = [
 
 - [PEP 768 - 安全外部调试器](https://peps.python.org/pep-0768/)
 - [PEP 669 - 低开销监控](https://peps.python.org/pep-0669/)
-- [Alibaba Arthas 架构](https://arthas.aliyun.com/doc/arch.html)
 - [simpleeval 文档](https://github.com/danthedeckie/simpleeval)

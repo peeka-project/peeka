@@ -795,51 +795,6 @@ call_path_count{path="/app/api/orders.py:67"} 78
 
 ---
 
-## 与 Arthas 对比
-
-### 功能对比
-
-| 功能 | Arthas (Java) | Peeka (Python) | 说明 |
-|------|---------------|----------------|------|
-| 调用栈捕获 | ✅ `stack` | ✅ `stack` | 核心功能一致 |
-| 条件过滤 | ✅ `#cost>100` | ✅ `--condition` | 语法略有不同 |
-| 栈深度限制 | ❌ 无 | ✅ `--depth` | Peeka 可控制输出长度 |
-| 捕获次数限制 | ✅ `-n` | ✅ `-n` | 一致 |
-| 线程信息 | ✅ | ✅ | 都支持 |
-| 异步函数支持 | ✅ | ✅ | 都支持 |
-| 输出格式 | 文本 | JSON | Peeka 更易于程序化处理 |
-
-### 命令对比
-
-**Arthas (Java)**：
-```bash
-stack com.example.MyClass myMethod -n 10 '#cost>100'
-```
-
-**Peeka (Python)**：
-```bash
-peeka-cli stack "myapp.MyClass.myMethod" -n 10 \
-  --condition "cost > 100"
-```
-
-**主要区别**：
-1. **语法**：Arthas 使用 `#cost`，Peeka 直接使用 `cost` 变量
-2. **输出**：Arthas 输出美化的文本，Peeka 输出 JSON（便于自动化处理）
-3. **栈深度**：Peeka 支持 `--depth` 参数，Arthas 默认输出全部
-
-### 优势对比
-
-**Peeka 优势**：
-- JSON 输出格式，易于与其他工具集成（`jq`、Prometheus 等）
-- 可配置栈深度，避免输出过长
-- 基于 Python 的安全表达式引擎（`simpleeval`）
-
-**Arthas 优势**：
-- 更成熟的生态系统
-- 支持更多 JVM 相关功能（如线程池、堆内存等）
-- 内置 Web UI（Peeka 目前仅命令行）
-
----
 
 ## 总结
 
