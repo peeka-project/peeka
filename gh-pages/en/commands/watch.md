@@ -24,7 +24,7 @@ The `watch` command is used to observe the execution of specified Python functio
 
 ## TUI Usage
 
-In TUI mode, press **`w`** key to switch to **Watch View**, providing the following interactive features:
+In TUI mode, press **`2`** key to switch to **Watch View**, providing the following interactive features:
 
 - **Pattern Input**: Supports function name auto-completion (fetched in real-time from the target process)
 - **Parameter Configuration**: Visual configuration of depth, times, observation points, condition expressions
@@ -753,8 +753,8 @@ peeka-cli watch "func" -x 3
 ```bash
 # Method 1: Ctrl+C to stop current observation
 
-# Method 2: Use stop command (requires watch_id)
-peeka-cli watch --action stop <watch_id>
+# Method 2: Use reset command to remove the watch enhancement
+peeka-cli reset "pattern"
 
 # Method 3: Stop all observations (in interactive mode)
 # Current CLI doesn't directly support, need to stop current session via Ctrl+C
