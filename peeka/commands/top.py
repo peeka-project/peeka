@@ -36,6 +36,7 @@ class TopCommand(BaseCommand):
         self._top_id: Optional[str] = None
         self._interval: float = 0.01  # 10ms default
         self._stream: bool = False
+        self._filter_peeka: bool = True
 
         # Resolve peeka package directory for thread filtering
         self._peeka_pkg_dir: str = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + os.sep
@@ -90,6 +91,7 @@ class TopCommand(BaseCommand):
             self._top_id = f"top_{uuid.uuid4().hex[:8]}"
             self._interval = params.get("interval", 0.01)
             self._stream = params.get("stream", False)
+            self._filter_peeka = params.get("filter_peeka", True)
 
             # Reset state
             self._stats.clear()
@@ -200,8 +202,8 @@ class TopCommand(BaseCommand):
 
                 # Process each thread
                 for thread_id, frame in frames.items():
-                    # Skip peeka's own threads
-                    if self._is_peeka_thread(thread_id, frame):
+                    # Skip peeka's own threads (if filtering enabled)
+                    if self._filter_peeka and self._is_peeka_thread(thread_id, frame):
                         continue
 
                     # Walk frame stack from leaf to root
