@@ -1,24 +1,18 @@
-<p align="right">
-  <strong>中文</strong> | <a href="README.md">English</a>
-</p>
-
-<p align="center">
-  <img src="gh-pages/assets/images/logo.png" alt="Peeka" width="128">
-</p>
+<h1 align="center">
+  <img src="gh-pages/assets/images/logo.png" alt="Peeka" width="48" style="vertical-align: middle;">
+  Peeka
+</h1>
 
 <p align="center">
   <a href="https://pypi.org/project/peeka/"><img src="https://img.shields.io/pypi/v/peeka?color=2888a8" alt="PyPI"></a>
-  <a href="https://pypi.org/project/peeka/"><img src="https://img.shields.io/pypi/pyversions/peeka?color=2888a8" alt="Python"></a>
   <a href="https://github.com/wwulfric/peeka/releases/latest"><img src="https://img.shields.io/github/v/release/wwulfric/peeka?color=2888a8" alt="Release"></a>
+  <a href="https://github.com/wwulfric/peeka/actions"><img src="https://img.shields.io/github/actions/workflow/status/wwulfric/peeka/e2e-tests.yml?label=tests" alt="Tests"></a>
+  <a href="https://github.com/wwulfric/peeka/blob/master/LICENSE"><img src="https://img.shields.io/github/license/wwulfric/peeka?color=2888a8" alt="License"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/wwulfric/peeka/actions"><img src="https://img.shields.io/github/actions/workflow/status/wwulfric/peeka/e2e-tests.yml?label=tests" alt="Tests"></a>
-  <a href="https://github.com/wwulfric/peeka/blob/master/LICENSE"><img src="https://img.shields.io/github/license/wwulfric/peeka?color=2888a8" alt="License"></a>
-  <a href="https://wwulfric.github.io/peeka/"><img src="https://img.shields.io/badge/docs-gh--pages-2888a8" alt="Docs"></a>
+  <strong>中文</strong> | <a href="README.md">English</a>
 </p>
-
-# Peeka
 
 > *Peek-a-boo!* — 名字取自躲猫猫游戏。诊断工具发现隐藏 bug 的那一刻，像极了捉迷藏时突然现身的惊喜。
 
