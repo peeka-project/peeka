@@ -1,7 +1,7 @@
-<h1 align="center">
-  <img src="gh-pages/assets/images/logo.png" alt="Peeka" width="48" style="vertical-align: middle;">
-  Peeka
-</h1>
+<p align="center">
+  <img src="gh-pages/assets/images/logo.png" alt="" width="48" align="middle">&nbsp;
+  <strong style="font-size:2em;">Peeka</strong>
+</p>
 
 <p align="center">
   <a href="https://pypi.org/project/peeka/"><img src="https://img.shields.io/pypi/v/peeka?color=2888a8" alt="PyPI"></a>
