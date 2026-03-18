@@ -34,7 +34,7 @@ The `stack` command captures the complete call stack when a function is invoked,
 
 ## TUI Usage
 
-In TUI mode, press **`s`** to switch to **Stack view**, which provides the following interactive features:
+In TUI mode, press **`4`** to switch to **Stack view**, which provides the following interactive features:
 
 - **Pattern Input**: Supports function name autocomplete (fetched from target process in real-time)
 - **Parameter Configuration**: Visual configuration for capture count, condition expressions, stack depth
@@ -650,14 +650,6 @@ process_tree at /app/myapp/api/views.py:123
 
 **Method 1**: Use Ctrl+C to interrupt the client (does not affect target process)
 
-**Method 2**: Use the `watch` command's stop functionality:
-```bash
-# View all current tracing tasks
-peeka-cli watch --action status
-
-# Stop specific task
-peeka-cli watch --action stop --watch-id watch_001
-```
 
 **Notes**:
 - After stopping tracing, the target function returns to original state (no performance impact)
