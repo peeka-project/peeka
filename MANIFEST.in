@@ -1,0 +1,37 @@
+# Include only essential files for PyPI distribution
+
+# Include license and main README
+include LICENSE
+include README.md
+
+# Recursively include all files in peeka package
+recursive-include peeka *.py *.tcss
+
+# Exclude test files, examples, docs, and development files
+recursive-exclude tests *
+exclude tests
+prune tests
+
+prune docker
+prune docs
+prune examples
+prune gh-pages
+prune .github
+
+# Exclude root-level demo/test scripts
+exclude attach.py
+exclude script.py
+
+# Exclude additional documentation files
+exclude README.zh-CN.md
+exclude AGENTS.md
+exclude ARCHITECTURE.md
+exclude CLAUDE.md
+
+# Exclude configuration files
+exclude pytest.ini
+exclude .dockerignore
+exclude .gitignore
+
+# Exclude lock files
+exclude uv.lock
