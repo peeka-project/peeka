@@ -33,7 +33,7 @@ nav_order: 4
 
 ## TUI 使用
 
-在 TUI 模式下，按 **`s`** 键切换到 **Stack 视图**，提供以下交互式功能：
+在 TUI 模式下，按 **`4`** 键切换到 **Stack 视图**，提供以下交互式功能：
 
 - **模式输入**：支持函数名自动补全（从目标进程实时获取）
 - **参数配置**：可视化配置捕获次数、条件表达式、栈深度
@@ -644,14 +644,6 @@ process_tree at /app/myapp/api/views.py:123
 
 **方法 1**：使用 Ctrl+C 中断客户端（不影响目标进程）
 
-**方法 2**：使用 `watch` 命令的停止功能：
-```bash
-# 查看当前所有追踪任务
-peeka-cli watch --action status
-
-# 停止特定任务
-peeka-cli watch --action stop --watch-id watch_001
-```
 
 **注意**：
 - 停止追踪后，目标函数恢复原样（无性能影响）
