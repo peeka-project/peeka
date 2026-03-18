@@ -25,7 +25,7 @@ Python 语言特性进行了深度优化。
 
 ## TUI 使用
 
-在 TUI 模式下，按 **`w`** 键切换到 **Watch 视图**，提供以下交互式功能：
+在 TUI 模式下，按 **`2`** 键切换到 **Watch 视图**，提供以下交互式功能：
 
 - **模式输入**：支持函数名自动补全（从目标进程实时获取）
 - **参数配置**：可视化配置深度、次数、观测点、条件表达式
@@ -755,8 +755,8 @@ peeka-cli watch "func" -x 3
 ```bash
 # 方法 1：Ctrl+C 停止当前观测
 
-# 方法 2：使用 stop 命令（需要 watch_id）
-peeka-cli watch --action stop <watch_id>
+# 方法 2：使用 reset 命令移除观测增强
+peeka-cli reset "pattern"
 
 # 方法 3：停止所有观测（在交互模式中）
 # 当前 CLI 不直接支持，需要通过 Ctrl+C 停止当前会话
