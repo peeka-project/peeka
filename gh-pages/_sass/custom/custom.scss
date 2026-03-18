@@ -1,4 +1,27 @@
 // =============================================================================
+// Sidebar: logo + title together
+// =============================================================================
+
+.site-title {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.site-logo {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+}
+
+.site-title-text {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: inherit;
+  letter-spacing: 0.02em;
+}
+
+// =============================================================================
 // Right-side sticky TOC
 // =============================================================================
 
