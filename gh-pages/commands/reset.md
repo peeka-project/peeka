@@ -394,7 +394,7 @@ peeka-cli monitor 12345 "myapp.service.query"  # 启动监控
 peeka-cli reset                        # 重置不会停止 monitor
 
 # 需要单独停止 monitor
-peeka-cli monitor 12345 --action stop
+peeka-cli reset "myapp.service.*"
 ```
 
 ### ⚠️ 模式匹配规则
@@ -442,27 +442,32 @@ reset 命令是线程安全的，但在高并发场景下可能出现边缘情�
 
 ## 常见问题
 
-### Q1: reset 和 watch --action stop 有什么区别？
+### Q1: reset 和停止流式观测有什么区别？
 
 **A**:
 
-- `reset`：批量操作，可以重置多个增强，支持模式匹配
-- `watch --action stop <watch_id>`：单个操作，需要指定 watch_id
+- `reset`：移除函数上注入的装饰器，永久删除增强逻辑
+- `Ctrl+C`（或关闭 CLI）：停止客户端流式接收数据，但增强逻辑仍在目标进程中
+
+**时序说明**：
+
+```
+Ctrl+C 停止流式客户端：观测数据停止返回，但增强仍运行
+reset 移除增强：删除目标进程中的装饰器，完全恢复原始函数
+```
 
 **推荐使用**：
 
-- 单个观测：使用 `watch --action stop`
-- 批量清理：使用 `reset`
-- 不确定 watch_id：使用 `reset --list` 查看后再决定
+- 临时暂停观测：使用 `Ctrl+C`（只断开客户端连接）
+- 彻底清理增强：使用 `reset` 命令（删除注入的逻辑）
+- 后续不再观测某函数：先 `reset`，再启动其他诊断
 
 ```bash
-# 方法 1：使用 reset（推荐）
-peeka-cli reset "myapp.service.*"
+# 方法 1：临时停止（客户端断开）
+# Ctrl+C
 
-# 方法 2：逐个停止
-peeka-cli reset --list  # 获取 watch_id
-peeka-cli watch --action stop watch_a1b2c3d4
-peeka-cli watch --action stop watch_e5f6g7h8
+# 方法 2：彻底清理（移除增强）
+peeka-cli reset "myapp.service.*"
 ```
 
 ### Q2: 如何重置特定 watch_id？
@@ -481,7 +486,7 @@ peeka-cli reset "myapp.service.query"
 **或者直接使用 watch stop**：
 
 ```bash
-peeka-cli watch --action stop watch_001
+peeka-cli reset "watch_001"
 ```
 
 ### Q3: reset 会影响正在运行的函数吗？
@@ -770,7 +775,7 @@ jq '.enhanced[] | {pattern, count}' enhancements_backup.json
    peeka-cli reset
    
    # ✅ 需要单独停止
-   peeka-cli monitor 12345 --action stop
+   peeka-cli reset "myapp.service.*"
    ```
 
 3. **过度使用精确模式**

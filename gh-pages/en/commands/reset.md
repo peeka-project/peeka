@@ -392,7 +392,7 @@ peeka-cli monitor 12345 "myapp.service.query"  # Start monitoring
 peeka-cli reset                        # Reset won't stop monitor
 
 # Need to stop monitor separately
-peeka-cli monitor 12345 --action stop
+peeka-cli reset "myapp.service.*"
 ```
 
 ### ⚠️ Pattern Matching Rules
@@ -440,27 +440,32 @@ The reset command is thread-safe, but edge cases may occur in high-concurrency s
 
 ## Common Questions
 
-### Q1: What's the difference between reset and watch --action stop?
+### Q1: What's the difference between reset and stopping observation streaming?
 
 **A**:
 
-- `reset`: Batch operation, can reset multiple enhancements, supports pattern matching
-- `watch --action stop <watch_id>`: Single operation, requires specifying watch_id
+- `reset`: Removes the injected decorator from the target function, permanently deletes the enhancement logic
+- `Ctrl+C` (or close CLI): Stops the client-side data streaming, but the enhancement logic remains active in the target process
+
+**Sequence Explanation**:
+
+```
+Ctrl+C stops streaming client: Observation data stops returning, but enhancement still runs
+reset removes enhancement: Deletes the decorator from target process, fully restores original function
+```
 
 **Recommended Usage**:
 
-- Single observation: Use `watch --action stop`
-- Batch cleanup: Use `reset`
-- Uncertain about watch_id: Use `reset --list` to view first
+- Temporary pause of observation: Use `Ctrl+C` (only disconnects client)
+- Complete cleanup of enhancements: Use `reset` command (removes injected logic)
+- Continue diagnostics on other functions: Use `reset` first, then restart other observations
 
 ```bash
-# Method 1: Using reset (recommended)
-peeka-cli reset "myapp.service.*"
+# Method 1: Temporary pause (client disconnect)
+# Ctrl+C
 
-# Method 2: Stop individually
-peeka-cli reset --list  # Get watch_id
-peeka-cli watch --action stop watch_a1b2c3d4
-peeka-cli watch --action stop watch_e5f6g7h8
+# Method 2: Complete cleanup (remove enhancement)
+peeka-cli reset "myapp.service.*"
 ```
 
 ### Q2: How to reset specific watch_id?
@@ -479,7 +484,7 @@ peeka-cli reset "myapp.service.query"
 **Or directly use watch stop**:
 
 ```bash
-peeka-cli watch --action stop watch_001
+peeka-cli reset "watch_001"
 ```
 
 ### Q3: Will reset affect running functions?
