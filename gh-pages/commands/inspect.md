@@ -68,7 +68,7 @@ peeka inspect --action get --target "sys.path"
 
 ## TUI 使用
 
-在 TUI 模式下，按 **`i`** 键切换到 **Inspect 视图**，提供以下交互式功能：
+在 TUI 模式下，按 **`8`** 键切换到 **Inspect 视图**，提供以下交互式功能：
 
 - **操作选择**：可视化切换 get/instances/count 操作
 - **get 操作**：

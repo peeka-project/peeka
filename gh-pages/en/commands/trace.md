@@ -24,7 +24,7 @@ The `trace` command is used to track the complete call chain and execution time 
 
 ## TUI Usage
 
-In TUI mode, press **`t`** key to switch to **Trace View**, providing the following interactive features:
+In TUI mode, press **`3`** key to switch to **Trace View**, providing the following interactive features:
 
 - **Pattern Input**: Supports function name auto-completion (fetched in real-time from the target process)
 - **Parameter Configuration**: Visual configuration of depth, times, condition expressions, skip-builtin

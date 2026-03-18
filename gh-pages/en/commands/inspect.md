@@ -33,7 +33,7 @@ The `inspect` command provides **runtime object inspection** capabilities, allow
 
 ## TUI Usage
 
-In TUI mode, press **`i`** key to switch to **Inspect View**, providing the following interactive features:
+In TUI mode, press **`8`** key to switch to **Inspect View**, providing the following interactive features:
 
 - **Operation Selection**: Visually switch between get/instances/count operations
 - **get Operation**: Get module/class attribute values

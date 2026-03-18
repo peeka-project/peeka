@@ -34,7 +34,7 @@ nav_order: 5
 
 ## TUI 使用
 
-在 TUI 模式下，按 **`m`** 键切换到 **Monitor 视图**，提供以下交互式功能：
+在 TUI 模式下，按 **`5`** 键切换到 **Monitor 视图**，提供以下交互式功能：
 
 - **模式输入**：支持函数名自动补全（从目标进程实时获取）
 - **参数配置**：可视化配置输出间隔、监控周期数
@@ -672,7 +672,7 @@ peeka-cli monitor "myapp.cache.get" --interval 60
 
 **方法 1**：使用 `status` 动作（如果 CLI 支持）
 ```bash
-peeka-cli monitor --action status
+peeka-cli reset -l
 ```
 
 **方法 2**：检查进程是否有对应的客户端连接

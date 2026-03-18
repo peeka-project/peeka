@@ -120,7 +120,7 @@ In TUI mode:
    peeka  # or python -m peeka.tui
    ```
 
-2. After connecting to the target process, press **`d`** key to return to Dashboard view
+2. After connecting to the target process, press **`1`** key to return to Dashboard view
 
 3. In Dashboard, enter command:
    ```
