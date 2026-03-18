@@ -35,7 +35,7 @@ The `monitor` command periodically collects and outputs function performance sta
 
 ## TUI Usage
 
-In TUI mode, press **`m`** to switch to **Monitor view**, which provides the following interactive features:
+In TUI mode, press **`5`** to switch to **Monitor view**, which provides the following interactive features:
 
 - **Pattern Input**: Supports function name autocomplete (fetched from target process in real-time)
 - **Parameter Configuration**: Visual configuration for output interval, monitoring cycle count
@@ -671,7 +671,7 @@ peeka-cli monitor "myapp.cache.get" --interval 60
 
 **Method 1**: Use `status` action (if CLI supports)
 ```bash
-peeka-cli monitor --action status
+peeka-cli reset -l
 ```
 
 **Method 2**: Check if process has corresponding client connections

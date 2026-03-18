@@ -314,7 +314,7 @@ echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope
 
 **目标进程行为异常**：
 
-- 停止观测：`peeka-cli watch --action stop <watch_id>`
+- 停止观测：按 Ctrl+C 终止 CLI 流式输出，使用 `peeka-cli reset "pattern"` 移除注入的增强
 - 如果持续异常，重启目标进程
 
 ## 环境变量
@@ -322,8 +322,3 @@ echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope
 | 变量                | 说明               | 默认值     |
 |-------------------|--------------------|---------|
 | `PEEKA_DUMP_DIR`  | 内存转储文件保存目录  | 系统临时目录 |
-## 版本历史
-
-| 版本    | 日期      | 说明                 |
-|-------|---------|--------------------|
-| 0.1.0 | 2025-01 | 初始版本，支持基本 watch 功能 |

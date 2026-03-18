@@ -122,7 +122,7 @@ peeka-cli logger --action set --logger myapp.metrics --level WARNING
 
 ## TUI Usage
 
-In TUI mode, press **`l`** key to switch to **Logger View**, providing the following interactive features:
+In TUI mode, press **`7`** key to switch to **Logger View**, providing the following interactive features:
 
 - **Logger List Display**: Automatically loads and displays all loggers and their current levels
   - Sorted by logger name

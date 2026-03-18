@@ -24,7 +24,7 @@ The `memory` command is used to analyze **memory usage** in running Python proce
 
 ## TUI Usage
 
-In TUI mode, press **`e`** key to switch to **Memory View**, providing 4 tabs and rich interactive features:
+In TUI mode, press **`6`** key to switch to **Memory View**, providing 4 tabs and rich interactive features:
 
 #### Overview Tab (Memory Overview)
 

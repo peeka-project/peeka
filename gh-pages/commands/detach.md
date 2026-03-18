@@ -119,7 +119,7 @@ peeka-cli detach
    peeka  # 或 python -m peeka.tui
    ```
 
-2. 连接到目标进程后，按 **`d`** 键返回 Dashboard 视图
+2. 连接到目标进程后，按 **`1`** 键返回 Dashboard 视图
 
 3. 在 Dashboard 中，输入命令：
    ```
