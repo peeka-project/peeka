@@ -876,7 +876,7 @@ def cmd_logger(args) -> int:
     command = {
         "type": "logger",
         "action": args.action,
-        "logger": args.logger,
+        "name": args.logger,
         "level": args.level,
         "pattern": args.pattern,
     }
@@ -1105,7 +1105,7 @@ def cmd_monitor(args) -> int:
         "type": "monitor",
         "action": "start",
         "pattern": pattern,
-        "interval": args.interval,
+        "cycle": args.interval,
         "cycles": args.cycles,
     }
 
@@ -1242,7 +1242,7 @@ def cmd_sc(args) -> int:
     command = {
         "type": "sc",
         "pattern": args.pattern,
-        "detail": args.detail,
+        "details": args.detail,
         "limit": args.limit,
     }
 
