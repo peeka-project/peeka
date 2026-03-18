@@ -801,51 +801,6 @@ call_path_count{path="/app/api/orders.py:67"} 78
 
 ---
 
-## Comparison with Arthas
-
-### Feature Comparison
-
-| Feature | Arthas (Java) | Peeka (Python) | Notes |
-|---------|---------------|----------------|-------|
-| Call stack capture | ✅ `stack` | ✅ `stack` | Core functionality identical |
-| Conditional filtering | ✅ `#cost>100` | ✅ `--condition` | Syntax slightly different |
-| Stack depth limit | ❌ None | ✅ `--depth` | Peeka can control output length |
-| Capture count limit | ✅ `-n` | ✅ `-n` | Identical |
-| Thread information | ✅ | ✅ | Both supported |
-| Async function support | ✅ | ✅ | Both supported |
-| Output format | Text | JSON | Peeka easier for programmatic processing |
-
-### Command Comparison
-
-**Arthas (Java)**:
-```bash
-stack com.example.MyClass myMethod -n 10 '#cost>100'
-```
-
-**Peeka (Python)**:
-```bash
-peeka-cli stack "myapp.MyClass.myMethod" -n 10 \
-  --condition "cost > 100"
-```
-
-**Main Differences**:
-1. **Syntax**: Arthas uses `#cost`, Peeka directly uses `cost` variable
-2. **Output**: Arthas outputs beautified text, Peeka outputs JSON (facilitates automated processing)
-3. **Stack Depth**: Peeka supports `--depth` parameter, Arthas outputs all by default
-
-### Advantages Comparison
-
-**Peeka Advantages**:
-- JSON output format, easy integration with other tools (`jq`, Prometheus, etc.)
-- Configurable stack depth, avoids excessive output
-- Python-based safe expression engine (`simpleeval`)
-
-**Arthas Advantages**:
-- More mature ecosystem
-- Supports more JVM-related features (e.g., thread pools, heap memory, etc.)
-- Built-in Web UI (Peeka currently CLI only)
-
----
 
 ## Summary
 

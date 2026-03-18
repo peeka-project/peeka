@@ -19,7 +19,7 @@ nav_order: 10
 
 `reset` 命令用于**恢复被增强的方法到原始状态**，移除 `watch`、`stack` 等命令注入的观测逻辑。这是一个清理命令，可以选择性地重置所有增强或仅重置匹配特定模式的增强。
 
-**设计灵感**：Peeka 的 `reset` 命令借鉴了 [Arthas](https://arthas.aliyun.com/) 的 `reset` 命令，提供类似的增强恢复能力。
+
 
 ## 使用场景
 
@@ -540,124 +540,6 @@ peeka-cli reset --list | jq '.enhanced[] | select(.pattern | startswith("myapp.s
 peeka-cli reset --list | jq '.enhanced | sort_by(.count) | reverse'
 ```
 
-## 与 Arthas 对比
-
-### 功能对比
-
-| 特性        | Peeka reset         | Arthas reset | 说明             |
-|-----------|---------------------|--------------|----------------|
-| **目标语言**  | Python              | Java         | 核心差异           |
-| **基本功能**  | ✅ 重置增强              | ✅ 重置增强       | 功能一致           |
-| **模式匹配**  | ✅ fnmatch（`*`, `?`） | ✅ 通配符（`*`）   | Peeka 支持更多通配符  |
-| **列出增强**  | ✅ `--list`          | ❌ 不支持        | Peeka 扩展功能     |
-| **增强计数**  | ✅ 显示观测次数            | ❌ 不显示        | Peeka 提供更多信息   |
-| **选择性重置** | ✅ 支持                | ✅ 支持         | 功能一致           |
-| **输出格式**  | JSON                | 文本           | Peeka 更适合自动化处理 |
-
-### 命令对比
-
-#### Arthas reset
-
-```bash
-# 重置所有
-reset
-
-# 重置特定类
-reset demo.MathGame
-
-# 重置特定方法
-reset demo.MathGame primeFactors
-```
-
-**输出**（文本格式）：
-
-```
-Affect(class count: 1, method count: 1) cost in 10 ms, listenerId: 1
-```
-
-#### Peeka reset
-
-```bash
-# 重置所有
-peeka-cli reset
-
-# 重置特定模块/类
-peeka-cli reset "demo.MathGame"
-
-# 重置特定方法
-peeka-cli reset "demo.MathGame.primeFactors"
-
-# 列出增强（Arthas 不支持）
-peeka-cli reset --list
-```
-
-**输出**（JSON 格式）：
-
-```json
-{
-  "status": "success",
-  "action": "reset",
-  "affected": [{"watch_id": "watch_001", "pattern": "demo.MathGame.primeFactors"}],
-  "count": 1
-}
-```
-
-### 核心差异分析
-
-#### 1. 列出增强功能
-
-**Peeka 扩展**：
-
-```bash
-peeka-cli reset --list
-```
-
-提供详细的增强信息：
-
-- watch_id（会话标识）
-- pattern（匹配模式）
-- command（创建命令）
-- count（观测次数）
-
-**Arthas**：不提供列出功能，需要手动记录增强状态。
-
-#### 2. 模式匹配
-
-**Peeka**（fnmatch）：
-
-```bash
-peeka-cli reset "myapp.service.User?.query"  # ? 匹配单个字符
-```
-
-**Arthas**（通配符）：
-
-```bash
-reset demo.Math*  # 只支持 *
-```
-
-#### 3. 输出格式
-
-**Peeka**：结构化 JSON，便于自动化处理：
-
-```bash
-COUNT=$(peeka-cli reset | jq '.count')
-```
-
-**Arthas**：人类可读文本，需要解析：
-
-```bash
-reset | grep "Affect"
-```
-
-### Python vs Java 差异
-
-| 维度              | Python (Peeka)        | Java (Arthas)    |
-|-----------------|-----------------------|------------------|
-| **增强机制**        | 装饰器替换（`setattr`）      | 字节码修改（ASM）       |
-| **恢复机制**        | 引用还原                  | 字节码还原            |
-| **类型系统**        | 动态类型，运行时替换            | 静态类型，需要重新加载类     |
-| **ClassLoader** | N/A（无 ClassLoader 概念） | 支持选择 ClassLoader |
-| **子类匹配**        | 自动处理（动态绑定）            | 需要显式指定           |
 
 ## 高级技巧
 

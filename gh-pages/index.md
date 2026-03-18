@@ -2,7 +2,7 @@
 layout: default
 title: 首页
 nav_order: 1
-description: "Peeka - Python 运行时诊断工具，提供类似 Java Arthas 的非侵入式函数观测能力"
+description: "Peeka - Python 运行时诊断工具，提供非侵入式函数观测能力"
 permalink: /
 ---
 
@@ -11,7 +11,7 @@ permalink: /
 
 > *Peek-a-boo!* — 名字取自躲猫猫游戏。诊断工具发现隐藏 bug 的那一刻，像极了捉迷藏时突然现身的惊喜。
 
-基于 Python 3.14 远程调试协议（PEP 768）的运行时诊断工具，提供类似 Java Arthas 的非侵入式函数观测能力。
+基于 Python 3.14 远程调试协议（PEP 768）的运行时诊断工具，提供非侵入式函数观测能力。
 {: .fs-6 .fw-300 }
 
 [快速开始](#快速开始){: .btn .btn-primary .fs-5 .mb-4 .mb-md-0 .mr-2 }
@@ -158,17 +158,6 @@ peeka
 
 ---
 
-## 与 Arthas 对比
-
-Peeka 的设计深受 [Alibaba Arthas](https://github.com/alibaba/arthas) 启发，为 Python 生态系统带来了类似的诊断能力。
-
-### Python 特有优势
-
-- **原生 JSON 输出** - 所有命令输出 JSONL 格式，便于自动化集成
-- **simpleeval 安全沙箱** - 条件表达式使用 AST 白名单，完全防御代码注入
-- **Python 3.12+ 性能优化** - trace 命令使用 `sys.monitoring` API，性能开销 < 5%
-- **轻量级部署** - 无需 Java 运行时，pip 一键安装
-
 ---
 
 ## 技术亮点
@@ -216,6 +205,6 @@ Peeka 基于 [Apache License 2.0](https://github.com/wwulfric/peeka/blob/main/LI
 
 ## 致谢
 
-- 灵感来源：[Alibaba Arthas](https://github.com/alibaba/arthas)
+- 安全评估：[simpleeval](https://github.com/danthedeckie/simpleeval)
 - 安全评估：[simpleeval](https://github.com/danthedeckie/simpleeval)
 - 远程调试协议：[PEP 768](https://peps.python.org/pep-0768/)

@@ -20,7 +20,7 @@ permalink: /commands/reset
 
 The `reset` command is used to **restore enhanced methods to their original state**, removing observation logic injected by commands like `watch` and `stack`. This is a cleanup command that can selectively reset all enhancements or only those matching specific patterns.
 
-**Design Inspiration**: Peeka's `reset` command is inspired by [Arthas](https://arthas.aliyun.com/)'s `reset` command, providing similar enhancement restoration capabilities.
+
 
 ## TUI Usage
 
@@ -536,68 +536,6 @@ peeka-cli reset --list | jq '.enhanced[] | select(.pattern | startswith("myapp.s
 
 # Sort by observation count
 peeka-cli reset --list | jq '.enhanced | sort_by(.count) | reverse'
-```
-
-## Comparison with Arthas
-
-### Feature Comparison
-
-| Feature | Peeka reset | Arthas reset | Notes |
-|---------|-------------|--------------|-------|
-| **Target Language** | Python | Java | Core difference |
-| **Basic Function** | ✅ Reset enhancements | ✅ Reset enhancements | Consistent functionality |
-| **Pattern Matching** | ✅ fnmatch (`*`, `?`) | ✅ Wildcards (`*`) | Peeka supports more wildcards |
-| **List Enhancements** | ✅ `--list` | ❌ Not supported | Peeka extended feature |
-| **Enhancement Count** | ✅ Show observation count | ❌ Don't show | Peeka provides more info |
-| **Selective Reset** | ✅ Supported | ✅ Supported | Consistent functionality |
-| **Output Format** | JSON | Text | Peeka better for automation |
-
-### Command Comparison
-
-#### Arthas reset
-
-```bash
-# Reset all
-reset
-
-# Reset specific class
-reset demo.MathGame
-
-# Reset specific method
-reset demo.MathGame primeFactors
-```
-
-**Output** (text format):
-
-```
-Affect(class count: 1, method count: 1) cost in 10 ms, listenerId: 1
-```
-
-#### Peeka reset
-
-```bash
-# Reset all
-peeka-cli reset
-
-# Reset specific module/class
-peeka-cli reset "demo.MathGame"
-
-# Reset specific method
-peeka-cli reset "demo.MathGame.primeFactors"
-
-# List enhancements (Arthas doesn't support)
-peeka-cli reset --list
-```
-
-**Output** (JSON format):
-
-```json
-{
-  "status": "success",
-  "action": "reset",
-  "affected": [{"watch_id": "watch_001", "pattern": "demo.MathGame.primeFactors"}],
-  "count": 1
-}
 ```
 
 ## Summary

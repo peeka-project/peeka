@@ -20,7 +20,7 @@ permalink: /commands/watch
 
 The `watch` command is used to observe the execution of specified Python functions, capturing **input parameters**, **return values**, **exception information**, **execution duration**, and other data. This is Peeka's core diagnostic command, suitable for real-time troubleshooting and performance analysis in production environments.
 
-**Design Inspiration**: Peeka's `watch` command draws inspiration from [Arthas](https://arthas.aliyun.com/), providing similar function observation capabilities but deeply optimized for Python language features.
+
 
 ## TUI Usage
 
@@ -128,7 +128,7 @@ peeka-cli watch "calculator.Calculator.add" -n 5
 }
 ```
 
-**Field Descriptions** (Arthas Compatible):
+**Field Descriptions**:
 
 | Field | Description | Example Value |
 |---------------|--------------------|------------------------------------------------|
@@ -136,13 +136,13 @@ peeka-cli watch "calculator.Calculator.add" -n 5
 | `timestamp` | Timestamp | `1705586200.123` |
 | `location` | Observation location | `"AtEnter"` / `"AtExit"` / `"AtExceptionExit"` |
 | `func_name` | Function name | `"module.Class.method"` |
-| `params` | Positional arguments (Arthas compatible) | `[10, 20]` |
+| `params` | Positional arguments | `[10, 20]` |
 | `kwargs` | Keyword arguments | `{"debug": true}` |
 | `target` | Target object (self, instance methods only) | `{"__attrs__": {...}}` |
-| `returnObj` | Return value (Arthas compatible) | `30` |
+| `returnObj` | Return value | `30` |
 | `success` | Success status | `true` / `false` |
-| `throwExp` | Exception info (Arthas compatible) | `"ValueError: ..."` |
-| `cost` | Execution duration (ms, Arthas compatible) | `0.045` |
+| `throwExp` | Exception info | `"ValueError: ..."` |
+| `cost` | Execution duration (ms) | `0.045` |
 | `thread_id` | Thread ID | `140234567890` |
 | `thread_name` | Thread name | `"MainThread"` |
 
@@ -204,9 +204,9 @@ peeka-cli watch "utils.Helper.static_method"
 peeka-cli watch "models.User.from_dict"
 ```
 
-## Observation Timing Control (Arthas Compatible)
+## Observation Timing Control
 
-Peeka supports Arthas-style observation timing control, allowing observation at different stages of function execution.
+Peeka supports observation timing control, allowing observation at different stages of function execution.
 
 ### Observation Timing Flags
 
@@ -449,7 +449,7 @@ peeka-cli watch "parser.parse" \
 #### 6. Performance Filtering (cost variable)
 
 ```bash
-# Only observe calls exceeding 100ms execution time (similar to Arthas #cost)
+# Only observe calls exceeding 100ms execution time (similar to #cost)
 peeka-cli watch "database.query" --condition "cost > 100"
 
 # Combine performance and parameter conditions
@@ -505,7 +505,7 @@ peeka-cli watch "mymodule.func" --condition "params[0] > 50"
 
 ### JSON Field Descriptions
 
-Each function call outputs one JSON record (Arthas compatible format):
+Each function call outputs one JSON record:
 
 ```json
 {
@@ -527,21 +527,21 @@ Each function call outputs one JSON record (Arthas compatible format):
 
 **Field Descriptions**:
 
-| Field | Type | Description | Arthas Compatible |
-|---------------|---------|--------------------------------------|-----------|
-| `watch_id` | string | Observation session ID | - |
-| `timestamp` | float | Call timestamp (Unix time) | - |
-| `location` | string | Observation location (AtEnter/AtExit/AtExceptionExit) | ✅ |
-| `func_name` | string | Full function name | - |
-| `params` | array | Positional argument list | ✅ |
-| `kwargs` | object | Keyword argument dict | - |
-| `target` | object | Target object (self, instance methods only) | ✅ |
-| `returnObj` | any | Return value (on success) | ✅ |
-| `success` | boolean | Execution success status | - |
-| `throwExp` | string | Exception info (on failure) | ✅ |
-| `cost` | float | Execution duration (milliseconds) | ✅ |
-| `thread_id` | int | Thread ID | - |
-| `thread_name` | string | Thread name | - |
+| Field | Type | Description |
+|---|---|---|
+| `watch_id` | string | Observation session ID |
+| `timestamp` | float | Call timestamp (Unix time) |
+| `location` | string | Observation location (AtEnter/AtExit/AtExceptionExit) |
+| `func_name` | string | Full function name |
+| `params` | array | Positional argument list |
+| `kwargs` | object | Keyword argument dict |
+| `target` | object | Target object (self, instance methods only) |
+| `returnObj` | any | Return value (on success) |
+| `success` | boolean | Execution success status |
+| `throwExp` | string | Exception info (on failure) |
+| `cost` | float | Execution duration (milliseconds) |
+| `thread_id` | int | Thread ID |
+| `thread_name` | string | Thread name |
 
 ### Exception Capture
 
@@ -760,191 +760,6 @@ peeka-cli reset "pattern"
 # Current CLI doesn't directly support, need to stop current session via Ctrl+C
 ```
 
-## Comparison with Arthas Watch
-
-| Feature | Peeka | Arthas | Notes |
-|--------------------|-----------------------------------|---------------------------------|-------------------------|
-| **Target Language** | Python | Java | Core difference |
-| **Observation Points** | ✅ Complete `-b/-e/-s/-f` support | `-b/-e/-s/-f` | **Implemented** Arthas compatible |
-| **location Field** | ✅ AtEnter/AtExit/AtExceptionExit | Same | **Implemented** |
-| **Expression Language** | Python + simpleeval | OGNL | Peeka safer but less capable |
-| **Observation Objects** | ✅ `params`, `kwargs`, `target` | `params`, `target`, `returnObj` | **Implemented** target support |
-| **Field Naming** | ✅ `returnObj`, `throwExp`, `cost` | Same | **Implemented** Arthas compatible |
-| **Duration Filtering** | ✅ `cost > 100` | `#cost>100` | **Implemented** cost variable |
-| **condition Parameter** | ✅ `--condition` | `--condition` | **Implemented** |
-| **Regex Matching** | ⏳ Not implemented | ✓ (wildcard + regex) | Planned |
-| **ClassLoader Selection** | N/A | ✓ (`-c` parameter) | Python has no ClassLoader concept |
-| **Subclass Matching** | ✗ | ✓ (matches subclasses by default) | Python dynamic binding already handles |
-| **Exclude Classes** | ✗ | ✓ (`--exclude-class-pattern`) | Peeka not implemented |
-| **Static Field Access** | ✗ | ✓ (`@ClassName@field`) | Arthas supports OGNL static access |
-| **Output Format** | JSON | Text + table | Peeka better for automation |
-| **Real-time Streaming** | ✓ | ✓ | Both support |
-| **Observation Count Limit** | ✓ (`-n`) | ✓ (`-n`) | Consistent functionality |
-| **Depth Control** | ✓ (`-x`, max 4) | ✓ (`-x`, max 4) | Consistent functionality |
-
-### Core Differences Analysis
-
-#### 1. **Observation Timing (✅ Implemented)**
-
-**Arthas** (supports 4 observation points):
-
-- `-b`: Before function call (no return value/exception at this time)
-- `-e`: After function exception
-- `-s`: After function return
-- `-f`: After function completion (default, includes normal return and exception)
-
-**Peeka** (✅ Complete support for 4 observation points):
-
-- `-b, --before`: Before function call (AtEnter)
-- `-e, --exception`: After function exception (AtExceptionExit)
-- `-s, --success`: After function return (AtExit)
-- `-f, --finish`: After function completion (default, AtExit or AtExceptionExit)
-
-**Implementation Status**:
-
-- ✅ **Fully compatible** with Arthas observation timing control
-- ✅ Supports observing object state changes "before call" and "after call"
-- ✅ Can determine if parameters were modified during function execution
-- ✅ Output includes `location` field identifying observation position
-- ✅ Supports combining multiple flags (like `-b -s` to observe both entry and exit)
-
-#### 2. **Expression Capability Differences**
-
-**Arthas OGNL** (powerful):
-
-```java
-// Access static fields
-'{@MyClass@staticField}'
-
-// Access current object properties
-'target.fieldName'
-
-// Complex navigation
-'params[0].user.address.city'
-
-// Call methods
-'params[0].toString().length() > 10'
-
-// Special variables
-'#cost>200'  // Execution duration
-```
-
-**Peeka simpleeval** (safe but limited, partially compatible):
-
-```python
-# Access parameters
-params[0] > 100
-
-# Call safe functions
-len(params) > 2
-
-# String operations
-str(params[0]).startswith('test')
-
-# ✅ Supports: cost variable (similar to Arthas #cost)
-cost > 200
-
-# ✅ Supports: target variable (accessible but no property navigation)
-# Currently can check if target exists, but doesn't support target.field
-
-# ✗ Doesn't support: Navigating object properties (params[0].user.name)
-# ✗ Doesn't support: Static field access
-```
-
-**Design Tradeoff**:
-
-- Peeka prioritizes **security** (prevent code injection)
-- Arthas prioritizes **expression power** (Java type safety provides protection)
-- ✅ Peeka has implemented `cost` and `target` variables, narrowing the gap
-
-#### 3. **Pattern Matching Differences**
-
-**Arthas** (flexible matching):
-
-```bash
-# Wildcard
-watch demo.* primeFactors
-
-# Regular expression (-E)
-watch -E 'demo\\.Math.*' 'prime.*'
-
-# Exclude specific classes
-watch MyClass * --exclude-class-pattern 'MyClass$Inner'
-```
-
-**Peeka** (exact matching):
-
-```bash
-# Only supports complete path
-peeka-cli watch "demo.MathGame.primeFactors"
-
-# ✗ Doesn't support wildcards
-# ✗ Doesn't support regular expressions
-```
-
-**Reason**:
-
-- Python's dynamic nature makes pattern matching implementation complex
-- Current version prioritizes core functionality, can be expanded later
-
-#### 4. **Target Object Access (✅ Partially Implemented)**
-
-**Arthas** (supports `target` keyword):
-
-```bash
-# Access this object
-watch demo.MathGame primeFactors 'target'
-
-# Access this object properties
-watch demo.MathGame primeFactors 'target.illegalArgumentCount'
-```
-
-**Peeka** (✅ Supports `target` but not property navigation):
-
-```python
-# ✅ Supports: Output contains target object
-# When observing instance methods, output will include target field (self object)
-peeka-cli watch "obj.MyClass.method"
-
-# ✅ Supports: target variable available in conditions
-# Can check if target exists
-peeka-cli watch "obj.method" --condition "len(params) > 0"
-
-# ⏳ Limitation: Doesn't support property navigation
-# Cannot use target.field_name in conditions
-# Workaround: Observe methods whose return values contain object state
-```
-
-**Implementation Status**:
-
-- ✅ Output includes `target` field (formatted self object)
-- ✅ `target` variable available in condition expressions
-- ⏳ Doesn't support property navigation (simpleeval limitation)
-- Planned for future version expansion
-
-### Feature Comparison Summary
-
-| Capability | Peeka | Arthas | Recommended Scenario |
-|---------|-------|--------|----------|
-| **Ease of Use** | ⭐⭐⭐⭐ | ⭐⭐⭐ | Peeka commands more concise |
-| **Expression Power** | ⭐⭐ | ⭐⭐⭐⭐⭐ | Arthas OGNL powerful |
-| **Security** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | Peeka strict injection prevention |
-| **Flexibility** | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | Arthas more flexible observation points/pattern matching |
-| **Automation Integration** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | Peeka JSON output easier to process |
-| **Performance Overhead** | < 5% | < 5% | Both comparable |
-
-### Peeka Implementation Progress
-
-Implementation status of Arthas features in Peeka:
-
-- [x] **Multiple observation points** (`-b/-e/-s/-f`) —— ✅ Fully implemented
-- [x] **cost variable** (execution time filtering) —— ✅ Implemented
-- [x] **target variable** (target object) —— ✅ Implemented (included in output)
-- [x] **Wildcard matching** (`module.*`) —— ✅ Implemented
-- [ ] **Regular expression matching** (`-E`) —— ⏳ Planned
-- [ ] **Object property navigation** (`target.field`) —— ⏳ Planned
-- [ ] **Static field access** (`@Class@field`) —— ⏳ Planned
-
 ## Advanced Techniques
 
 ### 1. Multi-Process Observation
@@ -999,7 +814,7 @@ for line in sys.stdin:
 
 ## References
 
-- [Arthas Watch Documentation](https://arthas.aliyun.com/doc/watch.html)
+- [simpleeval Documentation](https://github.com/danthedeckie/simpleeval)
 - [simpleeval Documentation](https://github.com/danthedeckie/simpleeval)
 - [Peeka Architecture Design](../ARCHITECTURE.md)
 - [Peeka Developer Guide](../AGENTS.md)

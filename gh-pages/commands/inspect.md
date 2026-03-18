@@ -26,7 +26,7 @@ nav_order: 8
 | **instances** | 查找类型实例    | 内存泄漏排查、对象追踪  |
 | **count**     | 统计实例数量    | 快速评估对象数量     |
 
-**设计灵感**：借鉴 Java Arthas 的 `getstatic` 和 `vmtool` 命令，针对 Python 使用 `sys.modules` 和 `gc.get_objects()` 实现。
+
 
 ---
 
@@ -670,53 +670,7 @@ jq '.instances | map(select(.value.active == true)) | length' users.json  # 活�
 
 ---
 
-## 与 Arthas 对比
 
-### 功能对比
-
-| 功能     | Arthas (Java)                   | Peeka inspect (Python)      |
-|--------|---------------------------------|-----------------------------|
-| 获取静态字段 | `getstatic`                     | `inspect --action get`      |
-| 获取实例   | `inspect --action getInstances` | `vmtool --action instances` |
-| 统计实例数  | 不支持                             | `inspect --action count`    |
-| 堆遍历    | JVMTI 原生接口                      | `gc.get_objects()`          |
-| 过滤表达式  | OGNL                            | SimpleEval                  |
-| 性能影响   | 低（原生）                           | 中等（Python）                  |
-
-### 设计差异
-
-#### Arthas getstatic
-
-```bash
-# Arthas: 获取静态字段（反射）
-getstatic java.lang.System out
-
-# Peeka: 获取模块属性（getattr）
-peeka inspect --action get --target "sys.stdout"
-```
-
-#### Arthas vmtool
-
-```bash
-# Arthas: 获取类实例（JVMTI）
-vmtool --action getInstances --className java.lang.String --limit 10
-
-# Peeka: 获取类实例（gc.get_objects）
-peeka inspect --action instances --type str --limit 10
-```
-
-### Python 特有功能
-
-Peeka 新增的 `count` 操作：
-
-```bash
-# 快速统计（无需获取实例）
-peeka inspect --action count --type list
-```
-
-Arthas 需要先 getInstances 再统计，Peeka 优化为单独操作。
-
----
 
 ## 总结
 

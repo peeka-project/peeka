@@ -19,7 +19,7 @@ nav_order: 7
 
 `memory` 命令用于分析运行中 Python 进程的**内存使用情况**，提供 10 种诊断操作：内存概览、追踪控制、分配分析、快照管理、快照对比、引用链查询、快照导出和 GC 统计。这是 Peeka 的核心内存诊断工具，适用于生产环境的内存泄漏排查和性能优化。
 
-**设计灵感**：Peeka 的 `memory` 命令借鉴了 [Arthas](https://arthas.aliyun.com/) 的 `memory` 命令，针对 Python 语言特性使用 `tracemalloc` 和 `gc` 模块实现。
+
 
 ## 使用场景
 
@@ -1008,25 +1008,12 @@ while True:
     time.sleep(15)
 ```
 
-## 与 Arthas Memory 的对比
-
-| 特性 | Peeka | Arthas | 说明 |
-|------|-------|--------|------|
-| **目标语言** | Python | Java | 核心差异 |
-| **RSS 查看** | ✅ procfs/resource | ✅ 系统 API | 功能一致 |
-| **堆内存分析** | ✅ tracemalloc | ✅ JVM heap | 实现机制不同 |
-| **GC 统计** | ✅ gc 模块 | ✅ JVM GC | 功能一致 |
-| **快照导出** | ✅ .snapshot 格式 | ✅ heap dump | 格式不同 |
-| **内存分配热点** | ✅ top 命令 | ✅ memory 命令 | 功能相似 |
-| **对象统计** | ✅ gc 命令 | ✅ dashboard | 功能相似 |
-| **堆外内存** | ⏳ 部分支持（RSS vs tracemalloc） | ✅ 完整支持 | Python 无堆外概念 |
-| **实时监控** | ❌ 需要轮询 | ✅ dashboard | Peeka 计划支持 |
 
 ## 参考资料
 
 - [Python tracemalloc 文档](https://docs.python.org/3/library/tracemalloc.html)
 - [Python gc 模块文档](https://docs.python.org/3/library/gc.html)
-- [Arthas Memory 文档](https://arthas.aliyun.com/doc/memory.html)
+
 - [Peeka 架构设计](../ARCHITECTURE.md)
 - [Peeka 开发指南](../AGENTS.md)
 

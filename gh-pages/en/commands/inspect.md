@@ -27,7 +27,7 @@ The `inspect` command provides **runtime object inspection** capabilities, allow
 | **instances** | Find type instances | Memory leak troubleshooting, object tracking |
 | **count** | Count instance numbers | Quickly assess object count |
 
-**Design Inspiration**: Inspired by Java Arthas's `getstatic` and `vmtool` commands, implemented for Python using `sys.modules` and `gc.get_objects()`.
+
 
 ---
 
@@ -668,53 +668,6 @@ jq '.instances | map(select(.value.active == true)) | length' users.json  # Acti
 
 ---
 
-## Comparison with Arthas
-
-### Feature Comparison
-
-| Feature | Arthas (Java) | Peeka inspect (Python) |
-|---------|---------------|------------------------|
-| Get static fields | `getstatic` | `inspect --action get` |
-| Get instances | `vmtool --action getInstances` | `inspect --action instances` |
-| Count instances | Not supported | `inspect --action count` |
-| Heap traversal | JVMTI native interface | `gc.get_objects()` |
-| Filter expression | OGNL | SimpleEval |
-| Performance impact | Low (native) | Medium (Python) |
-
-### Design Differences
-
-#### Arthas getstatic
-
-```bash
-# Arthas: get static field (reflection)
-getstatic java.lang.System out
-
-# Peeka: get module attribute (getattr)
-peeka inspect --action get --target "sys.stdout"
-```
-
-#### Arthas vmtool
-
-```bash
-# Arthas: get class instances (JVMTI)
-vmtool --action getInstances --className java.lang.String --limit 10
-
-# Peeka: get class instances (gc.get_objects)
-peeka inspect --action instances --type str --limit 10
-```
-
-### Python-Specific Features
-
-Peeka's unique `count` operation:
-
-```bash
-# Quick count (no need to get instances)
-peeka inspect --action count --type list
-```
-
-Arthas requires getInstances then count; Peeka optimizes as separate operation.
-
----
 
 ## Summary
 

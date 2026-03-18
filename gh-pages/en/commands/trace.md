@@ -20,7 +20,7 @@ permalink: /commands/trace
 
 The `trace` command is used to track the complete call chain and execution time of Python functions, displaying method call hierarchies in a tree structure. This is a powerful performance analysis and diagnostic tool that helps developers quickly identify performance bottlenecks and understand code execution paths.
 
-**Design Inspiration**: Peeka's `trace` command is inspired by [Arthas](https://arthas.aliyun.com/)'s trace feature, but deeply optimized for Python language characteristics and runtime environment.
+Peeka's `trace` command provides powerful performance analysis and diagnostic capabilities for Python applications.
 
 ## TUI Usage
 
@@ -503,28 +503,6 @@ json.dumps                                                      500        1000.
 ...
 ```
 
-## Comparison with Arthas Trace
-
-| Feature | Peeka | Arthas (Java) | Notes |
-|---------|-------|---------------|-------|
-| **Target Language** | Python | Java | Core difference |
-| **Call Tree Display** | ✅ Tree structure | ✅ Tree structure | Same functionality |
-| **Timing Statistics** | ✅ Millisecond precision | ✅ Millisecond | Same functionality |
-| **Depth Limiting** | ✅ Support (`-d`) | ✅ Support (`-n`) | Same functionality |
-| **Skip Built-in** | ✅ `--skip-builtin` | ✅ `--skipJDKMethod` | Same functionality |
-| **Conditional Filtering** | ✅ `cost > 100` | ✅ `#cost>100` | Syntax slightly different, same function |
-| **Performance Overhead** | 5-20% | < 5% | Depends on Python version |
-| **Regex Matching** | ⏳ Planned | ✅ Supported | Peeka future plan |
-
-### Feature Comparison Summary
-
-| Capability | Peeka | Arthas | Recommended Scenario |
-|-----------|-------|--------|----------------------|
-| **Ease of Use** | ⭐⭐⭐⭐ | ⭐⭐⭐ | Peeka commands more concise |
-| **Performance Overhead** | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | Arthas lower overhead |
-| **Flexibility** | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | Arthas richer features |
-| **Automation Integration** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | Peeka JSON easier to process |
-
 ## Common Issues
 
 ### 1. Insufficient Trace Depth
@@ -708,7 +686,7 @@ for line in proc.stdout:
 
 ## References
 
-- [Arthas Trace Documentation](https://arthas.aliyun.com/en/doc/trace.html)
+- [PEP 669: Low Impact Monitoring for CPython](https://peps.python.org/pep-0669/)
 - [PEP 669: Low Impact Monitoring for CPython](https://peps.python.org/pep-0669/)
 - [Peeka Architecture Design](../ARCHITECTURE.md)
 
