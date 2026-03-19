@@ -227,3 +227,7 @@ pytest tests/container/test_attach.py -v -m container --timeout=180
 - **Scope**: Module name in parens — `fix(tui):`, `feat(cli):`, `test(tui):`
 - **Language**: English
 - **Commit after every completed task**: NEVER leave work as unstaged changes. After finishing any implementation (feature, fix, refactor), immediately commit. Uncommitted work is invisible to git and will be lost on branch switches, checkouts, or crashes.
+
+## Python tool
+
+You can use `uv` (from `uvtools`) to run commands in a consistent environment. It automatically activates the virtual environment and ensures dependencies are available.
