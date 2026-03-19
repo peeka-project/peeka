@@ -337,21 +337,25 @@ class ProcessAttacher:
         Inject agent script using GDB.
 
         Executes Python code in target process by calling Python C API functions:
-        - PyGILState_Ensure(): Acquire GIL
-        - PyRun_SimpleString(): Execute Python code
-        - PyGILState_Release(): Release GIL
+        - PyGILState_Ensure(): Acquire GIL (returns PyGILState_STATE as int)
+        - PyRun_SimpleString(): Execute Python code (returns int)
+        - PyGILState_Release(): Release GIL (returns void)
         """
         escaped_script = agent_script.replace("\\", "\\\\").replace('"', '\\"')
 
+        # Use appropriate casts for each function's return type to avoid "Invalid cast" errors
+        # PyGILState_Ensure returns PyGILState_STATE (int-like enum)
+        # PyRun_SimpleString returns int
+        # PyGILState_Release returns void
         gdb_commands = [
-            "PyGILState_Ensure()",
-            f'PyRun_SimpleString("exec(open(\\"{escaped_script}\\").read())")',
-            "PyGILState_Release($1)",
+            ("call (int) PyGILState_Ensure()", "Acquire GIL"),
+            (f'call (int) PyRun_SimpleString("exec(open(\\"{escaped_script}\\").read())")', "Execute agent script"),
+            ("call (void) PyGILState_Release($1)", "Release GIL"),
         ]
 
         cmd = ["gdb", "-p", str(self.pid), "-batch", "-q"]
-        for gdb_cmd in gdb_commands:
-            cmd.extend(["-eval-command", f"call (void*) {gdb_cmd}"])
+        for gdb_cmd, description in gdb_commands:
+            cmd.extend(["-eval-command", gdb_cmd])
 
         print(f"[Peeka] Injecting agent via GDB...")
 
