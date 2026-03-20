@@ -220,6 +220,7 @@ class ProcessAttacher:
         agent_code = _read_agent_code()
 
         agent_script = self._create_agent_script(agent_code)
+        error_log = agent_script.replace(".py", "_error.log")
 
         try:
             self._inject_via_gdb(agent_script)
@@ -228,14 +229,32 @@ class ProcessAttacher:
                 print(f"[Peeka] Successfully attached to process {self.pid}")
                 return True
             else:
-                raise RuntimeError("Agent failed to initialize")
+                # Check if error log exists with details about agent failure
+                if os.path.exists(error_log):
+                    with open(error_log, "r") as f:
+                        error_details = f.read()
+                    raise RuntimeError(
+                        f"Agent failed to initialize. Error log:\n{error_details}"
+                    )
+                else:
+                    raise RuntimeError("Agent failed to initialize")
 
         except Exception as e:
+            # Also check error log on exception
+            if os.path.exists(error_log):
+                try:
+                    with open(error_log, "r") as f:
+                        error_details = f.read()
+                    print(f"[Peeka] Agent error log found:\n{error_details}")
+                except Exception:
+                    pass
             print(f"[Peeka] GDB injection failed: {e}")
             raise
         finally:
             if os.path.exists(agent_script):
                 os.remove(agent_script)
+            if os.path.exists(error_log):
+                os.remove(error_log)
 
     def _create_agent_script(self, agent_code: str) -> str:
         agent_path = Path(tempfile.gettempdir()) / f"peeka_agent_{self.session_id}.py"
@@ -342,6 +361,22 @@ class ProcessAttacher:
         - PyGILState_Release(): Release GIL (returns void)
         """
         escaped_script = agent_script.replace("\\", "\\\\").replace('"', '\\"')
+        error_log = agent_script.replace(".py", "_error.log")
+        escaped_error_log = error_log.replace("\\", "\\\\").replace('"', '\\"')
+
+        # Wrap agent execution in try-except to capture and log any errors
+        # This is critical because PyRun_SimpleString doesn't propagate exceptions
+        # Build the wrapper code carefully to avoid escaping issues
+        wrapper_parts = [
+            "try:",
+            '    exec(open("' + escaped_script + '").read())',
+            "except Exception as e:",
+            "    import traceback",
+            '    with open("' + escaped_error_log + '", "w") as f:',
+            '        f.write("Agent initialization failed: " + str(e) + "\\n")',
+            "        f.write(traceback.format_exc())"
+        ]
+        wrapper_code = "\\n".join(wrapper_parts)
 
         # Use appropriate casts for each function's return type to avoid "Invalid cast" errors
         # PyGILState_Ensure returns PyGILState_STATE (int-like enum)
@@ -349,7 +384,7 @@ class ProcessAttacher:
         # PyGILState_Release returns void
         gdb_commands = [
             ("call (int) PyGILState_Ensure()", "Acquire GIL"),
-            (f'call (int) PyRun_SimpleString("exec(open(\\"{escaped_script}\\").read())")', "Execute agent script"),
+            (f'call (int) PyRun_SimpleString("{wrapper_code}")', "Execute agent script"),
             ("call (void) PyGILState_Release($1)", "Release GIL"),
         ]
 

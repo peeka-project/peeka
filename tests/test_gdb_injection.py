@@ -174,6 +174,28 @@ class TestGDBErrorHandling:
     def attacher(self):
         return ProcessAttacher(pid=12345)
 
+    @pytest.fixture
+    def captured_cmd(self):
+        """Capture the actual cmd list passed to subprocess.run."""
+        captured = {}
+
+        def fake_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+            captured["kwargs"] = kwargs
+            return MockCompletedProcess()
+
+        captured["fake_run"] = fake_run
+        return captured
+
+    def _extract_eval_commands(self, cmd_list):
+        """Extract -eval-command values from a GDB command list."""
+        evals = []
+        it = iter(cmd_list)
+        for arg in it:
+            if arg == "-eval-command":
+                evals.append(next(it))
+        return evals
+
     def test_permission_denied_raises(self, attacher):
         mock_result = MockCompletedProcess(
             returncode=1, stderr="Operation not permitted"
@@ -216,3 +238,17 @@ class TestGDBErrorHandling:
         with patch("subprocess.run", return_value=mock_result):
             with pytest.raises(RuntimeError, match="Invalid cast error"):
                 attacher._inject_via_gdb("/tmp/agent.py")
+
+    def test_wrapper_code_includes_try_except(self, attacher, captured_cmd):
+        """Verify agent execution is wrapped in try-except for error capture."""
+        with patch("subprocess.run", side_effect=captured_cmd["fake_run"]):
+            attacher._inject_via_gdb("/tmp/agent.py")
+
+        evals = self._extract_eval_commands(captured_cmd["cmd"])
+        run_cmd = evals[1]  # The PyRun_SimpleString command
+        # Verify try-except wrapper is present
+        assert "try:" in run_cmd
+        assert "except Exception" in run_cmd
+        assert "traceback" in run_cmd
+        # And the original exec(open(...).read()) is still there
+        assert "exec(open(" in run_cmd
