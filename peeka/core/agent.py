@@ -9,17 +9,40 @@ import sys
 import threading
 import traceback
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
-from peeka.commands.base import BaseCommand
 from peeka.core.injector import DecoratorInjector
 from peeka.core.observer import ObservationManager
-
 
 class PeekaAgent:
     """Agent running inside target process"""
 
-    def __init__(self, session_id: str, attached_pid: Optional[int] = None):
+    # Lazy command registry: (module_path, class_name) tuples.
+    # Commands are imported and instantiated on first dispatch,
+    # dramatically reducing startup time under GDB injection.
+    _COMMAND_REGISTRY: Dict[str, Tuple[str, str]] = {
+        "complete": ("peeka.commands.complete", "CompleteCommand"),
+        "watch": ("peeka.commands.watch", "WatchCommand"),
+        "trace": ("peeka.commands.trace", "TraceCommand"),
+        "stack": ("peeka.commands.stack", "StackCommand"),
+        "logger": ("peeka.commands.logger", "LoggerCommand"),
+        "sc": ("peeka.commands.search", "SearchClassCommand"),
+        "sm": ("peeka.commands.search", "SearchMethodCommand"),
+        "monitor": ("peeka.commands.monitor", "MonitorCommand"),
+        "memory": ("peeka.commands.memory", "MemoryCommand"),
+        "reset": ("peeka.commands.reset", "ResetCommand"),
+        "vmtool": ("peeka.commands.vmtool", "VMToolCommand"),
+        "detach": ("peeka.commands.detach", "DetachCommand"),
+        "thread": ("peeka.commands.thread", "ThreadCommand"),
+        "top": ("peeka.commands.top", "TopCommand"),
+    }
+
+    def __init__(
+        self,
+        session_id: str,
+        attached_pid: Optional[int] = None,
+        notify_port: int = 0,
+    ):
         self.session_id = session_id
         self.attached_pid = attached_pid
         self.running = True
@@ -33,37 +56,43 @@ class PeekaAgent:
         self.observer = ObservationManager()
         self.injector = DecoratorInjector(self)
 
-        self._register_handlers()
+        self._notify_port = notify_port
+
+    # ------------------------------------------------------------------ #
+    #  Lazy command handler loading                                      #
+    # ------------------------------------------------------------------ #
+
+    def _get_handler(self, cmd_type: str) -> Optional[Any]:
+        """Return the handler for *cmd_type*, importing lazily if needed."""
+        handler = self.command_handlers.get(cmd_type)
+        if handler is not None:
+            return handler
+
+        spec = self._COMMAND_REGISTRY.get(cmd_type)
+        if spec is None:
+            return None
+
+        module_path, class_name = spec
+        try:
+            import importlib
+            mod = importlib.import_module(module_path)
+            cls = getattr(mod, class_name)
+            handler = cls(self)  # type: ignore[abstract]
+            self.command_handlers[cmd_type] = handler
+            return handler
+        except Exception:
+            traceback.print_exc()
+            return None
 
     def _register_handlers(self) -> None:
-        from peeka.commands.complete import CompleteCommand
-        from peeka.commands.detach import DetachCommand
-        from peeka.commands.logger import LoggerCommand
-        from peeka.commands.memory import MemoryCommand
-        from peeka.commands.monitor import MonitorCommand
-        from peeka.commands.reset import ResetCommand
-        from peeka.commands.search import SearchClassCommand, SearchMethodCommand
-        from peeka.commands.stack import StackCommand
-        from peeka.commands.trace import TraceCommand
-        from peeka.commands.vmtool import VMToolCommand
-        from peeka.commands.watch import WatchCommand
-        from peeka.commands.thread import ThreadCommand
-        from peeka.commands.top import TopCommand
-        self.command_handlers["complete"] = CompleteCommand(self)  # type: ignore[abstract]
-        self.command_handlers["watch"] = WatchCommand(self)  # type: ignore[abstract]
-        self.command_handlers["trace"] = TraceCommand(self)  # type: ignore[abstract]
-        self.command_handlers["stack"] = StackCommand(self)  # type: ignore[abstract]
-        self.command_handlers["logger"] = LoggerCommand(self)  # type: ignore[abstract]
-        self.command_handlers["sc"] = SearchClassCommand(self)  # type: ignore[abstract]
-        self.command_handlers["sm"] = SearchMethodCommand(self)  # type: ignore[abstract]
-        self.command_handlers["monitor"] = MonitorCommand(self)  # type: ignore[abstract]
-        self.command_handlers["memory"] = MemoryCommand(self)  # type: ignore[abstract]
-        self.command_handlers["reset"] = ResetCommand(self)  # type: ignore[abstract]
-        self.command_handlers["vmtool"] = VMToolCommand(self)  # type: ignore[abstract]
-        self.command_handlers["detach"] = DetachCommand(self)  # type: ignore[abstract]
-        self.command_handlers["thread"] = ThreadCommand(self)  # type: ignore[abstract]
-        self.command_handlers["top"] = TopCommand(self)  # type: ignore[abstract]
+        """Eagerly import and register ALL command handlers.
 
+        Used by `start()` after the socket is ready so that commands
+        are available immediately.  Runs on the agent thread so it
+        does not block GIL during GDB injection.
+        """
+        for cmd_type in list(self._COMMAND_REGISTRY):
+            self._get_handler(cmd_type)
     def start(self) -> None:
         try:
             self.server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -88,14 +117,20 @@ class PeekaAgent:
             thread.start()
             accept_ready.wait(timeout=10)
 
+            # Signal readiness via TCP reverse-connect (preferred) and
+            # .ready file (fallback / backward compatibility).
+            self._notify_ready()
             Path(f"/tmp/peeka_{self.session_id}.ready").touch()
             print("[peeka Agent] Started and listening for connections")
             print("[peeka Agent] Ready for commands")
 
+            # Eagerly load all command handlers now that the socket is
+            # ready.  This runs on the agent thread (not GIL-blocking).
+            self._register_handlers()
+
         except Exception as e:
             print(f"[peeka Agent] Start failed: {e}", file=sys.stderr)
             traceback.print_exc()
-
     def _accept_loop(self, ready_event: threading.Event) -> None:
         ready_event.set()
         while self.running:
@@ -158,7 +193,7 @@ class PeekaAgent:
     def _execute_command(self, command: dict) -> dict:
         cmd_type = command.get("type", "")
 
-        handler: BaseCommand = self.command_handlers.get(cmd_type)
+        handler = self._get_handler(cmd_type)
         if handler:
             try:
                 return handler.execute(command)
@@ -170,7 +205,6 @@ class PeekaAgent:
                 }
         else:
             return {"status": "error", "error": f"Unknown command type: {cmd_type}"}
-
     def _send_observation(self, observation: Dict[str, Any]) -> None:
         """Called by injector when a watched function is invoked."""
         observation["type"] = "observation"
@@ -189,6 +223,20 @@ class PeekaAgent:
 
             for conn in dead_connections:
                 self._client_connections.remove(conn)
+
+    def _notify_ready(self) -> None:
+        """Notify the attacher that the agent is ready via TCP."""
+        if self._notify_port <= 0:
+            return
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(5.0)
+            s.connect(("127.0.0.1", self._notify_port))
+            s.sendall(b"READY")
+            s.close()
+        except Exception:
+            # Non-fatal: attacher will fall back to .ready file polling.
+            pass
 
     def stop(self) -> None:
         self.running = False
@@ -221,8 +269,11 @@ class PeekaAgent:
                 p.unlink(missing_ok=True)
             except OSError:
                 pass
-
-def _init_agent(session_id: str, attached_pid: Optional[int] = None) -> None:
+def _init_agent(
+    session_id: str,
+    attached_pid: Optional[int] = None,
+    notify_port: int = 0,
+) -> None:
     try:
         # Stop ALL existing agents from previous sessions to prevent thread leaks.
         # Each sys.remote_exec() call creates a new agent; without this cleanup,
@@ -237,7 +288,7 @@ def _init_agent(session_id: str, attached_pid: Optional[int] = None) -> None:
                     pass
             sys._peeka_agents.clear()  # type: ignore[attr-defined]
 
-        agent = PeekaAgent(session_id, attached_pid)
+        agent = PeekaAgent(session_id, attached_pid, notify_port=notify_port)
         agent.start()
 
         if not hasattr(sys, "_peeka_agents"):
@@ -249,10 +300,13 @@ def _init_agent(session_id: str, attached_pid: Optional[int] = None) -> None:
         traceback.print_exc()
 
 # Auto-initialize when injected via sys.remote_exec() or GDB
-# {{SESSION_ID}} and {{ATTACHED_PID}} are replaced by ProcessAttacher before injection
+# {{SESSION_ID}}, {{ATTACHED_PID}}, and {{NOTIFY_PORT}} are replaced by
+# ProcessAttacher before injection.
 # This runs both when imported (PEP 768) and when exec'd (GDB fallback)
 _session_id = "{{SESSION_ID}}"
 _attached_pid_str = "{{ATTACHED_PID}}"
+_notify_port_str = "{{NOTIFY_PORT}}"
 _attached_pid = int(_attached_pid_str) if _attached_pid_str.isdigit() else None
-if not _session_id.startswith("{{"):
-    _init_agent(_session_id, _attached_pid)
+_notify_port = int(_notify_port_str) if _notify_port_str.isdigit() else 0
+if not _session_id.startswith("{{"): 
+    _init_agent(_session_id, _attached_pid, notify_port=_notify_port)

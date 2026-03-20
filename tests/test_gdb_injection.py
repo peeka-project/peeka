@@ -126,17 +126,17 @@ class TestGDBCommandStructure:
         assert "-batch" in cmd
         assert "-q" in cmd
 
-    def test_script_path_in_exec_open(self, attacher, captured_cmd):
-        """The agent script path must appear inside exec(open(...).read())."""
+    def test_script_path_in_bootstrap(self, attacher, captured_cmd):
+        """The agent script path must appear in the threaded bootstrap snippet."""
         script = "/tmp/peeka_agent_abc123.py"
         with patch("subprocess.run", side_effect=captured_cmd["fake_run"]):
             attacher._inject_via_gdb(script)
 
         evals = self._extract_eval_commands(captured_cmd["cmd"])
         run_cmd = evals[1]
-        assert "exec(open(" in run_cmd
+        # The bootstrap reads the file and spawns a thread to exec it
         assert "peeka_agent_abc123" in run_cmd
-        assert ".read())" in run_cmd
+        assert "threading" in run_cmd or "Thread" in run_cmd
 
     def test_path_with_special_chars_escaped(self, attacher, captured_cmd):
         """Backslashes and quotes in paths must be escaped for GDB."""
