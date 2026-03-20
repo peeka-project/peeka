@@ -206,3 +206,13 @@ class TestGDBErrorHandling:
         with patch("subprocess.run", side_effect=FileNotFoundError):
             with pytest.raises(RuntimeError, match="not found"):
                 attacher._inject_via_gdb("/tmp/agent.py")
+
+    def test_invalid_cast_raises(self, attacher):
+        """Test that 'Invalid cast' errors are caught and reported with helpful message."""
+        mock_result = MockCompletedProcess(
+            returncode=1,
+            stderr="Invalid cast.\nwarning: Cannot parse .gnu_debugdata section",
+        )
+        with patch("subprocess.run", return_value=mock_result):
+            with pytest.raises(RuntimeError, match="Invalid cast error"):
+                attacher._inject_via_gdb("/tmp/agent.py")

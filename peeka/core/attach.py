@@ -379,6 +379,13 @@ class ProcessAttacher:
                     "Python debugging symbols not found.\n"
                     "Install python3-dbg (Debian/Ubuntu) or python3-debuginfo (RHEL/Fedora)"
                 )
+            elif "invalid cast" in stderr:
+                raise RuntimeError(
+                    "GDB injection failed: Invalid cast error.\n"
+                    "This may indicate incompatible GDB version or missing Python debug info.\n"
+                    "Install python3-dbg (Debian/Ubuntu) or python3-debuginfo (RHEL/Fedora)\n"
+                    f"GDB stderr: {result.stderr}"
+                )
             elif result.returncode != 0:
                 raise RuntimeError(
                     f"GDB injection failed (exit code {result.returncode}):\n"

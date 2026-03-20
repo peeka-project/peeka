@@ -121,6 +121,7 @@ class ProcessSelectorScreen(Screen):
     async def _do_attach(self, pid: int) -> None:
         """Run attachment in worker thread, then push MainScreen on success."""
         import asyncio
+        import traceback as tb
 
         from peeka.core.attach import ProcessAttacher
 
@@ -139,8 +140,11 @@ class ProcessSelectorScreen(Screen):
                     self.notify, f"Failed to attach to process {pid}", severity="error"
                 )
         except Exception as e:
+            # Capture full traceback for better debugging
+            error_details = tb.format_exc()
+            error_message = f"Attach error: {e}\n\nDetails:\n{error_details}"
             self.app.call_from_thread(
-                self.notify, f"Attach error: {e}", severity="error"
+                self.notify, error_message, severity="error", timeout=20
             )
         finally:
             # Do NOT call attacher.cleanup() here — sys.remote_exec() is
