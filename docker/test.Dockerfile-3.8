@@ -1,0 +1,27 @@
+# Peeka GDB/Python 3.8 E2E Test Image
+# Test-only image for container-based E2E testing
+# Used by testcontainers in tests/container/ — do not rename without updating conftest.py
+#
+# Usage: mount host code as volume at /app, then pip install -e inside container
+#   docker run -v /path/to/peeka:/app --cap-add=SYS_PTRACE peeka-test:3.8
+#
+# Code is NOT baked into the image — mount via volume so the container
+# always reflects the latest source without rebuilding.
+
+FROM peeka-base:3.8
+
+LABEL maintainer="peeka"
+LABEL description="Peeka E2E testing with GDB (Python 3.8)"
+
+ENV PYTHONPATH=/app
+ENV TERM=xterm-256color
+ENV COLORTERM=truecolor
+
+RUN pip install --no-cache-dir -i https://mirrors.ustc.edu.cn/pypi/web/simple \
+    "textual>=7.5.0"
+
+WORKDIR /app
+
+COPY docker/restart-demo.sh /opt/restart-demo.sh
+
+CMD ["bash", "-c", "sh /opt/restart-demo.sh; sleep infinity & wait"]
