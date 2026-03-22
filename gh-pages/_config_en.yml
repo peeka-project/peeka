@@ -28,6 +28,10 @@ back_to_top_text: "Back to top"
 aux_links:
   "中文":
     - "/peeka/"
+  "日本語":
+    - "/peeka/ja/"
+  "Español":
+    - "/peeka/es/"
   "GitHub":
     - "https://github.com/wwulfric/peeka"
 

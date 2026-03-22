@@ -3,6 +3,7 @@ Process Attacher - Based on PEP 768
 Attach to running Python processes and inject agent code
 """
 
+import logging
 import os
 import shutil
 import socket as sock_mod
@@ -14,6 +15,8 @@ import uuid
 import warnings
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 # Python 3.9+ uses importlib.resources.files(), Python 3.8 uses read_text()
 try:
     from importlib.resources import files as resource_files
@@ -134,8 +137,8 @@ class ProcessAttacher:
             if existing:
                 existing_session, existing_pid = existing
                 if existing_pid == self.pid:
-                    print(f"[Peeka] Already attached to process {self.pid}")
-                    print(f"[Peeka] Socket path: /tmp/peeka_{existing_session}.sock")
+                    logger.info("Already attached to process %d", self.pid)
+                    logger.info("Socket path: /tmp/peeka_%s.sock", existing_session)
                     self._existing_session = existing_session
                     return True
                 else:
@@ -144,13 +147,13 @@ class ProcessAttacher:
                         f"Please detach first: peeka detach"
                     )
 
-            print(f"[Peeka] Attaching to process {self.pid}...")
+            logger.info("Attaching to process %d...", self.pid)
 
             if hasattr(sys, "remote_exec"):
                 result = self._attach_pep768()
             else:
-                print("[Peeka] Warning: PEP 768 not available (Python 3.14+ required)")
-                print("[Peeka] Using fallback mechanism for demonstration")
+                logger.warning("PEP 768 not available (Python 3.14+ required)")
+                logger.info("Using fallback mechanism for demonstration")
                 result = self._attach_fallback()
 
             if result:
@@ -159,7 +162,7 @@ class ProcessAttacher:
             return result
 
         except Exception as e:
-            print(f"[Peeka] Attach failed: {e}")
+            logger.error("Attach failed: %s", e)
             import traceback
 
             traceback.print_exc()
@@ -174,7 +177,7 @@ class ProcessAttacher:
         if not os.path.exists(self.agent_script):
             raise FileNotFoundError(f"Agent script not found: {self.agent_script}")
         else:
-            print(f"[Peeka] Agent script created at {self.agent_script}")
+            logger.debug("Agent script created at %s", self.agent_script)
 
         # Inject to target process
         sys.remote_exec(self.pid, self.agent_script)
@@ -185,13 +188,13 @@ class ProcessAttacher:
         for attempt in range(self.MAX_ATTEMPTS):
             try:
                 if self._wait_for_agent_ready(timeout=self.READY_TIMEOUT_PEP768):
-                    print(f"[Peeka] Successfully attached to process {self.pid}")
+                    logger.info("Successfully attached to process %d", self.pid)
                     return True
             except TimeoutError:
                 if attempt < self.MAX_ATTEMPTS - 1:
-                    print(
-                        f"[Peeka] Agent not ready yet, retrying... "
-                        f"(attempt {attempt + 1}/{self.MAX_ATTEMPTS})"
+                    logger.info(
+                        "Agent not ready yet, retrying... (attempt %d/%d)",
+                        attempt + 1, self.MAX_ATTEMPTS,
                     )
                 else:
                     raise
@@ -218,7 +221,7 @@ class ProcessAttacher:
         - ptrace_scope <= 1
         - Python debugging symbols
         """
-        print(f"[Peeka] Using GDB injection for PID {self.pid} (Python <3.14)")
+        logger.info("Using GDB injection for PID %d (Python <3.14)", self.pid)
 
         self._check_gdb_available()
         self._check_ptrace_permissions()
@@ -241,13 +244,13 @@ class ProcessAttacher:
                     if self._wait_for_agent_ready(
                         timeout=self.READY_TIMEOUT_GDB
                     ):
-                        print(f"[Peeka] Successfully attached to process {self.pid}")
+                        logger.info("Successfully attached to process %d", self.pid)
                         return True
                 except TimeoutError:
                     if attempt < self.MAX_ATTEMPTS - 1:
-                        print(
-                            f"[Peeka] Agent not ready yet, retrying... "
-                            f"(attempt {attempt + 1}/{self.MAX_ATTEMPTS})"
+                        logger.info(
+                            "Agent not ready yet, retrying... (attempt %d/%d)",
+                            attempt + 1, self.MAX_ATTEMPTS,
                         )
                     else:
                         raise
@@ -255,7 +258,7 @@ class ProcessAttacher:
             return False
 
         except Exception as e:
-            print(f"[Peeka] GDB injection failed: {e}")
+            logger.error("GDB injection failed: %s", e)
             raise
         finally:
             if os.path.exists(agent_script):
@@ -313,7 +316,7 @@ class ProcessAttacher:
         path_bootstrap = f"import sys; sys.path.insert(0, {peeka_root!r}) if {peeka_root!r} not in sys.path else None\n"
 
         with open(agent_path, "w") as f:
-            print(f"[Peeka] Creating agent script at {agent_path}")
+            logger.debug("Creating agent script at %s", agent_path)
             f.write(path_bootstrap + agent_code_injected)
 
         return str(agent_path)
@@ -466,7 +469,7 @@ class ProcessAttacher:
         for gdb_cmd, description in gdb_commands:
             cmd.extend(["-eval-command", gdb_cmd])
 
-        print("[Peeka] Injecting agent via GDB...")
+        logger.info("Injecting agent via GDB...")
 
         try:
             result = subprocess.run(
@@ -495,7 +498,7 @@ class ProcessAttacher:
                     f"stdout: {result.stdout}"
                 )
 
-            print("[Peeka] GDB injection completed")
+            logger.info("GDB injection completed")
 
         except subprocess.TimeoutExpired:
             raise TimeoutError(

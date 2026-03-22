@@ -4,19 +4,22 @@ Dashboard View - Arthas-style overview of attached process.
 Layout inspired by Alibaba Arthas dashboard and py-spy top:
   - Thread table (top, dominant) — TID, Name, State, Daemon, Depth, Top Frame
   - Memory + GC table (middle-left / middle-right)
-  - Runtime info (bottom)
+  - Runtime info (bottom-left)
+  - Agent Log (bottom-right) - displays agent-side log messages from target process
 """
 
 import logging
 import os
 import platform
+import threading
 import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
-from textual.widgets import Button, DataTable, Static
+from textual.widgets import Button, DataTable, RichLog, Static
 from textual.worker import Worker, get_current_worker
 
 if TYPE_CHECKING:
@@ -44,15 +47,21 @@ class DashboardView(Container):
 
     BINDINGS = [
         Binding("r", "refresh", "Refresh"),
+        Binding("c", "clear_agent_log", "Clear Agent Log"),
     ]
+
+    MAX_LOG_LINES = 1000
 
     def __init__(self, pid: int) -> None:
         super().__init__()
         self.pid = pid
         self._client: Optional["StreamingAgentClient"] = None
         self._own_client: Optional["StreamingAgentClient"] = None
+        self._stream_client: Optional["StreamingAgentClient"] = None
+        self._stream_client_lock: threading.Lock = threading.Lock()
         self._socket_path: Optional[str] = None
         self._refresh_worker: Optional[Worker] = None
+        self._log_worker: Optional[Worker] = None
         self._start_time = time.time()
         self._log = logging.getLogger(__name__)
 
@@ -62,6 +71,7 @@ class DashboardView(Container):
         # Create a dedicated connection for dashboard worker to avoid
         # socket contention with other views sharing the same client.
         self._connect_own_client()
+        self._connect_agent_log_stream()
         self._refresh_dashboard_sync()
         self._start_refresh_worker()
 
@@ -75,6 +85,35 @@ class DashboardView(Container):
         if result.get("status") != "success":
             self._log.warning("Dashboard dedicated client failed: %s", result.get("error"))
             self._own_client = None
+
+    def _connect_agent_log_stream(self) -> None:
+        """Create a dedicated StreamingAgentClient for agent log streaming."""
+        if not self._socket_path:
+            return
+        try:
+            from peeka.core.client import StreamingAgentClient
+            self._stream_client = StreamingAgentClient(self._socket_path)
+            result = self._stream_client.connect()
+            if result.get("status") != "success":
+                self._log.warning(
+                    "Agent log stream client failed: %s", result.get("error")
+                )
+                self._stream_client = None
+                return
+            # Start streaming immediately once connected
+            self._log_worker = self.run_worker(
+                lambda: self._stream_agent_log_messages(),
+                thread=True,
+                exclusive=False,
+            )
+        except Exception as e:
+            self._log.warning("Agent log stream client error: %s", e)
+            self._stream_client = None
+
+    def action_clear_agent_log(self) -> None:
+        """Clear the agent log display."""
+        rich_log = self.query_one("#dash-agent-log", RichLog)
+        rich_log.clear()
     def compose(self) -> ComposeResult:
         # -- Controls bar (status + refresh button) --
         thread_summary = Static(
@@ -114,6 +153,19 @@ class DashboardView(Container):
         )
         runtime_section.border_title = "Runtime"
 
+        # -- Agent Log (displays agent-side log messages from target process) --
+        agent_log_section = Vertical(
+            RichLog(
+                id="dash-agent-log",
+                highlight=True,
+                max_lines=self.MAX_LOG_LINES,
+                auto_scroll=True,
+            ),
+            id="dash-agent-log-section",
+            classes="panel",
+        )
+        agent_log_section.border_title = "Agent Log (c to clear)"
+
         yield Horizontal(
             thread_summary,
             Static("", classes="spacer"),
@@ -127,7 +179,11 @@ class DashboardView(Container):
                 gc_section,
                 id="dash-mid-row",
             ),
-            runtime_section,
+            Horizontal(
+                runtime_section,
+                agent_log_section,
+                id="dash-bottom-row",
+            ),
             id="dashboard-container",
         )
 
@@ -153,9 +209,14 @@ class DashboardView(Container):
     def on_unmount(self) -> None:
         if self._refresh_worker:
             self._refresh_worker.cancel()
+        if self._log_worker:
+            self._log_worker.cancel()
         if self._own_client:
             self._own_client.disconnect()
             self._own_client = None
+        if self._stream_client:
+            self._stream_client.disconnect()
+            self._stream_client = None
 
     def action_refresh(self) -> None:
         """Refresh dashboard data."""
@@ -443,3 +504,64 @@ class DashboardView(Container):
         ]
 
         self.query_one("#dash-runtime-info", Static).update("\n".join(lines))
+
+    # -- Agent Log Streaming --------------------------------------------------
+
+    def _stream_agent_log_messages(self) -> None:
+        """Stream log messages from the agent in background thread."""
+        stream = self._stream_client or self._client
+        if not stream:
+            return
+
+        worker = get_current_worker()
+
+        for observation in stream.stream_observations():
+            if worker.is_cancelled:
+                break
+
+            # Check if this is a log message
+            if observation.get("type") != "log":
+                continue
+
+            level = observation.get("level", "INFO").upper()
+            message = observation.get("message", "")
+            timestamp = observation.get("timestamp", "")
+
+            self.app.call_from_thread(
+                self._add_log_entry, level, message, timestamp
+            )
+
+    def _add_log_entry(self, level: str, message: str, timestamp: str) -> None:
+        """Add a log entry to the RichLog widget (runs on main thread).
+
+        Args:
+            level: Log level (INFO, WARNING, ERROR, etc.)
+            message: Log message text
+            timestamp: Optional timestamp string
+        """
+        rich_log = self.query_one("#dash-agent-log", RichLog)
+
+        # Choose color based on log level
+        style_map = {
+            "DEBUG": "dim blue",
+            "INFO": "blue",
+            "WARNING": "yellow",
+            "ERROR": "red",
+            "CRITICAL": "bold red",
+        }
+        style = style_map.get(level, "white")
+
+        # Format the entry
+        if timestamp:
+            text = Text(f"[{timestamp}] ", style="dim")
+        else:
+            text = Text()
+
+        level_text = Text(f"{level:8} ", style=style)
+        message_text = Text(message, style=style)
+
+        text.append(level_text)
+        text.append(message_text)
+
+        rich_log.write(text)
+        # Auto-scroll is handled automatically by RichLog when auto_scroll=True

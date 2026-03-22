@@ -33,6 +33,10 @@ back_to_top_text: "回到顶部"
 aux_links:
   "English":
     - "/peeka/en/"
+  "日本語":
+    - "/peeka/ja/"
+  "Español":
+    - "/peeka/es/"
   "GitHub":
     - "https://github.com/wwulfric/peeka"
 

@@ -57,8 +57,8 @@ class TestProcessSelectorScreen:
 
 class TestMainScreen:
     @pytest.mark.asyncio
-    async def test_main_screen_has_ten_tabs(self):
-        """MainScreen has exactly 10 tab panes."""
+    async def test_main_screen_has_correct_number_of_tabs(self):
+        """MainScreen has exactly 11 tab panes (including Agent Log)."""
         app = PeekaApp()
         async with app.run_test() as pilot:
             app.push_screen(
@@ -71,11 +71,11 @@ class TestMainScreen:
             from textual.widgets import ContentSwitcher
             switcher = tabbed.query_one(ContentSwitcher)
             panes = [c for c in switcher.children if isinstance(c, TabPane)]
-            assert len(panes) == 10
+            assert len(panes) == 11
 
     @pytest.mark.asyncio
     async def test_tab_labels_correct(self):
-        """All 10 tab pane IDs match expected names."""
+        """All tab pane IDs match expected names."""
         app = PeekaApp()
         async with app.run_test() as pilot:
             app.push_screen(
@@ -97,6 +97,7 @@ class TestMainScreen:
                 "monitor",
                 "memory",
                 "logger",
+                "agentlog",
                 "inspect",
                 "threads",
                 "top",
@@ -194,7 +195,8 @@ class TestInputLabels:
                 "4": 1,  # Stack: Pattern
                 "5": 2,  # Monitor: Pattern, Interval
                 "7": 2,  # Logger: Filter, Logger
-                "8": 1,  # Inspect: Object Path
+                "8": 0,  # Agent Log: no inputs with labels (auto-scroll)
+                "9": 1,  # Inspect: Object Path
             }
 
             for key, expected_count in tab_label_counts.items():
