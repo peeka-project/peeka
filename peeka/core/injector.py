@@ -6,6 +6,8 @@ observation logic into target functions at runtime, enabling function call
 monitoring without modifying the original source code.
 """
 
+import logging
+
 import fnmatch
 import importlib
 import inspect
@@ -16,6 +18,7 @@ import uuid
 from functools import wraps
 from typing import Any, Callable, Dict, Optional, TYPE_CHECKING
 
+logger = logging.getLogger(__name__)
 from peeka.core.safeeval.simpleeval import SimpleEval, BASIC_ALLOWED_ATTRS
 
 if TYPE_CHECKING:
@@ -205,7 +208,7 @@ class DecoratorInjector:
                         info["parent"], info["attr_name"], info["original"]
                     )
                 except Exception:
-                    pass  # Best effort restoration
+                    logger.debug("Best-effort restoration failed for %s", watch_id, exc_info=True)
 
             self.instrumented.clear()
             return count
@@ -567,7 +570,7 @@ class DecoratorInjector:
                 try:
                     injector.agent._send_observation(observation)
                 except Exception:
-                    pass
+                    logger.debug("Failed to send observation for %s", watch_id, exc_info=True)
 
             # Stage 1: Observe at function entry (AtEnter) if -b flag enabled
             # Available: params, kwargs, target
@@ -764,7 +767,7 @@ class DecoratorInjector:
             try:
                 injector.agent._send_observation(observation)
             except Exception:
-                pass
+                logger.debug("Failed to send trace observation for %s", watch_id, exc_info=True)
 
             # Return the actual result or raise exception
             if call_tree:

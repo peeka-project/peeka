@@ -72,3 +72,26 @@ class OutputFormatter:
         output = {"type": "result", "command": command, "data": data}
         output.update(kwargs)
         print(json.dumps(output), flush=True)
+
+
+import logging
+import os
+import sys
+
+
+def configure_logging() -> None:
+    """Configure logging for peeka process from environment variable.
+
+    Reads PEEKA_LOG_LEVEL environment variable to set root logger level.
+    Defaults to WARNING if not set.
+    Logs go to stderr to avoid mixing with JSONL output on stdout.
+    """
+    log_level_name = os.environ.get("PEEKA_LOG_LEVEL", "WARNING").upper()
+    log_level = getattr(logging, log_level_name, logging.WARNING)
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s %(name)s %(levelname)s: %(message)s",
+        stream=sys.stderr
+    )
+    # Always set the level even if basicConfig has already been called
+    logging.root.setLevel(log_level)

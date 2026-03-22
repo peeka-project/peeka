@@ -3,6 +3,7 @@ Agent Code - Runs inside target process
 This code is injected into the target process and handles command execution
 """
 
+import time as _time
 import json
 import socket
 import sys
@@ -121,15 +122,21 @@ class PeekaAgent:
             # .ready file (fallback / backward compatibility).
             self._notify_ready()
             Path(f"/tmp/peeka_{self.session_id}.ready").touch()
-            print("[peeka Agent] Started and listening for connections")
-            print("[peeka Agent] Ready for commands")
+            msg_start = "[peeka Agent] Started and listening for connections"
+            msg_ready = "[peeka Agent] Ready for commands"
+            print(msg_start)
+            print(msg_ready)
+            self._send_log("INFO", msg_start)
+            self._send_log("INFO", msg_ready)
 
             # Eagerly load all command handlers now that the socket is
             # ready.  This runs on the agent thread (not GIL-blocking).
             self._register_handlers()
 
         except Exception as e:
-            print(f"[peeka Agent] Start failed: {e}", file=sys.stderr)
+            msg = f"[peeka Agent] Start failed: {e}"
+            print(msg, file=sys.stderr)
+            self._send_log("ERROR", msg)
             traceback.print_exc()
     def _accept_loop(self, ready_event: threading.Event) -> None:
         ready_event.set()
@@ -152,7 +159,9 @@ class PeekaAgent:
                 break
             except Exception as e:
                 if self.running:
-                    print(f"[peeka Agent] Accept error: {e}", file=sys.stderr)
+                    msg = f"[peeka Agent] Accept error: {e}"
+                    print(msg, file=sys.stderr)
+                    self._send_log("ERROR", msg)
 
     def _handle_client(self, conn: socket.socket) -> None:
         with self._connections_lock:
@@ -183,7 +192,9 @@ class PeekaAgent:
                 conn.sendall(response)
 
         except Exception as e:
-            print(f"[peeka Agent] Client error: {e}", file=sys.stderr)
+            msg = f"[peeka Agent] Client error: {e}"
+            print(msg, file=sys.stderr)
+            self._send_log("ERROR", msg)
         finally:
             with self._connections_lock:
                 if conn in self._client_connections:
@@ -218,6 +229,28 @@ class PeekaAgent:
             for conn in self._client_connections:
                 try:
                     conn.sendall(message)
+                except Exception:
+                    dead_connections.append(conn)
+
+            for conn in dead_connections:
+                self._client_connections.remove(conn)
+
+    def _send_log(self, level: str, message: str) -> None:
+        """Send a log message from Agent to all connected host clients."""
+        log_msg = {
+            "type": "log",
+            "level": level,
+            "message": message,
+            "timestamp": _time.time(),
+        }
+        obs_json = json.dumps(log_msg).encode("utf-8")
+        frame = b"LOG:" + len(obs_json).to_bytes(4, "big") + obs_json
+
+        with self._connections_lock:
+            dead_connections = []
+            for conn in self._client_connections:
+                try:
+                    conn.sendall(frame)
                 except Exception:
                     dead_connections.append(conn)
 
@@ -283,7 +316,9 @@ def _init_agent(
             for old_agent in old_agents:
                 try:
                     old_agent.stop()
-                    print(f"[peeka Agent] Stopped previous agent: {old_agent.session_id}")
+                    msg = f"[peeka Agent] Stopped previous agent: {old_agent.session_id}"
+                    print(msg)
+                    old_agent._send_log("INFO", msg)
                 except Exception:
                     pass
             sys._peeka_agents.clear()  # type: ignore[attr-defined]
@@ -296,8 +331,10 @@ def _init_agent(
         sys._peeka_agents[session_id] = agent  # type: ignore[attr-defined]
 
     except Exception as e:
-        print(f"[peeka Agent] Initialization failed: {e}", file=sys.stderr)
+        msg = f"[peeka Agent] Initialization failed: {e}"
+        print(msg, file=sys.stderr)
         traceback.print_exc()
+        # Note: _send_log can't be called here because agent isn't fully initialized yet
 
 # Auto-initialize when injected via sys.remote_exec() or GDB
 # {{SESSION_ID}}, {{ATTACHED_PID}}, and {{NOTIFY_PORT}} are replaced by

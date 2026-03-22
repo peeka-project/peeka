@@ -4,12 +4,15 @@ Unix domain sockets using the length-prefixed JSON protocol defined in
 ``peeka.core.agent``.
 """
 
+import logging
+
 import json
 import socket
 import threading
 from pathlib import Path
 from typing import Any, Dict, Generator, Optional
 
+logger = logging.getLogger(__name__)
 
 class AgentClient:
     """Lightweight client for communicating with the Peeka agent."""
@@ -48,6 +51,7 @@ class AgentClient:
                 return json.loads(data.decode("utf-8"))
 
         except Exception as exc:
+            logger.debug("Command failed on %s: %s", self.socket_path, exc)
             return {
                 "status": "error",
                 "error": str(exc),
@@ -80,6 +84,7 @@ class StreamingAgentClient:
     """
 
     OBS_PREFIX = b"OBS:"
+    LOG_PREFIX = b"LOG:"
     PREFIX_LEN = 4
 
     def __init__(self, socket_path: str, timeout: Optional[float] = None):
@@ -104,6 +109,7 @@ class StreamingAgentClient:
             self._sock.connect(self.socket_path)
             return {"status": "success"}
         except Exception as e:
+            logger.debug("Connection to %s failed: %s", self.socket_path, e)
             self._sock = None
             return {"status": "error", "error": str(e)}
 
@@ -152,16 +158,16 @@ class StreamingAgentClient:
                     return {"status": "error", "error": "No response received"}
 
                 # After _recv_exact we may have read more data into _buffer.
-                # If the 4 bytes we got look like the OBS prefix, drain and retry.
-                while length_bytes == self.OBS_PREFIX:
-                    # We just consumed "OBS:" — read & discard the OBS payload
+                # If the 4 bytes we got look like the OBS or LOG prefix, drain and retry.
+                while length_bytes == self.OBS_PREFIX or length_bytes == self.LOG_PREFIX:
+                    # We just consumed the prefix — read & discard the payload
                     obs_len_bytes = self._recv_exact(4)
                     if not obs_len_bytes:
-                        return {"status": "error", "error": "Truncated OBS frame"}
+                        return {"status": "error", "error": "Truncated frame"}
                     obs_len = int.from_bytes(obs_len_bytes, "big")
                     obs_data = self._recv_exact(obs_len)
                     if not obs_data:
-                        return {"status": "error", "error": "Truncated OBS payload"}
+                        return {"status": "error", "error": "Truncated payload"}
                     # Try reading the next 4 bytes (hopefully the real response)
                     self._drain_obs_frames()
                     length_bytes = self._recv_exact(4)
@@ -176,6 +182,7 @@ class StreamingAgentClient:
                 return json.loads(data.decode("utf-8"))
 
             except Exception as e:
+                logger.debug("send_command error: %s", e)
                 return {"status": "error", "error": str(e)}
     def stream_observations(self) -> Generator[Dict[str, Any], None, None]:
         """
@@ -206,15 +213,35 @@ class StreamingAgentClient:
             except OSError:
                 break
             except Exception:
+                logger.debug("Unexpected error in stream_observations", exc_info=True)
                 break
 
     def _extract_observation(self) -> Optional[Dict[str, Any]]:
         """Extract one observation from buffer if complete."""
-        if not self._buffer.startswith(self.OBS_PREFIX):
-            idx = self._buffer.find(self.OBS_PREFIX)
-            if idx == -1:
+        # Check for observation prefix first
+        if self._buffer.startswith(self.OBS_PREFIX):
+            prefix = self.OBS_PREFIX
+        elif self._buffer.startswith(self.LOG_PREFIX):
+            prefix = self.LOG_PREFIX
+        else:
+            # Look for either prefix in the buffer
+            idx_obs = self._buffer.find(self.OBS_PREFIX)
+            idx_log = self._buffer.find(self.LOG_PREFIX)
+            if idx_obs == -1 and idx_log == -1:
                 return None
-            self._buffer = self._buffer[idx:]
+            # Take the earliest occurrence
+            if idx_obs == -1:
+                self._buffer = self._buffer[idx_log:]
+                prefix = self.LOG_PREFIX
+            elif idx_log == -1:
+                self._buffer = self._buffer[idx_obs:]
+                prefix = self.OBS_PREFIX
+            elif idx_obs < idx_log:
+                self._buffer = self._buffer[idx_obs:]
+                prefix = self.OBS_PREFIX
+            else:
+                self._buffer = self._buffer[idx_log:]
+                prefix = self.LOG_PREFIX
 
         header_size = self.PREFIX_LEN + 4
         if len(self._buffer) < header_size:
@@ -230,19 +257,22 @@ class StreamingAgentClient:
         self._buffer = self._buffer[total_size:]
 
         try:
+            if prefix is self.LOG_PREFIX:
+                # LOG messages already contain the type, level, and message in the JSON payload
+                return json.loads(data.decode("utf-8"))
             return json.loads(data.decode("utf-8"))
         except json.JSONDecodeError:
             return None
 
     def _drain_obs_frames(self) -> None:
-        """Remove complete OBS frames sitting at the front of ``_buffer``.
+        """Remove complete OBS or LOG frames sitting at the front of ``_buffer``.
 
         This is called inside ``send_command`` to skip over any observation
         broadcasts that arrived before the command response.  Only already-
         buffered data is considered — we never block waiting for more.
         """
-        while self._buffer.startswith(self.OBS_PREFIX):
-            header_size = self.PREFIX_LEN + 4  # "OBS:" + 4-byte length
+        while self._buffer.startswith(self.OBS_PREFIX) or self._buffer.startswith(self.LOG_PREFIX):
+            header_size = self.PREFIX_LEN + 4  # Prefix + 4-byte length
             if len(self._buffer) < header_size:
                 break  # incomplete header — leave it for the next recv
             obs_len = int.from_bytes(

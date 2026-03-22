@@ -10,9 +10,12 @@ import argparse
 import os
 import sys
 
+from peeka.core.output import configure_logging
 
 def main() -> None:
     """Entry point for the peeka TUI command."""
+    configure_logging()
+
     # Parse arguments before importing textual
     parser = argparse.ArgumentParser(
         prog="peeka", description="Peeka - Python Runtime Diagnostics TUI"
@@ -97,6 +100,7 @@ def main() -> None:
                     break
         except Exception:
             pass  # Best-effort: swallow to protect target process
+
 
     atexit.register(_atexit_cleanup)
     app.run()
