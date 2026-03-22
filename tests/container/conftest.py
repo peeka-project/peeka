@@ -27,18 +27,18 @@ _PROJECT_ROOT = str(Path(__file__).resolve().parents[2])
 def gdb_image():
     """Use pre-built GDB test image (Python 3.12 + GDB + python3-dbg).
 
-    Build: docker build --network=host -f docker/Dockerfile.test-gdb -t peeka-test:gdb .
+    Build: docker build --network=host -f docker/test.Dockerfile-3.12 -t peeka-test:3.12 .
     """
-    return "peeka-test:gdb"
+    return "peeka-test:3.12"
 
 
 @pytest.fixture(scope="session")
 def py314_image():
     """Use pre-built Python 3.14 test image (PEP 768 native attach).
 
-    Build: docker build --network=host -f docker/Dockerfile.test-py314 -t peeka-test:py314 .
+    Build: docker build --network=host -f docker/test.Dockerfile-3.14 -t peeka-test:3.14 .
     """
-    return "peeka-test:py314"
+    return "peeka-test:3.14"
 
 
 @pytest.fixture(scope="function")

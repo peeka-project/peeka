@@ -8,7 +8,7 @@
 # Code is NOT baked into the image — mount via volume so the container
 # always reflects the latest source without rebuilding.
 
-FROM python:3.12-trixie-gdb
+FROM peeka-base:3.12
 
 LABEL maintainer="peeka"
 LABEL description="Peeka E2E testing with GDB (Python 3.12)"
