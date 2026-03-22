@@ -14,6 +14,8 @@ from typing import Optional, Tuple
 from peeka.core.attach import ProcessAttacher
 from peeka.core.client import StreamingAgentClient
 from peeka.core.output import OutputFormatter
+from peeka.core.output import configure_logging
+configure_logging()
 
 
 def _find_pid_by_name(name: str) -> int:
