@@ -250,6 +250,14 @@ class ProcessAttacher:
                             f"(attempt {attempt + 1}/{self.MAX_ATTEMPTS})"
                         )
                     else:
+                        # Check for error log before raising
+                        error_log = agent_script.replace(".py", "_error.log")
+                        if os.path.exists(error_log):
+                            with open(error_log) as f:
+                                error_content = f.read()
+                            raise RuntimeError(
+                                f"Agent initialization failed with error:\n{error_content}"
+                            )
                         raise
 
             return False
@@ -260,6 +268,10 @@ class ProcessAttacher:
         finally:
             if os.path.exists(agent_script):
                 os.remove(agent_script)
+            # Clean up error log if it exists
+            error_log = agent_script.replace(".py", "_error.log")
+            if os.path.exists(error_log):
+                os.remove(error_log)
             self._close_notify_server()
 
     # ------------------------------------------------------------------ #
@@ -436,14 +448,22 @@ class ProcessAttacher:
         - PyGILState_Release(): Release GIL
         """
         escaped_script = agent_script.replace("\\", "\\\\").replace('"', '\\"')
+        error_log = agent_script.replace(".py", "_error.log")
+        escaped_error_log = error_log.replace("\\", "\\\\").replace('"', '\\"')
 
         # The bootstrap reads the script once, then offloads exec() to a
         # daemon thread so that PyRun_SimpleString returns quickly.
+        # Wrap exec() in try-except with file logging because PyRun_SimpleString
+        # doesn't propagate exceptions from the executed code.
         bootstrap = (
-            "import threading as _t; "
+            "import threading as _t, traceback as _tb; "
             f"_c = open(\\\"{escaped_script}\\\").read(); "
+            "def _run(): "
+            "  try: exec(_c, {{'__name__': '__main__'}}); "
+            "  except Exception as _e: "
+            f"    open(\\\"{escaped_error_log}\\\", 'w').write(_tb.format_exc()); "
             "_t.Thread("
-            "target=exec, args=(_c,), "
+            "target=_run, "
             "name='peeka-bootstrap', daemon=True"
             ").start()"
         )

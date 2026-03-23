@@ -206,3 +206,71 @@ class TestGDBErrorHandling:
         with patch("subprocess.run", side_effect=FileNotFoundError):
             with pytest.raises(RuntimeError, match="not found"):
                 attacher._inject_via_gdb("/tmp/agent.py")
+
+
+class TestGDBErrorLogging:
+    """Verify error logging in GDB bootstrap code."""
+
+    @pytest.fixture
+    def attacher(self):
+        return ProcessAttacher(pid=12345)
+
+    @pytest.fixture
+    def captured_cmd(self):
+        captured = {}
+
+        def fake_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+            captured["kwargs"] = kwargs
+            return MockCompletedProcess()
+
+        captured["fake_run"] = fake_run
+        return captured
+
+    def _extract_eval_commands(self, cmd_list):
+        evals = []
+        it = iter(cmd_list)
+        for arg in it:
+            if arg == "-eval-command":
+                evals.append(next(it))
+        return evals
+
+    def test_bootstrap_has_error_logging(self, attacher, captured_cmd):
+        """Bootstrap must wrap exec() in try-except with file logging."""
+        with patch("subprocess.run", side_effect=captured_cmd["fake_run"]):
+            attacher._inject_via_gdb("/tmp/peeka_agent_test.py")
+
+        evals = self._extract_eval_commands(captured_cmd["cmd"])
+        bootstrap = evals[1]
+
+        # Must import traceback
+        assert "traceback" in bootstrap or "_tb" in bootstrap
+        # Must have try-except block
+        assert "try:" in bootstrap
+        assert "except" in bootstrap
+        # Must write to error log file
+        assert "_error.log" in bootstrap
+        assert "format_exc" in bootstrap or "_tb.format_exc" in bootstrap
+
+    def test_error_log_path_matches_agent_script(self, attacher, captured_cmd):
+        """Error log path should be derived from agent script path."""
+        script = "/tmp/peeka_agent_abc123.py"
+        with patch("subprocess.run", side_effect=captured_cmd["fake_run"]):
+            attacher._inject_via_gdb(script)
+
+        evals = self._extract_eval_commands(captured_cmd["cmd"])
+        bootstrap = evals[1]
+
+        # Error log should be script.replace(".py", "_error.log")
+        assert "peeka_agent_abc123_error.log" in bootstrap
+
+    def test_error_log_escaped_correctly(self, attacher, captured_cmd):
+        """Error log path with special characters must be escaped."""
+        with patch("subprocess.run", side_effect=captured_cmd["fake_run"]):
+            attacher._inject_via_gdb('/tmp/has"quote.py')
+
+        evals = self._extract_eval_commands(captured_cmd["cmd"])
+        bootstrap = evals[1]
+
+        # Error log path should also be escaped
+        assert r'has\"quote_error.log' in bootstrap
