@@ -33,6 +33,15 @@ def gdb_image():
 
 
 @pytest.fixture(scope="session")
+def py38_image():
+    """Use pre-built Python 3.8 test image (GDB + ptrace attach).
+
+    Build: docker build --network=host -f docker/test.Dockerfile-3.8 -t peeka-test:3.8 .
+    """
+    return "peeka-test:3.8"
+
+
+@pytest.fixture(scope="session")
 def py314_image():
     """Use pre-built Python 3.14 test image (PEP 768 native attach).
 
@@ -46,6 +55,22 @@ def gdb_container(gdb_image):
     """Start GDB-based container with host code bind-mounted at /app."""
     with (
         DockerContainer(str(gdb_image))
+        .with_volume_mapping(_PROJECT_ROOT, "/app", mode="rw")
+        .with_kwargs(
+            cap_add=["SYS_PTRACE"],
+            security_opt=["seccomp:unconfined"],
+            init=True,
+        ) as container
+    ):
+        container.start()
+        yield container
+
+
+@pytest.fixture(scope="function")
+def py38_container(py38_image):
+    """Start Python 3.8 container with host code bind-mounted at /app."""
+    with (
+        DockerContainer(str(py38_image))
         .with_volume_mapping(_PROJECT_ROOT, "/app", mode="rw")
         .with_kwargs(
             cap_add=["SYS_PTRACE"],
@@ -167,6 +192,18 @@ def gdb_target(gdb_container):
 
 
 @pytest.fixture(scope="function")
+def py38_target(py38_container):
+    """Start target process in Python 3.8 container.
+
+    Yields:
+        Dict with keys: container (DockerContainer), pid (str)
+    """
+    pid = start_target_in_container(py38_container)
+    yield {"container": py38_container, "pid": pid}
+    cleanup_peeka_files_in_container(py38_container)
+
+
+@pytest.fixture(scope="function")
 def py314_target(py314_container):
     """Start target process in Python 3.14 container.
 
@@ -181,15 +218,17 @@ def py314_target(py314_container):
 # Parametrized fixture for dual-version testing
 
 
-@pytest.fixture(scope="function", params=["gdb", "py314"])
+@pytest.fixture(scope="function", params=["py38", "gdb", "py314"])
 def container_target(request):
-    """Parametrized fixture for testing across both container types.
+    """Parametrized fixture for testing across container types (all Python versions).
 
     Yields:
         Dict with keys: container (DockerContainer), pid (str), type (str)
     """
     target_type = request.param
-    if target_type == "gdb":
+    if target_type == "py38":
+        target = request.getfixturevalue("py38_target")
+    elif target_type == "gdb":
         target = request.getfixturevalue("gdb_target")
     else:
         target = request.getfixturevalue("py314_target")

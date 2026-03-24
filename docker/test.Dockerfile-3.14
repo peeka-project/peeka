@@ -3,7 +3,7 @@
 # NOTE: 3.14-rc tag may change. Pin to specific version if reproducibility needed.
 #
 # Usage: mount host code as volume at /app, then pip install -e inside container
-#   docker run -v /path/to/peeka:/app --cap-add=SYS_PTRACE peeka-test:py314
+#   docker run -v /path/to/peeka:/app --cap-add=SYS_PTRACE peeka-test:3.14
 #
 # Code is NOT baked into the image — mount via volume so the container
 # always reflects the latest source without rebuilding.

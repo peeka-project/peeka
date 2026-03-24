@@ -3,7 +3,7 @@
 # Used by testcontainers in tests/container/ — do not rename without updating conftest.py
 #
 # Usage: mount host code as volume at /app, then pip install -e inside container
-#   docker run -v /path/to/peeka:/app --cap-add=SYS_PTRACE peeka-test:gdb
+#   docker run -v /path/to/peeka:/app --cap-add=SYS_PTRACE peeka-test:3.12
 #
 # Code is NOT baked into the image — mount via volume so the container
 # always reflects the latest source without rebuilding.
