@@ -440,15 +440,13 @@ class ProcessAttacher:
         """
         escaped_script = agent_script.replace("\\", "\\\\").replace('"', '\\"')
 
-        # The bootstrap reads the script once, then offloads exec() to a
-        # daemon thread so that PyRun_SimpleString returns quickly.
+        # For Python <= 3.8, there's a bug where threads created during
+        # injection don't get scheduled after GDB detaches.
+        # So instead we just execute directly here while we still hold the GIL.
+        # This takes a bit longer but is guaranteed to work.
         bootstrap = (
-            "import threading as _t; "
             f"_c = open(\\\"{escaped_script}\\\").read(); "
-            "_t.Thread("
-            "target=exec, args=(_c,), "
-            "name='peeka-bootstrap', daemon=True"
-            ").start()"
+            "exec(_c);"
         )
 
         # Use appropriate casts for each function's return type to avoid

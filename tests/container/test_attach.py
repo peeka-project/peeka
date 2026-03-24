@@ -1,7 +1,8 @@
 """
 Container E2E tests for attach/detach lifecycle.
 
-Tests core attach/detach operations in Docker containers against both:
+Tests core attach/detach operations in Docker containers against:
+- Python 3.8 (GDB-based attachment)
 - Python 3.12 (GDB-based attachment)
 - Python 3.14 (PEP 768 native attachment)
 """

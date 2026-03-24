@@ -4,18 +4,22 @@ Runtime diagnostic tool for Python 3.8-3.14+ using PEP 768 remote debugging.
 
 ## Build & Test Commands
 
+This project uses **uv** as the package manager. Always prefix Python commands with `uv run` to ensure you're using the correct project environment:
+
 ```bash
 uv pip install -e .                 # Core only
 uv pip install -e ".[tui]"         # With TUI (textual)
 uv sync --dev                      # Dev (pytest, textual, testcontainers, docker, pytest-cov, pytest-timeout)
 
-pytest tests/ -v                                          # All tests
-pytest tests/ -v -m "not e2e and not container"           # CI-safe (no ptrace/docker)
-pytest tests/test_injector.py -v                          # Single file
-pytest tests/test_injector.py::TestDecoratorInjector::test_inject_function -v  # Single test
-pytest tests/e2e/ -v                                      # E2E (requires ptrace)
-ruff check peeka/                                         # Lint (no enforced config)
+uv run pytest tests/ -v                                          # All tests
+uv run pytest tests/ -v -m "not e2e and not container"           # CI-safe (no ptrace/docker)
+uv run pytest tests/test_injector.py -v                          # Single file
+uv run pytest tests/test_injector.py::TestDecoratorInjector::test_inject_function -v  # Single test
+uv run pytest tests/e2e/ -v                                      # E2E (requires ptrace)
+uv run ruff check peeka/                                         # Lint (no enforced config)
 ```
+
+**Rule**: Any Python command (pytest, ruff, python, etc.) should be run with `uv run <command>` to use the project's virtual environment.
 
 Pytest config: `pytest.ini` (timeout=60s, filterwarnings ignores DeprecationWarning).
 
@@ -147,10 +151,11 @@ Two test images in `docker/` for testcontainers and manual verification. All req
 
 | Image | Dockerfile | Python | Purpose |
 |-------|------------|--------|---------|
-| `peeka-test:gdb` | `Dockerfile.test-gdb` | 3.12 | GDB + ptrace attach testing |
-| `peeka-test:py314` | `Dockerfile.test-py314` | 3.14 | PEP 768 native attach testing |
+| `peeka-test:3.8` | `test.Dockerfile-3.8` | 3.8 | GDB + ptrace attach testing |
+| `peeka-test:3.12` | `test.Dockerfile-3.12` | 3.12 | GDB + ptrace attach testing |
+| `peeka-test:3.14` | `test.Dockerfile-3.14` | 3.14 | PEP 768 native attach testing |
 
-Build with `--network=host` (for proxy routing). Run: `pytest tests/container/test_attach.py -v -m container --timeout=180`
+Build with `--network=host` (for proxy routing). Run: `uv run pytest tests/container/test_attach.py -v -m container --timeout=180`
 
 ## Git Conventions
 

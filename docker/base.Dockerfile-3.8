@@ -2,13 +2,38 @@
 # Test-only image for container-based E2E testing
 # Used by testcontainers in tests/container/ — do not rename without updating conftest.py
 
-FROM python:3.8-bullseye
+# Use Debian bullseye + deadsnakes PPA for proper matching Python 3.8 + debug symbols
+FROM debian:bullseye
 
 LABEL maintainer="peeka"
 LABEL description="Peeka E2E testing with GDB (Python 3.8)"
 
+# Install prerequisites for adding deadsnakes
 RUN sed -i 's|deb.debian.org|mirrors.ustc.edu.cn|g' /etc/apt/sources.list \
-    && apt-get update && apt-get install -y --no-install-recommends \
-    gdb \
-    python3-dbg \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+    software-properties-common \
+    dirmngr \
+    gnupg \
+    wget \
     && rm -rf /var/lib/apt/lists/*
+
+# Add deadsnakes PPA
+RUN curl -fsSL https://dl.deadsnakes.io/debian/deadsnakes.gpg | gpg --dearmor -o /usr/share/keyrings/deadsnakes-archive-keyring.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/deadsnakes-archive-keyring.gpg] http://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu jammy main" >> /etc/apt/sources.list.d/deadsnakes.list
+
+# Install Python 3.8 with matching debug symbols
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.8 \
+    python3.8-dev \
+    python3.8-dbg \
+    libpython3.8-dbg \
+    gdb \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Make python3.8 the default python
+RUN ln -sf /usr/bin/python3.8 /usr/bin/python && ln -sf /usr/bin/python3.8 /usr/bin/python3
+
+# Verify installation
+RUN python --version && file /usr/bin/python3.8 && ls -la /usr/lib/x86_64-linux-gnu/libpython3.8*d
