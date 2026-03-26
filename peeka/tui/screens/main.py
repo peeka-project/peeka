@@ -32,9 +32,9 @@ class MainScreen(Screen):
         Binding("6", "switch_tab('memory')", "Memory"),
         Binding("7", "switch_tab('logger')", "Logger"),
         Binding("8", "switch_tab('inspect')", "Inspect"),
+        Binding("9", "switch_tab('threads')", "Threads"),
         Binding("escape", "go_back", "Back", priority=True),
-        Binding("0", "switch_tab('threads')", "Threads"),
-        Binding("t", "switch_tab('top')", "Top"),
+        Binding("0", "switch_tab('top')", "Top"),
         Binding("q", "go_back", "Back"),
     ]
 
@@ -68,9 +68,9 @@ class MainScreen(Screen):
                     yield LoggerView(self.pid)
                 with TabPane("[bold underline]8[/]·Inspect", id="inspect"):
                     yield InspectView(self.pid)
-                with TabPane("[bold underline]0[/]·Threads", id="threads"):
+                with TabPane("[bold underline]9[/]·Threads", id="threads"):
                     yield ThreadView(self.pid)
-                with TabPane("[bold underline]T[/]·Top", id="top"):
+                with TabPane("[bold underline]0[/]·Top", id="top"):
                     yield TopView(self.pid)
         yield Footer()
 
