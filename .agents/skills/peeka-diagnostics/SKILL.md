@@ -48,9 +48,13 @@ python3 --version
 # 3.14+: PEP 768 native attach (no extra deps)
 # 3.8-3.13: GDB + ptrace required
 
-# 3. For Python < 3.14 — verify GDB and ptrace
+# 3. For Python < 3.14 — verify GDB, ptrace, and debug symbols
 which gdb
 cat /proc/sys/kernel/yama/ptrace_scope  # Must be 0 or 1
+# Verify debug symbols match Python version
+gdb -batch -ex "py print PyGILState_Ensure" -ex quit
+# Must succeed (output is an integer, doesn't matter what value)
+# If fails → install python3-dbg that exactly matches your Python version
 # Docker: container must have --cap-add=SYS_PTRACE
 
 # 4. Check jq availability (for JSONL parsing)
@@ -707,8 +711,93 @@ peeka-cli reset && peeka-cli detach
 | `"Not attached to any process"` | No active peeka session | Run `peeka-cli attach <pid>` first |
 | `"Cannot find target: <pattern>"` | Wrong function pattern | Use `peeka-cli sc` and `peeka-cli sm` to find the correct pattern |
 | Permission denied / ptrace error | Missing ptrace permissions | Check `ptrace_scope`, use `--cap-add=SYS_PTRACE` in Docker |
+| **Timeout waiting for agent ready file (GDB path)** | Agent initialization never completes after GDB injection | See full troubleshooting below |
 | No observations received | Function not being called, or wrong timing flag | Verify function is active; try without `--condition`; check timing flags |
 | `"Already attached"` | Previous session not cleaned up | `peeka-cli detach`, then re-attach if needed |
 | tracemalloc error on `memory --action top` | tracemalloc not started | Run `peeka-cli memory --action start` first |
 | `memory --action diff` fails | Fewer than 2 snapshots | Take at least 2 snapshots with `memory --action snapshot` |
 | `memory --action referrers` fails | Missing `--type-name` | Add `--type-name "ClassName"` flag |
+
+---
+
+## Attach Failure Troubleshooting (GDB path - Python < 3.14)
+
+If `peeka-cli attach <pid>` hangs and eventually times out waiting for the agent ready file, use this systematic troubleshooting:
+
+### Step 1: Verify prerequisites
+```bash
+# 1. Check ptrace scope
+cat /proc/sys/kernel/yama/ptrace_scope
+# Must be 0 (allow any process to ptrace any other process)
+# If it's 1: sudo sysctl -w kernel.yama.ptrace_scope=0
+
+# 2. Check GDB installed
+which gdb
+
+# 3. VERIFY PYTHON DEBUG SYMBOLS (most common failure after ptrace)
+gdb -batch -ex "py print PyGILState_Ensure" -ex quit
+# ✓ Success: outputs an integer (doesn't matter what it is)
+# ✗ Failure: "No symbol "PyGILState_Ensure" in current context"
+#    → Debug symbols don't match your Python version
+#    → Fix: install python3-dbg package that exactly matches your python version
+#    → In Docker: use the base.Dockerfile-<version> to build a matched image
+
+# 4. Check that GDB can actually execute Python code
+docker exec peeka-test-<version> bash -c '
+  gdb -batch -p $(pgrep -f demo.py) \
+    -ex "call (int) PyGILState_Ensure()" \
+    -ex "call (int) PyRun_SimpleString(\"open(\\\"/tmp/gdb-test\\\", \\\"w\\\").write(\\\"ok\\\")\")" \
+    -ex "call (void) PyGILState_Release(\$1)" \
+    -ex quit
+'
+ls -l /tmp/gdb-test
+# ✓ Success: /tmp/gdb-test exists with content "ok"
+# If this fails → GDB/python-dbg issue, fix symbols first
+```
+
+### Step 2: Diagnose the thread scheduling issue (Python <= 3.8)
+
+If GDB works fine (Step 1 passes) but attach still times out:
+```bash
+# Manually test thread creation via GDB
+docker exec peeka-test-<version> bash -c '
+  gdb -batch -p $(pgrep -f demo.py) \
+    -ex "call (int) PyGILState_Ensure()" \
+    -ex "call (int) PyRun_SimpleString(\"import threading,time; print(\\\"starting thread\\\"); t=threading.Thread(target=lambda: time.sleep(30)); t.daemon=True; t.start(); print(\\\"thread started\\\")\")" \
+    -ex "call (void) PyGILState_Release(\$1)" \
+    -ex quit
+'
+
+# Check if thread actually scheduled
+ps -T $(pgrep -f demo.py) | grep -E "PID|sleep"
+# ✓ Success: you see the extra thread running
+# ✗ Failure: thread exists but is in T (stopped) state → THIS IS THE BUG
+#    → Root cause: On older Python <= 3.8, threads created via GDB while the
+#    process is stopped never get scheduled after GDB detaches
+#    → Fix: execute bootstrap directly without creating a new thread
+```
+
+### Step 3: Verify the fix
+
+After applying the direct-execution fix:
+```bash
+# Test direct execution via GDB
+docker exec peeka-test-<version> bash -c '
+  gdb -batch -p $(pgrep -f demo.py) \
+    -ex "call (int) PyGILState_Ensure()" \
+    -ex "call (int) PyRun_SimpleString(\"open(\\\"/tmp/direct-exec-ok\\\", \\\"w\\\").write(\\\"done\\\")\")" \
+    -ex "call (void) PyGILState_Release(\$1)" \
+    -ex quit
+'
+
+ls -l /tmp/direct-exec-ok
+# ✓ Success: file exists → direct execution works
+# Now try full attach → should succeed
+```
+
+### Common Root Causes Ordered by Likelihood:
+
+1. **ptrace_scope != 0** → 权限问题，fix ptrace_scope
+2. **Debug symbols don't match Python version** → 最常见，GDB 找不到 Python C API 符号
+3. **Missing --cap-add=SYS_PTRACE in Docker** → 容器没有权限
+4. **Thread scheduling bug (Python <= 3.8)** → 这就是我们这次遇到的问题，必须直接执行不能创建线程
