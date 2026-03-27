@@ -66,6 +66,7 @@ class ProcessAttacher:
         self.session_id = str(uuid.uuid4())
         self._existing_session = None
         self._notify_server: Optional[sock_mod.socket] = None
+
     def _check_existing_attachment(self) -> Optional[tuple]:
         """
         Check if there's already an active Peeka agent attached to any process.
@@ -111,6 +112,7 @@ class ProcessAttacher:
             return True
         except (ConnectionRefusedError, FileNotFoundError, OSError):
             return False
+
     @staticmethod
     def _cleanup_stale_files(*paths: Path) -> None:
         for p in paths:
@@ -194,12 +196,14 @@ class ProcessAttacher:
                 if attempt < self.MAX_ATTEMPTS - 1:
                     logger.info(
                         "Agent not ready yet, retrying... (attempt %d/%d)",
-                        attempt + 1, self.MAX_ATTEMPTS,
+                        attempt + 1,
+                        self.MAX_ATTEMPTS,
                     )
                 else:
                     raise
 
         return False
+
     def _attach_fallback(self) -> bool:
         """
         Fallback mechanism for older Python versions using GDB + ptrace.
@@ -231,9 +235,7 @@ class ProcessAttacher:
         # Open a TCP server for the agent to connect back to.
         notify_port = self._create_notify_server()
 
-        agent_script = self._create_agent_script(
-            agent_code, notify_port=notify_port
-        )
+        agent_script = self._create_agent_script(agent_code, notify_port=notify_port)
 
         try:
             self._inject_via_gdb(agent_script)
@@ -241,16 +243,15 @@ class ProcessAttacher:
             # Wait with retry, matching PEP 768 path behaviour.
             for attempt in range(self.MAX_ATTEMPTS):
                 try:
-                    if self._wait_for_agent_ready(
-                        timeout=self.READY_TIMEOUT_GDB
-                    ):
+                    if self._wait_for_agent_ready(timeout=self.READY_TIMEOUT_GDB):
                         logger.info("Successfully attached to process %d", self.pid)
                         return True
                 except TimeoutError:
                     if attempt < self.MAX_ATTEMPTS - 1:
                         logger.info(
                             "Agent not ready yet, retrying... (attempt %d/%d)",
-                            attempt + 1, self.MAX_ATTEMPTS,
+                            attempt + 1,
+                            self.MAX_ATTEMPTS,
                         )
                     else:
                         raise
@@ -275,12 +276,8 @@ class ProcessAttacher:
         The injected agent will connect back to this port once it is
         ready, which is far more reliable than polling for a file.
         """
-        self._notify_server = sock_mod.socket(
-            sock_mod.AF_INET, sock_mod.SOCK_STREAM
-        )
-        self._notify_server.setsockopt(
-            sock_mod.SOL_SOCKET, sock_mod.SO_REUSEADDR, 1
-        )
+        self._notify_server = sock_mod.socket(sock_mod.AF_INET, sock_mod.SOCK_STREAM)
+        self._notify_server.setsockopt(sock_mod.SOL_SOCKET, sock_mod.SO_REUSEADDR, 1)
         self._notify_server.bind(("127.0.0.1", 0))
         self._notify_server.listen(1)
         port = self._notify_server.getsockname()[1]
@@ -367,6 +364,7 @@ class ProcessAttacher:
             time.sleep(0.05)
 
         raise TimeoutError("Agent initialization timeout (socket not connectable)")
+
     def get_socket_path(self) -> str:
         """Get Unix domain socket path for communication"""
         if self._existing_session:
@@ -427,11 +425,7 @@ class ProcessAttacher:
         and can deadlock if the target holds the import lock), we run a
         tiny bootstrap snippet that:
         1. Reads the agent script into memory
-        2. Spawns a daemon thread to exec() it
-        3. Returns immediately, releasing the GIL
-
-        The real agent initialisation then happens on the daemon thread
-        without blocking the target process.
+        2. Executes it directly via exec()
 
         Calls Python C API functions via GDB:
         - PyGILState_Ensure(): Acquire GIL
@@ -444,10 +438,7 @@ class ProcessAttacher:
         # injection don't get scheduled after GDB detaches.
         # So instead we just execute directly here while we still hold the GIL.
         # This takes a bit longer but is guaranteed to work.
-        bootstrap = (
-            f"_c = open(\\\"{escaped_script}\\\").read(); "
-            "exec(_c);"
-        )
+        bootstrap = f'_c = open(\\"{escaped_script}\\").read(); exec(_c);'
 
         # Use appropriate casts for each function's return type to avoid
         # "Invalid cast" errors.
@@ -505,6 +496,7 @@ class ProcessAttacher:
             )
         except FileNotFoundError:
             raise RuntimeError("GDB executable not found in PATH")
+
     def cleanup(self):
         """Cleanup agent script only; socket and ready file persist for agent"""
         if self.agent_script and os.path.exists(self.agent_script):
