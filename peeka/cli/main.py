@@ -7,7 +7,9 @@ import argparse
 import json
 import os
 import signal
+import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -105,6 +107,7 @@ Examples:
   peeka-cli stack "mod.func"              # Stack trace (must attach first)
   peeka-cli detach                        # Detach from current process
   peeka-cli reset                         # Reset all enhancements
+  peeka-cli run myscript.py arg1 -- watch "module.function" --success  # Run script and watch function from start
         """,
     )
 
@@ -488,6 +491,25 @@ Examples:
     detach_parser = subparsers.add_parser(
         "detach", help="Detach from the target process"
     )
+    run_parser = subparsers.add_parser(
+        "run",
+        help="Run a Python script with Peeka attached from startup",
+        description=(
+            "Run a Python script with Peeka attached from startup.\n"
+            "Note: On extremely fast scripts that exit in under 100ms, it's possible\n"
+            "the target function may execute before Peeka completes injection. This is\n"
+            "extremely rare in practice."
+        )
+    )
+    run_parser.add_argument(
+        "script_path", help="Path to the Python script to execute"
+    )
+    # Note: We use nargs=argparse.REMAINDER to capture everything after script_path
+    # The actual splitting at -- happens manually in cmd_run
+    run_parser.add_argument(
+        "remaining", nargs=argparse.REMAINDER,
+        help="Script arguments followed by -- then the observation command"
+    )
 
     args = parser.parse_args()
 
@@ -524,6 +546,8 @@ Examples:
             return cmd_thread(args)
         elif args.command == "top":
             return cmd_top(args)
+        elif args.command == "run":
+            return cmd_run(args)
         else:
             OutputFormatter.error("peeka", error=f"Unknown command: {args.command}")
             return 1
@@ -1296,6 +1320,272 @@ def cmd_sm(args) -> int:
     streaming_client.disconnect()
 
     return 0 if response.get("status") == "success" else 1
+
+
+def _build_run_command(command_type: str, command_parts: list) -> Optional[dict]:
+    """
+    Build command dict from command parts for supported streaming commands.
+    Supports: watch, trace, stack, monitor, top
+    """
+    # We reuse the existing parsers by creating a tiny subparser just for this
+    # This ensures consistency with existing command parsing
+    parser = argparse.ArgumentParser(prog=f"peeka-cli run ... -- {command_type}")
+
+    command: dict = {"type": command_type, "action": "start"}
+
+    if command_type in ("watch", "trace", "stack"):
+        if len(command_parts) < 2:
+            return None
+        command["pattern"] = command_parts[1]
+        remaining = command_parts[2:]
+
+        if command_type == "watch":
+            parser.add_argument("-x", "--depth", type=int, default=2)
+            parser.add_argument("-n", "--times", type=int, default=-1)
+            parser.add_argument("-b", "--before", action="store_true")
+            parser.add_argument("-e", "--exception", action="store_true")
+            parser.add_argument("-s", "--success", action="store_true")
+            parser.add_argument("-f", "--finish", action="store_true", default=True)
+            parser.add_argument("--condition", dest="condition_express", type=str)
+        elif command_type == "trace":
+            parser.add_argument("-d", "--depth", type=int, default=3)
+            parser.add_argument("-n", "--times", type=int, default=-1)
+            parser.add_argument("--condition", dest="condition_express", type=str)
+            parser.add_argument("--skip-builtin", dest="skip_builtin", type=lambda x: x.lower() in ('true', '1', 'yes'), default=True)
+            parser.add_argument("--min-duration", dest="min_duration", type=float, default=0)
+        elif command_type == "stack":
+            parser.add_argument("-n", "--times", type=int, default=-1)
+            parser.add_argument("--condition", dest="condition_express", type=str)
+            parser.add_argument("--depth", type=int, default=10)
+
+        parsed = parser.parse_args(remaining)
+        command.update(vars(parsed))
+        return command
+
+    elif command_type == "monitor":
+        if not command_parts:
+            return None
+        command["pattern"] = command_parts[0]
+        remaining = command_parts[1:]
+        parser.add_argument("--interval", type=int, default=60)
+        parser.add_argument("-c", "--cycles", type=int, default=-1)
+        parsed = parser.parse_args(remaining)
+        command.update(vars(parsed))
+        return command
+
+    elif command_type == "top":
+        remaining = command_parts
+        parser.add_argument("--interval", "-i", type=float, default=0.01)
+        parser.add_argument("--cycles", "-c", type=int, default=-1)
+        parser.add_argument("--sort", type=str, default="own", choices=["own", "total", "own-time", "total-time"])
+        parser.add_argument("--no-filter-peeka", action="store_true", default=False)
+        parsed = parser.parse_args(remaining)
+        command["interval"] = parsed.interval
+        command["cycles"] = parsed.cycles
+        command["sort"] = parsed.sort
+        command["filter_peeka"] = not parsed.no_filter_peeka
+        command["stream"] = True
+        return command
+
+    else:
+        # Unsupported command
+        return None
+
+
+def cmd_run(args) -> int:
+    # We need to find -- manually in sys.argv because argparse removes it from remaining
+    # Find index of "run"
+    run_idx = None
+    for i, arg in enumerate(sys.argv):
+        if arg == "run" and i >= 1:  # sys.argv[0] is the program name
+            run_idx = i
+            break
+
+    if run_idx is None:
+        OutputFormatter.error("run", error="Could not find 'run' command in arguments")
+        return 1
+
+    # Look for first -- after "run"
+    separator_idx = None
+    for i in range(run_idx + 1, len(sys.argv)):
+        if sys.argv[i] == "--":
+            separator_idx = i
+            break
+
+    if separator_idx is None:
+        OutputFormatter.error("run", error="Missing -- separator between script args and command\nUsage: peeka-cli run <script> [args...] -- <command> [args...]")
+        return 1
+
+    # args.script_path is already parsed by argparse as the first positional arg after run
+    # Everything between run and -- is script_args (including script_path)
+    # So script_args is everything between run and --, excluding the script_path itself
+    script_args = sys.argv[run_idx + 2:separator_idx]
+    command_parts = sys.argv[separator_idx + 1:]
+
+    if not command_parts:
+        OutputFormatter.error("run", error="Missing observation command after --\nUsage: peeka-cli run <script> [args...] -- <command> [args...]")
+        return 1
+
+    # Build the child command
+    child_args = [sys.executable, args.script_path] + script_args
+    pid = subprocess.Popen(child_args).pid
+
+    child_pid = pid
+    OutputFormatter.status(f"Started script {args.script_path} with PID {child_pid}")
+
+    # Give the child a moment to initialize before attaching
+    # This helps PEP 768 find the main thread before the script exits
+    time.sleep(0.05)
+
+    attacher = ProcessAttacher(child_pid)
+
+    try:
+        attached = attacher.attach()
+        if not attached:
+            OutputFormatter.error("run", error=f"Failed to attach to process {child_pid}")
+            # Kill the child if attach fails
+            try:
+                os.kill(child_pid, signal.SIGKILL)
+                os.waitpid(child_pid, 0)
+            except Exception:
+                pass
+            attacher.cleanup()
+            return 1
+
+        socket_path = attacher.get_socket_path()
+        OutputFormatter.status(f"Attached to PID {child_pid}, setting up command...")
+
+        # Signal handlers: forward to child process then cleanup
+        def cleanup_and_exit(signum=None, frame=None):
+            try:
+                if signum is not None:
+                    os.kill(child_pid, signum)
+                # Detach
+                streaming_client = StreamingAgentClient(socket_path)
+                streaming_client.connect()
+                streaming_client.send_command({"type": "detach"})
+                streaming_client.disconnect()
+                # Cleanup socket/pid files
+                session_id = Path(socket_path).stem.replace("peeka_", "")
+                pid_file = Path(f"/tmp/peeka_{session_id}.pid")
+                ready_file = Path(f"/tmp/peeka_{session_id}.ready")
+                sock_file = Path(socket_path)
+                pid_file.unlink(missing_ok=True)
+                ready_file.unlink(missing_ok=True)
+                sock_file.unlink(missing_ok=True)
+                # Reap child
+                exit_code = 0
+                try:
+                    if signum is None:
+                        # Child already exited, just reap
+                        status, exit_code = os.waitpid(child_pid, 0)
+                    else:
+                        status, exit_code = os.waitpid(child_pid, 0)
+                except ChildProcessError:
+                    # Child already reaped by streaming loop
+                    pass
+            except Exception:
+                pass
+            finally:
+                attacher.cleanup()
+                if signum is not None:
+                    # Exit with the same code as child
+                    if os.WIFEXITED(exit_code):
+                        sys.exit(os.WEXITSTATUS(exit_code))
+                    elif os.WIFSIGNALED(exit_code):
+                        # Exit with 128 + signal number like shells do
+                        sys.exit(128 + os.WTERMSIG(exit_code))
+                    else:
+                        sys.exit(1)
+
+        signal.signal(signal.SIGINT, cleanup_and_exit)
+        signal.signal(signal.SIGTERM, cleanup_and_exit)
+
+        # Connect and send command
+        streaming_client = StreamingAgentClient(socket_path)
+        connect_result = streaming_client.connect()
+
+        if connect_result.get("status") != "success":
+            OutputFormatter.error("run", error=connect_result.get("error", "Connection failed"))
+            cleanup_and_exit()
+            return 1
+
+        # Parse command type and args by dispatching to existing pattern
+        command_type = command_parts[0]
+
+        # We need to parse the command arguments like it's done in the existing handlers
+        # For simplicity, we use argparse to re-parse the command, which ensures consistency
+        # Since we only support one command, and all commands follow the same streaming pattern,
+        # we can handle it generically.
+
+        # Build the generic command based on command type
+        command = _build_run_command(command_type, command_parts)
+
+        if command is None:
+            OutputFormatter.error("run", error=f"Unsupported command for run: {command_type}\nOnly streaming observation commands (watch/trace/stack/monitor/top) are supported")
+            cleanup_and_exit()
+            return 1
+
+        response = streaming_client.send_command(command)
+
+        if response.get("status") != "success":
+            OutputFormatter.error("run", error=response.get("error", f"{command_type} start failed"))
+            cleanup_and_exit()
+            return 1
+
+        watch_id = response.get("watch_id", response.get("monitor_id", response.get("top_id")))
+        OutputFormatter.event(f"{command_type}_started", data={f"{command_type}_id": watch_id, "command": command_parts})
+        sys.stdout.flush()
+
+        # Now stream observations while waiting for child to exit
+        # We use a non-blocking wait to check if child has exited while still streaming
+        child_exited = False
+        exit_code = 0
+
+        try:
+            for observation in streaming_client.stream_observations():
+                print(json.dumps(observation))
+                sys.stdout.flush()
+
+                # Check if child has exited
+                try:
+                    pid, status = os.waitpid(child_pid, os.WNOHANG)
+                    if pid == child_pid:
+                        child_exited = True
+                        if os.WIFEXITED(status):
+                            exit_code = os.WEXITSTATUS(status)
+                        elif os.WIFSIGNALED(status):
+                            exit_code = 128 + os.WTERMSIG(status)
+                        break
+                except ChildProcessError:
+                    # Child already reaped
+                    child_exited = True
+                    exit_code = 1
+                    break
+
+                # Small sleep to avoid busy waiting
+                time.sleep(0.01)
+        finally:
+            # If child exited but we still have streaming to clean up
+            if not child_exited:
+                cleanup_and_exit()
+
+        # Final cleanup
+        cleanup_and_exit()
+        return exit_code
+
+    except Exception as e:
+        # Catch any unexpected errors, ensure child is killed
+        try:
+            os.kill(child_pid, signal.SIGKILL)
+            os.waitpid(child_pid, 0)
+        except Exception:
+            pass
+        OutputFormatter.error("run", error=str(e))
+        import traceback
+        traceback.print_exc()
+        attacher.cleanup()
+        return 1
 
 
 if __name__ == "__main__":
