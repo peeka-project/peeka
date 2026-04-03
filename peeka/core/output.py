@@ -24,54 +24,52 @@ class OutputFormatter:
     """
 
     @staticmethod
-    def status(message: str, **kwargs) -> None:
-        """Output a status/info message."""
+    def status(message: str, file=None, **kwargs) -> None:
         output = {"type": "status", "level": "info", "message": message}
         output.update(kwargs)
-        print(json.dumps(output), flush=True)
+        print(json.dumps(output), flush=True, file=file or sys.stdout)
 
     @staticmethod
-    def success(command: str, data: Optional[Dict[str, Any]] = None, **kwargs) -> None:
-        """Output a success response."""
+    def success(
+        command: str, data: Optional[Dict[str, Any]] = None, file=None, **kwargs
+    ) -> None:
         output = {"type": "success", "command": command}
         if data:
             output["data"] = data
         output.update(kwargs)
-        print(json.dumps(output), flush=True)
+        print(json.dumps(output), flush=True, file=file or sys.stdout)
 
     @staticmethod
     def error(
-        command: str, error: str, suggestion: Optional[str] = None, **kwargs
+        command: str, error: str, suggestion: Optional[str] = None, file=None, **kwargs
     ) -> None:
-        """Output an error response."""
         output = {"type": "error", "command": command, "error": error}
         if suggestion:
             output["suggestion"] = suggestion
         output.update(kwargs)
-        print(json.dumps(output), flush=True)
+        print(json.dumps(output), flush=True, file=file or sys.stdout)
 
     @staticmethod
-    def event(event: str, data: Optional[Dict[str, Any]] = None, **kwargs) -> None:
-        """Output a control event."""
+    def event(
+        event: str, data: Optional[Dict[str, Any]] = None, file=None, **kwargs
+    ) -> None:
         output = {"type": "event", "event": event}
         if data:
             output["data"] = data
         output.update(kwargs)
-        print(json.dumps(output), flush=True)
+        print(json.dumps(output), flush=True, file=file or sys.stdout)
 
     @staticmethod
-    def observation(data: Dict[str, Any], **kwargs) -> None:
-        """Output an observation from watched function."""
+    def observation(data: Dict[str, Any], file=None, **kwargs) -> None:
         output = {"type": "observation", "data": data}
         output.update(kwargs)
-        print(json.dumps(output), flush=True)
+        print(json.dumps(output), flush=True, file=file or sys.stdout)
 
     @staticmethod
-    def result(command: str, data: Dict[str, Any], **kwargs) -> None:
-        """Output a query result."""
+    def result(command: str, data: Dict[str, Any], file=None, **kwargs) -> None:
         output = {"type": "result", "command": command, "data": data}
         output.update(kwargs)
-        print(json.dumps(output), flush=True)
+        print(json.dumps(output), flush=True, file=file or sys.stdout)
 
 
 import logging
@@ -91,7 +89,7 @@ def configure_logging() -> None:
     logging.basicConfig(
         level=log_level,
         format="%(asctime)s %(name)s %(levelname)s: %(message)s",
-        stream=sys.stderr
+        stream=sys.stderr,
     )
     # Always set the level even if basicConfig has already been called
     logging.root.setLevel(log_level)

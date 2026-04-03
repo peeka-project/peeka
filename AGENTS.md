@@ -1,165 +1,168 @@
-# Peeka Developer Guide (for AI Coding Agents)
+# Peeka 开发指南（AI 编码代理专用）
 
-Runtime diagnostic tool for Python 3.8-3.14+ using PEP 768 remote debugging.
+基于 PEP 768 远程调试的 Python 3.8-3.14+ 运行时诊断工具。
 
-## Build & Test Commands
+## 构建与测试命令
 
-This project uses **uv** as the package manager. Always prefix Python commands with `uv run` to ensure you're using the correct project environment:
+本项目使用 **uv** 作为包管理器。所有 Python 命令必须加 `uv run` 前缀：
 
 ```bash
-uv pip install -e .                 # Core only
-uv pip install -e ".[tui]"         # With TUI (textual)
-uv sync --dev                      # Dev (pytest, textual, testcontainers, docker, pytest-cov, pytest-timeout)
+uv pip install -e .                 # 仅核心
+uv pip install -e ".[tui]"         # 含 TUI（textual）
+uv sync --dev                      # 开发依赖（pytest, textual, testcontainers, docker, pytest-cov, pytest-timeout）
 
-uv run pytest tests/ -v                                          # All tests
-uv run pytest tests/ -v -m "not e2e and not container"           # CI-safe (no ptrace/docker)
-uv run pytest tests/test_injector.py -v                          # Single file
-uv run pytest tests/test_injector.py::TestDecoratorInjector::test_inject_function -v  # Single test
-uv run pytest tests/e2e/ -v                                      # E2E (requires ptrace)
-uv run ruff check peeka/                                         # Lint (no enforced config)
+uv run pytest tests/ -v                                          # 全部测试
+uv run pytest tests/ -v -m "not e2e and not container"           # CI 安全（无需 ptrace/docker）
+uv run pytest tests/test_injector.py -v                          # 单文件
+uv run pytest tests/test_injector.py::TestDecoratorInjector::test_inject_function -v  # 单测试
+uv run pytest tests/e2e/ -v                                      # E2E（需要 ptrace）
+uv run pytest tests/container/ -v -m container --timeout=180     # 容器测试（需要 Docker）
+uv run ruff check peeka/                                         # Lint（无强制配置）
 ```
 
-**Rule**: Any Python command (pytest, ruff, python, etc.) should be run with `uv run <command>` to use the project's virtual environment.
+**规则**：所有 Python 命令（pytest、ruff、python 等）必须通过 `uv run <命令>` 执行，以使用项目虚拟环境。
 
-Pytest config: `pytest.ini` (timeout=60s, filterwarnings ignores DeprecationWarning).
+Pytest 配置：`pytest.ini`（超时 60 秒，filterwarnings 忽略 DeprecationWarning）。
 
-## Entry Points
+## 入口点
 
-- `peeka-cli` → CLI (`peeka/cli/main.py`, argparse)
-- `peeka` → TUI (`peeka/tui/__init__.py`, requires textual)
+- `peeka-cli` → CLI（`peeka/cli/main.py`，argparse）
+- `peeka` → TUI（`peeka/tui/__init__.py`，需要 textual）
 
-## Code Style
+## 代码风格
 
-### Imports: stdlib → third-party → local (blank line between groups, alphabetical within)
+### 导入顺序：标准库 → 第三方 → 本地（组间空行，组内字母排序）
 
 ```python
 import json
 from typing import Any, Dict, Optional
 
-import textual  # third-party
+import textual  # 第三方
 
 from peeka.core.agent import PeekaAgent
 ```
 
-`typing` imports belong in the stdlib group. Use `TYPE_CHECKING` + string annotations for circular imports. Import inside methods when needed (see `agent.py._register_handlers()`).
+`typing` 导入属于标准库组。循环导入使用 `TYPE_CHECKING` + 字符串注解。重型或低频模块可在方法内部导入。
 
-### Type Hints & Docstrings
+### 类型注解与文档字符串
 
-- **Required** on public and non-trivial function signatures; small private callbacks may omit
-- Use `typing` module types (`Dict`, `Optional`, `Any`, `Callable`), not PEP 604 `X | None`
-- Google-style docstrings (Args, Returns, Raises) on public non-trivial methods
-- Naming: Classes=PascalCase, functions=snake_case, private=`_prefix`, constants=UPPER_SNAKE
+- 公开及非平凡函数签名**必须**添加类型注解；简单私有回调可省略
+- 使用 `typing` 模块类型（`Dict`、`Optional`、`Any`、`Callable`），**不用** PEP 604 的 `X | None`（项目支持 Python 3.8+）
+- 公开非平凡方法使用 Google 风格文档字符串（Args、Returns、Raises）
+- 命名：类=PascalCase，函数=snake_case，私有=`_前缀`，常量=UPPER_SNAKE
 
-### Error Handling (layered pattern)
+### 错误处理（分层模式）
 
-- **Core modules**: RAISE exceptions (e.g. `raise ValueError(...)`)
-- **Commands**: CATCH and return `{"status": "success"|"error", ...}` dicts
-- **Agent**: wraps command execution, adds traceback; swallows exceptions for best-effort restoration
+- **Core 模块**：抛出异常（如 `raise ValueError(...)`）
+- **Commands**：捕获并返回 `{"status": "success"|"error", ...}` 字典
+- **Agent**：包装命令执行，附加 traceback；吞掉异常以保证尽力恢复
 
-### Thread Safety & Logging
+### 线程安全与日志
 
-Use `threading.Lock` for shared mutable state in agent/injector/TUI views. Keep critical sections small.
-TUI streaming views use double-checked locking for lazy client initialization (`_ensure_stream_client()`).
+共享可变状态使用 `threading.Lock`（agent/injector/TUI views）。临界区尽量短小。
+TUI 流式视图通过双重检查锁惰性初始化客户端连接（`_ensure_stream_client()`）。
 
-- **Injected agent code**: `print("[peeka Agent] ...")` — no logging module, minimal footprint
-- **CLI output**: `OutputFormatter` from `peeka/core/output.py` for structured JSONL
-- **Commands/TUI views**: Python `logging` module
+- **注入的 agent 代码**：`print("[peeka Agent] ...")` — 不用 logging 模块，最小化开销
+- **CLI 输出**：`OutputFormatter`（`peeka/core/output.py`）结构化 JSONL
+- **Commands/TUI views**：Python `logging` 模块
 
-## Architecture
+## 架构
 
 ```
 peeka/
-├── cli/main.py              # CLI entry point (argparse)
+├── cli/main.py              # CLI 入口（argparse）
 ├── tui/
-│   ├── app.py               # PeekaApp main
-│   ├── completion.py         # CLI/TUI completion helper
+│   ├── app.py               # PeekaApp 主应用
+│   ├── completion.py         # CLI/TUI 补全辅助
 │   ├── screens/             # process_selector, main, help
-│   ├── views/               # dashboard, watch, stack, trace, monitor,
-│   │                        #   memory, logger, inspect, thread, top
+│   ├── views/               # dashboard（含 agent log）, watch, stack,
+│   │                        #   trace, monitor, memory, logger, inspect,
+│   │                        #   thread, top
 │   └── widgets/             # autocomplete_input
 ├── core/
-│   ├── agent.py             # PeekaAgent - injected into target, Unix socket server
-│   ├── attach.py            # Process attachment (PEP 768 + GDB fallback)
-│   ├── injector.py          # DecoratorInjector - runtime function wrapping
+│   ├── agent.py             # PeekaAgent - 注入目标进程，Unix socket 服务
+│   ├── attach.py            # 进程附加（PEP 768 + GDB 回退）
+│   ├── injector.py          # DecoratorInjector - 运行时函数包装
 │   ├── client.py            # AgentClient, StreamingAgentClient
 │   ├── observer.py          # ObservationManager
-│   ├── monitor.py           # Performance monitoring
-│   ├── output.py            # OutputFormatter (JSONL)
-│   └── safeeval/            # Safe expression evaluation (simpleeval)
-├── commands/                # BaseCommand subclasses
+│   ├── monitor.py           # 性能监控
+│   ├── output.py            # OutputFormatter（JSONL）
+│   └── safeeval/            # 安全表达式求值（simpleeval）
+├── commands/                # BaseCommand 子类
 │   ├── base.py              # ABC: execute() + validate_params()
 │   ├── watch.py, stack.py, trace.py, monitor.py, memory.py
 │   ├── logger.py, search.py, reset.py, vmtool.py
 │   ├── thread.py, top.py
 │   └── complete.py, detach.py
 └── utils/
-    ├── formatters.py        # Value formatting utilities
-    └── patterns.py          # Pattern matching (wildcards)
+    ├── formatters.py        # 值格式化工具
+    └── patterns.py          # 模式匹配（通配符）
 ```
 
-### Adding a New Command
+### 添加新命令
 
-1. Create `peeka/commands/mycommand.py` extending `BaseCommand`
-2. Implement `execute(self, params: Dict[str, Any]) -> Dict[str, Any]`
-3. Register in `peeka/core/agent.py` → `_register_handlers()` (import inside method)
-4. Add CLI subcommand in `peeka/cli/main.py`
-5. Write tests in `tests/test_mycommand.py`
+1. 创建 `peeka/commands/mycommand.py`，继承 `BaseCommand`
+2. 实现 `execute(self, params: Dict[str, Any]) -> Dict[str, Any]`
+3. 在 `PeekaAgent._COMMAND_REGISTRY`（`peeka/core/agent.py` 中的字典）注册 — 命令首次调度时通过 `_get_handler()` 惰性加载
+4. 在 `peeka/cli/main.py` 添加 CLI 子命令
+5. 在 `tests/test_mycommand.py` 编写测试
 
-### Security
+### 安全
 
-**NEVER use `eval()` on user input.** Use `peeka.core.safeeval.simpleeval.SimpleEval` instead.
+**禁止对用户输入使用 `eval()`。** 必须使用 `peeka.core.safeeval.simpleeval.SimpleEval`。
 
-## TUI Patterns (Textual)
+## TUI 模式（Textual）
 
-Streaming views (watch, trace, stack, monitor) create dedicated `StreamingAgentClient` connections
-lazily via `_ensure_stream_client()` with thread-safe double-checked locking. Non-streaming views
-(logger, memory, inspect, thread) share the main client. Use `self.app.call_from_thread()` for
-UI updates from background threads.
+流式视图（watch、trace、stack、monitor）通过 `_ensure_stream_client()` 惰性创建独立的 `StreamingAgentClient` 连接（双重检查锁）。非流式视图（logger、memory、inspect、thread）共享主客户端。后台线程更新 UI 使用 `self.app.call_from_thread()`。
 
-## Testing Patterns
+## 测试模式
 
-Most tests use **class-based** tests with pytest fixtures. Custom `MockAgent` / `MockStreamingAgentClient`
-classes (not unittest.mock). Dynamic test modules insert into `sys.modules`, clean up in teardown.
+大多数测试使用**基于类**的 pytest 测试加 fixture。使用自定义 `MockAgent` / `MockStreamingAgentClient`（不用 unittest.mock）。动态测试模块插入 `sys.modules`，teardown 时清理。
 
-### Test Markers (declared in pytest.ini)
+### 测试标记（在 pytest.ini 中声明）
 
-| Marker        | Meaning                 | Usage                                        |
-|---------------|-------------------------|----------------------------------------------|
-| `tui`         | Requires textual        | Heavily used in `tests/tui/`                 |
-| `unit`        | Fast, no external deps  | Sparsely applied                             |
-| `e2e`         | Requires ptrace         | By directory (`tests/e2e/`) + conftest       |
-| `container`   | Requires Docker         | By directory (`tests/container/`) + conftest |
-| `py314`       | Requires Python 3.14+   | —                                            |
-| `gdb`         | Requires GDB            | —                                            |
+| 标记          | 含义                      | 用途                                         |
+|---------------|---------------------------|----------------------------------------------|
+| `tui`         | 需要 textual              | 大量用于 `tests/tui/`                        |
+| `unit`        | 快速，无外部依赖          | 少量使用                                     |
+| `integration` | 进程内 agent/client       | 集成测试                                     |
+| `e2e`         | 需要 ptrace               | 按目录（`tests/e2e/`）+ conftest             |
+| `container`   | 需要 Docker               | 按目录（`tests/container/`）+ conftest       |
+| `slow`        | 慢测试（>10s）            | —                                            |
+| `py314`       | 需要 Python 3.14+         | —                                            |
+| `gdb`         | 需要 GDB                  | —                                            |
 
-### Key Test Fixtures
+### 关键测试 Fixture
 
-- `tests/tui/conftest.py` — `MockStreamingAgentClient`, shared TUI test mocks
-- `tests/e2e/conftest.py` — `has_ptrace_permission`, `has_pep768`, `has_gdb`, `target_process`
-- `tests/container/conftest.py` — `gdb_container`, `py314_container`, `container_target`
+- `tests/tui/conftest.py` — `MockStreamingAgentClient`，共享 TUI 测试 mock
+- `tests/e2e/conftest.py` — `has_ptrace_permission`、`has_pep768`、`has_gdb`、`target_process`
+- `tests/container/conftest.py` — `gdb_container`、`py314_container`、`container_target`
 
-## Python Version Support
+## Python 版本支持
 
-| Version  | Attach Mechanism          | Requirements                     |
-|----------|---------------------------|----------------------------------|
-| 3.14+    | PEP 768 `sys.remote_exec` | None                             |
-| 3.8-3.13 | GDB + ptrace fallback     | GDB, python3-dbg, CAP_SYS_PTRACE |
+| 版本     | 附加机制                  | 要求                              |
+|----------|---------------------------|-----------------------------------|
+| 3.14+    | PEP 768 `sys.remote_exec` | 无                                |
+| 3.8-3.13 | GDB + ptrace 回退         | GDB、python3-dbg、CAP_SYS_PTRACE |
 
-## Docker Test Images
+CI 测试覆盖 Python 3.9、3.12 和 3.14。
 
-Two test images in `docker/` for testcontainers and manual verification. All require `--cap-add=SYS_PTRACE`.
+## Docker 测试镜像
 
-| Image | Dockerfile | Python | Purpose |
+`docker/` 下有三个测试镜像，用于 testcontainers 和手动验证。均需 `--cap-add=SYS_PTRACE`。
+
+| 镜像 | Dockerfile | Python | 用途 |
 |-------|------------|--------|---------|
-| `peeka-test:3.8` | `test.Dockerfile-3.8` | 3.8 | GDB + ptrace attach testing |
-| `peeka-test:3.12` | `test.Dockerfile-3.12` | 3.12 | GDB + ptrace attach testing |
-| `peeka-test:3.14` | `test.Dockerfile-3.14` | 3.14 | PEP 768 native attach testing |
+| `peeka-test:3.8`  | `test.Dockerfile-3.8`  | 3.8  | GDB + ptrace 附加测试 |
+| `peeka-test:3.12` | `test.Dockerfile-3.12` | 3.12 | GDB + ptrace 附加测试 |
+| `peeka-test:3.14` | `test.Dockerfile-3.14` | 3.14 | PEP 768 原生附加测试 |
 
-Build with `--network=host` (for proxy routing). Run: `uv run pytest tests/container/test_attach.py -v -m container --timeout=180`
+构建使用 `--network=host`（代理路由）。运行：`uv run pytest tests/container/test_attach.py -v -m container --timeout=180`
 
-## Git Conventions
+## Git 规范
 
-- **Commit style**: Semantic (`feat:`, `fix:`, `perf:`, `docs:`, `test:`, `refactor:`)
-- **Scope**: Module name in parens — `fix(tui):`, `feat(cli):`, `test(tui):`
-- **Language**: English
-- **Commit after every completed task**: NEVER leave work as unstaged changes.
+- **提交风格**：语义化（`feat:`、`fix:`、`perf:`、`docs:`、`test:`、`refactor:`、`chore:`）
+- **范围**：括号内模块名 — `fix(tui):`、`feat(cli):`、`test(tui):`、`fix(core):`
+- **语言**：英文
+- **每完成一个任务就提交**：禁止留下未暂存的修改。
+- **临时文件**：测试时临时文件必须写到系统临时目录（`tempfile.gettempdir()`），不要写到项目根目录。

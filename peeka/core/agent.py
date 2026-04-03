@@ -43,10 +43,12 @@ class PeekaAgent:
         session_id: str,
         attached_pid: Optional[int] = None,
         notify_port: int = 0,
+        suppress_startup_messages: bool = False,
     ):
         self.session_id = session_id
         self.attached_pid = attached_pid
         self.running = True
+        self.suppress_startup_messages = suppress_startup_messages
         self.sock_path = f"/tmp/peeka_{session_id}.sock"
         self.server: Optional[socket.socket] = None
         self.command_handlers: Dict[str, Any] = {}
@@ -124,8 +126,9 @@ class PeekaAgent:
             Path(f"/tmp/peeka_{self.session_id}.ready").touch()
             msg_start = "[peeka Agent] Started and listening for connections"
             msg_ready = "[peeka Agent] Ready for commands"
-            print(msg_start)
-            print(msg_ready)
+            if not self.suppress_startup_messages:
+                print(msg_start)
+                print(msg_ready)
             self._send_log("INFO", msg_start)
             self._send_log("INFO", msg_ready)
 
@@ -306,6 +309,7 @@ def _init_agent(
     session_id: str,
     attached_pid: Optional[int] = None,
     notify_port: int = 0,
+    suppress_startup_messages: bool = False,
 ) -> None:
     try:
         # Stop ALL existing agents from previous sessions to prevent thread leaks.
@@ -323,7 +327,12 @@ def _init_agent(
                     pass
             sys._peeka_agents.clear()  # type: ignore[attr-defined]
 
-        agent = PeekaAgent(session_id, attached_pid, notify_port=notify_port)
+        agent = PeekaAgent(
+            session_id,
+            attached_pid,
+            notify_port=notify_port,
+            suppress_startup_messages=suppress_startup_messages
+        )
         agent.start()
 
         if not hasattr(sys, "_peeka_agents"):
@@ -343,7 +352,14 @@ def _init_agent(
 _session_id = "{{SESSION_ID}}"
 _attached_pid_str = "{{ATTACHED_PID}}"
 _notify_port_str = "{{NOTIFY_PORT}}"
+_suppress_startup = "{{SUPPRESS_STARTUP_MESSAGES}}"
 _attached_pid = int(_attached_pid_str) if _attached_pid_str.isdigit() else None
 _notify_port = int(_notify_port_str) if _notify_port_str.isdigit() else 0
-if not _session_id.startswith("{{"): 
-    _init_agent(_session_id, _attached_pid, notify_port=_notify_port)
+_suppress_startup_messages = _suppress_startup == "True"
+if not _session_id.startswith("{{"):
+    _init_agent(
+        _session_id,
+        _attached_pid,
+        notify_port=_notify_port,
+        suppress_startup_messages=_suppress_startup_messages
+    )
