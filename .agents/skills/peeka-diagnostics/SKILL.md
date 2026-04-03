@@ -34,6 +34,53 @@ Runtime diagnostic reference for AI agents using `peeka-cli` to diagnose live Py
 
 **Streaming commands** produce continuous output — ALWAYS use `-n`/`--times` (watch, trace, stack) or `-c`/`--cycles` (monitor, top) to bound execution.
 
+## `run` — Observe Short-Lived Scripts
+
+For scripts that exit quickly (before you could attach manually), use `peeka-cli run` to bootstrap and observe from startup:
+
+```bash
+peeka-cli run <script> [script-args...] -- <command> [command-args...]
+```
+
+The `run` command:
+1. Pre-imports the user script (so all functions/classes exist)
+2. Attaches peeka and sets up the observation command
+3. Then executes the script — all calls are captured
+
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `--output-file <path>` | Write peeka JSONL output to file instead of stdout |
+
+### Examples
+
+```bash
+# Watch a function in a script that runs and exits
+peeka-cli run myscript.py -- watch "myscript.process_data" -n 10
+
+# Pass arguments to the script
+peeka-cli run myscript.py arg1 arg2 -- watch "myscript.main" -n 5
+
+# Trace call tree of a short-lived script
+peeka-cli run myscript.py -- trace "myscript.run" -d 3 -n 1
+
+# Redirect peeka output to a file (best practice for AI agents)
+peeka-cli run myscript.py --output-file /tmp/peeka_run_output.jsonl -- watch "myscript.func" -n 5
+```
+
+### Best Practice for AI Agents
+
+Redirect peeka output to a temp file, then read results from that file:
+
+```bash
+peeka-cli run target_script.py --output-file /tmp/peeka_run_output.jsonl -- watch "module.func" -n 5
+# After script exits, read observations:
+cat /tmp/peeka_run_output.jsonl | jq 'select(.type == "observation")'
+```
+
+Supported observation commands after `--`: `watch`, `trace`, `stack`, `monitor`, `top`.
+
 ## Prerequisites Check
 
 Before diagnosing, verify the environment:

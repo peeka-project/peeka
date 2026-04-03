@@ -60,10 +60,16 @@ class ProcessAttacher:
     READY_TIMEOUT_GDB = 30
     MAX_ATTEMPTS = 2
 
-    def __init__(self, pid: int):
+    def __init__(
+        self,
+        pid: int,
+        suppress_startup_messages: bool = False,
+        session_id: Optional[str] = None,
+    ):
         self.pid = pid
+        self.suppress_startup_messages = suppress_startup_messages
         self.agent_script = None
-        self.session_id = str(uuid.uuid4())
+        self.session_id = session_id or str(uuid.uuid4())
         self._existing_session = None
         self._notify_server: Optional[sock_mod.socket] = None
 
@@ -175,7 +181,9 @@ class ProcessAttacher:
         agent_code = _read_agent_code()
 
         # Create agent script
-        self.agent_script = self._create_agent_script(agent_code)
+        self.agent_script = self._create_agent_script(
+            agent_code, suppress_startup_messages=self.suppress_startup_messages
+        )
         if not os.path.exists(self.agent_script):
             raise FileNotFoundError(f"Agent script not found: {self.agent_script}")
         else:
@@ -235,7 +243,11 @@ class ProcessAttacher:
         # Open a TCP server for the agent to connect back to.
         notify_port = self._create_notify_server()
 
-        agent_script = self._create_agent_script(agent_code, notify_port=notify_port)
+        agent_script = self._create_agent_script(
+            agent_code,
+            notify_port=notify_port,
+            suppress_startup_messages=self.suppress_startup_messages,
+        )
 
         try:
             self._inject_via_gdb(agent_script)
@@ -297,7 +309,10 @@ class ProcessAttacher:
     # ------------------------------------------------------------------ #
 
     def _create_agent_script(
-        self, agent_code: str, notify_port: Optional[int] = None
+        self,
+        agent_code: str,
+        notify_port: Optional[int] = None,
+        suppress_startup_messages: bool = False,
     ) -> str:
         agent_path = Path(tempfile.gettempdir()) / f"peeka_agent_{self.session_id}.py"
 
@@ -307,6 +322,10 @@ class ProcessAttacher:
         )
         agent_code_injected = agent_code_injected.replace(
             "{{NOTIFY_PORT}}", str(notify_port) if notify_port else "0"
+        )
+        agent_code_injected = agent_code_injected.replace(
+            "{{SUPPRESS_STARTUP_MESSAGES}}",
+            "True" if suppress_startup_messages else "False",
         )
 
         peeka_root = str(Path(__file__).parent.parent.parent.resolve())
