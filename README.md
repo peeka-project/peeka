@@ -245,19 +245,33 @@ sudo setsebool -P deny_ptrace=off
 
 ## Troubleshooting
 
-### Attach fails (permission denied)
+**For detailed troubleshooting, see [TROUBLESHOOTING.md](TROUBLESHOOTING.md)**
+
+### Common Issues
+
+#### PEP 768 attach fails (Python 3.14+)
+
+If you see `"PyRuntime address lookup failed"` or `"Can't determine the Python version"`:
+
+1. **Quick fix**: Use Python 3.8-3.13 to run Peeka (uses GDB fallback automatically)
+2. **Diagnose**: Run `python diagnose_attach.py <pid>` to check your Python build
+3. **Known issue**: Affects UV-managed Python 3.14 and other tools (memray, etc.)
+
+See [TROUBLESHOOTING.md](TROUBLESHOOTING.md#pep-768-attach-failures-python-314) for details.
+
+#### Attach fails (permission denied)
 
 - Ensure same UID or `CAP_SYS_PTRACE`
 - Check `ptrace_scope` (see above)
 - For GDB fallback: install debug symbols if "no symbol" error appears
 
-### No observation data
+#### No observation data
 
 - Verify function name (use fully qualified name: `module.Class.method`)
 - Confirm the function is actually being called
 - Check if condition expression is too restrictive
 
-### Target process behaving abnormally
+#### Target process behaving abnormally
 
 ```bash
 # Remove observation on specific function
