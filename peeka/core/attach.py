@@ -190,7 +190,32 @@ class ProcessAttacher:
             logger.debug("Agent script created at %s", self.agent_script)
 
         # Inject to target process
-        sys.remote_exec(self.pid, self.agent_script)
+        try:
+            sys.remote_exec(self.pid, self.agent_script)
+        except RuntimeError as e:
+            # Enhance error message if it's the PyRuntime lookup failure
+            error_msg = str(e)
+            if "PyRuntime address lookup failed" in error_msg:
+                logger.error("PEP 768 attach failed: %s", error_msg)
+                logger.error("")
+                logger.error("Possible causes:")
+                logger.error("  1. Target Python binary missing .pyruntime ELF section")
+                logger.error("  2. Python binary was stripped (missing symbols)")
+                logger.error("  3. Incompatible Python build (different compilation flags)")
+                logger.error("  4. ASLR interfering with memory layout detection")
+                logger.error("")
+                logger.error("Diagnostic steps:")
+                logger.error("  1. Verify both processes use same Python: python diagnose_attach.py %d", self.pid)
+                logger.error("  2. Check binary has .pyruntime section: readelf -S $(which python3)")
+                logger.error("  3. Try GDB fallback: Use Python < 3.14 to run peeka")
+                logger.error("")
+                raise RuntimeError(
+                    f"PEP 768 attach failed: {error_msg}\n"
+                    f"Run 'python diagnose_attach.py {self.pid}' for detailed diagnostics"
+                )
+            else:
+                # Re-raise other RuntimeErrors as-is
+                raise
 
         # Wait for agent ready with retry — agent bootstrap imports 13+
         # command modules and may take longer than a single timeout on
