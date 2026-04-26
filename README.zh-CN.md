@@ -18,7 +18,7 @@
 
 Python 应用运行时诊断工具，灵感来源于 [Alibaba Arthas](https://github.com/alibaba/arthas)。无需修改代码，即可非侵入式观测函数行为。
 
-Python 3.14+ 使用 [PEP 768](https://peps.python.org/pep-0768/)（`sys.remote_exec`），Python 3.8–3.13 使用 GDB + ptrace 降级方案。
+Python 3.14+ 使用 [PEP 768](https://peps.python.org/pep-0768/)（`sys.remote_exec`），Python 3.8–3.13 使用调试器降级方案（Linux 用 GDB，macOS 用 LLDB）。
 
 ## 核心特性
 
@@ -200,15 +200,17 @@ x + y > 10                   # 算术表达式
 
 ## Python 版本支持
 
-| Python 版本  | CLI | TUI | 附加机制                        | 要求                               |
-|-------------|:---:|:---:|--------------------------------|-----------------------------------|
-| 3.14+       | ✅  | ✅  | PEP 768 `sys.remote_exec()`   | 相同 UID 或 `CAP_SYS_PTRACE`      |
-| 3.9–3.13    | ✅  | ✅  | GDB + ptrace 降级方案           | GDB 7.3+，ptrace_scope ≤ 1       |
-| 3.8         | ✅  | ❌  | GDB + ptrace 降级方案           | GDB 7.3+，ptrace_scope ≤ 1       |
+| Python 版本  | CLI | TUI | 附加机制                        | 要求                                                  |
+|-------------|:---:|:---:|--------------------------------|------------------------------------------------------|
+| 3.14+       | ✅  | ✅  | PEP 768 `sys.remote_exec()`   | 相同 UID 或 `CAP_SYS_PTRACE`                         |
+| 3.9–3.13    | ✅  | ✅  | GDB (Linux) / LLDB (macOS)    | **Linux**: GDB 7.3+，ptrace ≤ 1<br>**macOS**: Xcode 命令行工具 |
+| 3.8         | ✅  | ❌  | GDB (Linux) / LLDB (macOS)    | **Linux**: GDB 7.3+，ptrace ≤ 1<br>**macOS**: Xcode 命令行工具 |
 
 TUI 依赖 [Textual](https://github.com/Textualize/textual)，需要 Python ≥ 3.9。
 
 ### Python < 3.14 配置
+
+#### Linux
 
 需要 GDB。**强烈建议安装调试符号**——部分发行版默认已包含足够的符号信息，但如果 GDB 报告 "no symbol" 错误，需要手动安装：
 
@@ -223,13 +225,23 @@ sudo yum install gdb python3-debuginfo
 sudo pacman -S gdb
 ```
 
+#### macOS
+
+使用 LLDB 代替 GDB。如果尚未安装，请安装 Xcode 命令行工具：
+
+```bash
+xcode-select --install
+```
+
+LLDB 已默认包含，无需额外安装调试符号。
+
 ### Docker
 
 ```bash
 docker run --cap-add=SYS_PTRACE your-image
 ```
 
-### ptrace 限制
+### ptrace 限制（Linux）
 
 ```bash
 # 查看当前设置
@@ -242,14 +254,17 @@ echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope
 sudo setsebool -P deny_ptrace=off
 ```
 
+**注意**：macOS 没有 ptrace_scope 限制。系统完整性保护（SIP）可能会阻止调试某些系统进程，但用户进程可以正常调试。
+
 
 ## 故障排除
 
 ### 附加失败（权限不足）
 
 - 确保相同 UID 或拥有 `CAP_SYS_PTRACE`
-- 检查 `ptrace_scope`（见上文）
-- GDB 方案：如果出现 "no symbol" 错误，安装调试符号
+- **Linux**：检查 `ptrace_scope`（见上文）
+- **Linux**：如果 GDB 报告 "no symbol" 错误，安装调试符号
+- **macOS**：确保已安装 Xcode 命令行工具（`xcode-select --install`）
 
 ### 没有观测数据
 
@@ -279,7 +294,7 @@ CLI/TUI  →  AgentClient  →  Unix Socket  →  PeekaAgent（注入到目标�
                                               └─ 观测管理器（缓冲流式传输）
 ```
 
-- **进程附加**：Python 3.14+ 使用 PEP 768 `sys.remote_exec()`，3.8–3.13 使用 GDB + ptrace
+- **进程附加**：Python 3.14+ 使用 PEP 768 `sys.remote_exec()`，3.8–3.13 使用 GDB（Linux）或 LLDB（macOS）
 - **观测机制**：装饰器注入包装目标函数，捕获参数/返回值/异常/耗时
 - **数据传输**：通过 Unix Domain Socket 实时流式传输观测数据（长度前缀 + JSON）
 - **命令系统**：模块化 `BaseCommand` 子类，在 `PeekaAgent._register_handlers()` 中注册
