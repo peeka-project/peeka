@@ -18,7 +18,7 @@
 
 Runtime diagnostic tool for Python applications, inspired by [Alibaba Arthas](https://github.com/alibaba/arthas). Non-invasive function observation with zero code changes.
 
-Uses [PEP 768](https://peps.python.org/pep-0768/) (`sys.remote_exec`) on Python 3.14+, with a GDB + ptrace fallback for Python 3.8–3.13.
+Uses [PEP 768](https://peps.python.org/pep-0768/) (`sys.remote_exec`) on Python 3.14+, with debugger-based fallback for Python 3.8–3.13 (GDB on Linux, LLDB on macOS).
 
 ## Key Features
 
@@ -200,15 +200,17 @@ Every line is a JSON object with a `type` field:
 
 ## Python Version Support
 
-| Python Version | CLI | TUI | Attach Mechanism              | Requirements                      |
-|----------------|:---:|:---:|-------------------------------|-----------------------------------|
-| 3.14+          | ✅  | ✅  | PEP 768 `sys.remote_exec()`  | Same UID or `CAP_SYS_PTRACE`     |
-| 3.9–3.13       | ✅  | ✅  | GDB + ptrace fallback         | GDB 7.3+, ptrace_scope ≤ 1       |
-| 3.8            | ✅  | ❌  | GDB + ptrace fallback         | GDB 7.3+, ptrace_scope ≤ 1       |
+| Python Version | CLI | TUI | Attach Mechanism              | Requirements                                    |
+|----------------|:---:|:---:|-------------------------------|------------------------------------------------|
+| 3.14+          | ✅  | ✅  | PEP 768 `sys.remote_exec()`  | Same UID or `CAP_SYS_PTRACE`                   |
+| 3.9–3.13       | ✅  | ✅  | GDB (Linux) / LLDB (macOS)    | **Linux**: GDB 7.3+, ptrace ≤ 1<br>**macOS**: Xcode Command Line Tools |
+| 3.8            | ✅  | ❌  | GDB (Linux) / LLDB (macOS)    | **Linux**: GDB 7.3+, ptrace ≤ 1<br>**macOS**: Xcode Command Line Tools |
 
 TUI requires [Textual](https://github.com/Textualize/textual) which needs Python ≥ 3.9.
 
 ### Python < 3.14 Setup
+
+#### Linux
 
 GDB is required. Debug symbols are **strongly recommended** — some distros include them by default, but if GDB reports "no symbol" errors, install them:
 
@@ -223,13 +225,23 @@ sudo yum install gdb python3-debuginfo
 sudo pacman -S gdb
 ```
 
+#### macOS
+
+LLDB is used instead of GDB. Install Xcode Command Line Tools if not already installed:
+
+```bash
+xcode-select --install
+```
+
+LLDB is included by default. No additional debug symbols are required.
+
 ### Docker
 
 ```bash
 docker run --cap-add=SYS_PTRACE your-image
 ```
 
-### ptrace Restrictions
+### ptrace Restrictions (Linux)
 
 ```bash
 # Check current setting
@@ -242,14 +254,17 @@ echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope
 sudo setsebool -P deny_ptrace=off
 ```
 
+**Note**: macOS does not have ptrace_scope restrictions. System Integrity Protection (SIP) may prevent debugging some system processes, but user processes can be debugged normally.
+
 
 ## Troubleshooting
 
 ### Attach fails (permission denied)
 
 - Ensure same UID or `CAP_SYS_PTRACE`
-- Check `ptrace_scope` (see above)
-- For GDB fallback: install debug symbols if "no symbol" error appears
+- **Linux**: Check `ptrace_scope` (see above)
+- **Linux**: Install debug symbols if GDB reports "no symbol" errors
+- **macOS**: Ensure Xcode Command Line Tools are installed (`xcode-select --install`)
 
 ### No observation data
 
@@ -279,7 +294,7 @@ CLI/TUI  →  AgentClient  →  Unix Socket  →  PeekaAgent (injected in target
                                               └─ ObservationManager (buffered streaming)
 ```
 
-- **Attach**: PEP 768 `sys.remote_exec()` on 3.14+, GDB + ptrace on 3.8–3.13
+- **Attach**: PEP 768 `sys.remote_exec()` on 3.14+, GDB (Linux) or LLDB (macOS) on 3.8–3.13
 - **Observe**: Decorator injection wraps target functions, captures args/return/exceptions/timing
 - **Stream**: Real-time observation data via Unix domain socket (length-prefixed JSON)
 - **Commands**: Modular `BaseCommand` subclasses, registered in `PeekaAgent._register_handlers()`
