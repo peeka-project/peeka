@@ -208,7 +208,9 @@ class DecoratorInjector:
                         info["parent"], info["attr_name"], info["original"]
                     )
                 except Exception:
-                    logger.debug("Best-effort restoration failed for %s", watch_id, exc_info=True)
+                    logger.debug(
+                        "Best-effort restoration failed for %s", watch_id, exc_info=True
+                    )
 
             self.instrumented.clear()
             return count
@@ -570,7 +572,9 @@ class DecoratorInjector:
                 try:
                     injector.agent._send_observation(observation)
                 except Exception:
-                    logger.debug("Failed to send observation for %s", watch_id, exc_info=True)
+                    logger.debug(
+                        "Failed to send observation for %s", watch_id, exc_info=True
+                    )
 
             # Stage 1: Observe at function entry (AtEnter) if -b flag enabled
             # Available: params, kwargs, target
@@ -767,7 +771,9 @@ class DecoratorInjector:
             try:
                 injector.agent._send_observation(observation)
             except Exception:
-                logger.debug("Failed to send trace observation for %s", watch_id, exc_info=True)
+                logger.debug(
+                    "Failed to send trace observation for %s", watch_id, exc_info=True
+                )
 
             # Return the actual result or raise exception
             if call_tree:
@@ -863,9 +869,7 @@ class DecoratorInjector:
                     return
 
                 call_stack.pop()
-                duration_ms = (
-                    time.perf_counter() - call_entry["start_time"]
-                ) * 1000
+                duration_ms = (time.perf_counter() - call_entry["start_time"]) * 1000
 
                 # Clean up internal keys
                 del call_entry["_code"]
@@ -883,13 +887,24 @@ class DecoratorInjector:
                 else:
                     # Below min_duration: discard but migrate children up
                     if call_entry["children"] and call_stack:
-                        call_stack[-1]["children"].extend(
-                            call_entry["children"]
-                        )
+                        call_stack[-1]["children"].extend(call_entry["children"])
+
         # Register monitoring
-        tool_id = 0
+        tool_id = None
+        for candidate_id in range(5, -1, -1):
+            try:
+                sys.monitoring.use_tool_id(candidate_id, "peeka-trace")
+                tool_id = candidate_id
+                break
+            except ValueError:
+                continue
+
+        if tool_id is None:
+            return self._trace_with_settrace(
+                func, args, kwargs, max_depth, skip_builtin, min_duration, call_stack
+            )
+
         try:
-            sys.monitoring.use_tool_id(tool_id, "peeka-trace")
             sys.monitoring.set_events(
                 tool_id,
                 sys.monitoring.events.PY_START | sys.monitoring.events.PY_RETURN,
