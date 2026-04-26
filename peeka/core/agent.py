@@ -15,6 +15,7 @@ from typing import Any, Dict, Optional, Tuple
 from peeka.core.injector import DecoratorInjector
 from peeka.core.observer import ObservationManager
 
+
 class PeekaAgent:
     """Agent running inside target process"""
 
@@ -78,6 +79,7 @@ class PeekaAgent:
         module_path, class_name = spec
         try:
             import importlib
+
             mod = importlib.import_module(module_path)
             cls = getattr(mod, class_name)
             handler = cls(self)  # type: ignore[abstract]
@@ -96,6 +98,7 @@ class PeekaAgent:
         """
         for cmd_type in list(self._COMMAND_REGISTRY):
             self._get_handler(cmd_type)
+
     def start(self) -> None:
         try:
             self.server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -114,8 +117,10 @@ class PeekaAgent:
             # connect before accept() is called.
             accept_ready = threading.Event()
             thread = threading.Thread(
-                target=self._accept_loop, args=(accept_ready,),
-                name="peeka-agent-accept", daemon=True,
+                target=self._accept_loop,
+                args=(accept_ready,),
+                name="peeka-agent-accept",
+                daemon=True,
             )
             thread.start()
             accept_ready.wait(timeout=10)
@@ -141,6 +146,7 @@ class PeekaAgent:
             print(msg, file=sys.stderr)
             self._send_log("ERROR", msg)
             traceback.print_exc()
+
     def _accept_loop(self, ready_event: threading.Event) -> None:
         ready_event.set()
         while self.running:
@@ -150,7 +156,8 @@ class PeekaAgent:
                 conn, _ = self.server.accept()
                 self._client_counter += 1
                 threading.Thread(
-                    target=self._handle_client, args=(conn,),
+                    target=self._handle_client,
+                    args=(conn,),
                     name=f"peeka-agent-client-{self._client_counter}",
                     daemon=True,
                 ).start()
@@ -191,8 +198,9 @@ class PeekaAgent:
                 result = self._execute_command(command)
 
                 response = json.dumps(result).encode("utf-8")
-                conn.sendall(len(response).to_bytes(4, "big"))
-                conn.sendall(response)
+                response_frame = len(response).to_bytes(4, "big") + response
+                with self._connections_lock:
+                    conn.sendall(response_frame)
 
         except Exception as e:
             msg = f"[peeka Agent] Client error: {e}"
@@ -219,6 +227,7 @@ class PeekaAgent:
                 }
         else:
             return {"status": "error", "error": f"Unknown command type: {cmd_type}"}
+
     def _send_observation(self, observation: Dict[str, Any]) -> None:
         """Called by injector when a watched function is invoked."""
         observation["type"] = "observation"
@@ -305,6 +314,8 @@ class PeekaAgent:
                 p.unlink(missing_ok=True)
             except OSError:
                 pass
+
+
 def _init_agent(
     session_id: str,
     attached_pid: Optional[int] = None,
@@ -320,7 +331,9 @@ def _init_agent(
             for old_agent in old_agents:
                 try:
                     old_agent.stop()
-                    msg = f"[peeka Agent] Stopped previous agent: {old_agent.session_id}"
+                    msg = (
+                        f"[peeka Agent] Stopped previous agent: {old_agent.session_id}"
+                    )
                     print(msg)
                     old_agent._send_log("INFO", msg)
                 except Exception:
@@ -331,7 +344,7 @@ def _init_agent(
             session_id,
             attached_pid,
             notify_port=notify_port,
-            suppress_startup_messages=suppress_startup_messages
+            suppress_startup_messages=suppress_startup_messages,
         )
         agent.start()
 
@@ -344,6 +357,7 @@ def _init_agent(
         print(msg, file=sys.stderr)
         traceback.print_exc()
         # Note: _send_log can't be called here because agent isn't fully initialized yet
+
 
 # Auto-initialize when injected via sys.remote_exec() or GDB
 # {{SESSION_ID}}, {{ATTACHED_PID}}, and {{NOTIFY_PORT}} are replaced by
@@ -361,5 +375,5 @@ if not _session_id.startswith("{{"):
         _session_id,
         _attached_pid,
         notify_port=_notify_port,
-        suppress_startup_messages=_suppress_startup_messages
+        suppress_startup_messages=_suppress_startup_messages,
     )
