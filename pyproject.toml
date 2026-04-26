@@ -35,7 +35,7 @@ where = ["."]
 include = ["peeka*"]
 
 [tool.setuptools.package-data]
-peeka = ["tui/styles/*.tcss"]
+peeka = ["tui/styles/*.tcss", "core/_attach.gdb", "core/_attach.lldb"]
 
 [dependency-groups]
 dev = [
