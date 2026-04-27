@@ -2,16 +2,17 @@
 
 | 字段 | 值 |
 |------|-----|
-| **话题** | CLI 到 Agent 的命令分发与参数键契约不一致问题 |
-| **受影响组件** | cli/main.py, CLI payload 组装逻辑 |
+| **话题** | CLI 到 Agent 的命令分发与参数键契约不一致问题，以及 CLI run 命令实现缺陷 |
+| **受影响组件** | cli/main.py, core/output.py, core/bootstrap.py |
 | **最高严重级别** | SEV-1 (High) |
-| **事故次数** | 4 |
-| **时间跨度** | 2026-01-29 至 2026-03-18 |
+| **事故次数** | 5 |
+| **时间跨度** | 2026-01-29 至 2026-04-03 |
 
 ## 案例索引
 
 | # | 事故 | 严重级别 | 日期 |
 |---|------|----------|------|
+| [#5](#事故-5peeka-cli-run-命令-outputformatter-stdout-捕获缺陷及多处实现问题) | peeka-cli run 命令 OutputFormatter stdout 捕获缺陷及多处实现问题 | SEV-2 | 2026-04-03 |
 | [#4](#事故-4cli-与-agent-payload-键名重构后失配) | CLI 与 Agent payload 键名重构后失配 | SEV-2 | 2026-03-18 |
 | [#3](#事故-3sm-命令参数键与结构错误导致完全失败) | `sm` 命令参数键与结构错误导致完全失败 | SEV-1 | 2026-03-01 |
 | [#2](#事故-2top-命令已实现但未接入主分发) | `top` 命令已实现但未接入主分发 | SEV-3 | 2026-02-26 |
@@ -21,9 +22,128 @@
 
 ## 话题概述
 
-该话题聚焦 CLI 入口与 Agent 命令契约的演化失步：包括命令未接入主分发、字段命名不一致、参数结构不匹配及历史模块结构冲突。共同模式是“接口定义变更后未端到端同步验证”，导致命令可见但不可用，或直接返回缺参错误。
+该话题聚焦 CLI 入口与 Agent 命令契约的演化失步：包括命令未接入主分发、字段命名不一致、参数结构不匹配及历史模块结构冲突。共同模式是"接口定义变更后未端到端同步验证"，导致命令可见但不可用，或直接返回缺参错误。
+
+2026-04-03 新增第五类问题：`peeka-cli run` 命令初始实现中存在多处缺陷，包括 `OutputFormatter` 的 `file=` 参数默认值在 pytest 环境下捕获了 monkeypatch 前的 stdout 对象，导致测试输出路由错误；bootstrap 模板内联维护困难；run 命令缺少 `--output-file` 等实用参数；临时文件未在异常路径下清理。
 
 ---
+
+## 事故 #5：peeka-cli run 命令 OutputFormatter stdout 捕获缺陷及多处实现问题
+
+> **Tag 范围**：`v0.1.7` → `v0.1.8` | **严重级别**：SEV-2 | **日期**：2026-04-03
+
+### 概要
+
+`peeka-cli run` 命令在初始实现（v0.1.7）中存在多个缺陷：`OutputFormatter` 各方法的 `file=` 参数默认值在模块加载时绑定为 `sys.stdout`，在 pytest 中 monkeypatch stdout 后实际输出不走 monkeypatch 的目标，导致测试断言失败；bootstrap 注入代码以内联 f-string 维护，难以阅读和修改；`run` 命令缺少 `--output-file` 参数；临时文件在异常路径下未清理。以上问题在运行测试和实际使用中均可观察到。
+
+### 根因分析
+
+#### 类别
+Logic Error / Configuration Error
+
+#### 分析
+
+1. **OutputFormatter stdout 捕获问题**：`file=sys.stdout` 作为默认参数在函数定义时求值，绑定了定义时的 `sys.stdout` 对象。pytest 的 `capsys`/monkeypatch 替换的是 `sys.stdout` 引用，而非已绑定的对象，导致输出绕过捕获。修复将默认值改为 `None`，方法内部使用 `file or sys.stdout`，每次调用时动态解析：
+
+```python
+# 修复前（定义时绑定）
+def status(message: str, file=sys.stdout, **kwargs) -> None:
+    print(json.dumps(output), flush=True, file=file)
+
+# 修复后（调用时解析）
+def status(message: str, file=None, **kwargs) -> None:
+    print(json.dumps(output), flush=True, file=file or sys.stdout)
+```
+
+2. **bootstrap 模板内联**：注入代码以 f-string 内联在 `cli/main.py` 中，提取到独立的 `peeka/core/bootstrap.py` 模板文件后可读性和可维护性大幅改善。
+
+3. **临时文件清理**：`cmd_run` 未使用 `try/finally` 包裹，异常退出时临时文件不会被清理。
+
+#### 致因提交
+
+| 提交 | 作者 | 日期 | 描述 |
+|------|------|------|------|
+| 致因提交为 `run` 命令初始实现提交（4d459d1） | lufeihaidao | 2026-04-03 前 | feat(cli): add peeka-cli run command for short-lived scripts |
+
+### 复现
+
+#### 前置条件
+- 使用 pytest + capsys 测试 `OutputFormatter` 输出
+- 或运行 `peeka-cli run` 脚本遇到异常
+
+#### 步骤
+1. 编写 pytest 测试，monkeypatch `sys.stdout`，调用 `OutputFormatter.status(...)`
+2. 断言捕获到的输出
+
+#### 预期行为
+输出被 capsys/monkeypatch 捕获
+
+#### 实际行为
+输出写入定义时绑定的原始 sys.stdout，测试断言失败
+
+### 修复
+
+#### 修复提交
+
+| 提交 | 作者 | 日期 | 描述 |
+|------|------|------|------|
+| [`d7ad207`](https://github.com/wwulfric/peeka/commit/d7ad2075353a48c3d4f8bb0d38e3d7f62d304c71) | lufeihaidao | 2026-04-03 | fix(cli): polish peeka-cli run command and add bootstrap template |
+
+#### 变更内容
+- `OutputFormatter` 所有方法 `file=` 默认值改为 `None`，方法内 `file or sys.stdout` 动态解析
+- bootstrap 注入代码提取到 `peeka/core/bootstrap.py`
+- `cmd_run` 用 `try/finally` 确保临时文件清理
+- 添加 `--output-file` 参数支持将观测输出写入文件
+- 观测数据路由到 stdout，控制消息路由到 stderr
+- `ProcessAttacher` 增加 `session_id` 参数，使用 uuid4 替代 `pid=0`
+
+#### 验证
+`peeka-cli run` 相关测试通过；临时文件清理行为验证通过。
+
+### 影响
+
+- **受影响用户**：使用 `peeka-cli run` 命令的用户；编写 OutputFormatter 相关测试的开发者
+- **持续时间**：从 `run` 命令初始实现（4d459d1）到 v0.1.8 修复
+- **数据影响**：无
+
+### 时间线
+
+| 时间 | 事件 |
+|------|------|
+| 初始实现（4d459d1） | `run` 命令及 OutputFormatter 缺陷引入 |
+| 2026-04-03 | 缺陷被识别 |
+| 2026-04-03 | 修复提交：`d7ad207` |
+
+### 经验教训
+
+#### 做得好的方面
+- 集中修复了多个相关缺陷，避免后续积累。
+
+#### 可以改进的方面
+- Python 函数默认参数"定义时求值"是经典陷阱，应在代码评审中主动检查涉及全局对象（stdout/stderr/None）的默认参数。
+- 新命令实现应包含基本的 happy path + 异常 path 测试。
+
+#### 行动项
+
+| 行动 | 优先级 | 状态 |
+|------|--------|------|
+| 新增函数默认参数评审检查项：禁止使用可变对象或全局流对象作为默认值 | P1 | 待处理 |
+| 所有新 CLI 命令实现须包含 try/finally 清理逻辑 | P1 | 已完成（d7ad207） |
+
+### 预防
+
+- **立即执行**：OutputFormatter 所有输出方法 `file=` 默认值统一为 `None`，方法内动态解析。
+- **短期**：添加 CLI run 命令的端到端测试，覆盖正常路径和异常退出路径。
+- **长期**：建立"Python 常见陷阱"检查清单（默认参数、mutable default、stdout 绑定等），纳入代码评审流程。
+
+### 参考
+
+- 修复 PR/提交：`d7ad207 fix(cli): polish peeka-cli run command and add bootstrap template`
+- 相关 issue：未提供
+
+---
+
+
 
 ## 事故 #4：CLI 与 Agent payload 键名重构后失配
 
