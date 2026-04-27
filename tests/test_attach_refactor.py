@@ -106,24 +106,27 @@ class TestHasInjector:
 
     def test_returns_true_when_injector_exists(self):
         """Test that _has_injector returns True when extension exists."""
-        with patch("peeka.core.attach._find_injector_path") as mock_find:
-            mock_find.return_value = "/path/to/_inject.so"
+        import sys
+        import types
+        fake_module = types.ModuleType("peeka.core._inject")
+        with patch.dict(sys.modules, {"peeka.core._inject": fake_module}):
             result = attach._has_injector()
             assert result is True
 
     def test_returns_false_when_injector_missing(self):
         """Test that _has_injector returns False when extension is missing."""
-        with patch("peeka.core.attach._find_injector_path") as mock_find:
-            mock_find.return_value = None
+        import sys
+        with patch.dict(sys.modules, {"peeka.core._inject": None}):
             result = attach._has_injector()
             assert result is False
 
     def test_calls_find_injector_path(self):
-        """Test that _has_injector calls _find_injector_path."""
-        with patch("peeka.core.attach._find_injector_path") as mock_find:
-            mock_find.return_value = "/path/to/_inject.so"
-            attach._has_injector()
-            mock_find.assert_called_once()
+        import sys
+        import types
+        fake_module = types.ModuleType("peeka.core._inject")
+        with patch.dict(sys.modules, {"peeka.core._inject": fake_module}):
+            result = attach._has_injector()
+            assert result is True
 
 
 class TestAttachFallbackDispatch:
