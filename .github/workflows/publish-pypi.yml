@@ -54,7 +54,7 @@ jobs:
           python-version: '3.12'
       
       - name: Install build tools
-        run: pip install --upgrade pip build
+        run: pip install --upgrade pip build auditwheel
       
       - name: Clean dist directory
         run: rm -rf dist/
@@ -62,9 +62,15 @@ jobs:
       - name: Build package
         run: python -m build
       
+      - name: Repair wheel to manylinux
+        run: |
+          WHL=$(ls dist/*.whl 2>/dev/null | head -1)
+          if [ -n "$WHL" ]; then
+            auditwheel repair "$WHL" --wheel-dir dist/ && rm "$WHL"
+          fi
+      
       - name: Verify wheel contents
         run: |
-          # Sanity check: wheel should contain >= 10 peeka/ entries (subpackages)
           unzip -l dist/*.whl | grep -c 'peeka/' | xargs test 10 -le || exit 1
       
       - name: Publish to PyPI
