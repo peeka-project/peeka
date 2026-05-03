@@ -5,14 +5,17 @@ Layout inspired by Alibaba Arthas dashboard and py-spy top:
   - Thread table (top, dominant) — TID, Name, State, Daemon, Depth, Top Frame
   - Memory + GC table (middle-left / middle-right)
   - Runtime info (bottom-left)
-  - Agent Log (bottom-right) - displays agent-side log messages from target process
+  - Activity Log (bottom-right) - displays agent and current-client activity
 """
 
 import logging
 import os
 import platform
+import re
+import tempfile
 import threading
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from rich.text import Text
@@ -41,13 +44,17 @@ _STATE_ORDER = {
     "UNKNOWN": 3,
 }
 
+_SESSION_LOG_PATTERN = re.compile(
+    r"^(?P<timestamp>\d+(?:\.\d+)?) (?P<level>[A-Z]+) (?P<message>.*)$"
+)
+
 
 class DashboardView(Container):
     """Arthas-style dashboard with thread table, memory/GC stats, and runtime info."""
 
     BINDINGS = [
         Binding("r", "refresh", "Refresh"),
-        Binding("c", "clear_agent_log", "Clear Agent Log"),
+        Binding("c", "clear_agent_log", "Clear Activity Log"),
     ]
 
     MAX_LOG_LINES = 1000
@@ -65,10 +72,18 @@ class DashboardView(Container):
         self._start_time = time.time()
         self._log = logging.getLogger(__name__)
         self._active = True
+        self._session_id: Optional[str] = None
+        self._agent_history_loaded = False
+        self._last_client_activity_seq = 0
+        self._activity_listener_registered = False
 
     def set_client(self, client: "StreamingAgentClient") -> None:
         self._client = client
         self._socket_path = client.socket_path
+        self._session_id = self._extract_session_id(client.socket_path)
+        self._load_client_activity_history()
+        self._register_client_activity_listener()
+        self._load_persisted_agent_log_history()
         # Create a dedicated connection for dashboard worker to avoid
         # socket contention with other views sharing the same client.
         self._connect_own_client()
@@ -88,6 +103,8 @@ class DashboardView(Container):
         self._active = active
         if active:
             if self._client:
+                self._load_persisted_agent_log_history()
+                self._load_client_activity_history()
                 if not self._own_client:
                     self._connect_own_client()
                 if not self._stream_client:
@@ -104,11 +121,19 @@ class DashboardView(Container):
         if not self._socket_path:
             return
         from peeka.core.client import StreamingAgentClient
+
         self._own_client = StreamingAgentClient(self._socket_path)
         result = self._own_client.connect()
         if result.get("status") != "success":
-            self._log.warning("Dashboard dedicated client failed: %s", result.get("error"))
+            error = result.get("error")
+            self._log.warning("Dashboard dedicated client failed: %s", error)
+            self._record_client_activity(
+                "WARNING", f"dedicated data client failed: {error}"
+            )
             self._own_client = None
+            return
+
+        self._record_client_activity("INFO", "dedicated data client connected")
 
     def _connect_agent_log_stream(self) -> None:
         """Create a dedicated StreamingAgentClient for agent log streaming."""
@@ -116,23 +141,29 @@ class DashboardView(Container):
             return
         try:
             from peeka.core.client import StreamingAgentClient
+
             self._stream_client = StreamingAgentClient(self._socket_path)
             result = self._stream_client.connect()
             if result.get("status") != "success":
-                self._log.warning(
-                    "Agent log stream client failed: %s", result.get("error")
+                error = result.get("error")
+                self._log.warning("Agent log stream client failed: %s", error)
+                self._record_client_activity(
+                    "WARNING", f"activity stream failed: {error}"
                 )
                 self._stream_client = None
                 return
+            self._record_client_activity("INFO", "activity stream connected")
             self._start_log_worker()
         except Exception as e:
             self._log.warning("Agent log stream client error: %s", e)
+            self._record_client_activity("WARNING", f"activity stream error: {e}")
             self._stream_client = None
 
     def action_clear_agent_log(self) -> None:
-        """Clear the agent log display."""
+        """Clear the activity log display."""
         rich_log = self.query_one("#dash-agent-log", RichLog)
         rich_log.clear()
+
     def compose(self) -> ComposeResult:
         # -- Controls bar (status + refresh button) --
         thread_summary = Static(
@@ -173,7 +204,7 @@ class DashboardView(Container):
         runtime_section.can_focus = True
         runtime_section.border_title = "Runtime"
 
-        # -- Agent Log (displays agent-side log messages from target process) --
+        # -- Activity Log (agent-side logs + current client activity) --
         agent_log_section = Vertical(
             RichLog(
                 id="dash-agent-log",
@@ -184,7 +215,7 @@ class DashboardView(Container):
             id="dash-agent-log-section",
             classes="panel panel--stream",
         )
-        agent_log_section.border_title = "Agent Log (c to clear)"
+        agent_log_section.border_title = "Activity Log (c to clear)"
 
         yield Horizontal(
             thread_summary,
@@ -231,10 +262,12 @@ class DashboardView(Container):
         self._stop_refresh_worker()
         self._stop_log_worker()
         self._disconnect_dedicated_clients()
+        self._unregister_client_activity_listener()
 
     def action_refresh(self) -> None:
         """Refresh dashboard data."""
         if self._client:
+            self._record_client_activity("INFO", "manual refresh")
             self._refresh_dashboard_sync()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -354,6 +387,121 @@ class DashboardView(Container):
             return data
 
         self.run_worker(worker_fn, thread=True, exclusive=False)
+
+    def _extract_session_id(self, socket_path: str) -> Optional[str]:
+        """Extract the peeka session id from a socket path."""
+        stem = Path(socket_path).stem
+        if not stem.startswith("peeka_"):
+            return None
+        return stem.replace("peeka_", "", 1)
+
+    def _get_session_log_path(self) -> Optional[Path]:
+        """Return the persisted session log path when the session is known."""
+        if not self._session_id:
+            return None
+        return Path(tempfile.gettempdir()) / f"peeka_{self._session_id}.log"
+
+    def _register_client_activity_listener(self) -> None:
+        """Subscribe to app-level client activity updates."""
+        if self._activity_listener_registered:
+            return
+
+        register = getattr(self.app, "register_activity_listener", None)
+        if not callable(register):
+            return
+
+        register(self._handle_client_activity)
+        self._activity_listener_registered = True
+
+    def _unregister_client_activity_listener(self) -> None:
+        """Unsubscribe from app-level client activity updates."""
+        if not self._activity_listener_registered:
+            return
+
+        unregister = getattr(self.app, "unregister_activity_listener", None)
+        if callable(unregister):
+            unregister(self._handle_client_activity)
+        self._activity_listener_registered = False
+
+    def _load_client_activity_history(self) -> None:
+        """Replay buffered client activity emitted before the dashboard mounted."""
+        getter = getattr(self.app, "get_client_activity_entries", None)
+        if not callable(getter):
+            return
+
+        for entry in getter(after_seq=self._last_client_activity_seq):
+            self._ingest_client_activity_entry(entry)
+
+    def _handle_client_activity(self, entry: Dict[str, Any]) -> None:
+        """Append future client activity entries to the dashboard log."""
+        if threading.current_thread() is threading.main_thread():
+            self._ingest_client_activity_entry(entry)
+            return
+
+        self.app.call_from_thread(self._ingest_client_activity_entry, dict(entry))
+
+    def _record_client_activity(
+        self, level: str, message: str, source: str = "dashboard"
+    ) -> None:
+        """Emit a client-side activity entry when the app supports it."""
+        recorder = getattr(self.app, "record_client_activity", None)
+        if callable(recorder):
+            recorder(level, message, source=source)
+
+    def _ingest_client_activity_entry(self, entry: Dict[str, Any]) -> None:
+        """Render one buffered client activity entry into the activity log."""
+        seq = int(entry.get("seq", 0))
+        if seq <= self._last_client_activity_seq:
+            return
+
+        self._last_client_activity_seq = seq
+        message = str(entry.get("message", ""))
+        source = str(entry.get("source", "client"))
+        if source and source not in ("client", "main"):
+            message = f"{source}: {message}"
+
+        self._write_activity_entry(
+            "client",
+            str(entry.get("level", "INFO")),
+            message,
+            entry.get("timestamp", ""),
+        )
+
+    def _load_persisted_agent_log_history(self) -> None:
+        """Replay the persisted session log so late-opened dashboards aren't blank."""
+        if self._agent_history_loaded:
+            return
+
+        log_path = self._get_session_log_path()
+        if not log_path or not log_path.exists():
+            return
+
+        last_level = "INFO"
+        last_timestamp = ""
+
+        try:
+            for raw_line in log_path.read_text(
+                encoding="utf-8", errors="replace"
+            ).splitlines():
+                if not raw_line.strip():
+                    continue
+
+                match = _SESSION_LOG_PATTERN.match(raw_line)
+                if match:
+                    last_timestamp = match.group("timestamp")
+                    last_level = match.group("level")
+                    message = match.group("message")
+                else:
+                    message = raw_line
+
+                self._write_activity_entry(
+                    "agent", last_level, message, last_timestamp
+                )
+        except OSError as e:
+            self._log.debug("Failed to replay agent session log: %s", e)
+            return
+
+        self._agent_history_loaded = True
 
     # -- UI updates -------------------------------------------------------------
 
@@ -553,7 +701,7 @@ class DashboardView(Container):
 
         self.query_one("#dash-runtime-info", Static).update("\n".join(lines))
 
-    # -- Agent Log Streaming --------------------------------------------------
+    # -- Activity Log Streaming ----------------------------------------------
 
     def _stream_agent_log_messages(self) -> None:
         """Stream log messages from the agent in background thread."""
@@ -576,16 +724,29 @@ class DashboardView(Container):
             timestamp = observation.get("timestamp", "")
 
             self.app.call_from_thread(
-                self._add_log_entry, level, message, timestamp
+                self._write_activity_entry, "agent", level, message, timestamp
             )
 
-    def _add_log_entry(self, level: str, message: str, timestamp: str) -> None:
-        """Add a log entry to the RichLog widget (runs on main thread).
+    def _format_timestamp(self, timestamp: Any) -> str:
+        """Format numeric timestamps into a stable human-readable time."""
+        if timestamp in ("", None):
+            return ""
+
+        try:
+            return time.strftime("%H:%M:%S", time.localtime(float(timestamp)))
+        except (TypeError, ValueError):
+            return str(timestamp)
+
+    def _write_activity_entry(
+        self, source: str, level: str, message: str, timestamp: Any
+    ) -> None:
+        """Add an activity entry to the RichLog widget (runs on main thread).
 
         Args:
+            source: Entry origin label such as ``agent`` or ``client``.
             level: Log level (INFO, WARNING, ERROR, etc.)
             message: Log message text
-            timestamp: Optional timestamp string
+            timestamp: Optional timestamp or timestamp string
         """
         rich_log = self.query_one("#dash-agent-log", RichLog)
 
@@ -598,16 +759,24 @@ class DashboardView(Container):
             "CRITICAL": "bold red",
         }
         style = style_map.get(level, "white")
+        source_style_map = {
+            "agent": "magenta",
+            "client": "green",
+        }
+        source_style = source_style_map.get(source, "cyan")
 
         # Format the entry
-        if timestamp:
-            text = Text(f"[{timestamp}] ", style="dim")
+        rendered_timestamp = self._format_timestamp(timestamp)
+        if rendered_timestamp:
+            text = Text(f"[{rendered_timestamp}] ", style="dim")
         else:
             text = Text()
 
+        source_text = Text(f"{source.upper():7} ", style=source_style)
         level_text = Text(f"{level:8} ", style=style)
         message_text = Text(message, style=style)
 
+        text.append(source_text)
         text.append(level_text)
         text.append(message_text)
 

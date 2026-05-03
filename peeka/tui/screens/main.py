@@ -102,6 +102,12 @@ class MainScreen(Screen):
     def on_unmount(self) -> None:
         self._cleanup_all_views()
 
+    def _record_client_activity(self, level: str, message: str) -> None:
+        """Record a client-side activity entry when the app supports it."""
+        recorder = getattr(self.app, "record_client_activity", None)
+        if callable(recorder):
+            recorder(level, message, source="main")
+
     async def _connect(self) -> None:
         """Connect to the target process agent with retry logic.
 
@@ -144,6 +150,11 @@ class MainScreen(Screen):
 
         # Each streaming view now creates its own dedicated connection
         # in set_client(), so no shared stream client is needed.
+        if self._client:
+            self._record_client_activity(
+                "INFO",
+                f"connected to agent session {self.session_id} for pid {self.pid}",
+            )
 
     def action_switch_tab(self, tab_id: str) -> None:
         """Switch to a specific view."""
@@ -217,4 +228,8 @@ class MainScreen(Screen):
 
     def _disconnect_clients(self) -> None:
         if self._client:
+            self._record_client_activity(
+                "INFO",
+                f"disconnected from agent session {self.session_id}",
+            )
             self._client.disconnect()

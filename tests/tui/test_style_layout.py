@@ -213,6 +213,29 @@ class TestDashboardStyles:
 
     @pytest.mark.asyncio
     @pytest.mark.tui
+    async def test_dashboard_activity_panel_fits_at_80_columns(self):
+        """Dashboard activity panel remains visible and within bounds at 80 columns."""
+        class DashboardLayoutApp(App[None]):
+            CSS_PATH = str(STYLE_PATH)
+
+            def compose(self) -> ComposeResult:
+                yield DashboardView(pid=12345)
+
+        app = DashboardLayoutApp()
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+
+            detail_row = app.query_one("#dash-detail-row", Horizontal)
+            summary_column = app.query_one("#dash-summary-column", Vertical)
+            agent_log_section = app.query_one("#dash-agent-log-section", Vertical)
+
+            assert detail_row.region.x + detail_row.region.width <= 80
+            assert summary_column.region.width > 0
+            assert agent_log_section.region.width > 0
+            assert agent_log_section.region.y >= detail_row.region.y
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
     async def test_dashboard_runtime_panel_is_focusable(self):
         """Dashboard runtime panel can receive focus even though it has static text."""
         class DashboardLayoutApp(App[None]):
