@@ -42,6 +42,7 @@ class LoggerView(Container):
                 Input(placeholder="Filter loggers...", id="logger-filter"),
                 Button("Refresh", id="logger-refresh-btn", variant="primary", flat=True),
                 id="logger-controls",
+                classes="compact-control",
             ),
             Vertical(
                 DataTable(id="logger-table"),
@@ -55,9 +56,11 @@ class LoggerView(Container):
                     [(level, level) for level in self.LEVELS],
                     id="logger-level-select",
                     prompt="Select level",
+                    compact=True,
                 ),
                 Button("Set Level", id="set-level-btn", variant="primary", flat=True),
                 id="logger-set-controls",
+                classes="compact-control",
             ),
             id="logger-container",
         )

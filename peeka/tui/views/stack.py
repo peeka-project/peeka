@@ -98,17 +98,18 @@ class StackView(Container):
                 Button("Stack", id="stack-btn", variant="primary", flat=True),
                 Button("Stop", id="stop-stack-btn", variant="error", flat=True),
                 id="stack-controls",
+                classes="compact-control",
             ),
             Horizontal(
                 Vertical(
                     DataTable(id="stack-table"),
                     id="stack-list",
-                    classes="panel",
+                    classes="panel panel--stream",
                 ),
                 Vertical(
                     Tree("Stack", id="stack-tree"),
                     id="stack-panel",
-                    classes="panel",
+                    classes="panel panel--detail",
                 ),
                 id="stack-content",
             ),

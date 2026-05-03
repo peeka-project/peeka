@@ -6,20 +6,144 @@
 
 Screen {
     scrollbar-size: 1 1;
+    layers: base overlay;
 }
 
 /* ============================================================================
-   PANEL SYSTEM
-   ============================================================================ */
+     PANEL SYSTEM — Hybrid Border Hierarchy
+     ============================================================================ */
 
+/* Hybrid border strategy: Panel bodies inherit the view background across all
+   variants. Border colors carry hierarchy: restrained low-emphasis borders for
+   normal/secondary panels, theme primary for important/primary regions, and
+   error borders for critical states. This preserves visual distinction without
+   changing interior fills. */
+
+/* Base panel: restrained visual styling with border and background */
 .panel {
     padding: 0 1;
     margin: 0;
+    border: round #6f7280;
+    border-title-color: #8a8f98;
+    border-title-style: bold;
+    background: transparent;
+}
+
+/* Panel variant: primary — for main diagnostic content areas */
+.panel--primary {
+    border: round #6f7280;
+    border-title-color: #8a8f98;
+    border-title-style: bold;
+    background: transparent;
+}
+
+/* Panel variant: stream — for real-time streaming data (watch, trace, stack) */
+.panel--stream {
+    border: round #6f7280;
+    border-title-color: #8a8f98;
+    border-title-style: bold;
+    background: transparent;
+}
+
+/* Panel variant: detail — for detailed inspection and analysis views */
+.panel--detail {
+    border: round #6f7280;
+    border-title-color: #8a8f98;
+    border-title-style: bold;
+    background: transparent;
+}
+
+/* Panel variant: muted — for secondary or background information */
+.panel--muted {
+    border: round #6f7280;
+    border-title-color: #8a8f98;
+    border-title-style: bold;
+    background: transparent;
+}
+
+/* Panel variant: danger — for error states or critical alerts */
+.panel--danger {
+    border: round $error;
+    border-title-color: $error;
+    border-title-style: bold;
+    background: transparent;
+}
+
+/* Focus, not tab selection, owns high-emphasis borders. The body fill stays
+   stable so focus is communicated by the border instead of panel brightness. */
+.panel:focus,
+.panel:focus-within,
+.panel--primary:focus,
+.panel--primary:focus-within,
+.panel--stream:focus,
+.panel--stream:focus-within,
+.panel--detail:focus,
+.panel--detail:focus-within,
+.panel--muted:focus,
+.panel--muted:focus-within {
+    border: round $primary;
+    border-title-color: $primary;
+    border-title-style: bold;
+    background: transparent;
+}
+
+.panel DataTable,
+.panel Tree,
+.panel RichLog,
+.panel Pretty,
+.panel DataTable:focus,
+.panel Tree:focus,
+.panel RichLog:focus,
+.panel Pretty:focus {
+    background: transparent;
 }
 
 /* ============================================================================
-   EMPTY STATE
-   ============================================================================ */
+     SEMANTIC STATUS & HINT UTILITIES
+    ============================================================================ */
+
+/* Status utility: muted/hint — for secondary or disabled text */
+.status--muted,
+.status-muted {
+    color: $text-muted;
+}
+
+/* Status utility: success — for successful operations or positive states */
+.status--success,
+.status-success {
+    color: $success;
+}
+
+/* Status utility: warning — for cautionary or attention-needed states */
+.status--warning,
+.status-warning {
+    color: $warning;
+}
+
+/* Status utility: danger — for error or critical states */
+.status--danger,
+.status-danger {
+    color: $error;
+}
+
+/* Status utility: running/active — for active or in-progress states */
+.status--running,
+.status-running,
+.status--active,
+.status-active {
+    color: $accent;
+}
+
+/* Status pill: optional compact badge styling for status indicators */
+.status-pill {
+    padding: 0 1;
+    border: solid $panel;
+    background: $surface;
+}
+
+/* ============================================================================
+    EMPTY STATE
+    ============================================================================ */
 
 .empty-state {
     content-align: center middle;
@@ -40,6 +164,7 @@ Screen {
 
 #process-selector #filter {
     margin-bottom: 1;
+    height: auto;
 }
 
 #width-warning {
@@ -48,6 +173,7 @@ Screen {
     text-style: bold;
     padding: 0 1;
     margin-bottom: 1;
+    height: auto;
 }
 
 #process-table {
@@ -59,7 +185,9 @@ Screen {
    ============================================================================ */
 
 #main-container {
+    height: 1fr;
     padding: 0 1;
+    margin-bottom: 1;
 }
 
 
@@ -73,6 +201,8 @@ TabbedContent {
 
 Tabs {
     dock: top;
+    margin-top: 1;
+    margin-bottom: 1;
 }
 
 Tabs #tabs-scroll {
@@ -115,7 +245,7 @@ TabPane {
 #thread-controls Static,
 #dash-controls Static {
     width: auto;
-    height: 3;
+    height: auto;
     content-align: center middle;
     padding: 0 1;
 }
@@ -169,47 +299,97 @@ TabPane {
     height: 1fr;
 }
 
-#dash-mid-row {
-    height: auto;
-    max-height: 10;
-    margin-bottom: 0;
+#dash-detail-row {
+    height: 1fr;
+    min-height: 14;
 }
 
-#dash-memory-section {
-    width: 1fr;
+#dash-summary-column {
+    width: 50%;
+    height: 1fr;
     margin-right: 1;
 }
 
+#dash-memory-section,
 #dash-gc-section {
-    width: 1fr;
-}
-
-#dash-mem-table,
-#dash-gc-table {
-    height: auto;
-    max-height: 8;
+    height: 1fr;
+    min-height: 5;
+    margin-bottom: 1;
 }
 
 #dash-runtime-section {
-    height: auto;
-    max-height: 12;
+    height: 1fr;
+    min-height: 5;
+}
+
+#dash-agent-log-section {
+    width: 50%;
+    height: 1fr;
+}
+
+#dash-mem-table,
+#dash-gc-table,
+#dash-agent-log {
+    height: 100%;
 }
 
 #dash-runtime-info {
     padding: 0 1;
 }
 /* ============================================================================
-   CONTROLS — shared pattern across views
-   ============================================================================ */
+     COMPACT CONTROL DESIGN TOKENS
+     ============================================================================ */
+
+/* Compact control height: single line for command bars and labels */
+.compact-control {
+    height: 1;
+    align: center middle;
+}
+
+/* ============================================================================
+     INPUT STYLING — ONE-LINE HEIGHT
+     ============================================================================ */
+
+/* Global Input widget: render at one-line height */
+Input {
+    height: 1;
+    background: $panel;
+    border: none;
+    padding: 0 1;
+    box-sizing: border-box;
+}
+
+/* Compact control label: minimal vertical padding for command bar labels */
+.compact-control-label {
+    width: auto;
+    height: 1;
+    content-align: center middle;
+    padding: 0 1;
+}
+
+/* Compact separator: minimal height for visual dividers */
+.compact-separator {
+    width: 1;
+    height: auto;
+    content-align: center middle;
+    color: $text-muted;
+    margin: 0 1;
+}
+
+/* ============================================================================
+    CONTROLS — shared pattern across views
+    ============================================================================ */
 
 #watch-controls,
 #trace-controls,
+#trace-options-controls,
+#trace-action-controls,
 #stack-controls,
 #monitor-controls,
 #logger-controls,
 #inspect-controls,
 #top-controls {
-    height: auto;
+    height: 1;
     margin-bottom: 1;
 }
 
@@ -217,6 +397,7 @@ TabPane {
 #watch-controls AutoCompleteInput,
 #trace-controls Input,
 #trace-controls AutoCompleteInput,
+#trace-options-controls Input,
 #stack-controls Input,
 #stack-controls AutoCompleteInput,
 #monitor-controls Input,
@@ -227,18 +408,74 @@ TabPane {
     margin-right: 1;
 }
 
+#trace-options-controls #trace-depth {
+    width: 8;
+}
+
+#trace-options-controls #trace-condition {
+    width: 1fr;
+}
+
 #watch-controls Button,
 #trace-controls Button,
+#trace-options-controls Button,
+#trace-action-controls Button,
 #stack-controls Button,
 #monitor-controls Button,
 #logger-controls Button,
+#logger-set-controls Button,
 #inspect-controls Button,
 #top-controls Button,
 #dash-controls Button,
-#thread-controls Button {
+#thread-controls Button,
+#memory-status-bar Button,
+#mem-track-controls Button,
+#mem-gc-controls Button,
+#mem-alloc-controls Button,
+#mem-diff-controls Button,
+#mem-references-controls Button {
+    height: 1;
+    min-height: 1;
+    max-height: 1;
     margin-left: 1;
     min-width: 8;
     max-width: 14;
+    border: none;
+    padding: 0 1;
+}
+
+#trace-top-controls {
+    width: 1fr;
+    height: 3;
+    layout: vertical;
+    margin-bottom: 1;
+}
+
+#trace-top-controls #trace-controls,
+#trace-top-controls #trace-options-controls,
+#trace-top-controls #trace-action-controls {
+    margin-bottom: 0;
+}
+
+#trace-top-controls > .spacer {
+    display: none;
+}
+
+#trace-top-controls.trace-top-wide {
+    height: 1;
+    layout: horizontal;
+}
+
+#trace-top-controls.trace-top-wide #trace-controls {
+    width: 1fr;
+}
+
+#trace-top-controls.trace-top-wide #trace-options-controls {
+    width: 1fr;
+}
+
+#trace-top-controls.trace-top-wide #trace-action-controls {
+    width: auto;
 }
 
 /* ============================================================================
@@ -262,20 +499,30 @@ TabPane {
     margin-right: 1;
 }
 
-#observations-panel {
+#watch-detail-column {
     width: 60%;
+    height: 1fr;
 }
 
 #watch-table {
     height: 100%;
 }
 
-#observations-table {
+#observations-panel {
     height: 2fr;
+    margin-bottom: 1;
+}
+
+#observations-table {
+    height: 100%;
+}
+
+#observation-detail-panel {
+    height: 1fr;
 }
 
 #observation-detail {
-    height: 1fr;
+    height: 100%;
 }
 
 /* ============================================================================
@@ -283,12 +530,22 @@ TabPane {
    ============================================================================ */
 
 #trace-list {
-    width: 35%;
+    width: 40%;
     margin-right: 1;
 }
 
+#trace-detail-column {
+    width: 60%;
+    height: 1fr;
+}
+
 #trace-tree-panel {
-    width: 65%;
+    height: 2fr;
+    margin-bottom: 1;
+}
+
+#trace-stats-panel {
+    height: 1fr;
 }
 
 #trace-table {
@@ -301,12 +558,11 @@ TabPane {
 }
 
 #call-tree {
-    height: 1fr;
-    margin-bottom: 1;
+    height: 100%;
 }
 
 #trace-stats {
-    height: auto;
+    height: 100%;
     padding: 0 1;
 }
 /* ============================================================================
@@ -347,35 +603,61 @@ TabPane {
    ============================================================================ */
 
 #memory-container {
-    height: auto;
+    height: 1fr;
     padding: 0 1;
 }
 
-#memory-status-bar {
+#memory-top-controls {
     width: 1fr;
-    height: auto;
+    height: 2;
+    layout: vertical;
     margin-bottom: 1;
 }
 
-#memory-status-bar Static {
+#memory-status-bar,
+#mem-track-controls {
+    width: 1fr;
+    height: 1;
+}
+
+#memory-top-controls.memory-top-wide {
+    height: 1;
+    layout: horizontal;
+}
+
+#memory-top-controls.memory-top-wide #memory-status-bar {
     width: auto;
-    height: 3;
+}
+
+#memory-top-controls.memory-top-wide #mem-track-controls {
+    width: auto;
+}
+
+#memory-top-controls.memory-top-wide > .spacer {
+    display: block;
+    width: 1fr;
+}
+
+#memory-status-bar Static,
+#mem-track-controls Static {
+    width: auto;
+    height: auto;
     content-align: center middle;
     padding: 0 1;
 }
 
-#memory-status-bar Button {
+#mem-track-controls Button {
     margin-left: 1;
     min-width: 8;
     max-width: 10;
 }
 
-#memory-status-bar Input {
+#mem-track-controls Input {
     width: 8;
     margin-right: 1;
 }
 
-#memory-status-bar #mem-nframe-input {
+#mem-track-controls #mem-nframe-input {
     width: 12;
     margin-right: 1;
 }
@@ -387,7 +669,7 @@ TabPane {
 
 .separator {
     width: 1;
-    height: 3;
+    height: auto;
     content-align: center middle;
     color: $text-muted;
     margin: 0 1;
@@ -402,12 +684,18 @@ TabPane {
     padding: 0;
 }
 
-#mem-gc-controls,
-#mem-alloc-controls,
-#mem-diff-controls {
-    height: auto;
-    margin-bottom: 1;
+#memory-top-controls > .spacer {
+    display: none;
+    width: 1fr;
+    padding: 0;
 }
+
+#mem-gc-controls,
+ #mem-alloc-controls,
+ #mem-diff-controls {
+     height: 1;
+     margin-bottom: 1;
+ }
 
 #mem-gc-controls Button,
 #mem-alloc-controls Button,
@@ -424,7 +712,7 @@ TabPane {
 
 #mem-diff-controls Static {
     width: auto;
-    height: 3;
+    height: auto;
     content-align: center middle;
     padding: 0 1;
 }
@@ -472,8 +760,8 @@ TabPane {
 }
 
 #mem-references-controls {
-    height: auto;
-}
+     height: 1;
+ }
 
 #mem-references-controls Input {
     width: 1fr;
@@ -492,16 +780,29 @@ TabPane {
     margin-bottom: 1;
 }
 
+#logger-container {
+    height: 1fr;
+    padding-bottom: 1;
+}
+
 #logger-table {
     height: 100%;
 }
 
 #logger-set-controls {
-    height: auto;
+    height: 1;
+    margin-bottom: 1;
 }
 
 #logger-set-controls Input {
     width: 1fr;
+    margin-right: 1;
+}
+
+#logger-set-controls Select {
+    height: 1;
+    min-height: 1;
+    max-height: 1;
     margin-right: 1;
 }
 
@@ -538,25 +839,46 @@ TabPane {
     width: auto;
     padding: 0 1;
     content-align: center middle;
-    height: 3;
+    height: 1;
 }
 
 /* ============================================================================
-   AUTOCOMPLETE WIDGET
-   ============================================================================ */
+     AUTOCOMPLETE WIDGET
+     ============================================================================ */
 
 AutoCompleteInput {
     width: 1fr;
-    height: auto;
+    height: 1;
+    layers: base overlay;
 }
 
 AutoCompleteInput #ac-input {
     width: 100%;
+    height: 1;
+    background: $panel;
+    border: none;
+    padding: 0 1;
+    box-sizing: border-box;
 }
 
 AutoCompleteInput #ac-dropdown {
+    min-width: 30;
     max-height: 10;
+    height: auto;
+    offset: 0 1;
     padding: 0 1;
+    border: solid $accent;
+    background: $panel;
+    color: $text;
+    display: none;
+    layer: overlay;
+    overlay: screen;
+    constrain: none inside;
+}
+
+AutoCompleteInput #ac-dropdown:focus {
+    border: solid $primary;
+    background: $panel;
 }
 
 /* ============================================================================
@@ -581,6 +903,28 @@ AutoCompleteInput #ac-dropdown {
 Button {
     min-width: 8;
     max-width: 14;
+    height: 1;
+    min-height: 1;
+    content-align: center middle;
+    text-align: center;
+    color: $text;
+}
+
+Button.-style-flat {
+    color: $text;
+    content-align: center middle;
+    text-align: center;
+}
+
+Button.-style-flat.-primary,
+Button.-style-flat.-success,
+Button.-style-flat.-warning,
+Button.-style-flat.-error {
+    color: $text;
+}
+
+Button:disabled {
+    color: $text-muted;
 }
 
 
@@ -590,7 +934,7 @@ Button {
 
 #top-controls Static {
     width: auto;
-    height: 3;
+    height: auto;
     content-align: center middle;
     padding: 0 1;
 }

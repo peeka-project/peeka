@@ -7,18 +7,22 @@ import threading
 from collections import deque
 from typing import TYPE_CHECKING, Any, Deque, Dict, List, Optional
 
+from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Button, DataTable, Input, Static, Tree
 from textual.widgets.tree import TreeNode
-from textual.worker import Worker, get_current_worker
+from textual.worker import get_current_worker
 
 from peeka.tui.completion import CompletionSource
 from peeka.tui.widgets.autocomplete_input import AutoCompleteInput
 
 if TYPE_CHECKING:
     from peeka.core.client import StreamingAgentClient
+
+
+_WIDE_TRACE_CONTROLS_MIN_WIDTH = 120
 
 
 class TraceView(Container):
@@ -103,40 +107,60 @@ class TraceView(Container):
 
     def compose(self) -> ComposeResult:
         yield Container(
-            Horizontal(
-                Static("Pattern:", classes="input-label"),
-                AutoCompleteInput(
-                    placeholder="module.Class.method",
-                    completions_callback=self._get_pattern_completions,
-                    id="trace-pattern",
+            Container(
+                Horizontal(
+                    Static("Pattern:", classes="input-label"),
+                    AutoCompleteInput(
+                        placeholder="module.Class.method",
+                        completions_callback=self._get_pattern_completions,
+                        id="trace-pattern",
+                    ),
+                    id="trace-controls",
+                    classes="compact-control",
                 ),
-                Static("Depth:", classes="input-label"),
-                Input(
-                    placeholder="3",
-                    id="trace-depth",
+                Horizontal(
+                    Static("Depth:", classes="input-label"),
+                    Input(
+                        placeholder="3",
+                        id="trace-depth",
+                    ),
+                    Static("Condition:", classes="input-label"),
+                    Input(
+                        placeholder="cost > 50 (optional)",
+                        id="trace-condition",
+                    ),
+                    id="trace-options-controls",
+                    classes="compact-control",
                 ),
-                Static("Condition:", classes="input-label"),
-                Input(
-                    placeholder="cost > 50 (optional)",
-                    id="trace-condition",
+                Static("", classes="spacer"),
+                Horizontal(
+                    Button("Trace", id="trace-btn", variant="primary", flat=True),
+                    Button("Stop", id="stop-trace-btn", variant="error", flat=True),
+                    Button("Clear", id="clear-trace-btn", variant="warning", flat=True),
+                    id="trace-action-controls",
+                    classes="compact-control",
                 ),
-                Button("Trace", id="trace-btn", variant="primary", flat=True),
-                Button("Stop", id="stop-trace-btn", variant="error", flat=True),
-                Button("Clear", id="clear-trace-btn", variant="warning", flat=True),
-                id="trace-controls",
+                id="trace-top-controls",
             ),
             Horizontal(
                 Vertical(
                     DataTable(id="trace-table"),
                     DataTable(id="trace-obs-table"),
                     id="trace-list",
-                    classes="panel",
+                    classes="panel panel--stream",
                 ),
                 Vertical(
-                    Tree("Call Tree", id="call-tree"),
-                    Static(id="trace-stats", classes="panel"),
-                    id="trace-tree-panel",
-                    classes="panel",
+                    Vertical(
+                        Tree("Call Tree", id="call-tree"),
+                        id="trace-tree-panel",
+                        classes="panel panel--detail",
+                    ),
+                    Vertical(
+                        Static(id="trace-stats"),
+                        id="trace-stats-panel",
+                        classes="panel panel--detail",
+                    ),
+                    id="trace-detail-column",
                 ),
                 id="trace-content",
             ),
@@ -174,7 +198,10 @@ class TraceView(Container):
 
         # Call tree panel
         trace_tree_panel = self.query_one("#trace-tree-panel", Vertical)
-        trace_tree_panel.border_title = "Call Tree & Stats"
+        trace_tree_panel.border_title = "Call Tree"
+
+        stats_panel = self.query_one("#trace-stats-panel", Vertical)
+        stats_panel.border_title = "Stats"
 
         # Initialize tree
         tree = self.query_one("#call-tree", Tree)
@@ -184,6 +211,28 @@ class TraceView(Container):
         # Initialize stats display
         stats = self.query_one("#trace-stats", Static)
         stats.update("[dim]No trace data yet[/dim]")
+        self._update_top_controls_layout()
+
+    def on_resize(self, event: events.Resize) -> None:
+        """Keep Trace controls compact on narrow terminals."""
+        self._update_top_controls_layout(event.size.width)
+
+    def _update_top_controls_layout(self, width: Optional[int] = None) -> None:
+        """Use one trace control row on wide terminals and stacked narrow controls.
+
+        Args:
+            width: Current app width, or None to read it from the app.
+        """
+        try:
+            top_controls = self.query_one("#trace-top-controls", Container)
+        except Exception:
+            return
+
+        current_width = width or self.app.size.width
+        if current_width >= _WIDE_TRACE_CONTROLS_MIN_WIDTH:
+            top_controls.add_class("trace-top-wide")
+        else:
+            top_controls.remove_class("trace-top-wide")
 
     def on_unmount(self) -> None:
         """Cancel all workers and disconnect stream client when view is unmounted."""

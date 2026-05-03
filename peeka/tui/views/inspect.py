@@ -40,17 +40,18 @@ class InspectView(Container):
                 ),
                 Button("Inspect", id="inspect-btn", variant="primary", flat=True),
                 id="inspect-controls",
+                classes="compact-control",
             ),
             Horizontal(
                 Vertical(
                     Tree("Object", id="inspect-tree"),
                     id="inspect-tree-panel",
-                    classes="panel",
+                    classes="panel panel--detail",
                 ),
                 Vertical(
                     Pretty("Select an object to inspect", id="inspect-details"),
                     id="inspect-details-panel",
-                    classes="panel",
+                    classes="panel panel--detail",
                 ),
                 id="inspect-content",
             ),

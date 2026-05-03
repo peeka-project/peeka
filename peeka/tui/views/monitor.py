@@ -92,6 +92,7 @@ class MonitorView(Container):
                 Button("Monitor", id="monitor-btn", variant="primary", flat=True),
                 Button("Stop", id="stop-monitor-btn", variant="error", flat=True),
                 id="monitor-controls",
+                classes="compact-control",
             ),
             Vertical(
                 DataTable(id="stats-table"),
