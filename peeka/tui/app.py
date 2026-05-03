@@ -4,10 +4,12 @@ PeekaApp - Main TUI Application
 
 import asyncio
 import signal
+import threading
+import time
 
-from typing import Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
-from textual.app import App, ComposeResult
+from textual.app import App
 from textual.binding import Binding
 from textual.theme import Theme
 
@@ -46,6 +48,7 @@ class PeekaApp(App):
     TITLE = "Peeka"
     SUB_TITLE = "Python Runtime Diagnostics"
     CSS_PATH = "styles/peeka.tcss"
+    ACTIVITY_LIMIT = 500
 
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit", priority=True),
@@ -60,6 +63,10 @@ class PeekaApp(App):
         """
         super().__init__()
         self._theme_name = theme if theme is not None else DEFAULT_THEME
+        self._activity_entries: List[Dict[str, Any]] = []
+        self._activity_listeners: List[Callable[[Dict[str, Any]], None]] = []
+        self._activity_lock = threading.Lock()
+        self._activity_seq = 0
 
     def on_mount(self) -> None:
         """Called when app is mounted."""
@@ -117,6 +124,89 @@ class PeekaApp(App):
         from peeka.tui.screens.help import HelpScreen
 
         self.push_screen(HelpScreen())
+
+    @staticmethod
+    def _normalize_activity_level(severity: str) -> str:
+        """Map Textual notification severities to log-style levels."""
+        level_map = {
+            "information": "INFO",
+            "warning": "WARNING",
+            "error": "ERROR",
+        }
+        return level_map.get(str(severity).lower(), str(severity).upper())
+
+    def record_client_activity(
+        self, level: str, message: str, source: str = "client"
+    ) -> None:
+        """Store a client-side activity entry and notify listeners."""
+        entry = {
+            "level": level.upper(),
+            "message": message,
+            "source": source,
+            "timestamp": time.time(),
+        }
+
+        with self._activity_lock:
+            self._activity_seq += 1
+            entry["seq"] = self._activity_seq
+            self._activity_entries.append(dict(entry))
+            if len(self._activity_entries) > self.ACTIVITY_LIMIT:
+                self._activity_entries = self._activity_entries[-self.ACTIVITY_LIMIT :]
+            listeners = list(self._activity_listeners)
+
+        for listener in listeners:
+            try:
+                listener(dict(entry))
+            except Exception:
+                continue
+
+    def get_client_activity_entries(self, after_seq: int = 0) -> List[Dict[str, Any]]:
+        """Return buffered client activity entries after a sequence number."""
+        with self._activity_lock:
+            return [
+                dict(entry)
+                for entry in self._activity_entries
+                if int(entry.get("seq", 0)) > after_seq
+            ]
+
+    def register_activity_listener(
+        self, listener: Callable[[Dict[str, Any]], None]
+    ) -> None:
+        """Subscribe to future client activity entries."""
+        with self._activity_lock:
+            if listener not in self._activity_listeners:
+                self._activity_listeners.append(listener)
+
+    def unregister_activity_listener(
+        self, listener: Callable[[Dict[str, Any]], None]
+    ) -> None:
+        """Remove a previously registered activity listener."""
+        with self._activity_lock:
+            if listener in self._activity_listeners:
+                self._activity_listeners.remove(listener)
+
+    def notify(
+        self,
+        message: str,
+        *,
+        title: str = "",
+        severity: str = "information",
+        timeout: Optional[float] = None,
+        markup: bool = True,
+    ) -> None:
+        """Mirror Textual notifications into the client activity buffer."""
+        rendered_message = f"{title}: {message}" if title else message
+        self.record_client_activity(
+            self._normalize_activity_level(severity),
+            rendered_message,
+        )
+        super().notify(
+            message,
+            title=title,
+            severity=severity,
+            timeout=timeout,
+            markup=markup,
+        )
 
     async def action_quit(self) -> None:
         from peeka.tui.screens.main import MainScreen

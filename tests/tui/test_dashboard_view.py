@@ -1,11 +1,18 @@
 """Tests for DashboardView - data-flow and error handling."""
 
+from pathlib import Path
+
 import pytest
-from textual.widgets import DataTable, Static
+from textual.widgets import DataTable, RichLog, Static
 
 from peeka.tui.app import PeekaApp
 from peeka.tui.screens.main import MainScreen
 from peeka.tui.views.dashboard import DashboardView
+
+
+def _rich_log_lines(widget: RichLog) -> str:
+    """Return the plain-text content currently rendered by a RichLog."""
+    return "\n".join(line.text for line in widget.lines)
 
 
 class TestDashboardView:
@@ -203,8 +210,6 @@ class TestDashboardView:
             await app.push_screen(main_screen)
             await pilot.pause()
 
-            dashboard = app.screen.query_one("DashboardView", DashboardView)
-
             # Thread summary should show placeholder dashes
             thread_summary = app.screen.query_one("#dash-thread-summary", Static)
             summary_text = thread_summary.render().plain
@@ -291,3 +296,86 @@ class TestDashboardView:
             assert "3.12.0" in content  # python version
             assert "12345" in content  # pid
             assert "uptime" in content
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_activity_log_replays_persisted_agent_history(
+        self, mock_client_factory, monkeypatch, tmp_path
+    ):
+        """Dashboard replays persisted agent history before the live stream starts."""
+        session_id = "dashboard-history"
+        socket_path = f"/tmp/peeka_{session_id}.sock"
+        log_path = Path(tmp_path) / f"peeka_{session_id}.log"
+        log_path.write_text(
+            "\n".join(
+                [
+                    "1714972800.000 INFO [peeka Agent] Started and listening for connections",
+                    "1714972801.000 INFO [peeka Agent] Ready for commands",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            "peeka.tui.views.dashboard.tempfile.gettempdir",
+            lambda: str(tmp_path),
+        )
+
+        client = mock_client_factory()
+        client.socket_path = socket_path
+        client.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id=session_id, socket_path=socket_path
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            dashboard = app.screen.query_one("DashboardView", DashboardView)
+            dashboard.set_client(client)
+
+            await pilot.pause()
+            await pilot.pause()
+
+            rich_log = app.screen.query_one("#dash-agent-log", RichLog)
+            content = _rich_log_lines(rich_log)
+
+            assert "AGENT" in content
+            assert "Started and listening for connections" in content
+            assert "Ready for commands" in content
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_activity_log_includes_buffered_and_live_client_activity(
+        self, mock_client
+    ):
+        """Dashboard merges current-client activity with the agent activity panel."""
+        mock_client.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            app.record_client_activity(
+                "INFO", "watch list refreshed", source="watch"
+            )
+
+            dashboard = app.screen.query_one("DashboardView", DashboardView)
+            dashboard.set_client(mock_client)
+
+            await pilot.pause()
+            app.notify("trace started", severity="warning")
+            await pilot.pause()
+            await pilot.pause()
+
+            rich_log = app.screen.query_one("#dash-agent-log", RichLog)
+            content = _rich_log_lines(rich_log)
+
+            assert "CLIENT" in content
+            assert "watch: watch list refreshed" in content
+            assert "trace started" in content
