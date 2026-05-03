@@ -4,7 +4,7 @@ Similar to Arthas 'thread' command and py-spy thread listing.
 """
 
 import time
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -39,19 +39,41 @@ class ThreadView(Container):
         self._refresh_worker: Optional[Worker] = None
         self._threads_cache: List[Dict[str, Any]] = []
         self._mounted = False
+        self._active = True
 
     def set_client(self, client: "StreamingAgentClient") -> None:
         self._client = client
-        if self._mounted:
+        if self._mounted and self._active:
             self._refresh_threads()
             self._start_refresh_worker()
 
+    def set_active(self, active: bool) -> None:
+        """Pause periodic refresh while the thread tab is hidden.
+
+        Args:
+            active: Whether this view is currently visible.
+        """
+        if self._active == active:
+            return
+
+        self._active = active
+        if active:
+            if self._mounted and self._client:
+                self._refresh_threads()
+                self._start_refresh_worker()
+        else:
+            self._stop_refresh_worker()
+
     def compose(self) -> ComposeResult:
         yield Horizontal(
-            Static("", id="thread-summary"),
+            Static(
+                "Threads: - total | - runnable | - waiting | - timed | - daemon",
+                id="thread-summary",
+            ),
             Static("", classes="spacer"),
             Button("Refresh", id="thread-refresh-btn", variant="default", flat=True),
             id="thread-controls",
+            classes="compact-control",
         )
         yield Container(
             Horizontal(
@@ -86,13 +108,12 @@ class ThreadView(Container):
 
         self._mounted = True
         # If set_client was called before on_mount, start fetching now
-        if self._client:
+        if self._active and self._client:
             self._refresh_threads()
             self._start_refresh_worker()
 
     def on_unmount(self) -> None:
-        if self._refresh_worker:
-            self._refresh_worker.cancel()
+        self._stop_refresh_worker()
 
     def action_refresh(self) -> None:
         """Refresh thread list."""
@@ -121,12 +142,18 @@ class ThreadView(Container):
 
     def _start_refresh_worker(self) -> None:
         """Start background periodic refresh of thread list."""
-        if not self._client or self._refresh_worker:
+        if not self._active or not self._client or self._refresh_worker:
             return
 
         self._refresh_worker = self.run_worker(
             lambda: self._periodic_refresh(), thread=True, exclusive=False
         )
+
+    def _stop_refresh_worker(self) -> None:
+        """Cancel the periodic thread refresh worker."""
+        if self._refresh_worker:
+            self._refresh_worker.cancel()
+            self._refresh_worker = None
 
     def _periodic_refresh(self) -> None:
         """Periodically refresh thread data every 3 seconds."""
@@ -138,11 +165,12 @@ class ThreadView(Container):
                     return
                 time.sleep(0.1)
 
-            self.app.call_from_thread(self._refresh_threads)
+            if self._active:
+                self.app.call_from_thread(self._refresh_threads)
 
     def _refresh_threads(self) -> None:
         """Launch worker to fetch thread list from agent."""
-        if not self._client:
+        if not self._active or not self._client:
             return
 
         def worker_fn():
@@ -152,7 +180,7 @@ class ThreadView(Container):
                     "action": "list",
                 }
             )
-            if response.get("status") == "success":
+            if self._active and response.get("status") == "success":
                 self.app.call_from_thread(self._update_threads_ui, response)
             return response
 
