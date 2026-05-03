@@ -64,6 +64,7 @@ class DashboardView(Container):
         self._log_worker: Optional[Worker] = None
         self._start_time = time.time()
         self._log = logging.getLogger(__name__)
+        self._active = True
 
     def set_client(self, client: "StreamingAgentClient") -> None:
         self._client = client
@@ -74,6 +75,29 @@ class DashboardView(Container):
         self._connect_agent_log_stream()
         self._refresh_dashboard_sync()
         self._start_refresh_worker()
+
+    def set_active(self, active: bool) -> None:
+        """Pause background work while the dashboard tab is hidden.
+
+        Args:
+            active: Whether this view is currently visible.
+        """
+        if self._active == active:
+            return
+
+        self._active = active
+        if active:
+            if self._client:
+                if not self._own_client:
+                    self._connect_own_client()
+                if not self._stream_client:
+                    self._connect_agent_log_stream()
+                self._refresh_dashboard_sync()
+                self._start_refresh_worker()
+        else:
+            self._stop_refresh_worker()
+            self._stop_log_worker()
+            self._disconnect_dedicated_clients()
 
     def _connect_own_client(self) -> None:
         """Create a dedicated StreamingAgentClient for dashboard data fetching."""
@@ -100,12 +124,7 @@ class DashboardView(Container):
                 )
                 self._stream_client = None
                 return
-            # Start streaming immediately once connected
-            self._log_worker = self.run_worker(
-                lambda: self._stream_agent_log_messages(),
-                thread=True,
-                exclusive=False,
-            )
+            self._start_log_worker()
         except Exception as e:
             self._log.warning("Agent log stream client error: %s", e)
             self._stream_client = None
@@ -125,7 +144,7 @@ class DashboardView(Container):
         thread_section = Vertical(
             DataTable(id="dash-thread-table"),
             id="dash-thread-section",
-            classes="panel",
+            classes="panel panel--primary",
         )
         thread_section.border_title = "Threads"
 
@@ -133,7 +152,7 @@ class DashboardView(Container):
         memory_section = Vertical(
             DataTable(id="dash-mem-table"),
             id="dash-memory-section",
-            classes="panel",
+            classes="panel panel--detail",
         )
         memory_section.border_title = "Memory"
 
@@ -141,7 +160,7 @@ class DashboardView(Container):
         gc_section = Vertical(
             DataTable(id="dash-gc-table"),
             id="dash-gc-section",
-            classes="panel",
+            classes="panel panel--detail",
         )
         gc_section.border_title = "GC"
 
@@ -149,8 +168,9 @@ class DashboardView(Container):
         runtime_section = Vertical(
             Static("", id="dash-runtime-info"),
             id="dash-runtime-section",
-            classes="panel",
+            classes="panel panel--detail",
         )
+        runtime_section.can_focus = True
         runtime_section.border_title = "Runtime"
 
         # -- Agent Log (displays agent-side log messages from target process) --
@@ -162,7 +182,7 @@ class DashboardView(Container):
                 auto_scroll=True,
             ),
             id="dash-agent-log-section",
-            classes="panel",
+            classes="panel panel--stream",
         )
         agent_log_section.border_title = "Agent Log (c to clear)"
 
@@ -171,18 +191,19 @@ class DashboardView(Container):
             Static("", classes="spacer"),
             Button("Refresh", id="dash-refresh-btn", variant="default", flat=True),
             id="dash-controls",
+            classes="compact-control",
         )
         yield Container(
             thread_section,
             Horizontal(
-                memory_section,
-                gc_section,
-                id="dash-mid-row",
-            ),
-            Horizontal(
-                runtime_section,
+                Vertical(
+                    memory_section,
+                    gc_section,
+                    runtime_section,
+                    id="dash-summary-column",
+                ),
                 agent_log_section,
-                id="dash-bottom-row",
+                id="dash-detail-row",
             ),
             id="dashboard-container",
         )
@@ -207,16 +228,9 @@ class DashboardView(Container):
         gc_table.show_cursor = False
 
     def on_unmount(self) -> None:
-        if self._refresh_worker:
-            self._refresh_worker.cancel()
-        if self._log_worker:
-            self._log_worker.cancel()
-        if self._own_client:
-            self._own_client.disconnect()
-            self._own_client = None
-        if self._stream_client:
-            self._stream_client.disconnect()
-            self._stream_client = None
+        self._stop_refresh_worker()
+        self._stop_log_worker()
+        self._disconnect_dedicated_clients()
 
     def action_refresh(self) -> None:
         """Refresh dashboard data."""
@@ -231,12 +245,44 @@ class DashboardView(Container):
     # -- Periodic refresh -------------------------------------------------------
 
     def _start_refresh_worker(self) -> None:
-        if not self._client or self._refresh_worker:
+        if not self._active or not self._client or self._refresh_worker:
             return
 
         self._refresh_worker = self.run_worker(
             lambda: self._periodic_refresh(), thread=True, exclusive=False
         )
+
+    def _stop_refresh_worker(self) -> None:
+        """Cancel the periodic dashboard refresh worker."""
+        if self._refresh_worker:
+            self._refresh_worker.cancel()
+            self._refresh_worker = None
+
+    def _start_log_worker(self) -> None:
+        """Start agent log streaming when the dashboard is active."""
+        if not self._active or not self._stream_client or self._log_worker:
+            return
+
+        self._log_worker = self.run_worker(
+            lambda: self._stream_agent_log_messages(),
+            thread=True,
+            exclusive=False,
+        )
+
+    def _stop_log_worker(self) -> None:
+        """Cancel the agent log streaming worker."""
+        if self._log_worker:
+            self._log_worker.cancel()
+            self._log_worker = None
+
+    def _disconnect_dedicated_clients(self) -> None:
+        """Disconnect dashboard-owned clients."""
+        if self._own_client:
+            self._own_client.disconnect()
+            self._own_client = None
+        if self._stream_client:
+            self._stream_client.disconnect()
+            self._stream_client = None
 
     def _periodic_refresh(self) -> None:
         worker = get_current_worker()
@@ -250,14 +296,15 @@ class DashboardView(Container):
             if worker.is_cancelled:
                 break
 
-            self.app.call_from_thread(self._refresh_dashboard_sync)
+            if self._active:
+                self.app.call_from_thread(self._refresh_dashboard_sync)
 
     # -- Data fetch -------------------------------------------------------------
 
     def _refresh_dashboard_sync(self) -> None:
         """Launch worker thread to fetch dashboard data."""
         client = self._own_client or self._client
-        if not client:
+        if not self._active or not client:
             return
 
         def worker_fn() -> Dict[str, Any]:
@@ -302,7 +349,8 @@ class DashboardView(Container):
             elif thread_result.get("status") == "error":
                 self._log.debug("thread(list) failed: %s", thread_result.get("error"))
 
-            self.app.call_from_thread(self._update_dashboard_ui, data)
+            if self._active:
+                self.app.call_from_thread(self._update_dashboard_ui, data)
             return data
 
         self.run_worker(worker_fn, thread=True, exclusive=False)

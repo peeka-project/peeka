@@ -2,11 +2,13 @@
 Main Screen - Primary interface after attaching to a process.
 """
 
+from typing import Any, Dict, Optional, Set, Type
+
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container
 from textual.screen import Screen
-from textual.widgets import Header, Footer, Static, TabbedContent, TabPane
+from textual.widgets import Header, Footer, TabbedContent, TabPane
 
 from peeka.tui.views.dashboard import DashboardView
 from peeka.tui.views.inspect import InspectView
@@ -38,12 +40,27 @@ class MainScreen(Screen):
         Binding("q", "go_back", "Back"),
     ]
 
+    _VIEW_BY_TAB: Dict[str, Type[Any]] = {
+        "dashboard": DashboardView,
+        "watch": WatchView,
+        "trace": TraceView,
+        "stack": StackView,
+        "monitor": MonitorView,
+        "memory": MemoryView,
+        "logger": LoggerView,
+        "inspect": InspectView,
+        "threads": ThreadView,
+        "top": TopView,
+    }
+
     def __init__(self, pid: int, session_id: str, socket_path: str) -> None:
         super().__init__()
         self.pid = pid
         self.session_id = session_id
         self.socket_path = socket_path
         self._client = None
+        self._activated_tabs: Set[str] = set()
+        self._active_tab_id: Optional[str] = None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -79,35 +96,8 @@ class MainScreen(Screen):
 
         if self._client:
             self.app.sub_title = f"Attached to PID {self.pid}"
-            dashboard_view = self.query_one(DashboardView)
-            dashboard_view.set_client(self._client)
-
-            watch_view = self.query_one(WatchView)
-            watch_view.set_client(self._client)
-
-            trace_view = self.query_one(TraceView)
-            trace_view.set_client(self._client)
-
-            logger_view = self.query_one(LoggerView)
-            logger_view.set_client(self._client)
-
-            stack_view = self.query_one(StackView)
-            stack_view.set_client(self._client)
-
-            monitor_view = self.query_one(MonitorView)
-            monitor_view.set_client(self._client)
-
-            memory_view = self.query_one(MemoryView)
-            memory_view.set_client(self._client)
-
-            inspect_view = self.query_one(InspectView)
-            inspect_view.set_client(self._client)
-
-            thread_view = self.query_one(ThreadView)
-            thread_view.set_client(self._client)
-
-            top_view = self.query_one(TopView)
-            top_view.set_client(self._client)
+            tabbed = self.query_one("#main-content", TabbedContent)
+            self._select_tab(tabbed.active or "dashboard")
 
     def on_unmount(self) -> None:
         self._cleanup_all_views()
@@ -159,6 +149,51 @@ class MainScreen(Screen):
         """Switch to a specific view."""
         tabbed = self.query_one("#main-content", TabbedContent)
         tabbed.active = tab_id
+
+    def on_tabbed_content_tab_activated(
+        self, event: TabbedContent.TabActivated
+    ) -> None:
+        """Initialize a tab's view the first time the main tab is shown."""
+        if event.tabbed_content.id != "main-content":
+            return
+        if event.pane.id:
+            self._select_tab(event.pane.id)
+
+    def _select_tab(self, tab_id: str) -> None:
+        """Activate a tab and notify views when they become visible or hidden."""
+        if self._active_tab_id and self._active_tab_id != tab_id:
+            self._set_tab_active(self._active_tab_id, False)
+
+        self._activate_tab(tab_id)
+        self._set_tab_active(tab_id, True)
+        self._active_tab_id = tab_id
+
+    def _activate_tab(self, tab_id: str) -> None:
+        """Attach the shared client to a view only when its tab is used."""
+        if not self._client or tab_id in self._activated_tabs:
+            return
+
+        view_cls = self._VIEW_BY_TAB.get(tab_id)
+        if not view_cls:
+            return
+
+        view = self.query_one(view_cls)
+        view.set_client(self._client)
+        self._activated_tabs.add(tab_id)
+
+    def _set_tab_active(self, tab_id: str, active: bool) -> None:
+        """Notify a view about tab visibility when it supports that hook."""
+        if tab_id not in self._activated_tabs:
+            return
+
+        view_cls = self._VIEW_BY_TAB.get(tab_id)
+        if not view_cls:
+            return
+
+        view = self.query_one(view_cls)
+        set_active = getattr(view, "set_active", None)
+        if set_active:
+            set_active(active)
 
     def action_go_back(self) -> None:
         self._cleanup_all_views()
