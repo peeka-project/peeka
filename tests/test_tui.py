@@ -10,6 +10,7 @@ Tests verify:
 """
 
 import inspect
+from types import SimpleNamespace
 
 import pytest
 
@@ -24,7 +25,7 @@ class TestProcessSelectorScreen:
     async def test_screen_renders_with_table(self):
         """ProcessSelectorScreen has a DataTable with correct columns."""
         app = PeekaApp()
-        async with app.run_test() as pilot:
+        async with app.run_test():
             assert isinstance(app.screen, ProcessSelectorScreen)
             from textual.widgets import DataTable
 
@@ -48,11 +49,81 @@ class TestProcessSelectorScreen:
     async def test_filter_input_exists(self):
         """Filter input exists with correct placeholder."""
         app = PeekaApp()
-        async with app.run_test() as pilot:
+        async with app.run_test():
             from textual.widgets import Input
 
             filter_input = app.screen.query_one("#filter", Input)
             assert filter_input.placeholder == "Filter by PID or command..."
+
+    def test_get_python_processes_skips_uv_wrapper(self, monkeypatch):
+        """Wrapper processes like uv should not be listed as attach targets."""
+        screen = ProcessSelectorScreen()
+        ps_output = "\n".join(
+            [
+                "USER PID %CPU %MEM VSZ RSS TTY STAT START TIME COMMAND",
+                "alice 100 0.0 0.1 0 0 ? S 10:00 0:00 uv run python -m http.server 8888",
+                "alice 101 0.0 0.1 0 0 ? S 10:00 0:00 /tmp/.venv/bin/python -m http.server 8888",
+            ]
+        )
+
+        monkeypatch.setattr(
+            "peeka.tui.screens.process_selector.subprocess.run",
+            lambda *args, **kwargs: SimpleNamespace(stdout=ps_output),
+        )
+        monkeypatch.setattr(
+            ProcessSelectorScreen,
+            "_is_python_process",
+            staticmethod(lambda pid: pid == "101"),
+        )
+        monkeypatch.setattr(
+            ProcessSelectorScreen,
+            "_is_peeka_process",
+            staticmethod(lambda pid, cmd: False),
+        )
+
+        assert screen._get_python_processes() == [
+            ("101", "alice", "0.0", "0.1", "/tmp/.venv/bin/python -m http.server 8888")
+        ]
+
+    def test_get_python_processes_skips_peeka_processes(self, monkeypatch):
+        """Peeka's own processes should not be shown as attach targets."""
+        screen = ProcessSelectorScreen()
+        ps_output = "\n".join(
+            [
+                "USER PID %CPU %MEM VSZ RSS TTY STAT START TIME COMMAND",
+                "alice 200 0.0 0.1 0 0 ? S 10:00 0:00 /tmp/.venv/bin/python -m peeka.cli.main tui",
+                "alice 201 0.0 0.1 0 0 ? S 10:00 0:00 /tmp/.venv/bin/python -m http.server 8888",
+            ]
+        )
+
+        monkeypatch.setattr(
+            "peeka.tui.screens.process_selector.subprocess.run",
+            lambda *args, **kwargs: SimpleNamespace(stdout=ps_output),
+        )
+        monkeypatch.setattr(
+            ProcessSelectorScreen,
+            "_is_python_process",
+            staticmethod(lambda pid: True),
+        )
+
+        assert screen._get_python_processes() == [
+            ("201", "alice", "0.0", "0.1", "/tmp/.venv/bin/python -m http.server 8888")
+        ]
+
+    def test_is_python_process_uses_cmdline_fallback_when_proc_lookup_fails(self, monkeypatch):
+        """Process detection should stay permissive when /proc lookup is unavailable."""
+        monkeypatch.setattr(
+            "peeka.tui.screens.process_selector.os.readlink",
+            lambda path: (_ for _ in ()).throw(OSError("missing /proc entry")),
+        )
+
+        assert ProcessSelectorScreen._is_python_process("123") is True
+
+    def test_is_peeka_process_matches_current_pid(self, monkeypatch):
+        """The current Peeka process should always be filtered out."""
+        monkeypatch.setattr("peeka.tui.screens.process_selector.os.getpid", lambda: 321)
+
+        assert ProcessSelectorScreen._is_peeka_process("321", "python -m http.server") is True
 
 
 class TestMainScreen:
@@ -121,6 +192,52 @@ class TestMainScreen:
             app.screen.action_switch_tab("stack")
             await pilot.pause()
             assert tabbed.active == "stack"
+
+    @pytest.mark.asyncio
+    async def test_views_receive_client_on_first_tab_activation(self, monkeypatch):
+        """MainScreen lazily initializes views as their tabs are first shown."""
+        client = SimpleNamespace(
+            socket_path="/tmp/fake.sock",
+            disconnect=lambda: None,
+            send_command=lambda command: {"status": "success"},
+        )
+        activated_tabs = []
+
+        async def fake_connect(self):
+            self._client = client
+
+        def make_set_client(tab_id):
+            def set_client(self, received_client):
+                activated_tabs.append(tab_id)
+                self._client = received_client
+
+            return set_client
+
+        monkeypatch.setattr(MainScreen, "_connect", fake_connect)
+        for tab_id, view_cls in MainScreen._VIEW_BY_TAB.items():
+            monkeypatch.setattr(view_cls, "set_client", make_set_client(tab_id))
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test", socket_path="/tmp/fake.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            assert activated_tabs == ["dashboard"]
+
+            main_screen.action_switch_tab("watch")
+            await pilot.pause()
+            assert activated_tabs == ["dashboard", "watch"]
+
+            main_screen.action_switch_tab("watch")
+            await pilot.pause()
+            assert activated_tabs == ["dashboard", "watch"]
+
+            main_screen.action_switch_tab("trace")
+            await pilot.pause()
+            assert activated_tabs == ["dashboard", "watch", "trace"]
 
 
 class TestWatchView:

@@ -16,6 +16,20 @@ from peeka.core.injector import DecoratorInjector
 from peeka.core.observer import ObservationManager
 
 
+def _write_session_log(
+    session_id: str, level: str, message: str, details: Optional[str] = None
+) -> None:
+    """Persist agent diagnostics without touching the target process stdio."""
+    try:
+        log_path = Path(f"/tmp/peeka_{session_id}.log")
+        with log_path.open("a", encoding="utf-8") as log_file:
+            log_file.write(f"{_time.time():.3f} {level} {message}\n")
+            if details:
+                log_file.write(details.rstrip() + "\n")
+    except OSError:
+        pass
+
+
 class PeekaAgent:
     """Agent running inside target process"""
 
@@ -86,8 +100,19 @@ class PeekaAgent:
             self.command_handlers[cmd_type] = handler
             return handler
         except Exception:
-            traceback.print_exc()
+            self._emit_log(
+                "ERROR",
+                f"[peeka Agent] Failed to load handler for {cmd_type}",
+                traceback.format_exc(),
+            )
             return None
+
+    def _emit_log(
+        self, level: str, message: str, details: Optional[str] = None
+    ) -> None:
+        """Send diagnostics through side channels only."""
+        self._send_log(level, message)
+        _write_session_log(self.session_id, level, message, details)
 
     def _register_handlers(self) -> None:
         """Eagerly import and register ALL command handlers.
@@ -131,11 +156,8 @@ class PeekaAgent:
             Path(f"/tmp/peeka_{self.session_id}.ready").touch()
             msg_start = "[peeka Agent] Started and listening for connections"
             msg_ready = "[peeka Agent] Ready for commands"
-            if not self.suppress_startup_messages:
-                print(msg_start)
-                print(msg_ready)
-            self._send_log("INFO", msg_start)
-            self._send_log("INFO", msg_ready)
+            self._emit_log("INFO", msg_start)
+            self._emit_log("INFO", msg_ready)
 
             # Eagerly load all command handlers now that the socket is
             # ready.  This runs on the agent thread (not GIL-blocking).
@@ -143,9 +165,7 @@ class PeekaAgent:
 
         except Exception as e:
             msg = f"[peeka Agent] Start failed: {e}"
-            print(msg, file=sys.stderr)
-            self._send_log("ERROR", msg)
-            traceback.print_exc()
+            self._emit_log("ERROR", msg, traceback.format_exc())
 
     def _accept_loop(self, ready_event: threading.Event) -> None:
         ready_event.set()
@@ -170,8 +190,7 @@ class PeekaAgent:
             except Exception as e:
                 if self.running:
                     msg = f"[peeka Agent] Accept error: {e}"
-                    print(msg, file=sys.stderr)
-                    self._send_log("ERROR", msg)
+                    self._emit_log("ERROR", msg, traceback.format_exc())
 
     def _handle_client(self, conn: socket.socket) -> None:
         with self._connections_lock:
@@ -204,8 +223,7 @@ class PeekaAgent:
 
         except Exception as e:
             msg = f"[peeka Agent] Client error: {e}"
-            print(msg, file=sys.stderr)
-            self._send_log("ERROR", msg)
+            self._emit_log("ERROR", msg, traceback.format_exc())
         finally:
             with self._connections_lock:
                 if conn in self._client_connections:
@@ -334,8 +352,7 @@ def _init_agent(
                     msg = (
                         f"[peeka Agent] Stopped previous agent: {old_agent.session_id}"
                     )
-                    print(msg)
-                    old_agent._send_log("INFO", msg)
+                    old_agent._emit_log("INFO", msg)
                 except Exception:
                     pass
             sys._peeka_agents.clear()  # type: ignore[attr-defined]
@@ -354,9 +371,7 @@ def _init_agent(
 
     except Exception as e:
         msg = f"[peeka Agent] Initialization failed: {e}"
-        print(msg, file=sys.stderr)
-        traceback.print_exc()
-        # Note: _send_log can't be called here because agent isn't fully initialized yet
+        _write_session_log(session_id, "ERROR", msg, traceback.format_exc())
 
 
 # Auto-initialize when injected via sys.remote_exec() or GDB

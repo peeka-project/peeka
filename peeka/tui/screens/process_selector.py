@@ -2,6 +2,7 @@
 Process Selector Screen - List and select Python processes to attach.
 """
 
+import os
 import subprocess
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -28,7 +29,7 @@ class ProcessSelectorScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Header()
         selector = Container(
-            Input(placeholder="Filter by PID or command...", id="filter"),
+            Input(placeholder="Filter by PID or command...", id="filter", classes="compact-control"),
             DataTable(id="process-table"),
             id="process-selector",
             classes="panel",
@@ -77,11 +78,44 @@ class ProcessSelectorScreen(Screen):
                 if len(parts) >= 11:
                     user, pid, cpu, mem = parts[0], parts[1], parts[2], parts[3]
                     cmd = parts[10]
-                    if "python" in cmd.lower():
-                        processes.append((pid, user, cpu, mem, cmd[:60]))
+                    if (
+                        "python" in cmd.lower()
+                        and self._is_python_process(pid)
+                        and not self._is_peeka_process(pid, cmd)
+                    ):
+                        processes.append((pid, user, cpu, mem, cmd))
         except Exception:
             pass
         return processes
+
+    @staticmethod
+    def _is_python_process(pid: str) -> bool:
+        """Return True when the PID's real executable is a Python interpreter."""
+        exe_path = f"/proc/{pid}/exe"
+        try:
+            exe_name = os.path.basename(os.readlink(exe_path)).lower()
+            return exe_name.startswith("python")
+        except OSError:
+            # /proc/<pid>/exe is Linux-specific and may be unavailable on other
+            # platforms or for short-lived processes. Fall back to cmdline-only
+            # filtering in those cases.
+            return True
+
+    @staticmethod
+    def _is_peeka_process(pid: str, cmd: str) -> bool:
+        """Return True for the current Peeka process or explicit Peeka commands."""
+        if pid == str(os.getpid()):
+            return True
+
+        normalized = cmd.lower()
+        peeka_markers = (
+            " -m peeka",
+            " peeka-cli",
+            " peeka-tui",
+            "/peeka-cli",
+            "/peeka-tui",
+        )
+        return any(marker in normalized for marker in peeka_markers)
 
     def on_input_changed(self, event: Input.Changed) -> None:
         """Filter processes based on input."""
@@ -121,11 +155,13 @@ class ProcessSelectorScreen(Screen):
     async def _do_attach(self, pid: int) -> None:
         """Run attachment in worker thread, then push MainScreen on success."""
         import asyncio
+        import traceback
 
         from peeka.core.attach import ProcessAttacher
 
-        attacher = ProcessAttacher(pid)
+        attacher = ProcessAttacher(pid, suppress_startup_messages=True)
         result: Optional[Dict[str, Any]] = None
+        error_message: Optional[str] = None
 
         try:
             if attacher.attach():
@@ -135,13 +171,10 @@ class ProcessSelectorScreen(Screen):
                     "socket_path": attacher.get_socket_path(),
                 }
             else:
-                self.app.call_from_thread(
-                    self.notify, f"Failed to attach to process {pid}", severity="error"
-                )
+                error_message = f"Failed to attach to process {pid}\n\nThis could be due to:\n- Permission issues (ptrace_scope)\n- Python version mismatch\n- GDB/LLDB not available\n- Process already has an agent attached"
         except Exception as e:
-            self.app.call_from_thread(
-                self.notify, f"Attach error: {e}", severity="error"
-            )
+            tb = traceback.format_exc()
+            error_message = f"Failed to attach to process {pid}\n\nError: {e}\n\nDetails:\n{tb}"
         finally:
             # Do NOT call attacher.cleanup() here — sys.remote_exec() is
             # fire-and-forget and the target process may not have read the
@@ -151,6 +184,73 @@ class ProcessSelectorScreen(Screen):
 
         if result:
             self.app.call_from_thread(self._on_attach_success, result)
+        elif error_message:
+            self.app.call_from_thread(self._show_attach_error, error_message)
+
+    def _show_attach_error(self, error_msg: str) -> None:
+        """Show detailed attach error in a modal dialog."""
+        self._enable_interaction()
+
+        # Create a simple error modal
+        from textual.containers import Container
+        from textual.widgets import Markdown, Button
+        from textual.screen import Screen
+
+        class ErrorModal(Screen):
+            CSS = """
+            ErrorModal {
+                align: center middle;
+            }
+
+            #error-container {
+                background: $surface;
+                border: thick $error;
+                padding: 1;
+                width: 80%;
+                height: 80%;
+                max-width: 100;
+                max-height: 40;
+            }
+
+            #error-title {
+                background: $error;
+                color: white;
+                padding: 1;
+                text-align: center;
+                margin-bottom: 1;
+            }
+
+            #error-content {
+                height: 80%;
+                overflow-y: scroll;
+                margin-bottom: 1;
+            }
+
+            #error-dismiss {
+                align: center bottom;
+            }
+            """
+
+            def __init__(self, error_msg: str) -> None:
+                super().__init__()
+                self.error_msg = error_msg
+
+            def compose(self) -> ComposeResult:
+                yield Container(
+                    Static("⚠️ Attach Failed", id="error-title"),
+                    Markdown(self.error_msg, id="error-content"),
+                    Container(
+                        Button("Dismiss", variant="error", id="error-dismiss"),
+                        id="error-controls",
+                    ),
+                    id="error-container",
+                )
+
+            def on_button_pressed(self, event: Button.Pressed) -> None:
+                if event.button.id == "error-dismiss":
+                    self.dismiss()
+
+        self.app.push_screen(ErrorModal(error_msg))
 
     def _on_attach_success(self, result: Dict[str, Any]) -> None:
         """Called on main thread after successful attachment."""

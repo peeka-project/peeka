@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 from typing import Optional, Tuple
 
+import peeka
 from peeka.core.attach import ProcessAttacher
 from peeka.core.client import StreamingAgentClient
 from peeka.core.output import OutputFormatter
@@ -112,7 +113,7 @@ Examples:
         """,
     )
 
-    parser.add_argument("--version", action="version", version="%(prog)s 0.1.0")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {peeka.__version__}")
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
@@ -580,7 +581,7 @@ def cmd_attach(args) -> int:
     target_pid = args.pid
     OutputFormatter.status(f"Attaching to process {target_pid}")
 
-    attacher = ProcessAttacher(target_pid)
+    attacher = ProcessAttacher(target_pid, suppress_startup_messages=True)
 
     try:
         if attacher.attach():
