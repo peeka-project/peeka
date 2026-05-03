@@ -1,6 +1,6 @@
 """AutoComplete Input Widget - Input with fuzzy completion dropdown."""
 
-from typing import Callable, List, Optional, Union
+from typing import Callable, List, Optional
 
 from textual.app import ComposeResult
 from textual.events import Key
@@ -24,19 +24,31 @@ class AutoCompleteInput(Widget):
     DEFAULT_CSS = """
     AutoCompleteInput {
         width: 1fr;
-        height: auto;
-        layout: vertical;
+        height: 1;
+        layers: base overlay;
     }
 
     AutoCompleteInput > #ac-input {
         width: 100%;
+        height: 1;
+        background: $panel;
+        border: none;
+        padding: 0 1;
+        box-sizing: border-box;
     }
 
     AutoCompleteInput > #ac-dropdown {
+        min-width: 30;
         max-height: 10;
+        offset: 0 1;
         border: solid $accent;
-        background: $surface;
+        background: $panel;
+        color: $text;
         display: none;
+        height: auto;
+        layer: overlay;
+        overlay: screen;
+        constrain: none inside;
     }
     """
 
@@ -50,7 +62,7 @@ class AutoCompleteInput(Widget):
     def __init__(
         self,
         placeholder: str = "",
-        completions_callback: Optional[Callable[[str], Union[List[str]]]] = None,
+        completions_callback: Optional[Callable[[str], List[str]]] = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)

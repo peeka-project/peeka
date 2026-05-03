@@ -46,6 +46,7 @@ class TopView(Container):
                 Button("Stop", id="top-stop-btn", variant="error", flat=True),
                 Button("Reset", id="top-reset-btn", variant="warning", flat=True),
                 id="top-controls",
+                classes="compact-control",
             )
             yield DataTable(id="top-table")
 

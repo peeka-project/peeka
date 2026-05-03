@@ -201,18 +201,26 @@ class WatchView(Container):
                 Button("Watch", id="watch-btn", variant="primary", flat=True),
                 Button("Stop", id="stop-btn", variant="error", flat=True),
                 id="watch-controls",
+                classes="compact-control",
             ),
             Horizontal(
                 Vertical(
                     DataTable(id="watch-table"),
                     id="watch-list",
-                    classes="panel",
+                    classes="panel panel--stream",
                 ),
                 Vertical(
-                    DataTable(id="observations-table"),
-                    Tree("Detail", id="observation-detail"),
-                    id="observations-panel",
-                    classes="panel",
+                    Vertical(
+                        DataTable(id="observations-table"),
+                        id="observations-panel",
+                        classes="panel panel--detail",
+                    ),
+                    Vertical(
+                        Tree("Detail", id="observation-detail"),
+                        id="observation-detail-panel",
+                        classes="panel panel--detail",
+                    ),
+                    id="watch-detail-column",
                 ),
                 id="watch-content",
             ),
@@ -253,6 +261,9 @@ class WatchView(Container):
         observations_panel.border_title = "Observations"
 
         # Detail panel title
+        detail_panel = self.query_one("#observation-detail-panel", Vertical)
+        detail_panel.border_title = "Detail"
+
         detail = self.query_one("#observation-detail", Tree)
         detail.border_title = "Detail"
         detail.show_root = False

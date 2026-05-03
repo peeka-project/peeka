@@ -33,13 +33,13 @@ HELP_TEXT = """
 | `7` | Logger - Logger management |
 | `8` | Inspect - Object inspection |
 | `9` | Threads - Thread management |
-| `0` | Top - Top processes |
+| `0` | Top - Function profiler |
 
 ## Process Selector
 
 | Key | Action |
 |-----|--------|
-| `R` | Refresh process list |
+| `r` | Refresh process list |
 | `Enter` | Attach to selected process |
 | `↑/↓` | Navigate processes |
 

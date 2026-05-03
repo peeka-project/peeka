@@ -3,23 +3,27 @@ Memory View - Memory analysis interface.
 """
 
 import logging
-from typing import TYPE_CHECKING, Optional, Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
+from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Vertical, Horizontal
+from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import (
-    Static,
-    DataTable,
     Button,
+    DataTable,
+    Input,
+    Static,
     TabbedContent,
     TabPane,
-    Input,
     Tree,
 )
 
 if TYPE_CHECKING:
     from peeka.core.client import StreamingAgentClient
+
+
+_WIDE_TOP_CONTROLS_MIN_WIDTH = 120
 
 
 class MemoryView(Container):
@@ -165,47 +169,56 @@ class MemoryView(Container):
         self._toggle_tracking()
     def compose(self) -> ComposeResult:
         with Container(id="memory-container"):
-            # === One-line status bar (top) ===
-            yield Horizontal(
-                Static("RSS: calculating...", id="mem-rss"),
-                Static("│", classes="separator"),
-                Static("Traced: Not tracking", id="mem-total"),
-                Static("│", classes="separator"),
-                Static("GC: calculating...", id="mem-gc"),
-                Static("", classes="spacer"),
-                # Right side: nframe + Track/Stop
-                Static("nframe:", classes="input-label"),
-                Input(
-                    value="10",
-                    id="mem-nframe-input",
-                    max_length=3,
-                    tooltip="Stack frames to capture (1-50)",
+            # === Process memory status + tracking controls (top) ===
+            yield Container(
+                Horizontal(
+                    Static("RSS: calculating...", id="mem-rss"),
+                    Static("│", classes="separator"),
+                    Static("Traced: Not tracking", id="mem-total"),
+                    Static("│", classes="separator"),
+                    Static("GC: calculating...", id="mem-gc"),
+                    id="memory-status-bar",
+                    classes="compact-control",
                 ),
-                Button("Track", id="mem-track-btn", variant="success", flat=True),
-                Button("Stop", id="mem-stop-btn", variant="error", flat=True),
-                id="memory-status-bar",
+                Static("", classes="spacer"),
+                Horizontal(
+                    Static("nframe:", classes="input-label"),
+                    Input(
+                        value="10",
+                        id="mem-nframe-input",
+                        max_length=3,
+                        tooltip="Stack frames to capture (1-50)",
+                    ),
+                    Button("Track", id="mem-track-btn", variant="success", flat=True),
+                    Button("Stop", id="mem-stop-btn", variant="error", flat=True),
+                    id="mem-track-controls",
+                    classes="compact-control",
+                ),
+                id="memory-top-controls",
             )
             # === Tabs (no Overview tab) ===
             with TabbedContent(id="mem-tabs"):
                 with TabPane("GC Objects", id="mem-gc-pane"):
-                    yield Horizontal(
-                        Static("limit:", classes="input-label"),
-                        Input(
-                            value="20",
-                            id="mem-gc-limit-input",
-                            max_length=3,
-                            tooltip="Max rows to display (1-100)",
-                        ),
-                        Static("", classes="spacer"),
-                        Button(
-                            "Refresh",
-                            id="mem-gc-refresh-btn",
-                            variant="primary",
-                            flat=True,
-                        ),
-                        id="mem-gc-controls",
-                    )
-                    yield DataTable(id="mem-objects-table")
+                    with Vertical(id="mem-gc-content", classes="panel panel--detail"):
+                        yield Horizontal(
+                            Static("limit:", classes="input-label"),
+                            Input(
+                                value="20",
+                                id="mem-gc-limit-input",
+                                max_length=3,
+                                tooltip="Max rows to display (1-100)",
+                            ),
+                            Static("", classes="spacer"),
+                            Button(
+                                "Refresh",
+                                id="mem-gc-refresh-btn",
+                                variant="primary",
+                                flat=True,
+                            ),
+                            id="mem-gc-controls",
+                            classes="compact-control",
+                        )
+                        yield DataTable(id="mem-objects-table")
                 with TabPane("Allocations", id="mem-allocations-pane"):
                     yield Vertical(
                         Static(
@@ -234,11 +247,13 @@ class MemoryView(Container):
                                 flat=True,
                             ),
                             id="mem-alloc-controls",
+                            classes="compact-control",
                         ),
                         DataTable(
                             id="mem-alloc-table", show_header=True, zebra_stripes=True
                         ),
                         id="mem-allocations-content",
+                        classes="panel panel--detail",
                     )
                 with TabPane("Diff", id="mem-diff-pane"):
                     yield Vertical(
@@ -264,15 +279,17 @@ class MemoryView(Container):
                                 disabled=True,
                             ),
                             id="mem-diff-controls",
+                            classes="compact-control",
                         ),
                         DataTable(
                             id="mem-diff-table", show_header=True, zebra_stripes=True
                         ),
                         id="mem-diff-content",
+                        classes="panel panel--detail",
                     )
                 with TabPane("References", id="mem-references-pane"):
-                    with Vertical(id="mem-references-content"):
-                        with Horizontal(id="mem-references-controls"):
+                    with Vertical(id="mem-references-content", classes="panel panel--detail"):
+                        with Horizontal(id="mem-references-controls", classes="compact-control"):
                             yield Static("Type:", classes="input-label")
                             yield Input(
                                 value="", placeholder="dict", id="mem-type-input"
@@ -292,8 +309,6 @@ class MemoryView(Container):
                         yield Tree("No data", id="mem-ref-tree")
 
     def on_mount(self) -> None:
-        container = self.query_one("#memory-container", Container)
-
         table = self.query_one("#mem-objects-table", DataTable)
         self._gc_column_keys = table.add_columns(
             "Type", "Count", "Δ Count", "Size", "Δ Size"
@@ -308,9 +323,32 @@ class MemoryView(Container):
 
         # Set initial visibility state
         self._update_track_dependent_visibility()
+        self._update_top_controls_layout()
 
         if self._client:
             self._initial_refresh()
+
+    def on_resize(self, event: events.Resize) -> None:
+        """Keep Memory top controls compact on narrow terminals."""
+        self._update_top_controls_layout(event.size.width)
+
+    def _update_top_controls_layout(self, width: Optional[int] = None) -> None:
+        """Use one top row on wide terminals and two rows on narrow terminals.
+
+        Args:
+            width: Current app width, or None to read it from the app.
+        """
+        try:
+            top_controls = self.query_one("#memory-top-controls", Container)
+        except Exception:
+            return
+
+        current_width = width or self.app.size.width
+        if current_width >= _WIDE_TOP_CONTROLS_MIN_WIDTH:
+            top_controls.add_class("memory-top-wide")
+        else:
+            top_controls.remove_class("memory-top-wide")
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if not self._own_client and not self._client:
             self.app.notify("Not connected to agent", severity="warning")
@@ -868,7 +906,7 @@ class MemoryView(Container):
 
         # Notify user
         self.app.notify("Diff reset. Take 2 new snapshots.", severity="information")
-    def _apply_sort_to_table(self, table: DataTable) -> None:
+    def _apply_sort_to_table(self, table: DataTable[Any]) -> None:
         """Sort the table by the current sort column and update column labels."""
         if not self._sort_column or not self._prev_gc_stats:
             return
@@ -938,7 +976,7 @@ class MemoryView(Container):
         # Update column labels with sort indicator
         self._update_column_labels(table)
 
-    def _update_column_labels(self, table: DataTable) -> None:
+    def _update_column_labels(self, table: DataTable[Any]) -> None:
         """Update column labels to show sort indicator on active column."""
         # Note: Textual DataTable doesn't expose a public API to update column headers,
         # so we can't display the sort indicator. The sorting is still applied to the data.
@@ -1017,7 +1055,7 @@ class MemoryView(Container):
             return
         tree = self.query_one("#mem-ref-tree", Tree)
         self._populate_tree(tree, response, "referents")
-    def _populate_tree(self, tree: Tree, data: Dict[str, Any], relation: str) -> None:
+    def _populate_tree(self, tree: Tree[Any], data: Dict[str, Any], relation: str) -> None:
         """Populate tree with referrer/referent data."""
         tree.clear()
         target = data["target"]
