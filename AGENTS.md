@@ -115,6 +115,43 @@ peeka/
 
 流式视图（watch、trace、stack、monitor）通过 `_ensure_stream_client()` 惰性创建独立的 `StreamingAgentClient` 连接（双重检查锁）。非流式视图（logger、memory、inspect、thread）共享主客户端。后台线程更新 UI 使用 `self.app.call_from_thread()`。
 
+### TUI UI/UX 变更守则（减少返工）
+
+当任务涉及布局、视觉层级、可用性（宽窄屏、焦点、分组）时，必须按以下顺序执行，避免“修一点坏一点”的反复提交：
+
+1. **先冻结设计意图（Design Contract）**
+   - 在动代码前，用 3-6 条可验证语句写清目标（例如：`140 列单行，80 列双行`、`A 区块左对齐，B 区块右对齐`、`Stats 与 Tree 必须是两个独立 panel`）。
+   - 若意图未冻结，不允许直接改 TCSS。
+
+2. **区分“结构变更”和“皮肤变更”**
+   - 结构变更：`compose()` 层级、panel 拆分/合并、focus 链、tab 可达性。
+   - 皮肤变更：颜色、边框样式、间距、字号。
+   - 先做结构再做皮肤；禁止在一个小提交中交替改二者。
+
+3. **必须补“几何断言”测试，而不只看 class**
+   - 除 class 断言外，至少补 1 条 region 断言（`x/y/width/height`）覆盖目标约束。
+   - 宽窄屏至少各测一个尺寸（推荐 `80x24` 和 `140x24`）。
+   - 涉及键盘可达性必须测 `tab` 焦点链。
+
+4. **提交前执行最小验证矩阵**
+   - `uv run ruff check <changed files>`
+   - `uv run pytest tests/tui/test_style_layout.py -k "<affected views>" -v`
+   - 若有焦点行为变更，额外跑对应 view 的焦点测试。
+
+5. **提交粒度规则**
+   - 一个提交只表达一个意图（例如：`memory 顶栏响应式`）。
+   - 微小修补（文案、阈值、空格）应优先并入最近相关提交，避免连续“补丁型提交”。
+
+### TUI 变更 DoD（Definition of Done）
+
+涉及 UI/UX 的任务在满足以下条件前不得声明完成：
+
+- 设计意图 3-6 条全部可映射到代码和测试。
+- 至少 1 条宽屏几何断言 + 1 条窄屏几何断言。
+- 如果是 panel 拆分任务，必须验证“独立 panel + 间距 + 对齐”三项。
+- 如果是可交互区域任务，必须验证“可聚焦 + Tab 可达”。
+- 变更说明中明确“保持不变”的行为（防止隐式回归）。
+
 ## 测试模式
 
 大多数测试使用**基于类**的 pytest 测试加 fixture。使用自定义 `MockAgent` / `MockStreamingAgentClient`（不用 unittest.mock）。动态测试模块插入 `sys.modules`，teardown 时清理。
