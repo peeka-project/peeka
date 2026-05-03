@@ -91,6 +91,7 @@ peeka-cli watch "module.func" > observations.jsonl
 | `top`     | Function-level performance sampling         |
 | `reset`   | Remove all injected enhancements            |
 | `detach`  | Detach from target process                  |
+| `run`     | Run a script with Peeka injected from startup |
 
 ### watch
 
@@ -102,11 +103,11 @@ peeka-cli watch <pattern> [options]
 |--------------------|-----------------------------------------|---------|
 | `-x, --depth`      | Output depth for nested objects          | 2       |
 | `-n, --times`      | Number of observations (-1 = infinite)  | -1      |
-| `--condition`       | Filter expression (supports `cost` var) | —       |
+| `--condition`       | Filter expression (e.g. `params[0] > 100`, `cost > 50`) | —       |
 | `-b, --before`      | Observe at function entry               | false   |
 | `-s, --success`     | Observe on success only                 | false   |
 | `-e, --exception`   | Observe on exception only               | false   |
-| `-f, --finish`      | Observe on both success and exception   | true    |
+| `-f, --finish`      | Observe on finish (success or exception) | true    |
 
 **Pattern format**: `module.Class.method` or `module.function`
 
@@ -120,7 +121,7 @@ peeka-cli trace <pattern> [options]
 |--------------------|--------------------------------------------|---------|
 | `-d, --depth`      | Max call tree depth                        | 3       |
 | `-n, --times`      | Number of observations (-1 = infinite)     | -1      |
-| `--condition`       | Filter expression (supports `cost` var)    | —       |
+| `--condition`       | Filter expression (e.g. `cost > 50`)       | —       |
 | `--skip-builtin`    | Skip stdlib/built-in functions             | true    |
 | `--min-duration`    | Minimum duration filter (ms)               | 0       |
 
@@ -146,6 +147,41 @@ peeka-cli stack <pattern> [options]
 | `--condition`       | Filter expression                          | —       |
 | `--depth`           | Stack depth limit                          | 10      |
 
+### reset
+
+```bash
+peeka-cli reset [pattern] [options]
+```
+
+| Option        | Description                              | Default |
+|---------------|------------------------------------------|---------|
+| `-l, --list`  | List current enhancements without reset  | false   |
+| `pattern`     | Optional glob pattern to filter targets  | —       |
+
+```bash
+peeka-cli reset                    # Reset all enhancements
+peeka-cli reset "mymodule.*"       # Reset matching functions only
+peeka-cli reset --list             # List active enhancements
+```
+
+### run
+
+Run a Python script with Peeka injected from startup — useful when you need to observe code that runs at import time or in short-lived scripts.
+
+```bash
+peeka-cli run <script> [script_args] -- <command> [command_options]
+```
+
+```bash
+peeka-cli run myscript.py -- watch "mymodule.func"
+peeka-cli run myscript.py arg1 arg2 -- trace "mymodule.func" -d 3
+peeka-cli run myscript.py -- watch "mymodule.func" --output-file out.jsonl
+```
+
+| Option          | Description                                    | Default |
+|-----------------|------------------------------------------------|---------|
+| `--output-file` | Write JSONL output to file instead of stdout   | —       |
+
 ## Condition Expressions
 
 Powered by [simpleeval](https://github.com/danthedeckie/simpleeval) for safe evaluation:
@@ -154,10 +190,12 @@ Powered by [simpleeval](https://github.com/danthedeckie/simpleeval) for safe eva
 params[0] > 100              # Positional argument check
 len(params) > 2              # Argument count
 kwargs.get('debug') == True  # Keyword argument check
-cost > 50                    # Execution time in ms (watch/trace)
+cost > 50                    # Execution time in ms (watch/trace only)
 str(x).startswith('prefix')  # String operations
 x + y > 10                   # Arithmetic
 ```
+
+Available variables: `params` (positional args list), `kwargs` (keyword args dict), `result` (return value, finish only), `cost` (duration ms, watch/trace only).
 
 **Security**: Only safe operations (comparisons, arithmetic, logic) are allowed. `eval`, `exec`, `__import__`, `open`, `compile` and reflection via `__class__`/`__subclasses__` are all blocked.
 
@@ -279,7 +317,7 @@ sudo setsebool -P deny_ptrace=off
 peeka-cli reset "module.func"
 
 # Remove all injected enhancements
-peeka-cli reset --all
+peeka-cli reset
 
 # If issues persist, detach and restart target process
 peeka-cli detach <pid>

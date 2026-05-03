@@ -91,6 +91,7 @@ peeka-cli watch "module.func" > observations.jsonl
 | `top`     | 函数级性能采样                 |
 | `reset`   | 移除所有注入的增强              |
 | `detach`  | 从目标进程分离                 |
+| `run`     | 从启动时注入并运行脚本          |
 
 ### watch
 
@@ -102,11 +103,11 @@ peeka-cli watch <pattern> [options]
 |--------------------|---------------------------------|--------|
 | `-x, --depth`      | 嵌套对象输出深度                 | 2      |
 | `-n, --times`      | 观测次数（-1 为无限）            | -1     |
-| `--condition`       | 条件表达式（支持 `cost` 变量）    | —      |
+| `--condition`       | 条件表达式（如 `params[0] > 100`、`cost > 50`） | —      |
 | `-b, --before`      | 在函数入口观测                   | false  |
 | `-s, --success`     | 仅在成功时观测                   | false  |
 | `-e, --exception`   | 仅在异常时观测                   | false  |
-| `-f, --finish`      | 观测成功和异常（默认）            | true   |
+| `-f, --finish`      | 观测完成时（成功或异常）          | true   |
 
 **pattern 格式**：`module.Class.method` 或 `module.function`
 
@@ -120,7 +121,7 @@ peeka-cli trace <pattern> [options]
 |--------------------|---------------------------------|--------|
 | `-d, --depth`      | 追踪深度（最大调用层数）          | 3      |
 | `-n, --times`      | 观测次数（-1 为无限）            | -1     |
-| `--condition`       | 条件表达式（支持 `cost` 变量）    | —      |
+| `--condition`       | 条件表达式（如 `cost > 50`）     | —      |
 | `--skip-builtin`    | 跳过内置函数和标准库              | true   |
 | `--min-duration`    | 最小耗时过滤（毫秒）             | 0      |
 
@@ -146,6 +147,41 @@ peeka-cli stack <pattern> [options]
 | `--condition`       | 条件表达式                       | —      |
 | `--depth`           | 调用栈深度限制                   | 10     |
 
+### reset
+
+```bash
+peeka-cli reset [pattern] [options]
+```
+
+| 参数          | 说明                              | 默认值 |
+|---------------|-----------------------------------|--------|
+| `-l, --list`  | 列出当前增强项，不执行重置         | false  |
+| `pattern`     | 可选 glob 模式，过滤目标函数       | —      |
+
+```bash
+peeka-cli reset                    # 重置所有增强
+peeka-cli reset "mymodule.*"       # 仅重置匹配的函数
+peeka-cli reset --list             # 列出当前活跃的增强项
+```
+
+### run
+
+从脚本启动时即注入 Peeka——适用于需要观测导入期代码或短生命周期脚本的场景。
+
+```bash
+peeka-cli run <script> [script_args] -- <command> [command_options]
+```
+
+```bash
+peeka-cli run myscript.py -- watch "mymodule.func"
+peeka-cli run myscript.py arg1 arg2 -- trace "mymodule.func" -d 3
+peeka-cli run myscript.py -- watch "mymodule.func" --output-file out.jsonl
+```
+
+| 参数            | 说明                              | 默认值 |
+|-----------------|-----------------------------------|--------|
+| `--output-file` | 将 JSONL 输出写入文件而非 stdout   | —      |
+
 ## 条件表达式
 
 基于 [simpleeval](https://github.com/danthedeckie/simpleeval) 实现安全求值：
@@ -154,10 +190,12 @@ peeka-cli stack <pattern> [options]
 params[0] > 100              # 位置参数检查
 len(params) > 2              # 参数数量
 kwargs.get('debug') == True  # 关键字参数检查
-cost > 50                    # 执行耗时（毫秒，watch/trace 支持）
+cost > 50                    # 执行耗时（毫秒，仅 watch/trace 支持）
 str(x).startswith('prefix')  # 字符串操作
 x + y > 10                   # 算术表达式
 ```
+
+可用变量：`params`（位置参数列表）、`kwargs`（关键字参数字典）、`result`（返回值，仅 finish 时）、`cost`（耗时毫秒，仅 watch/trace）。
 
 **安全机制**：仅允许安全操作（比较、算术、逻辑），`eval`、`exec`、`__import__`、`open`、`compile` 以及 `__class__`/`__subclasses__` 等反射操作均被阻止。
 
@@ -279,7 +317,7 @@ sudo setsebool -P deny_ptrace=off
 peeka-cli reset "module.func"
 
 # 移除所有注入的增强
-peeka-cli reset --all
+peeka-cli reset
 
 # 如果持续异常，断开连接并重启目标进程
 peeka-cli detach <pid>
