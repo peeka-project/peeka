@@ -2,11 +2,16 @@
 Unit tests for attach.py RTLD constants and injector utility functions.
 """
 
+import importlib
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+cli_main = importlib.import_module("peeka.cli.main")
 from peeka.core import attach
+from peeka.core import agent as agent_module
+from peeka.core.agent import PeekaAgent, _init_agent
 from peeka.core.attach import ProcessAttacher
 
 
@@ -138,11 +143,43 @@ class TestAttachFallbackDispatch:
         with patch("peeka.core.attach._has_injector", return_value=True), patch(
             "platform.system", return_value="Linux"
         ), patch.object(
+            attacher, "_get_target_python_version", return_value=(3, 9)
+        ), patch.object(
             attacher, "_inject_via_gdb_dlopen", return_value=True
         ) as mock_gdb_dlopen, patch.object(attacher, "_inject_via_lldb") as mock_lldb:
             assert attacher._attach_fallback() is True
             mock_gdb_dlopen.assert_called_once_with()
             mock_lldb.assert_not_called()
+
+    def test_linux_python38_skips_dlopen_and_uses_legacy_gdb(self):
+        """Python 3.8 should avoid dlopen path and go straight to legacy GDB."""
+        attacher = ProcessAttacher(12345)
+        with patch("peeka.core.attach._has_injector", return_value=True), patch(
+            "platform.system", return_value="Linux"
+        ), patch.object(
+            attacher, "_get_target_python_version", return_value=(3, 8)
+        ), patch.object(
+            attacher, "_inject_via_gdb_dlopen"
+        ) as mock_gdb_dlopen, patch.object(
+            attacher, "_check_gdb_available"
+        ), patch.object(
+            attacher, "_check_ptrace_permissions"
+        ), patch(
+            "peeka.core.attach._read_agent_code", return_value="print('agent')"
+        ), patch.object(
+            attacher, "_create_notify_server", return_value=54321
+        ), patch.object(
+            attacher, "_create_agent_script", return_value="/tmp/agent.py"
+        ), patch.object(
+            attacher, "_inject_via_gdb_legacy"
+        ) as mock_legacy, patch.object(
+            attacher, "_wait_for_agent_ready", return_value=True
+        ), patch.object(attacher, "_close_notify_server"), patch(
+            "os.path.exists", return_value=False
+        ):
+            assert attacher._attach_fallback() is True
+            mock_gdb_dlopen.assert_not_called()
+            mock_legacy.assert_called_once_with("/tmp/agent.py")
 
     def test_macos_with_injector_dispatches_lldb(self):
         """Darwin + injector available should use LLDB path."""
@@ -280,3 +317,43 @@ class TestCheckPythonVersionMatch:
         attacher = ProcessAttacher(12345)
         with patch.object(attacher, "_get_target_python_version", return_value=None):
             attacher._check_python_version_match()
+
+
+class TestAttachOutputIsolation:
+    def test_cmd_attach_suppresses_agent_startup_messages(self):
+        mock_attacher = MagicMock()
+        mock_attacher.attach.return_value = False
+
+        with patch.object(
+            cli_main, "ProcessAttacher", return_value=mock_attacher
+        ) as mock_attacher_cls, patch.object(cli_main.OutputFormatter, "status"), patch.object(
+            cli_main.OutputFormatter, "error"
+        ):
+            cli_main.cmd_attach(SimpleNamespace(pid=12345))
+
+        mock_attacher_cls.assert_called_once_with(
+            12345, suppress_startup_messages=True
+        )
+
+    def test_agent_handler_import_failures_do_not_print_tracebacks(self):
+        agent = PeekaAgent("session-1")
+
+        with patch.object(agent_module.traceback, "print_exc") as mock_print_exc, patch(
+            "importlib.import_module", side_effect=RuntimeError("boom")
+        ), patch.object(agent, "_emit_log") as mock_emit_log:
+            assert agent._get_handler("watch") is None
+
+        mock_emit_log.assert_called_once()
+        mock_print_exc.assert_not_called()
+
+    def test_init_agent_failures_write_session_log_without_stdio(self):
+        with patch("peeka.core.agent.PeekaAgent.start", side_effect=RuntimeError("boom")), patch(
+            "peeka.core.agent._write_session_log"
+        ) as mock_write_session_log, patch("builtins.print") as mock_print, patch(
+            "traceback.print_exc"
+        ) as mock_print_exc:
+            _init_agent("session-2")
+
+        mock_write_session_log.assert_called_once()
+        mock_print.assert_not_called()
+        mock_print_exc.assert_not_called()
