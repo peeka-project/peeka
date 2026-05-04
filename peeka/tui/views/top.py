@@ -9,6 +9,8 @@ from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Button, DataTable, Static
 from textual.worker import Worker, get_current_worker
 
+from peeka.tui.activity import make_activity_reporter
+
 if TYPE_CHECKING:
     from peeka.core.client import StreamingAgentClient
 
@@ -68,7 +70,10 @@ class TopView(Container):
         try:
             from peeka.core.client import StreamingAgentClient
 
-            self._own_client = StreamingAgentClient(self._socket_path)
+            self._own_client = StreamingAgentClient(
+                self._socket_path,
+                activity_reporter=make_activity_reporter(self.app, "top-data"),
+            )
             result = self._own_client.connect()
             if result.get("status") != "success":
                 self._log.warning(

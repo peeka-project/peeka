@@ -12,6 +12,7 @@ from textual.containers import Container, Vertical, Horizontal
 from textual.widgets import Static, DataTable, Input, Button
 from textual.worker import Worker, get_current_worker
 
+from peeka.tui.activity import make_activity_reporter
 from peeka.tui.completion import CompletionSource
 from peeka.tui.widgets.autocomplete_input import AutoCompleteInput
 
@@ -49,7 +50,10 @@ class MonitorView(Container):
             return
         try:
             from peeka.core.client import StreamingAgentClient
-            self._stream_client = StreamingAgentClient(self._socket_path)
+            self._stream_client = StreamingAgentClient(
+                self._socket_path,
+                activity_reporter=make_activity_reporter(self.app, "monitor-stream"),
+            )
             result = self._stream_client.connect()
             if result.get("status") != "success":
                 self._log.warning(

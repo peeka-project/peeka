@@ -25,6 +25,8 @@ from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Button, DataTable, RichLog, Static
 from textual.worker import Worker, get_current_worker
 
+from peeka.tui.activity import make_activity_reporter
+
 if TYPE_CHECKING:
     from peeka.core.client import StreamingAgentClient
 
@@ -122,18 +124,16 @@ class DashboardView(Container):
             return
         from peeka.core.client import StreamingAgentClient
 
-        self._own_client = StreamingAgentClient(self._socket_path)
+        self._own_client = StreamingAgentClient(
+            self._socket_path,
+            activity_reporter=make_activity_reporter(self.app, "dashboard-data"),
+        )
         result = self._own_client.connect()
         if result.get("status") != "success":
             error = result.get("error")
             self._log.warning("Dashboard dedicated client failed: %s", error)
-            self._record_client_activity(
-                "WARNING", f"dedicated data client failed: {error}"
-            )
             self._own_client = None
             return
-
-        self._record_client_activity("INFO", "dedicated data client connected")
 
     def _connect_agent_log_stream(self) -> None:
         """Create a dedicated StreamingAgentClient for agent log streaming."""
@@ -142,21 +142,21 @@ class DashboardView(Container):
         try:
             from peeka.core.client import StreamingAgentClient
 
-            self._stream_client = StreamingAgentClient(self._socket_path)
+            self._stream_client = StreamingAgentClient(
+                self._socket_path,
+                activity_reporter=make_activity_reporter(
+                    self.app, "dashboard-stream"
+                ),
+            )
             result = self._stream_client.connect()
             if result.get("status") != "success":
                 error = result.get("error")
                 self._log.warning("Agent log stream client failed: %s", error)
-                self._record_client_activity(
-                    "WARNING", f"activity stream failed: {error}"
-                )
                 self._stream_client = None
                 return
-            self._record_client_activity("INFO", "activity stream connected")
             self._start_log_worker()
         except Exception as e:
             self._log.warning("Agent log stream client error: %s", e)
-            self._record_client_activity("WARNING", f"activity stream error: {e}")
             self._stream_client = None
 
     def action_clear_agent_log(self) -> None:
