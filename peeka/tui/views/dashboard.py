@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from rich.text import Text
+from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
@@ -79,6 +80,7 @@ class DashboardView(Container):
         self._agent_history_loaded = False
         self._last_client_activity_seq = 0
         self._activity_listener_registered = False
+        self._activity_log_entries: List[Dict[str, Any]] = []
 
     def set_client(self, client: "StreamingAgentClient") -> None:
         self._client = client
@@ -166,6 +168,7 @@ class DashboardView(Container):
         """Clear the activity log display."""
         rich_log = self.query_one("#dash-agent-log", RichLog)
         rich_log.clear()
+        self._activity_log_entries.clear()
 
     def compose(self) -> ComposeResult:
         # -- Controls bar (status + refresh button) --
@@ -262,6 +265,10 @@ class DashboardView(Container):
         gc_table = self.query_one("#dash-gc-table", DataTable)
         gc_table.add_columns("Generation", "Collections", "Threshold", "Objects")
         gc_table.show_cursor = False
+
+    def on_resize(self, event: events.Resize) -> None:
+        """Reflow activity entries when the dashboard gets a real content width."""
+        self._rerender_activity_log()
 
     def on_unmount(self) -> None:
         self._stop_refresh_worker()
@@ -753,7 +760,42 @@ class DashboardView(Container):
             message: Log message text
             timestamp: Optional timestamp or timestamp string
         """
+        entry = {
+            "source": source,
+            "level": level,
+            "message": message,
+            "timestamp": timestamp,
+        }
+        self._activity_log_entries.append(entry)
+        if len(self._activity_log_entries) > self.MAX_LOG_LINES:
+            self._activity_log_entries = self._activity_log_entries[-self.MAX_LOG_LINES :]
+
+        self._render_activity_entry(entry)
+
+    def _activity_log_render_width(self, rich_log: RichLog) -> int:
+        """Return the current render width, falling back only before layout."""
+        current_width = rich_log.region.width
+        if current_width > 0:
+            return current_width
+        return self.ACTIVITY_LOG_MIN_RENDER_WIDTH
+
+    def _rerender_activity_log(self) -> None:
+        """Re-render cached activity entries using the current panel width."""
+        if not self.is_mounted:
+            return
+
         rich_log = self.query_one("#dash-agent-log", RichLog)
+        rich_log.clear()
+        for entry in self._activity_log_entries[-self.MAX_LOG_LINES :]:
+            self._render_activity_entry(entry)
+
+    def _render_activity_entry(self, entry: Dict[str, Any]) -> None:
+        """Render one cached activity entry to the RichLog."""
+        rich_log = self.query_one("#dash-agent-log", RichLog)
+        source = str(entry.get("source", ""))
+        level = str(entry.get("level", "INFO"))
+        message = str(entry.get("message", ""))
+        timestamp = entry.get("timestamp", "")
 
         # Choose color based on log level
         style_map = {
@@ -785,9 +827,6 @@ class DashboardView(Container):
         text.append(level_text)
         text.append(message_text)
 
-        render_width = max(
-            rich_log.region.width,
-            self.ACTIVITY_LOG_MIN_RENDER_WIDTH,
-        )
+        render_width = self._activity_log_render_width(rich_log)
         rich_log.write(text, width=render_width)
         # Auto-scroll is handled automatically by RichLog when auto_scroll=True
