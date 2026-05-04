@@ -282,6 +282,35 @@ class TestDashboardStyles:
 
     @pytest.mark.asyncio
     @pytest.mark.tui
+    async def test_dashboard_activity_log_keeps_fitting_entries_on_one_line(self):
+        """Activity entries that fit the visible log width stay on one line."""
+        class DashboardLayoutApp(App[None]):
+            CSS_PATH = str(STYLE_PATH)
+
+            def compose(self) -> ComposeResult:
+                yield DashboardView(pid=12345)
+
+        app = DashboardLayoutApp()
+        async with app.run_test(size=(140, 24)) as pilot:
+            await pilot.pause()
+
+            dashboard = app.query_one("DashboardView", DashboardView)
+            activity_log = app.query_one("#dash-agent-log", RichLog)
+
+            dashboard._write_activity_entry(
+                "agent",
+                "INFO",
+                "[peeka Agent] Ready for commands",
+                1714972801.0,
+            )
+            await pilot.pause()
+
+            rendered = [line.text for line in activity_log.lines]
+            assert len(rendered) == 1
+            assert "Ready for commands" in rendered[0]
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
     async def test_dashboard_runtime_panel_is_focusable(self):
         """Dashboard runtime panel can receive focus even though it has static text."""
         class DashboardLayoutApp(App[None]):
