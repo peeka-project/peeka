@@ -16,6 +16,9 @@ from typing import Any, Callable, Dict, Generator, Optional
 logger = logging.getLogger(__name__)
 
 _DEFAULT_CLIENT_INSTANCE_ID = f"cli-{uuid.uuid4().hex[:6]}"
+_OBS_PREFIX = b"OBS:"
+_LOG_PREFIX = b"LOG:"
+_CONTROL_PREFIXES = (_OBS_PREFIX, _LOG_PREFIX)
 
 
 def _build_client_info(
@@ -53,7 +56,13 @@ class AgentClient:
         return payload
 
     def send_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
-        """Send a JSON command and return the agent response."""
+        """Send a JSON command and return the agent response.
+
+        Agent-side activity and observations are broadcast to every open
+        connection, including the one waiting for the immediate response.
+        Skip those control frames until the length-prefixed JSON response
+        arrives.
+        """
         if not Path(self.socket_path).exists():
             return {
                 "status": "error",
@@ -70,7 +79,7 @@ class AgentClient:
                 sock.sendall(len(payload).to_bytes(4, "big"))
                 sock.sendall(payload)
 
-                length_bytes = self._recv_exact(sock, 4)
+                length_bytes = self._recv_response_header(sock)
                 if not length_bytes:
                     raise TimeoutError("No response length received")
 
@@ -105,6 +114,20 @@ class AgentClient:
             remaining -= len(chunk)
         return b"".join(chunks)
 
+    @classmethod
+    def _recv_response_header(cls, sock: socket.socket) -> bytes:
+        """Read the next JSON response length, skipping broadcast frames."""
+        length_bytes = cls._recv_exact(sock, 4)
+        while length_bytes in _CONTROL_PREFIXES:
+            frame_len_bytes = cls._recv_exact(sock, 4)
+            if not frame_len_bytes:
+                return b""
+            frame_len = int.from_bytes(frame_len_bytes, "big")
+            if frame_len and not cls._recv_exact(sock, frame_len):
+                return b""
+            length_bytes = cls._recv_exact(sock, 4)
+        return length_bytes
+
 
 class StreamingAgentClient:
     """
@@ -114,8 +137,8 @@ class StreamingAgentClient:
     The agent sends observations with "OBS:" prefix followed by length-prefixed JSON.
     """
 
-    OBS_PREFIX = b"OBS:"
-    LOG_PREFIX = b"LOG:"
+    OBS_PREFIX = _OBS_PREFIX
+    LOG_PREFIX = _LOG_PREFIX
     PREFIX_LEN = 4
 
     def __init__(

@@ -144,6 +144,53 @@ class TestAgentClientRecvExact:
             if os.path.exists(sock_path):
                 os.unlink(sock_path)
 
+    def test_send_command_skips_broadcast_frames_before_response(self, tmp_path):
+        """One-shot clients should ignore LOG/OBS frames before responses."""
+        sock_path = str(tmp_path / "test.sock")
+
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server.bind(sock_path)
+        server.listen(1)
+
+        try:
+
+            def send_response():
+                conn, _ = server.accept()
+                length_bytes = conn.recv(4)
+                if length_bytes:
+                    length = int.from_bytes(length_bytes, "big")
+                    conn.recv(length)
+
+                log_payload = json.dumps(
+                    {"type": "log", "message": "client connected"}
+                ).encode()
+                obs_payload = json.dumps(
+                    {"type": "observation", "value": 1}
+                ).encode()
+                response = json.dumps({"status": "ok"}).encode()
+                for prefix, payload in (
+                    (b"LOG:", log_payload),
+                    (b"OBS:", obs_payload),
+                    (b"", response),
+                ):
+                    if prefix:
+                        conn.sendall(prefix)
+                    conn.sendall(len(payload).to_bytes(4, "big"))
+                    conn.sendall(payload)
+                conn.close()
+
+            worker = threading.Thread(target=send_response, daemon=True)
+            worker.start()
+
+            client = AgentClient(sock_path, timeout=5.0)
+            result = client.send_command({"cmd": "test"})
+
+            assert result["status"] == "ok"
+        finally:
+            server.close()
+            if os.path.exists(sock_path):
+                os.unlink(sock_path)
+
 
 class TestStreamingAgentClientConnect:
     """Test StreamingAgentClient connection handling."""
