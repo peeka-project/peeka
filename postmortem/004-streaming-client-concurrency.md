@@ -5,13 +5,14 @@
 | **话题** | StreamingAgentClient 并发访问、专用连接策略与协议同步问题（含 BrokenPipe） |
 | **受影响组件** | core/client, tui views |
 | **最高严重级别** | SEV-1 (High) |
-| **事故次数** | 6 |
-| **时间跨度** | 2026-02-28 至 2026-03-10 |
+| **事故次数** | 7 |
+| **时间跨度** | 2026-02-28 至 2026-05-04 |
 
 ## 案例索引
 
 | # | 事故 | 严重级别 | 日期 |
 |---|------|----------|------|
+| [#7](#事故-7streaming-client-连接标识缺失导致活动日志源歧义) | Streaming Client 连接标识缺失导致活动日志源歧义 | SEV-3 | 2026-05-04 |
 | [#6](#事故-6nframetrackstop-右对齐失败css-特异性) | nframe/Track/Stop 右对齐失败(CSS 特异性) | SEV-3 | 2026-03-10 |
 | [#5](#事故-5请求-响应视图重新引入专用客户端以抑制竞态) | 请求-响应视图重新引入专用客户端以抑制竞态 | SEV-1 | 2026-03-03 |
 | [#4](#事故-4请求-响应视图误用专用客户端造成资源浪费) | 请求-响应视图误用专用客户端造成资源浪费 | SEV-3 | 2026-03-03 |
@@ -24,6 +25,66 @@
 ## 话题概述
 
 该话题体现了“共享连接 + 多线程 + 流式帧”组合下的系统性复杂度：读取竞争会破坏帧边界，发送并发会破坏长度前缀协议，异常后未排空 OBS 帧会导致后续请求响应错位；同时“专用客户端是否必要”在不同视图类型间被反复修正，反映连接模型边界在实践中逐步澄清。
+
+---
+
+## 事故 #7：Streaming Client 连接标识缺失导致活动日志源歧义
+
+> **Tag 范围**：`v0.1.8..v0.1.9` | **严重级别**：SEV-3 | **日期**：2026-05-04
+> **相关提交**：`a90d080 fix(core): identify streaming clients on connect`, `965ff22 feat(core): label clients with stable sources`, `b1b0412 feat(tui): enrich activity diagnostics`
+
+### 概要
+
+活动日志（activity log）中无法区分多个 streaming client 的来源，不同视图的连接事件显示为相同标识。
+
+### 根因分析
+
+#### 类别
+Observability Gap
+
+#### 分析
+所有 `StreamingAgentClient` 实例在连接时记录的活动事件使用相同的 source 标识，用户无法分辨：
+1. `watch` 视图的连接 vs `trace` 视图的连接
+2. 同一视图的多次重连
+3. 不同 tab 中相同视图的独立连接
+
+### 复现步骤
+1. 打开 `watch` 视图和 `trace` 视图
+2. 两者都建立 streaming 连接
+3. 在 activity log 中查看 — 两个连接事件无区别
+
+### 修复详情
+
+```python
+# TUI 创建客户端时携带稳定的 client_info
+self._stream_client = StreamingAgentClient(
+    self._socket_path,
+    activity_reporter=make_activity_reporter(self.app, "watch-stream"),
+    client_info=make_client_info(self.app, "watch-stream"),
+)
+
+# StreamingAgentClient 在 connect() 时发送内部 hello 帧
+def _identify_connection(self) -> Dict[str, Any]:
+    return self.send_command({"type": "client", "action": "hello"})
+
+# Agent 端提取 _client 元数据，并在 activity log 中使用稳定 label
+raw_command = json.loads(data.decode("utf-8"))
+client_info = self._extract_client_info(raw_command)
+client_label = self._format_client_label(client_id, client_info)
+```
+
+### 经验教训
+
+1. **诊断系统需要可观测性而非可调试性** — 用户需要在运行时就知道"是谁在做什么"，而不是事后 debug
+2. **多实例场景必须有标识** — 只要一个类可能被实例化多次，就需要实例标识
+3. **source 应该在创建点设置** — 下游不应该猜测自己属于哪个业务场景
+
+### 预防措施
+
+- [x] 为 `StreamingAgentClient` 增加可选 `client_info`
+- [x] TUI 流式视图在创建客户端时传递 `make_client_info(...)`
+- [x] Agent 端提取 `_client` 元数据并在 activity log 中显示 source
+- [x] 增加 client identity 与 hello 帧的单元测试
 
 ---
 

@@ -5,13 +5,14 @@
 | **话题** | 进程 attach 就绪探测、会话文件清理、accept 循环时序与 agent 线程生命周期问题 |
 | **受影响组件** | core/attach, core/agent, tui process attach flow |
 | **最高严重级别** | SEV-0 (Critical) |
-| **事故次数** | 5 |
-| **时间跨度** | 2026-02-26 至 2026-03-01 |
+| **事故次数** | 6 |
+| **时间跨度** | 2026-02-26 至 2026-05-03 |
 
 ## 案例索引
 
 | # | 事故 | 严重级别 | 日期 |
 |---|------|----------|------|
+| [#6](#事故-6attach-错误传播改进与-gdb-附加状态解析) | attach 错误传播改进与 GDB 附加状态解析 | SEV-2 | 2026-05-03 |
 | [#5](#事故-5首次-attach-间歇性超时) | 首次 attach 间歇性超时 | SEV-2 | 2026-03-01 |
 | [#4](#事故-4快速-attachdetach-后-connection-refused) | 快速 attach/detach 后 Connection refused | SEV-1 | 2026-03-01 |
 | [#3](#事故-3多次-attachdetach-线程泄漏导致资源耗尽) | 多次 attach/detach 线程泄漏导致资源耗尽 | SEV-0 | 2026-03-01 |
@@ -23,6 +24,72 @@
 ## 话题概述
 
 该话题集中暴露 attach 与 agent 的“就绪判定—运行—清理”全链路时序问题：仅依赖 `.ready` 文件会误判就绪；accept 线程 event 设置过早导致连接窗口竞态；首次冷启动导入耗时与固定超时冲突；rapid attach 场景出现脚本清理时序与 stale 文件误判；最终在多次 attach/detach 循环中演化为线程泄漏（SEV-0）。
+
+---
+
+## 事故 #6：attach 错误传播改进与 GDB 附加状态解析
+
+> **Tag 范围**：`v0.1.8..v0.1.9` | **严重级别**：SEV-2 | **日期**：2026-05-03
+> **相关提交**：`88da13e fix(core): improve attach reliability and error surfacing`
+
+### 概要
+
+attach 失败时错误信息不足，用户难以定位是 GDB 问题、Python 版本问题还是进程权限问题。
+
+### 根因分析
+
+#### 类别
+Observability Gap
+
+#### 分析
+原始实现中 GDB attach 失败直接抛出通用异常，缺少：
+1. GDB 子进程 exit code 捕获
+2. GDB stdout/stderr 输出透传
+3. Python 3.14 PEP 768 与 GDB fallback 路径的状态区分
+
+### 复现步骤
+1. 对无 ptrace 权限的进程执行 attach
+2. 观察错误：仅"attach failed"，无具体原因
+
+### 修复详情
+
+```python
+# Linux fallback 根据目标 Python 版本选择注入路径：
+# Python 3.8 及以下优先 legacy GDB，避免 dlopen 路径的线程调度问题。
+target_version = self._get_target_python_version()
+prefer_legacy_gdb = (
+    system_name == "Linux"
+    and target_version is not None
+    and target_version <= (3, 8)
+)
+
+if not prefer_legacy_gdb:
+    try:
+        return self._inject_via_gdb_dlopen()
+    except (TimeoutError, RuntimeError, OSError) as e:
+        logger.warning("GDB dlopen injection failed (%s), falling back to legacy GDB", e)
+
+# GDB/LLDB 子进程失败时在异常信息中携带 return code、stderr、stdout。
+if result.returncode != 0:
+    raise RuntimeError(
+        f"GDB injection failed (exit code {result.returncode}):\n"
+        f"stderr: {result.stderr}\n"
+        f"stdout: {result.stdout}"
+    )
+```
+
+### 经验教训
+
+1. **错误传播是调试体验的核心** — 用户遇到 attach 失败时首先需要知道"是我的环境问题吗"
+2. **跨层错误需要结构化** — CLI 层需要结构化异常来格式化友好输出，而不是字符串拼接
+3. **fallback 路径需要状态可见** — 用户需要知道当前使用的是 PEP 768 还是 GDB
+
+### 预防措施
+
+- [x] Python 3.8 及以下优先使用 legacy GDB fallback
+- [x] GDB/LLDB 失败信息包含 exit code、stderr、stdout
+- [x] CLI attach 使用 `suppress_startup_messages=True` 保持 JSONL 输出纯净
+- [x] TUI attach 失败时显示包含 traceback 的错误弹窗
 
 ---
 
