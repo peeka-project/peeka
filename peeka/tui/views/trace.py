@@ -445,7 +445,7 @@ class TraceView(Container):
                 break
 
             obs_watch_id = observation.get("watch_id")
-            if obs_watch_id and obs_watch_id != watch_id:
+            if obs_watch_id != watch_id:
                 continue
 
             # Skip non-trace observations (no call_tree)

@@ -1,9 +1,7 @@
 """Tests for WatchView - streaming data flow and error handling."""
 
-import asyncio
-
 import pytest
-from textual.widgets import DataTable, RichLog
+from textual.widgets import DataTable
 
 from peeka.tui.app import PeekaApp
 from peeka.tui.screens.main import MainScreen
@@ -252,6 +250,60 @@ class TestWatchView:
             # Verify watch entry created
             table = watch_view.query_one("#watch-table", DataTable)
             assert table.row_count == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_watch_stream_ignores_log_frames(self, mock_client_factory):
+        """Agent log frames on the stream should not render as unknown observations."""
+        observations = [
+            {
+                "type": "log",
+                "level": "INFO",
+                "message": "[peeka Agent] client disconnected",
+            },
+            {
+                "type": "observation",
+                "watch_id": "w1",
+                "func_name": "module.func",
+                "params": [42],
+                "kwargs": {},
+                "returnObj": 84,
+                "cost": 0.3,
+                "success": True,
+                "count": 1,
+            },
+        ]
+        client = mock_client_factory(
+            responses={"watch": {"status": "success", "watch_id": "w1"}},
+        )
+        stream_client = mock_client_factory(observations=observations)
+        client.connect()
+        stream_client.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            watch_view = app.screen.query_one("WatchView", WatchView)
+            watch_view.set_client(client)
+            watch_view._stream_client = stream_client
+
+            pattern_input = watch_view.query_one("#watch-pattern", AutoCompleteInput)
+            pattern_input.value = "module.func"
+
+            await watch_view._start_watch()
+            await pilot.pause()
+            await pilot.pause()
+
+            table = watch_view.query_one("#observations-table", DataTable)
+            assert table.row_count == 1
+            row = table.get_row_at(0)
+            assert "module.func" in str(row)
+            assert "unknown" not in str(row)
 
     @pytest.mark.asyncio
     @pytest.mark.tui

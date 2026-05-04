@@ -252,7 +252,7 @@ class TestDashboardStyles:
             activity_panel = app.query_one("#dash-agent-log-section", Vertical)
 
             assert activity_log.wrap is True
-            assert activity_log.min_width == 1
+            assert activity_log.min_width == DashboardView.ACTIVITY_LOG_MIN_RENDER_WIDTH
             assert activity_log.region.x >= activity_panel.region.x
             assert activity_log.region.width <= activity_panel.region.width
             assert activity_panel.region.x + activity_panel.region.width <= 80
@@ -275,7 +275,7 @@ class TestDashboardStyles:
             activity_panel = app.query_one("#dash-agent-log-section", Vertical)
 
             assert activity_log.wrap is True
-            assert activity_log.min_width == 1
+            assert activity_log.min_width == DashboardView.ACTIVITY_LOG_MIN_RENDER_WIDTH
             assert activity_log.region.x >= activity_panel.region.x
             assert activity_log.region.width <= activity_panel.region.width
             assert activity_panel.region.x + activity_panel.region.width <= 140

@@ -60,6 +60,7 @@ class DashboardView(Container):
     ]
 
     MAX_LOG_LINES = 1000
+    ACTIVITY_LOG_MIN_RENDER_WIDTH = 32
 
     def __init__(self, pid: int) -> None:
         super().__init__()
@@ -214,7 +215,7 @@ class DashboardView(Container):
                 max_lines=self.MAX_LOG_LINES,
                 auto_scroll=True,
                 wrap=True,
-                min_width=1,
+                min_width=self.ACTIVITY_LOG_MIN_RENDER_WIDTH,
             ),
             id="dash-agent-log-section",
             classes="panel panel--stream",
@@ -784,5 +785,9 @@ class DashboardView(Container):
         text.append(level_text)
         text.append(message_text)
 
-        rich_log.write(text)
+        render_width = max(
+            rich_log.region.width,
+            self.ACTIVITY_LOG_MIN_RENDER_WIDTH,
+        )
+        rich_log.write(text, width=render_width)
         # Auto-scroll is handled automatically by RichLog when auto_scroll=True

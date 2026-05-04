@@ -524,7 +524,7 @@ class WatchView(Container):
                 break
 
             obs_watch_id = observation.get("watch_id")
-            if obs_watch_id and obs_watch_id != watch_id:
+            if obs_watch_id != watch_id:
                 continue
 
             local_count += 1
