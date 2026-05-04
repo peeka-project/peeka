@@ -9,9 +9,10 @@ import threading
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Vertical, Horizontal
-from textual.widgets import Static, DataTable, Input, Button, Tree
+from textual.widgets import Static, DataTable, Button, Tree
 from textual.worker import Worker, get_current_worker
 
+from peeka.tui.activity import make_activity_reporter
 from peeka.tui.completion import CompletionSource
 from peeka.tui.widgets.autocomplete_input import AutoCompleteInput
 
@@ -55,7 +56,10 @@ class StackView(Container):
         try:
             from peeka.core.client import StreamingAgentClient
 
-            self._stream_client = StreamingAgentClient(self._socket_path)
+            self._stream_client = StreamingAgentClient(
+                self._socket_path,
+                activity_reporter=make_activity_reporter(self.app, "stack-stream"),
+            )
             result = self._stream_client.connect()
             if result.get("status") != "success":
                 self._log.warning("Stack stream client failed: %s", result.get("error"))

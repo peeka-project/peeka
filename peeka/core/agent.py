@@ -33,6 +33,28 @@ def _write_session_log(
 class PeekaAgent:
     """Agent running inside target process"""
 
+    _QUIET_COMMAND_ACTIONS = {
+        ("complete", ""),
+        ("logger", "get"),
+        ("logger", "list"),
+        ("memory", "gc"),
+        ("memory", "overview"),
+        ("memory", "top"),
+        ("monitor", "status"),
+        ("reset", "list"),
+        ("sc", ""),
+        ("sm", ""),
+        ("stack", "status"),
+        ("thread", "detail"),
+        ("thread", "list"),
+        ("top", "snapshot"),
+        ("trace", "status"),
+        ("vmtool", "count"),
+        ("vmtool", "get"),
+        ("vmtool", "instances"),
+        ("watch", "status"),
+    }
+
     # Lazy command registry: (module_path, class_name) tuples.
     # Commands are imported and instantiated on first dispatch,
     # dramatically reducing startup time under GDB injection.
@@ -124,6 +146,54 @@ class PeekaAgent:
         for cmd_type in list(self._COMMAND_REGISTRY):
             self._get_handler(cmd_type)
 
+    @staticmethod
+    def _normalize_action(command: Dict[str, Any]) -> str:
+        """Return a normalized action name for logging decisions."""
+        action = command.get("action")
+        if action is None:
+            return ""
+        return str(action).lower()
+
+    def _should_log_command(self, command: Dict[str, Any]) -> bool:
+        """Return True when a command is worth surfacing in agent activity logs."""
+        cmd_type = str(command.get("type", "unknown"))
+        action = self._normalize_action(command)
+        return (cmd_type, action) not in self._QUIET_COMMAND_ACTIONS
+
+    def _summarize_command(self, command: Dict[str, Any]) -> str:
+        """Build a concise command summary for agent-side diagnostics."""
+        cmd_type = str(command.get("type", "unknown"))
+        action = self._normalize_action(command) or "execute"
+        details = []
+
+        for key in ("pattern", "watch_id", "top_id", "logger", "level", "target"):
+            value = command.get(key)
+            if value not in (None, ""):
+                details.append(f"{key}={value}")
+
+        if "interval" in command:
+            details.append(f"interval={command.get('interval')}")
+        if "times" in command:
+            details.append(f"times={command.get('times')}")
+
+        summary = f"{cmd_type}/{action}"
+        if details:
+            summary += " " + " ".join(details[:4])
+        return summary
+
+    @staticmethod
+    def _summarize_result(result: Dict[str, Any]) -> str:
+        """Build a concise result summary for command completion logs."""
+        details = []
+        for key in ("watch_id", "top_id", "message", "observation_count"):
+            value = result.get(key)
+            if value not in (None, "", []):
+                details.append(f"{key}={value}")
+
+        if not details:
+            return "success"
+        return "success " + " ".join(details[:3])
+
     def start(self) -> None:
         try:
             self.server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -177,7 +247,7 @@ class PeekaAgent:
                 self._client_counter += 1
                 threading.Thread(
                     target=self._handle_client,
-                    args=(conn,),
+                    args=(conn, self._client_counter),
                     name=f"peeka-agent-client-{self._client_counter}",
                     daemon=True,
                 ).start()
@@ -192,9 +262,15 @@ class PeekaAgent:
                     msg = f"[peeka Agent] Accept error: {e}"
                     self._emit_log("ERROR", msg, traceback.format_exc())
 
-    def _handle_client(self, conn: socket.socket) -> None:
+    def _handle_client(self, conn: socket.socket, client_id: int) -> None:
         with self._connections_lock:
             self._client_connections.append(conn)
+            connection_total = len(self._client_connections)
+
+        self._emit_log(
+            "INFO",
+            f"[peeka Agent] client#{client_id} connected ({connection_total} total)",
+        )
 
         try:
             while True:
@@ -214,7 +290,28 @@ class PeekaAgent:
                     break
 
                 command = json.loads(data.decode("utf-8"))
+                should_log = self._should_log_command(command)
+                command_summary = self._summarize_command(command)
+                if should_log:
+                    self._emit_log(
+                        "INFO",
+                        f"[peeka Agent] client#{client_id} -> {command_summary}",
+                    )
                 result = self._execute_command(command)
+
+                if result.get("status") == "error":
+                    self._emit_log(
+                        "ERROR",
+                        f"[peeka Agent] client#{client_id} {command_summary} failed: "
+                        f"{result.get('error', 'unknown error')}",
+                        result.get("traceback"),
+                    )
+                elif should_log:
+                    self._emit_log(
+                        "INFO",
+                        f"[peeka Agent] client#{client_id} {command_summary} "
+                        f"{self._summarize_result(result)}",
+                    )
 
                 response = json.dumps(result).encode("utf-8")
                 response_frame = len(response).to_bytes(4, "big") + response
@@ -228,7 +325,12 @@ class PeekaAgent:
             with self._connections_lock:
                 if conn in self._client_connections:
                     self._client_connections.remove(conn)
+                connection_total = len(self._client_connections)
             conn.close()
+            self._emit_log(
+                "INFO",
+                f"[peeka Agent] client#{client_id} disconnected ({connection_total} total)",
+            )
 
     def _execute_command(self, command: dict) -> dict:
         cmd_type = command.get("type", "")

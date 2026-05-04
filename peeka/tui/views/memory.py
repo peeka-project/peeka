@@ -19,6 +19,8 @@ from textual.widgets import (
     Tree,
 )
 
+from peeka.tui.activity import make_activity_reporter
+
 if TYPE_CHECKING:
     from peeka.core.client import StreamingAgentClient
 
@@ -105,7 +107,10 @@ class MemoryView(Container):
             return
         from peeka.core.client import StreamingAgentClient
 
-        self._own_client = StreamingAgentClient(self._socket_path)
+        self._own_client = StreamingAgentClient(
+            self._socket_path,
+            activity_reporter=make_activity_reporter(self.app, "memory-data"),
+        )
         result = self._own_client.connect()
         if result.get("status") != "success":
             self._log.warning("Memory dedicated client failed: %s", result.get("error"))

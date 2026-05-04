@@ -10,7 +10,7 @@ import json
 import socket
 import threading
 from pathlib import Path
-from typing import Any, Dict, Generator, Optional
+from typing import Any, Callable, Dict, Generator, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -87,34 +87,73 @@ class StreamingAgentClient:
     LOG_PREFIX = b"LOG:"
     PREFIX_LEN = 4
 
-    def __init__(self, socket_path: str, timeout: Optional[float] = None):
+    def __init__(
+        self,
+        socket_path: str,
+        timeout: Optional[float] = None,
+        activity_reporter: Optional[Callable[[str, str], None]] = None,
+    ):
         self.socket_path = socket_path
         self.timeout = timeout
         self._sock: Optional[socket.socket] = None
         self._buffer = b""
         self._stop_event = threading.Event()
         self._send_lock = threading.Lock()
+        self._activity_reporter = activity_reporter
+
+    @staticmethod
+    def _summarize_command(command: Dict[str, Any]) -> str:
+        """Build a concise command summary for client-side diagnostics."""
+        cmd_type = str(command.get("type", "unknown"))
+        action_value = command.get("action")
+        action = str(action_value).lower() if action_value is not None else "execute"
+        details = []
+
+        for key in ("pattern", "watch_id", "top_id", "logger", "target"):
+            value = command.get(key)
+            if value not in (None, ""):
+                details.append(f"{key}={value}")
+
+        summary = f"{cmd_type}/{action}"
+        if details:
+            summary += " " + " ".join(details[:3])
+        return summary
+
+    def _report_activity(self, level: str, message: str) -> None:
+        """Emit a client-side activity entry when a reporter is configured."""
+        if not self._activity_reporter:
+            return
+        try:
+            self._activity_reporter(level, message)
+        except Exception:
+            logger.debug("activity reporter failed", exc_info=True)
 
     def connect(self) -> Dict[str, Any]:
         """Connect to the agent socket."""
         if not Path(self.socket_path).exists():
-            return {
+            result = {
                 "status": "error",
                 "error": f"Agent socket not found: {self.socket_path}",
             }
+            self._report_activity("ERROR", f"connect failed: {result['error']}")
+            return result
 
         try:
             self._sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             self._sock.settimeout(self.timeout if self.timeout else 1.0)
             self._sock.connect(self.socket_path)
+            self._stop_event.clear()
+            self._report_activity("INFO", "connected")
             return {"status": "success"}
         except Exception as e:
             logger.debug("Connection to %s failed: %s", self.socket_path, e)
             self._sock = None
+            self._report_activity("ERROR", f"connect failed: {e}")
             return {"status": "error", "error": str(e)}
 
     def disconnect(self) -> None:
         """Close the connection and signal streaming loops to stop."""
+        had_socket = self._sock is not None
         self._stop_event.set()
         if self._sock:
             try:
@@ -127,6 +166,8 @@ class StreamingAgentClient:
                 pass
             self._sock = None
         self._buffer = b""
+        if had_socket:
+            self._report_activity("INFO", "disconnected")
 
     def send_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
         """Send a command and receive the immediate response.
@@ -142,10 +183,13 @@ class StreamingAgentClient:
         send/receive cycle uses the socket at a time.
         """
         if not self._sock:
+            summary = self._summarize_command(command)
+            self._report_activity("ERROR", f"{summary} failed: not connected")
             return {"status": "error", "error": "Not connected"}
 
         with self._send_lock:
             try:
+                summary = self._summarize_command(command)
                 payload = json.dumps(command).encode("utf-8")
                 self._sock.sendall(len(payload).to_bytes(4, "big"))
                 self._sock.sendall(payload)
@@ -155,6 +199,7 @@ class StreamingAgentClient:
 
                 length_bytes = self._recv_exact(4)
                 if not length_bytes:
+                    self._report_activity("ERROR", f"{summary} failed: no response received")
                     return {"status": "error", "error": "No response received"}
 
                 # After _recv_exact we may have read more data into _buffer.
@@ -163,26 +208,42 @@ class StreamingAgentClient:
                     # We just consumed the prefix — read & discard the payload
                     obs_len_bytes = self._recv_exact(4)
                     if not obs_len_bytes:
+                        self._report_activity("ERROR", f"{summary} failed: truncated frame")
                         return {"status": "error", "error": "Truncated frame"}
                     obs_len = int.from_bytes(obs_len_bytes, "big")
                     obs_data = self._recv_exact(obs_len)
                     if not obs_data:
+                        self._report_activity(
+                            "ERROR", f"{summary} failed: truncated payload"
+                        )
                         return {"status": "error", "error": "Truncated payload"}
                     # Try reading the next 4 bytes (hopefully the real response)
                     self._drain_obs_frames()
                     length_bytes = self._recv_exact(4)
                     if not length_bytes:
+                        self._report_activity(
+                            "ERROR", f"{summary} failed: no response received"
+                        )
                         return {"status": "error", "error": "No response received"}
 
                 length = int.from_bytes(length_bytes, "big")
                 data = self._recv_exact(length)
                 if not data:
-                    return {"status": "error", "error": "Incomplete response"}
+                    result = {"status": "error", "error": "Incomplete response"}
+                    self._report_activity("ERROR", f"{summary} failed: incomplete response")
+                    return result
 
-                return json.loads(data.decode("utf-8"))
+                result = json.loads(data.decode("utf-8"))
+                if result.get("status") == "error":
+                    self._report_activity(
+                        "ERROR",
+                        f"{summary} failed: {result.get('error', 'unknown error')}",
+                    )
+                return result
 
             except Exception as e:
                 logger.debug("send_command error: %s", e)
+                self._report_activity("ERROR", f"{summary} failed: {e}")
                 return {"status": "error", "error": str(e)}
     def stream_observations(self) -> Generator[Dict[str, Any], None, None]:
         """
@@ -198,6 +259,8 @@ class StreamingAgentClient:
             try:
                 chunk = self._sock.recv(4096)
                 if not chunk:
+                    if not self._stop_event.is_set():
+                        self._report_activity("WARNING", "observation stream closed by peer")
                     break
 
                 self._buffer += chunk
@@ -210,9 +273,13 @@ class StreamingAgentClient:
 
             except socket.timeout:
                 continue
-            except OSError:
+            except OSError as e:
+                if not self._stop_event.is_set():
+                    self._report_activity("WARNING", f"observation stream error: {e}")
                 break
             except Exception:
+                if not self._stop_event.is_set():
+                    self._report_activity("WARNING", "observation stream crashed unexpectedly")
                 logger.debug("Unexpected error in stream_observations", exc_info=True)
                 break
 

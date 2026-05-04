@@ -10,6 +10,7 @@ from textual.containers import Container
 from textual.screen import Screen
 from textual.widgets import Header, Footer, TabbedContent, TabPane
 
+from peeka.tui.activity import make_activity_reporter
 from peeka.tui.views.dashboard import DashboardView
 from peeka.tui.views.inspect import InspectView
 from peeka.tui.views.logger import LoggerView
@@ -123,7 +124,10 @@ class MainScreen(Screen):
 
         for attempt in range(max_retries):
             try:
-                self._client = StreamingAgentClient(self.socket_path)
+                self._client = StreamingAgentClient(
+                    self.socket_path,
+                    activity_reporter=make_activity_reporter(self.app, "main"),
+                )
                 result = self._client.connect()
 
                 if result.get("status") == "success":

@@ -4,11 +4,9 @@ Unit tests for peeka.core.client boundary conditions
 
 import json
 import socket
-import tempfile
 import threading
 import time
 import os
-import pytest
 
 from peeka.core.client import AgentClient, StreamingAgentClient
 
@@ -295,6 +293,107 @@ class TestStreamingAgentClientContextManager:
             # After exiting context, should be disconnected
             assert client._sock is None
         finally:
+            server.close()
+            if os.path.exists(sock_path):
+                os.unlink(sock_path)
+
+
+class TestStreamingAgentClientActivityReporting:
+    """Test client-side activity reporting hooks."""
+
+    def test_connect_failure_reports_activity(self):
+        """Missing sockets should emit a client activity error."""
+        events = []
+        client = StreamingAgentClient(
+            "/nonexistent/socket.sock",
+            activity_reporter=lambda level, message: events.append((level, message)),
+        )
+
+        result = client.connect()
+
+        assert result["status"] == "error"
+        assert any("connect failed" in message for _, message in events)
+
+    def test_send_command_error_response_reports_activity(self, tmp_path):
+        """Agent error responses should be mirrored into client activity logs."""
+        sock_path = str(tmp_path / "test.sock")
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server.bind(sock_path)
+        server.listen(1)
+        events = []
+        client = None
+
+        try:
+
+            def respond_with_error():
+                conn, _ = server.accept()
+                length_bytes = conn.recv(4)
+                if length_bytes:
+                    length = int.from_bytes(length_bytes, "big")
+                    conn.recv(length)
+                response = json.dumps({"status": "error", "error": "boom"}).encode()
+                conn.sendall(len(response).to_bytes(4, "big"))
+                conn.sendall(response)
+                conn.close()
+
+            worker = threading.Thread(target=respond_with_error, daemon=True)
+            worker.start()
+
+            client = StreamingAgentClient(
+                sock_path,
+                activity_reporter=lambda level, message: events.append((level, message)),
+            )
+            assert client.connect()["status"] == "success"
+
+            result = client.send_command(
+                {"type": "watch", "action": "start", "pattern": "pkg.func"}
+            )
+
+            assert result["status"] == "error"
+            assert any(
+                "watch/start pattern=pkg.func failed: boom" in message
+                for _, message in events
+            )
+        finally:
+            if client is not None:
+                client.disconnect()
+            server.close()
+            if os.path.exists(sock_path):
+                os.unlink(sock_path)
+
+    def test_stream_close_reports_activity(self, tmp_path):
+        """Unexpected stream closure should emit a client activity warning."""
+        sock_path = str(tmp_path / "test.sock")
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server.bind(sock_path)
+        server.listen(1)
+        events = []
+        client = None
+
+        try:
+
+            def close_immediately():
+                conn, _ = server.accept()
+                conn.close()
+
+            worker = threading.Thread(target=close_immediately, daemon=True)
+            worker.start()
+
+            client = StreamingAgentClient(
+                sock_path,
+                activity_reporter=lambda level, message: events.append((level, message)),
+            )
+            assert client.connect()["status"] == "success"
+
+            list(client.stream_observations())
+
+            assert any(
+                "observation stream closed by peer" in message
+                for _, message in events
+            )
+        finally:
+            if client is not None:
+                client.disconnect()
             server.close()
             if os.path.exists(sock_path):
                 os.unlink(sock_path)
