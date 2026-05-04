@@ -84,7 +84,7 @@ dev = [
 
 | 提交 | 作者 | 日期 | 描述 |
 |------|------|------|------|
-| [`11ff017`](https://github.com/wwulfric/peeka/commit/11ff017fa6948546f2ad4290c772b5e183b43441) | wuxing | 2026-04-12 | fix: migrate dev-dependencies to PEP 735 dependency-groups (#12) |
+| [`11ff017`](https://github.com/peeka-project/peeka/commit/11ff017fa6948546f2ad4290c772b5e183b43441) | wuxing | 2026-04-12 | fix: migrate dev-dependencies to PEP 735 dependency-groups (#12) |
 
 #### 变更内容
 将 `[tool.uv] dev-dependencies` 迁移至标准 `[dependency-groups] dev`，消除废弃警告，符合 PEP 735 规范。

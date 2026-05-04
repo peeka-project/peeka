@@ -87,7 +87,7 @@ def status(message: str, file=None, **kwargs) -> None:
 
 | 提交 | 作者 | 日期 | 描述 |
 |------|------|------|------|
-| [`d7ad207`](https://github.com/wwulfric/peeka/commit/d7ad2075353a48c3d4f8bb0d38e3d7f62d304c71) | lufeihaidao | 2026-04-03 | fix(cli): polish peeka-cli run command and add bootstrap template |
+| [`d7ad207`](https://github.com/peeka-project/peeka/commit/d7ad2075353a48c3d4f8bb0d38e3d7f62d304c71) | lufeihaidao | 2026-04-03 | fix(cli): polish peeka-cli run command and add bootstrap template |
 
 #### 变更内容
 - `OutputFormatter` 所有方法 `file=` 默认值改为 `None`，方法内 `file or sys.stdout` 动态解析
