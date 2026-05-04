@@ -249,7 +249,7 @@ class MemoryView(Container):
                             Button(
                                 "Dump",
                                 id="mem-dump-btn",
-                                variant="warning",
+                                variant="primary",
                                 flat=True,
                             ),
                             id="mem-alloc-controls",
@@ -303,13 +303,13 @@ class MemoryView(Container):
                             yield Button(
                                 "Referrers",
                                 id="mem-referrers-btn",
-                                variant="default",
+                                variant="primary",
                                 flat=True,
                             )
                             yield Button(
                                 "Referents",
                                 id="mem-referents-btn",
-                                variant="default",
+                                variant="primary",
                                 flat=True,
                             )
                         yield Tree("No data", id="mem-ref-tree")

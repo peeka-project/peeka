@@ -912,18 +912,33 @@ Button {
 
 Button.-style-flat {
     color: $text;
+    background: $surface;
     content-align: center middle;
     text-align: center;
 }
 
-Button.-style-flat.-primary,
-Button.-style-flat.-success,
-Button.-style-flat.-warning,
+Button.-style-flat.-primary {
+    background: $primary 15%;
+    color: $text;
+}
+
+Button.-style-flat.-success {
+    background: $success 15%;
+    color: $text;
+}
+
+Button.-style-flat.-warning {
+    background: $warning 18%;
+    color: $text;
+}
+
 Button.-style-flat.-error {
+    background: $error 15%;
     color: $text;
 }
 
 Button:disabled {
+    background: $surface;
     color: $text-muted;
 }
 

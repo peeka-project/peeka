@@ -154,7 +154,6 @@ class ProcessSelectorScreen(Screen):
 
     async def _do_attach(self, pid: int) -> None:
         """Run attachment in worker thread, then push MainScreen on success."""
-        import asyncio
         import traceback
 
         from peeka.core.attach import ProcessAttacher
@@ -240,7 +239,7 @@ class ProcessSelectorScreen(Screen):
                     Static("⚠️ Attach Failed", id="error-title"),
                     Markdown(self.error_msg, id="error-content"),
                     Container(
-                        Button("Dismiss", variant="error", id="error-dismiss"),
+                        Button("Dismiss", variant="default", id="error-dismiss"),
                         id="error-controls",
                     ),
                     id="error-container",

@@ -53,6 +53,109 @@ class TestPanelStyles:
         assert "border-title-color: $primary;" in css
 
 
+class TestButtonSemanticStyles:
+    """Verify buttons use restrained, semantic color variants."""
+
+    def test_flat_button_variants_use_restrained_theme_tints(self):
+        """Flat semantic buttons use low-opacity theme colors."""
+        css = STYLE_PATH.read_text()
+
+        assert "Button.-style-flat.-primary {\n    background: $primary 15%;" in css
+        assert "Button.-style-flat.-success {\n    background: $success 15%;" in css
+        assert "Button.-style-flat.-warning {\n    background: $warning 18%;" in css
+        assert "Button.-style-flat.-error {\n    background: $error 15%;" in css
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_observation_start_buttons_share_success_variant(self):
+        """Long-running observation start buttons share the success variant."""
+        app = PeekaApp()
+        async with app.run_test(size=(140, 24)) as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            expected = {
+                "watch": "#watch-btn",
+                "trace": "#trace-btn",
+                "stack": "#stack-btn",
+                "monitor": "#monitor-btn",
+                "memory": "#mem-track-btn",
+                "top": "#top-start-btn",
+            }
+
+            for tab_id, button_id in expected.items():
+                main_screen.action_switch_tab(tab_id)
+                await pilot.pause()
+                button = app.screen.query_one(button_id, Button)
+                assert button.variant == "success"
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_query_refresh_buttons_share_primary_variant(self):
+        """Refresh, query, snapshot, and export actions share primary."""
+        app = PeekaApp()
+        async with app.run_test(size=(80, 24)) as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            expected = {
+                "dashboard": ["#dash-refresh-btn"],
+                "threads": ["#thread-refresh-btn"],
+                "logger": ["#logger-refresh-btn", "#set-level-btn"],
+                "inspect": ["#inspect-btn"],
+                "memory": [
+                    "#mem-gc-refresh-btn",
+                    "#mem-alloc-refresh-btn",
+                    "#mem-dump-btn",
+                    "#mem-snap-btn",
+                    "#mem-diff-btn",
+                    "#mem-referrers-btn",
+                    "#mem-referents-btn",
+                ],
+            }
+
+            for tab_id, button_ids in expected.items():
+                main_screen.action_switch_tab(tab_id)
+                await pilot.pause()
+                for button_id in button_ids:
+                    button = app.screen.query_one(button_id, Button)
+                    assert button.variant == "primary"
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_stop_and_reset_buttons_keep_distinct_variants(self):
+        """Stop stays error while clear/reset stays warning."""
+        app = PeekaApp()
+        async with app.run_test(size=(140, 24)) as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            expected = {
+                "watch": {"#stop-btn": "error"},
+                "trace": {"#stop-trace-btn": "error", "#clear-trace-btn": "warning"},
+                "stack": {"#stop-stack-btn": "error"},
+                "monitor": {"#stop-monitor-btn": "error"},
+                "memory": {"#mem-stop-btn": "error", "#mem-reset-btn": "warning"},
+                "top": {"#top-stop-btn": "error", "#top-reset-btn": "warning"},
+            }
+
+            for tab_id, button_variants in expected.items():
+                main_screen.action_switch_tab(tab_id)
+                await pilot.pause()
+                for button_id, variant in button_variants.items():
+                    button = app.screen.query_one(button_id, Button)
+                    assert button.variant == variant
+
+
 class TestProcessSelectorStyles:
     """Verify process selector compact styling (T9)."""
 

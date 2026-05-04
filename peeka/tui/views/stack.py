@@ -100,7 +100,7 @@ class StackView(Container):
                     completions_callback=self._get_pattern_completions,
                     id="stack-pattern",
                 ),
-                Button("Stack", id="stack-btn", variant="primary", flat=True),
+                Button("Stack", id="stack-btn", variant="success", flat=True),
                 Button("Stop", id="stop-stack-btn", variant="error", flat=True),
                 id="stack-controls",
                 classes="compact-control",

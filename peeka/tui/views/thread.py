@@ -71,7 +71,7 @@ class ThreadView(Container):
                 id="thread-summary",
             ),
             Static("", classes="spacer"),
-            Button("Refresh", id="thread-refresh-btn", variant="default", flat=True),
+            Button("Refresh", id="thread-refresh-btn", variant="primary", flat=True),
             id="thread-controls",
             classes="compact-control",
         )
