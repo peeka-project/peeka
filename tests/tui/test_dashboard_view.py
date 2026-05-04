@@ -12,7 +12,7 @@ from peeka.tui.views.dashboard import DashboardView
 
 def _rich_log_lines(widget: RichLog) -> str:
     """Return the plain-text content currently rendered by a RichLog."""
-    return "\n".join(line.text for line in widget.lines)
+    return " ".join("\n".join(line.text for line in widget.lines).split())
 
 
 class TestDashboardView:

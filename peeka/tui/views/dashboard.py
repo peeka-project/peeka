@@ -213,6 +213,8 @@ class DashboardView(Container):
                 highlight=True,
                 max_lines=self.MAX_LOG_LINES,
                 auto_scroll=True,
+                wrap=True,
+                min_width=1,
             ),
             id="dash-agent-log-section",
             classes="panel panel--stream",
