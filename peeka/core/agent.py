@@ -197,6 +197,12 @@ class PeekaAgent:
         stripped.pop("_client", None)
         return stripped
 
+    def _is_client_hello(self, command: Dict[str, Any]) -> bool:
+        """Return True for client identity frames handled by the transport layer."""
+        cmd_type = str(command.get("type", ""))
+        action = self._normalize_action(command)
+        return cmd_type == "client" and action == "hello"
+
     @staticmethod
     def _format_client_label(client_id: int, client_info: Dict[str, Any]) -> str:
         """Return a readable stable client label for activity logs."""
@@ -317,11 +323,6 @@ class PeekaAgent:
         identified = False
         client_label = self._format_client_label(client_id, client_info)
 
-        self._emit_log(
-            "INFO",
-            f"[peeka Agent] {client_label} connected ({connection_total} total)",
-        )
-
         try:
             while True:
                 length_bytes = conn.recv(4)
@@ -351,35 +352,38 @@ class PeekaAgent:
                         self._emit_log(
                             "INFO",
                             (
-                                f"[peeka Agent] {client_label} identified "
-                                f"kind={kind}{pid_suffix}"
+                                f"[peeka Agent] {client_label} connected "
+                                f"({connection_total} total) kind={kind}{pid_suffix}"
                             ),
                         )
                         identified = True
 
                 command = self._strip_client_info(raw_command)
-                should_log = self._should_log_command(command)
-                command_summary = self._summarize_command(command)
-                if should_log:
-                    self._emit_log(
-                        "INFO",
-                        f"[peeka Agent] {client_label} -> {command_summary}",
-                    )
-                result = self._execute_command(command)
+                if self._is_client_hello(command):
+                    result = {"status": "success", "client": client_label}
+                else:
+                    should_log = self._should_log_command(command)
+                    command_summary = self._summarize_command(command)
+                    if should_log:
+                        self._emit_log(
+                            "INFO",
+                            f"[peeka Agent] {client_label} -> {command_summary}",
+                        )
+                    result = self._execute_command(command)
 
-                if result.get("status") == "error":
-                    self._emit_log(
-                        "ERROR",
-                        f"[peeka Agent] {client_label} {command_summary} failed: "
-                        f"{result.get('error', 'unknown error')}",
-                        result.get("traceback"),
-                    )
-                elif should_log:
-                    self._emit_log(
-                        "INFO",
-                        f"[peeka Agent] {client_label} {command_summary} "
-                        f"{self._summarize_result(result)}",
-                    )
+                    if result.get("status") == "error":
+                        self._emit_log(
+                            "ERROR",
+                            f"[peeka Agent] {client_label} {command_summary} failed: "
+                            f"{result.get('error', 'unknown error')}",
+                            result.get("traceback"),
+                        )
+                    elif should_log:
+                        self._emit_log(
+                            "INFO",
+                            f"[peeka Agent] {client_label} {command_summary} "
+                            f"{self._summarize_result(result)}",
+                        )
 
                 response = json.dumps(result).encode("utf-8")
                 response_frame = len(response).to_bytes(4, "big") + response

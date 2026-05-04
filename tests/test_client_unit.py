@@ -222,7 +222,7 @@ class TestStreamingAgentClientSendCommand:
         assert "Not connected" in result["error"]
 
     def test_send_command_attaches_client_info(self, tmp_path):
-        """Persistent clients should identify their source on each command."""
+        """Persistent TUI clients identify on connect and on each command."""
         sock_path = str(tmp_path / "test.sock")
         server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         server.bind(sock_path)
@@ -234,13 +234,14 @@ class TestStreamingAgentClientSendCommand:
 
             def respond_success():
                 conn, _ = server.accept()
-                length_bytes = conn.recv(4)
-                if length_bytes:
-                    length = int.from_bytes(length_bytes, "big")
-                    received.append(json.loads(conn.recv(length).decode("utf-8")))
-                response = json.dumps({"status": "success"}).encode()
-                conn.sendall(len(response).to_bytes(4, "big"))
-                conn.sendall(response)
+                for _ in range(2):
+                    length_bytes = conn.recv(4)
+                    if length_bytes:
+                        length = int.from_bytes(length_bytes, "big")
+                        received.append(json.loads(conn.recv(length).decode("utf-8")))
+                    response = json.dumps({"status": "success"}).encode()
+                    conn.sendall(len(response).to_bytes(4, "big"))
+                    conn.sendall(response)
                 conn.close()
 
             worker = threading.Thread(target=respond_success, daemon=True)
@@ -262,13 +263,21 @@ class TestStreamingAgentClientSendCommand:
             )
 
             assert result["status"] == "success"
+            assert received[0]["type"] == "client"
+            assert received[0]["action"] == "hello"
             assert received[0]["_client"] == {
                 "id": "tui-abc123",
                 "kind": "tui",
                 "source": "watch-stream",
                 "pid": 42,
             }
-            assert received[0]["type"] == "watch"
+            assert received[1]["_client"] == {
+                "id": "tui-abc123",
+                "kind": "tui",
+                "source": "watch-stream",
+                "pid": 42,
+            }
+            assert received[1]["type"] == "watch"
         finally:
             if client is not None:
                 client.disconnect()

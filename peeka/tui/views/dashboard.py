@@ -821,7 +821,7 @@ class DashboardView(Container):
 
         source_text = Text(f"{source.upper():7} ", style=source_style)
         level_text = Text(f"{level:8} ", style=style)
-        message_text = Text(message, style=style)
+        message_text = Text(message)
 
         text.append(source_text)
         text.append(level_text)
