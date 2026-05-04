@@ -14,6 +14,10 @@
   <strong>中文</strong> | <a href="README.md">English</a>
 </p>
 
+<p align="center">
+  路线图：<strong>中文</strong> | <a href="ROADMAP.md">English</a>
+</p>
+
 > *Peek-a-boo!* — 名字取自躲猫猫游戏。诊断工具发现隐藏 bug 的那一刻，像极了捉迷藏时突然现身的惊喜。
 
 Python 应用运行时诊断工具，灵感来源于 [Alibaba Arthas](https://github.com/alibaba/arthas)。无需修改代码，即可非侵入式观测函数行为。
