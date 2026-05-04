@@ -414,6 +414,40 @@ class TestDashboardStyles:
 
     @pytest.mark.asyncio
     @pytest.mark.tui
+    async def test_dashboard_activity_log_message_uses_default_foreground(self):
+        """Activity message text inherits the active theme foreground."""
+        class DashboardLayoutApp(App[None]):
+            CSS_PATH = str(STYLE_PATH)
+
+            def compose(self) -> ComposeResult:
+                yield DashboardView(pid=12345)
+
+        app = DashboardLayoutApp()
+        async with app.run_test(size=(140, 24)) as pilot:
+            await pilot.pause()
+
+            dashboard = app.query_one("DashboardView", DashboardView)
+            activity_log = app.query_one("#dash-agent-log", RichLog)
+            captured = []
+
+            def capture_write(content, *args, **kwargs):
+                captured.append(content)
+                return activity_log
+
+            activity_log.write = capture_write  # type: ignore[method-assign]
+            dashboard._write_activity_entry(
+                "agent",
+                "ERROR",
+                "plain message body",
+                1714972801.0,
+            )
+
+            rendered = captured[-1]
+            message_start = rendered.plain.index("plain message body")
+            assert all(span.end <= message_start for span in rendered.spans)
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
     async def test_dashboard_runtime_panel_is_focusable(self):
         """Dashboard runtime panel can receive focus even though it has static text."""
         class DashboardLayoutApp(App[None]):

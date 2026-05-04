@@ -133,6 +133,7 @@ class StreamingAgentClient:
         self._send_lock = threading.Lock()
         self._activity_reporter = activity_reporter
         self._client_info = _build_client_info(client_info, "cli")
+        self._identify_on_connect = client_info is not None
 
     @staticmethod
     def _summarize_command(command: Dict[str, Any]) -> str:
@@ -167,6 +168,10 @@ class StreamingAgentClient:
         payload["_client"] = dict(self._client_info)
         return payload
 
+    def _identify_connection(self) -> Dict[str, Any]:
+        """Send a lightweight identity frame for stream-only connections."""
+        return self.send_command({"type": "client", "action": "hello"})
+
     def connect(self) -> Dict[str, Any]:
         """Connect to the agent socket."""
         if not Path(self.socket_path).exists():
@@ -182,6 +187,13 @@ class StreamingAgentClient:
             self._sock.settimeout(self.timeout if self.timeout else 1.0)
             self._sock.connect(self.socket_path)
             self._stop_event.clear()
+            if self._identify_on_connect:
+                hello_result = self._identify_connection()
+                if hello_result.get("status") != "success":
+                    self.disconnect()
+                    error = hello_result.get("error", "client identification failed")
+                    self._report_activity("ERROR", f"connect failed: {error}")
+                    return {"status": "error", "error": error}
             self._report_activity("INFO", "connected")
             return {"status": "success"}
         except Exception as e:

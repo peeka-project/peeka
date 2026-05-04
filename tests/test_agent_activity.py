@@ -29,6 +29,20 @@ def _send_command(
     return json.loads(client_sock.recv(response_len).decode("utf-8"))
 
 
+def _send_hello(
+    client_sock: socket.socket,
+    instance_id: str = "tui-test01",
+    source: str = "main",
+) -> dict:
+    """Send the internal client identity frame."""
+    return _send_command(
+        client_sock,
+        {"type": "client", "action": "hello"},
+        instance_id=instance_id,
+        source=source,
+    )
+
+
 class TestAgentActivityLogging:
     """Verify agent activity logs surface useful client and command context."""
 
@@ -67,9 +81,8 @@ class TestAgentActivityLogging:
         messages = [message for _, message, _ in logs]
 
         client_label = "client tui-test01/watch-stream conn#7"
-        assert any("conn#7 connected" in message for message in messages)
         assert any(
-            f"{client_label} identified kind=tui pid=12345" in message
+            f"{client_label} connected (1 total) kind=tui pid=12345" in message
             for message in messages
         )
         assert any(
@@ -114,7 +127,10 @@ class TestAgentActivityLogging:
 
         messages = [message for _, message, _ in logs]
         client_label = "client tui-test01/dashboard-data conn#3"
-        assert any("conn#3 connected" in message for message in messages)
+        assert any(
+            f"{client_label} connected (1 total) kind=tui pid=12345" in message
+            for message in messages
+        )
         assert any(f"{client_label} disconnected" in message for message in messages)
         assert not any("vmtool/get" in message for message in messages)
 
@@ -154,3 +170,40 @@ class TestAgentActivityLogging:
             in message
             for message in messages
         )
+
+    def test_client_hello_identifies_stream_only_connection(self) -> None:
+        """Stream-only clients should identify before sending observations."""
+        agent = PeekaAgent("test_session")
+        logs: List[Tuple[str, str, Optional[str]]] = []
+        handled_commands = []
+
+        agent._emit_log = lambda level, message, details=None: logs.append(  # type: ignore[method-assign]
+            (level, message, details)
+        )
+        agent._execute_command = lambda command: handled_commands.append(command)  # type: ignore[method-assign]
+
+        server_sock, client_sock = socket.socketpair()
+        worker = threading.Thread(
+            target=agent._handle_client,
+            args=(server_sock, 5),
+            daemon=True,
+        )
+        worker.start()
+
+        try:
+            response = _send_hello(client_sock, source="dashboard-stream")
+            assert response["status"] == "success"
+            assert response["client"] == "client tui-test01/dashboard-stream conn#5"
+        finally:
+            client_sock.close()
+            worker.join(timeout=1.0)
+
+        messages = [message for _, message, _ in logs]
+        client_label = "client tui-test01/dashboard-stream conn#5"
+        assert any(
+            f"{client_label} connected (1 total) kind=tui pid=12345" in message
+            for message in messages
+        )
+        assert any(f"{client_label} disconnected" in message for message in messages)
+        assert not any("client/hello" in message for message in messages)
+        assert handled_commands == []
