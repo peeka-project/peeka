@@ -1,13 +1,14 @@
 <p align="center">
-  <img src="gh-pages/assets/images/logo.png" alt="" width="48" align="middle">&nbsp;
+  <img src="https://peeka-project.github.io/assets/images/logo.png" alt="" width="48" align="middle">&nbsp;
   <strong style="font-size:2em;">Peeka</strong>
 </p>
 
 <p align="center">
   <a href="https://pypi.org/project/peeka/"><img src="https://img.shields.io/pypi/v/peeka?color=2888a8" alt="PyPI"></a>
-  <a href="https://github.com/wwulfric/peeka/releases/latest"><img src="https://img.shields.io/github/v/release/wwulfric/peeka?color=2888a8" alt="Release"></a>
-  <a href="https://github.com/wwulfric/peeka/actions"><img src="https://img.shields.io/github/actions/workflow/status/wwulfric/peeka/e2e-tests.yml?label=tests" alt="Tests"></a>
-  <a href="https://github.com/wwulfric/peeka/blob/master/LICENSE"><img src="https://img.shields.io/github/license/wwulfric/peeka?color=2888a8" alt="License"></a>
+  <a href="https://github.com/peeka-project/peeka/releases/latest"><img src="https://img.shields.io/github/v/release/peeka-project/peeka?color=2888a8" alt="Release"></a>
+  <a href="https://github.com/peeka-project/peeka/actions"><img src="https://img.shields.io/github/actions/workflow/status/peeka-project/peeka/e2e-tests.yml?label=tests" alt="Tests"></a>
+  <a href="https://github.com/peeka-project/peeka/blob/master/LICENSE"><img src="https://img.shields.io/github/license/peeka-project/peeka?color=2888a8" alt="License"></a>
+  <a href="https://peeka-project.github.io/"><img src="https://img.shields.io/badge/docs-peeka--project.github.io-2888a8" alt="Docs"></a>
 </p>
 
 <p align="center">

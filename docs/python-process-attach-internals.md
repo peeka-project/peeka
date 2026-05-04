@@ -4,7 +4,7 @@
 
 怎么办？
 
-答案是**进程注入**（process injection）：在不重启目标进程的前提下，将诊断代码注入到一个正在运行的 Python 解释器中。这正是 [peeka](https://github.com/wwulfric/peeka)、[memray](https://github.com/bloomberg/memray)、[pyrasite](https://github.com/lmacken/pyrasite) 等工具的核心能力。
+答案是**进程注入**（process injection）：在不重启目标进程的前提下，将诊断代码注入到一个正在运行的 Python 解释器中。这正是 [peeka](https://github.com/peeka-project/peeka)、[memray](https://github.com/bloomberg/memray)、[pyrasite](https://github.com/lmacken/pyrasite) 等工具的核心能力。
 
 本文将从底层原理到工程实践，系统地拆解 Python 进程注入的三代技术方案。
 
@@ -128,7 +128,7 @@ pyrasite 本质上是在"碰运气"——大多数时候目标进程不在这些
 
 ## 3. 第二代：memray/peeka 的 dlopen + pthread 方案
 
-[memray](https://github.com/bloomberg/memray)（Bloomberg 开源的内存分析器）和 [peeka](https://github.com/wwulfric/peeka) 在 Python 3.8-3.13 上采用了相似的改进方案。核心思路是：**不在 ptrace 暂停点直接执行 Python 代码，而是注入一个 C 扩展，由 C 扩展在安全的时机执行代码**。
+[memray](https://github.com/bloomberg/memray)（Bloomberg 开源的内存分析器）和 [peeka](https://github.com/peeka-project/peeka) 在 Python 3.8-3.13 上采用了相似的改进方案。核心思路是：**不在 ptrace 暂停点直接执行 Python 代码，而是注入一个 C 扩展，由 C 扩展在安全的时机执行代码**。
 
 ### 原理概览
 
@@ -580,4 +580,4 @@ Python 进程注入经历了三代演进：
 
 ---
 
-*本文基于 [peeka](https://github.com/wwulfric/peeka) 的实际开发经验撰写。peeka 是一个受 [Alibaba Arthas](https://github.com/alibaba/arthas) 启发的 Python 运行时诊断工具，支持 Python 3.8-3.14+。*
+*本文基于 [peeka](https://github.com/peeka-project/peeka) 的实际开发经验撰写。peeka 是一个受 [Alibaba Arthas](https://github.com/alibaba/arthas) 启发的 Python 运行时诊断工具，支持 Python 3.8-3.14+。*
