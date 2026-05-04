@@ -25,7 +25,7 @@ from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Button, DataTable, RichLog, Static
 from textual.worker import Worker, get_current_worker
 
-from peeka.tui.activity import make_activity_reporter
+from peeka.tui.activity import make_activity_reporter, make_client_info
 
 if TYPE_CHECKING:
     from peeka.core.client import StreamingAgentClient
@@ -127,6 +127,7 @@ class DashboardView(Container):
         self._own_client = StreamingAgentClient(
             self._socket_path,
             activity_reporter=make_activity_reporter(self.app, "dashboard-data"),
+            client_info=make_client_info(self.app, "dashboard-data"),
         )
         result = self._own_client.connect()
         if result.get("status") != "success":
@@ -147,6 +148,7 @@ class DashboardView(Container):
                 activity_reporter=make_activity_reporter(
                     self.app, "dashboard-stream"
                 ),
+                client_info=make_client_info(self.app, "dashboard-stream"),
             )
             result = self._stream_client.connect()
             if result.get("status") != "success":

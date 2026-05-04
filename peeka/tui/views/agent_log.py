@@ -13,7 +13,7 @@ from textual.containers import Container
 from textual.widgets import RichLog
 from textual.worker import get_current_worker
 
-from peeka.tui.activity import make_activity_reporter
+from peeka.tui.activity import make_activity_reporter, make_client_info
 
 if TYPE_CHECKING:
     from peeka.core.client import StreamingAgentClient
@@ -53,6 +53,7 @@ class AgentLogView(Container):
             self._stream_client = StreamingAgentClient(
                 self._socket_path,
                 activity_reporter=make_activity_reporter(self.app, "agent-log-stream"),
+                client_info=make_client_info(self.app, "agent-log-stream"),
             )
             result = self._stream_client.connect()
             if result.get("status") != "success":

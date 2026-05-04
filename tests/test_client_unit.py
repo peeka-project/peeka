@@ -3,10 +3,10 @@ Unit tests for peeka.core.client boundary conditions
 """
 
 import json
+import os
 import socket
 import threading
 import time
-import os
 
 from peeka.core.client import AgentClient, StreamingAgentClient
 
@@ -106,6 +106,44 @@ class TestAgentClientRecvExact:
             if os.path.exists(sock_path):
                 os.unlink(sock_path)
 
+    def test_send_command_attaches_default_client_info(self, tmp_path):
+        """One-shot clients should also identify their process."""
+        sock_path = str(tmp_path / "test.sock")
+        received = []
+
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server.bind(sock_path)
+        server.listen(1)
+
+        try:
+
+            def send_response():
+                conn, _ = server.accept()
+                length_bytes = conn.recv(4)
+                if length_bytes:
+                    length = int.from_bytes(length_bytes, "big")
+                    received.append(json.loads(conn.recv(length).decode("utf-8")))
+                response = json.dumps({"status": "ok"}).encode()
+                conn.sendall(len(response).to_bytes(4, "big"))
+                conn.sendall(response)
+                conn.close()
+
+            worker = threading.Thread(target=send_response, daemon=True)
+            worker.start()
+
+            client = AgentClient(sock_path, timeout=5.0)
+            result = client.send_command({"cmd": "test"})
+
+            assert result["status"] == "ok"
+            assert received[0]["cmd"] == "test"
+            assert received[0]["_client"]["kind"] == "cli"
+            assert received[0]["_client"]["source"] == "request"
+            assert received[0]["_client"]["id"].startswith("cli-")
+        finally:
+            server.close()
+            if os.path.exists(sock_path):
+                os.unlink(sock_path)
+
 
 class TestStreamingAgentClientConnect:
     """Test StreamingAgentClient connection handling."""
@@ -182,6 +220,61 @@ class TestStreamingAgentClientSendCommand:
 
         assert result["status"] == "error"
         assert "Not connected" in result["error"]
+
+    def test_send_command_attaches_client_info(self, tmp_path):
+        """Persistent clients should identify their source on each command."""
+        sock_path = str(tmp_path / "test.sock")
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server.bind(sock_path)
+        server.listen(1)
+        received = []
+        client = None
+
+        try:
+
+            def respond_success():
+                conn, _ = server.accept()
+                length_bytes = conn.recv(4)
+                if length_bytes:
+                    length = int.from_bytes(length_bytes, "big")
+                    received.append(json.loads(conn.recv(length).decode("utf-8")))
+                response = json.dumps({"status": "success"}).encode()
+                conn.sendall(len(response).to_bytes(4, "big"))
+                conn.sendall(response)
+                conn.close()
+
+            worker = threading.Thread(target=respond_success, daemon=True)
+            worker.start()
+
+            client = StreamingAgentClient(
+                sock_path,
+                client_info={
+                    "id": "tui-abc123",
+                    "kind": "tui",
+                    "source": "watch-stream",
+                    "pid": 42,
+                },
+            )
+            assert client.connect()["status"] == "success"
+
+            result = client.send_command(
+                {"type": "watch", "action": "start", "pattern": "pkg.func"}
+            )
+
+            assert result["status"] == "success"
+            assert received[0]["_client"] == {
+                "id": "tui-abc123",
+                "kind": "tui",
+                "source": "watch-stream",
+                "pid": 42,
+            }
+            assert received[0]["type"] == "watch"
+        finally:
+            if client is not None:
+                client.disconnect()
+            server.close()
+            if os.path.exists(sock_path):
+                os.unlink(sock_path)
 
 
 class TestStreamingAgentClientExtractObservation:

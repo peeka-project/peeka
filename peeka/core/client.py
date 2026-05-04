@@ -4,22 +4,53 @@ Unix domain sockets using the length-prefixed JSON protocol defined in
 ``peeka.core.agent``.
 """
 
-import logging
-
 import json
+import logging
+import os
 import socket
 import threading
+import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, Generator, Optional
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_CLIENT_INSTANCE_ID = f"cli-{uuid.uuid4().hex[:6]}"
+
+
+def _build_client_info(
+    client_info: Optional[Dict[str, Any]], default_source: str
+) -> Dict[str, Any]:
+    """Build stable client metadata sent with each command."""
+    info = {
+        "id": _DEFAULT_CLIENT_INSTANCE_ID,
+        "kind": "cli",
+        "source": default_source,
+        "pid": os.getpid(),
+    }
+    if client_info:
+        info.update(client_info)
+    return info
+
+
 class AgentClient:
     """Lightweight client for communicating with the Peeka agent."""
 
-    def __init__(self, socket_path: str, timeout: float = 5.0):
+    def __init__(
+        self,
+        socket_path: str,
+        timeout: float = 5.0,
+        client_info: Optional[Dict[str, Any]] = None,
+    ):
         self.socket_path = socket_path
         self.timeout = timeout
+        self._client_info = _build_client_info(client_info, "request")
+
+    def _attach_client_info(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        """Attach client metadata without mutating the caller's command."""
+        payload = dict(command)
+        payload["_client"] = dict(self._client_info)
+        return payload
 
     def send_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
         """Send a JSON command and return the agent response."""
@@ -35,7 +66,7 @@ class AgentClient:
                 sock.settimeout(self.timeout)
                 sock.connect(self.socket_path)
 
-                payload = json.dumps(command).encode("utf-8")
+                payload = json.dumps(self._attach_client_info(command)).encode("utf-8")
                 sock.sendall(len(payload).to_bytes(4, "big"))
                 sock.sendall(payload)
 
@@ -92,6 +123,7 @@ class StreamingAgentClient:
         socket_path: str,
         timeout: Optional[float] = None,
         activity_reporter: Optional[Callable[[str, str], None]] = None,
+        client_info: Optional[Dict[str, Any]] = None,
     ):
         self.socket_path = socket_path
         self.timeout = timeout
@@ -100,6 +132,7 @@ class StreamingAgentClient:
         self._stop_event = threading.Event()
         self._send_lock = threading.Lock()
         self._activity_reporter = activity_reporter
+        self._client_info = _build_client_info(client_info, "cli")
 
     @staticmethod
     def _summarize_command(command: Dict[str, Any]) -> str:
@@ -127,6 +160,12 @@ class StreamingAgentClient:
             self._activity_reporter(level, message)
         except Exception:
             logger.debug("activity reporter failed", exc_info=True)
+
+    def _attach_client_info(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        """Attach client metadata without exposing it to command callers."""
+        payload = dict(command)
+        payload["_client"] = dict(self._client_info)
+        return payload
 
     def connect(self) -> Dict[str, Any]:
         """Connect to the agent socket."""
@@ -190,7 +229,7 @@ class StreamingAgentClient:
         with self._send_lock:
             try:
                 summary = self._summarize_command(command)
-                payload = json.dumps(command).encode("utf-8")
+                payload = json.dumps(self._attach_client_info(command)).encode("utf-8")
                 self._sock.sendall(len(payload).to_bytes(4, "big"))
                 self._sock.sendall(payload)
 

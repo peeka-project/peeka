@@ -15,7 +15,7 @@ from textual.widgets import Button, DataTable, Input, Static, Tree
 from textual.widgets.tree import TreeNode
 from textual.worker import get_current_worker
 
-from peeka.tui.activity import make_activity_reporter
+from peeka.tui.activity import make_activity_reporter, make_client_info
 from peeka.tui.completion import CompletionSource
 from peeka.tui.widgets.autocomplete_input import AutoCompleteInput
 
@@ -70,6 +70,7 @@ class TraceView(Container):
             self._stream_client = StreamingAgentClient(
                 self._socket_path,
                 activity_reporter=make_activity_reporter(self.app, "trace-stream"),
+                client_info=make_client_info(self.app, "trace-stream"),
             )
             result = self._stream_client.connect()
             if result.get("status") != "success":
