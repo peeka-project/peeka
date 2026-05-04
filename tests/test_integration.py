@@ -10,6 +10,32 @@ from typing import Optional
 import pytest
 
 
+def _recv_exact(sock: socket.socket, size: int) -> bytes:
+    chunks = []
+    remaining = size
+    while remaining > 0:
+        chunk = sock.recv(remaining)
+        if not chunk:
+            return b""
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+def _recv_json_response(sock: socket.socket) -> dict:
+    """Read a JSON command response, skipping broadcast LOG/OBS frames."""
+    length_bytes = _recv_exact(sock, 4)
+    while length_bytes in (b"LOG:", b"OBS:"):
+        frame_len_bytes = _recv_exact(sock, 4)
+        frame_len = int.from_bytes(frame_len_bytes, "big")
+        _recv_exact(sock, frame_len)
+        length_bytes = _recv_exact(sock, 4)
+
+    length = int.from_bytes(length_bytes, "big")
+    response_data = _recv_exact(sock, length)
+    return json.loads(response_data.decode("utf-8"))
+
+
 class TestAgentIntegration:
     @pytest.fixture
     def temp_socket_path(self):
@@ -48,10 +74,7 @@ class TestAgentIntegration:
                 sock.sendall(len(payload).to_bytes(4, "big"))
                 sock.sendall(payload)
 
-                length_bytes = sock.recv(4)
-                length = int.from_bytes(length_bytes, "big")
-                response_data = sock.recv(length)
-                response = json.loads(response_data.decode("utf-8"))
+                response = _recv_json_response(sock)
 
                 assert response["status"] == "success"
                 assert "watches" in response
@@ -259,10 +282,7 @@ class TestWatchCommandWithCondition:
                 sock.sendall(len(payload).to_bytes(4, "big"))
                 sock.sendall(payload)
 
-                length_bytes = sock.recv(4)
-                length = int.from_bytes(length_bytes, "big")
-                response_data = sock.recv(length)
-                response = json.loads(response_data.decode("utf-8"))
+                response = _recv_json_response(sock)
 
                 assert response["status"] == "success"
                 watch_id = response["watch_id"]
