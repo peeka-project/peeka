@@ -10,7 +10,7 @@ from textual.containers import Container
 from textual.screen import Screen
 from textual.widgets import Header, Footer, TabbedContent, TabPane
 
-from peeka.tui.activity import make_activity_reporter
+from peeka.tui.activity import make_activity_reporter, make_client_info
 from peeka.tui.views.dashboard import DashboardView
 from peeka.tui.views.inspect import InspectView
 from peeka.tui.views.logger import LoggerView
@@ -127,6 +127,7 @@ class MainScreen(Screen):
                 self._client = StreamingAgentClient(
                     self.socket_path,
                     activity_reporter=make_activity_reporter(self.app, "main"),
+                    client_info=make_client_info(self.app, "main"),
                 )
                 result = self._client.connect()
 

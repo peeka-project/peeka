@@ -12,7 +12,7 @@ from textual.containers import Container, Vertical, Horizontal
 from textual.widgets import Static, DataTable, Button, Tree
 from textual.worker import Worker, get_current_worker
 
-from peeka.tui.activity import make_activity_reporter
+from peeka.tui.activity import make_activity_reporter, make_client_info
 from peeka.tui.completion import CompletionSource
 from peeka.tui.widgets.autocomplete_input import AutoCompleteInput
 
@@ -59,6 +59,7 @@ class StackView(Container):
             self._stream_client = StreamingAgentClient(
                 self._socket_path,
                 activity_reporter=make_activity_reporter(self.app, "stack-stream"),
+                client_info=make_client_info(self.app, "stack-stream"),
             )
             result = self._stream_client.connect()
             if result.get("status") != "success":

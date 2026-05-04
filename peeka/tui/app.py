@@ -6,6 +6,7 @@ import asyncio
 import signal
 import threading
 import time
+import uuid
 
 from typing import Any, Callable, Dict, List, Optional
 
@@ -67,6 +68,7 @@ class PeekaApp(App):
         self._activity_listeners: List[Callable[[Dict[str, Any]], None]] = []
         self._activity_lock = threading.Lock()
         self._activity_seq = 0
+        self.client_instance_id = f"tui-{uuid.uuid4().hex[:6]}"
 
     def on_mount(self) -> None:
         """Called when app is mounted."""

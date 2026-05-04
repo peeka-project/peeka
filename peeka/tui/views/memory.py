@@ -19,7 +19,7 @@ from textual.widgets import (
     Tree,
 )
 
-from peeka.tui.activity import make_activity_reporter
+from peeka.tui.activity import make_activity_reporter, make_client_info
 
 if TYPE_CHECKING:
     from peeka.core.client import StreamingAgentClient
@@ -110,6 +110,7 @@ class MemoryView(Container):
         self._own_client = StreamingAgentClient(
             self._socket_path,
             activity_reporter=make_activity_reporter(self.app, "memory-data"),
+            client_info=make_client_info(self.app, "memory-data"),
         )
         result = self._own_client.connect()
         if result.get("status") != "success":

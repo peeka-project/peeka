@@ -160,6 +160,52 @@ class PeekaAgent:
         action = self._normalize_action(command)
         return (cmd_type, action) not in self._QUIET_COMMAND_ACTIONS
 
+    @staticmethod
+    def _sanitize_client_field(value: Any, default: str) -> str:
+        """Normalize client identity fields before placing them in logs."""
+        text = str(value if value not in (None, "") else default)
+        sanitized = []
+        for char in text[:48]:
+            if char.isalnum() or char in ("-", "_", "."):
+                sanitized.append(char)
+            else:
+                sanitized.append("_")
+        return "".join(sanitized) or default
+
+    def _extract_client_info(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract sanitized client metadata from a command payload."""
+        raw_info = command.get("_client")
+        if not isinstance(raw_info, dict):
+            return {}
+
+        info: Dict[str, Any] = {
+            "id": self._sanitize_client_field(raw_info.get("id"), "anonymous"),
+            "source": self._sanitize_client_field(raw_info.get("source"), "unknown"),
+            "kind": self._sanitize_client_field(raw_info.get("kind"), "client"),
+        }
+        pid = raw_info.get("pid")
+        if isinstance(pid, int) or (isinstance(pid, str) and pid.isdigit()):
+            info["pid"] = str(pid)
+        return info
+
+    @staticmethod
+    def _strip_client_info(command: Dict[str, Any]) -> Dict[str, Any]:
+        """Remove transport metadata before command dispatch."""
+        if "_client" not in command:
+            return command
+        stripped = dict(command)
+        stripped.pop("_client", None)
+        return stripped
+
+    @staticmethod
+    def _format_client_label(client_id: int, client_info: Dict[str, Any]) -> str:
+        """Return a readable stable client label for activity logs."""
+        instance_id = client_info.get("id")
+        source = client_info.get("source")
+        if instance_id and source:
+            return f"client {instance_id}/{source} conn#{client_id}"
+        return f"conn#{client_id}"
+
     def _summarize_command(self, command: Dict[str, Any]) -> str:
         """Build a concise command summary for agent-side diagnostics."""
         cmd_type = str(command.get("type", "unknown"))
@@ -267,9 +313,13 @@ class PeekaAgent:
             self._client_connections.append(conn)
             connection_total = len(self._client_connections)
 
+        client_info: Dict[str, Any] = {}
+        identified = False
+        client_label = self._format_client_label(client_id, client_info)
+
         self._emit_log(
             "INFO",
-            f"[peeka Agent] client#{client_id} connected ({connection_total} total)",
+            f"[peeka Agent] {client_label} connected ({connection_total} total)",
         )
 
         try:
@@ -289,27 +339,45 @@ class PeekaAgent:
                 if len(data) < length:
                     break
 
-                command = json.loads(data.decode("utf-8"))
+                raw_command = json.loads(data.decode("utf-8"))
+                extracted_info = self._extract_client_info(raw_command)
+                if extracted_info:
+                    client_info = extracted_info
+                    client_label = self._format_client_label(client_id, client_info)
+                    if not identified:
+                        pid = client_info.get("pid")
+                        pid_suffix = f" pid={pid}" if pid else ""
+                        kind = client_info.get("kind", "client")
+                        self._emit_log(
+                            "INFO",
+                            (
+                                f"[peeka Agent] {client_label} identified "
+                                f"kind={kind}{pid_suffix}"
+                            ),
+                        )
+                        identified = True
+
+                command = self._strip_client_info(raw_command)
                 should_log = self._should_log_command(command)
                 command_summary = self._summarize_command(command)
                 if should_log:
                     self._emit_log(
                         "INFO",
-                        f"[peeka Agent] client#{client_id} -> {command_summary}",
+                        f"[peeka Agent] {client_label} -> {command_summary}",
                     )
                 result = self._execute_command(command)
 
                 if result.get("status") == "error":
                     self._emit_log(
                         "ERROR",
-                        f"[peeka Agent] client#{client_id} {command_summary} failed: "
+                        f"[peeka Agent] {client_label} {command_summary} failed: "
                         f"{result.get('error', 'unknown error')}",
                         result.get("traceback"),
                     )
                 elif should_log:
                     self._emit_log(
                         "INFO",
-                        f"[peeka Agent] client#{client_id} {command_summary} "
+                        f"[peeka Agent] {client_label} {command_summary} "
                         f"{self._summarize_result(result)}",
                     )
 
@@ -329,7 +397,7 @@ class PeekaAgent:
             conn.close()
             self._emit_log(
                 "INFO",
-                f"[peeka Agent] client#{client_id} disconnected ({connection_total} total)",
+                f"[peeka Agent] {client_label} disconnected ({connection_total} total)",
             )
 
     def _execute_command(self, command: dict) -> dict:
