@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input, RichLog, Static
 
 from peeka.tui.app import PeekaApp
 from peeka.tui.screens.main import MainScreen
@@ -233,6 +233,52 @@ class TestDashboardStyles:
             assert summary_column.region.width > 0
             assert agent_log_section.region.width > 0
             assert agent_log_section.region.y >= detail_row.region.y
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_dashboard_activity_log_wraps_at_80_columns(self):
+        """Dashboard activity log wraps long entries within a narrow panel."""
+        class DashboardLayoutApp(App[None]):
+            CSS_PATH = str(STYLE_PATH)
+
+            def compose(self) -> ComposeResult:
+                yield DashboardView(pid=12345)
+
+        app = DashboardLayoutApp()
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+
+            activity_log = app.query_one("#dash-agent-log", RichLog)
+            activity_panel = app.query_one("#dash-agent-log-section", Vertical)
+
+            assert activity_log.wrap is True
+            assert activity_log.min_width == 1
+            assert activity_log.region.x >= activity_panel.region.x
+            assert activity_log.region.width <= activity_panel.region.width
+            assert activity_panel.region.x + activity_panel.region.width <= 80
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_dashboard_activity_log_wraps_at_140_columns(self):
+        """Dashboard activity log keeps wrapping enabled on wide layouts."""
+        class DashboardLayoutApp(App[None]):
+            CSS_PATH = str(STYLE_PATH)
+
+            def compose(self) -> ComposeResult:
+                yield DashboardView(pid=12345)
+
+        app = DashboardLayoutApp()
+        async with app.run_test(size=(140, 24)) as pilot:
+            await pilot.pause()
+
+            activity_log = app.query_one("#dash-agent-log", RichLog)
+            activity_panel = app.query_one("#dash-agent-log-section", Vertical)
+
+            assert activity_log.wrap is True
+            assert activity_log.min_width == 1
+            assert activity_log.region.x >= activity_panel.region.x
+            assert activity_log.region.width <= activity_panel.region.width
+            assert activity_panel.region.x + activity_panel.region.width <= 140
 
     @pytest.mark.asyncio
     @pytest.mark.tui
