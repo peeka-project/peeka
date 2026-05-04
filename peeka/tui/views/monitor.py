@@ -94,7 +94,7 @@ class MonitorView(Container):
                     value="5",
                     id="monitor-interval",
                 ),
-                Button("Monitor", id="monitor-btn", variant="primary", flat=True),
+                Button("Monitor", id="monitor-btn", variant="success", flat=True),
                 Button("Stop", id="stop-monitor-btn", variant="error", flat=True),
                 id="monitor-controls",
                 classes="compact-control",

@@ -228,7 +228,7 @@ class DashboardView(Container):
         yield Horizontal(
             thread_summary,
             Static("", classes="spacer"),
-            Button("Refresh", id="dash-refresh-btn", variant="default", flat=True),
+            Button("Refresh", id="dash-refresh-btn", variant="primary", flat=True),
             id="dash-controls",
             classes="compact-control",
         )

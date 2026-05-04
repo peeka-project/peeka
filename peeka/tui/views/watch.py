@@ -203,7 +203,7 @@ class WatchView(Container):
                     placeholder="condition (optional)",
                     id="watch-condition",
                 ),
-                Button("Watch", id="watch-btn", variant="primary", flat=True),
+                Button("Watch", id="watch-btn", variant="success", flat=True),
                 Button("Stop", id="stop-btn", variant="error", flat=True),
                 id="watch-controls",
                 classes="compact-control",

@@ -139,7 +139,7 @@ class TraceView(Container):
                 ),
                 Static("", classes="spacer"),
                 Horizontal(
-                    Button("Trace", id="trace-btn", variant="primary", flat=True),
+                    Button("Trace", id="trace-btn", variant="success", flat=True),
                     Button("Stop", id="stop-trace-btn", variant="error", flat=True),
                     Button("Clear", id="clear-trace-btn", variant="warning", flat=True),
                     id="trace-action-controls",
