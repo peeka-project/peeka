@@ -14,6 +14,10 @@
   <a href="README.zh-CN.md">中文</a> | <strong>English</strong>
 </p>
 
+<p align="center">
+  Roadmap: <strong>English</strong> | <a href="ROADMAP.zh-CN.md">中文</a>
+</p>
+
 > *Peek-a-boo!* — The name comes from the children's game. A diagnostic tool finding a hidden bug feels just like that moment of surprise when someone is found in hide-and-seek.
 
 Runtime diagnostic tool for Python applications, inspired by [Alibaba Arthas](https://github.com/alibaba/arthas). Non-invasive function observation with zero code changes.
