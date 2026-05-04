@@ -239,6 +239,47 @@ class TestMainScreen:
             await pilot.pause()
             assert activated_tabs == ["dashboard", "watch", "trace"]
 
+    @pytest.mark.asyncio
+    async def test_number_shortcut_does_not_reactivate_previous_focused_tab(
+        self, monkeypatch
+    ):
+        """Number shortcuts clear old pane focus before switching tabs."""
+        client = SimpleNamespace(
+            socket_path="/tmp/fake.sock",
+            disconnect=lambda: None,
+            send_command=lambda command: {"status": "success"},
+        )
+
+        async def fake_connect(self):
+            self._client = client
+
+        monkeypatch.setattr(MainScreen, "_connect", fake_connect)
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test", socket_path="/tmp/fake.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            await pilot.press("2")
+            await pilot.pause()
+
+            from textual.widgets import Button, TabbedContent
+
+            stop_button = app.screen.query_one("#stop-btn", Button)
+            stop_button.focus()
+            await pilot.pause()
+
+            await pilot.press("1")
+            await pilot.pause()
+            await pilot.pause()
+
+            tabbed = app.screen.query_one("#main-content", TabbedContent)
+            assert tabbed.active == "dashboard"
+            assert app.focused is None or not app.focused.id == "watch-condition"
+
 
 class TestWatchView:
     @pytest.mark.asyncio

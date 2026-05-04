@@ -163,6 +163,9 @@ class MainScreen(Screen):
 
     def action_switch_tab(self, tab_id: str) -> None:
         """Switch to a specific view."""
+        # Clear focus from the old pane first. Otherwise Textual may reactivate
+        # that pane when the hidden focused widget receives focus bookkeeping.
+        self.set_focus(None)
         tabbed = self.query_one("#main-content", TabbedContent)
         tabbed.active = tab_id
 
