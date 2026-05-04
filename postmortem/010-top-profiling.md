@@ -88,7 +88,7 @@ with self._connections_lock:
 
 | 提交 | 作者 | 日期 | 描述 |
 |------|------|------|------|
-| [`390b09d`](https://github.com/wwulfric/peeka/commit/390b09db60248d6d8cafea24ca0d1e2e9451caeb) | lufeihaidao | 2026-04-26 | fix(core): fix top command JSON corruption and trace tool_id conflict |
+| [`390b09d`](https://github.com/peeka-project/peeka/commit/390b09db60248d6d8cafea24ca0d1e2e9451caeb) | lufeihaidao | 2026-04-26 | fix(core): fix top command JSON corruption and trace tool_id conflict |
 
 #### 变更内容
 将两次独立的 `sendall` 合并为单次写入，并加 `_connections_lock` 互斥锁：
