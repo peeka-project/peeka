@@ -25,6 +25,12 @@ Runtime diagnostic tool for Python applications, inspired by [Alibaba Arthas](ht
 
 Uses [PEP 768](https://peps.python.org/pep-0768/) (`sys.remote_exec`) on Python 3.14+, with debugger-based fallback for Python 3.8–3.13 (GDB on Linux, LLDB on macOS).
 
+## Screenshots
+
+| Dashboard | Watch | Trace |
+|-----------|-------|-------|
+| <img src="docs/assets/screenshots/peeka-dashboard.png" alt="Peeka dashboard view" width="320"> | <img src="docs/assets/screenshots/peeka-watch.png" alt="Peeka watch view" width="320"> | <img src="docs/assets/screenshots/peeka-trace.png" alt="Peeka trace view" width="320"> |
+
 ## Key Features
 
 - **Non-invasive** — Inject observation logic at runtime, fully restored on detach
