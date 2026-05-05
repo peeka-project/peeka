@@ -25,6 +25,12 @@ Python 应用运行时诊断工具，灵感来源于 [Alibaba Arthas](https://gi
 
 Python 3.14+ 使用 [PEP 768](https://peps.python.org/pep-0768/)（`sys.remote_exec`），Python 3.8–3.13 使用调试器降级方案（Linux 用 GDB，macOS 用 LLDB）。
 
+## 截图
+
+| Dashboard | Watch | Trace |
+|-----------|-------|-------|
+| <img src="docs/assets/screenshots/peeka-dashboard.png" alt="Peeka dashboard 视图" width="320"> | <img src="docs/assets/screenshots/peeka-watch.png" alt="Peeka watch 视图" width="320"> | <img src="docs/assets/screenshots/peeka-trace.png" alt="Peeka trace 视图" width="320"> |
+
 ## 核心特性
 
 - **非侵入式** — 运行时注入观测逻辑，退出时完全恢复原状
