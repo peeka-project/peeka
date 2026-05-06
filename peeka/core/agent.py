@@ -3,14 +3,14 @@ Agent Code - Runs inside target process
 This code is injected into the target process and handles command execution
 """
 
-import time as _time
+import _thread
 import json
 import socket
 import sys
-import threading
+import time as _time
 import traceback
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 from peeka.core.injector import DecoratorInjector
 from peeka.core.observer import ObservationManager
@@ -28,6 +28,38 @@ def _write_session_log(
                 log_file.write(details.rstrip() + "\n")
     except OSError:
         pass
+
+
+def _get_original_runtime_attr(
+    module_name: str, attr_name: str, fallback: Any
+) -> Any:
+    """Return an unpatched runtime primitive when gevent exposes one.
+
+    This does not import or depend on gevent. It only avoids already-applied
+    monkey patches in target processes that happen to use gevent.
+    """
+    monkey = sys.modules.get("gevent.monkey")
+    get_original = getattr(monkey, "get_original", None)
+    if callable(get_original):
+        try:
+            return get_original(module_name, attr_name)
+        except Exception:
+            pass
+    return fallback
+
+
+_NATIVE_SOCKET = _get_original_runtime_attr("socket", "socket", socket.socket)
+_NATIVE_START_NEW_THREAD = _get_original_runtime_attr(
+    "_thread", "start_new_thread", _thread.start_new_thread
+)
+_NATIVE_ALLOCATE_LOCK = _get_original_runtime_attr(
+    "_thread", "allocate_lock", _thread.allocate_lock
+)
+
+
+def _start_native_thread(target: Callable[..., Any], *args: Any) -> None:
+    """Start a low-level native thread without target monkey-patched threading."""
+    _NATIVE_START_NEW_THREAD(target, args)
 
 
 class PeekaAgent:
@@ -90,7 +122,7 @@ class PeekaAgent:
         self.server: Optional[socket.socket] = None
         self.command_handlers: Dict[str, Any] = {}
         self._client_connections: list = []
-        self._connections_lock = threading.Lock()
+        self._connections_lock = _NATIVE_ALLOCATE_LOCK()
 
         self._client_counter = 0
         self.observer = ObservationManager()
@@ -248,7 +280,7 @@ class PeekaAgent:
 
     def start(self) -> None:
         try:
-            self.server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            self.server = _NATIVE_SOCKET(socket.AF_UNIX, socket.SOCK_STREAM)
 
             if Path(self.sock_path).exists():
                 Path(self.sock_path).unlink()
@@ -259,18 +291,11 @@ class PeekaAgent:
             # allowing the accept loop to check self.running periodically.
             self.server.settimeout(1.0)
 
-            # Use an event to ensure the accept loop is actually running
-            # before signaling readiness, avoiding a race where clients
-            # connect before accept() is called.
-            accept_ready = threading.Event()
-            thread = threading.Thread(
-                target=self._accept_loop,
-                args=(accept_ready,),
-                name="peeka-agent-accept",
-                daemon=True,
-            )
-            thread.start()
-            accept_ready.wait(timeout=10)
+            # Start the accept loop with a native low-level thread. Do not use
+            # target-process threading primitives here: frameworks such as
+            # gevent may monkey-patch threading.Event/Thread and make blocking
+            # waits illegal in the injection callback.
+            _start_native_thread(self._accept_loop)
 
             # Signal readiness via TCP reverse-connect (preferred) and
             # .ready file (fallback / backward compatibility).
@@ -289,20 +314,14 @@ class PeekaAgent:
             msg = f"[peeka Agent] Start failed: {e}"
             self._emit_log("ERROR", msg, traceback.format_exc())
 
-    def _accept_loop(self, ready_event: threading.Event) -> None:
-        ready_event.set()
+    def _accept_loop(self) -> None:
         while self.running:
             try:
                 if self.server is None:
                     break
                 conn, _ = self.server.accept()
                 self._client_counter += 1
-                threading.Thread(
-                    target=self._handle_client,
-                    args=(conn, self._client_counter),
-                    name=f"peeka-agent-client-{self._client_counter}",
-                    daemon=True,
-                ).start()
+                _start_native_thread(self._handle_client, conn, self._client_counter)
             except socket.timeout:
                 # Periodic wakeup to re-check self.running
                 continue
@@ -466,7 +485,7 @@ class PeekaAgent:
         if self._notify_port <= 0:
             return
         try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s = _NATIVE_SOCKET(socket.AF_INET, socket.SOCK_STREAM)
             s.settimeout(5.0)
             s.connect(("127.0.0.1", self._notify_port))
             s.sendall(b"READY")
