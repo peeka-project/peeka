@@ -11,11 +11,16 @@ description: 指导智能体在 Omarchy/Hyprland 上使用 tmux 控制的 Peeka 
 
 ## 核心规则
 
+- Peeka TUI 截图必须基于 `$docker-build` skill 声明、创建、维护的 Docker 镜像和容器；不要使用本机 Python 进程截图，除非用户明确要求“本机 Python”。
+- 容器镜像由 `$docker-build` skill 创建和维护；需要 Python 3.8、3.12、3.14 测试容器时，先按该 skill 检查或构建 `peeka-test:<version>`，不要在本 skill 中复制镜像构建流程。
+- 执行截图前必须明确记录截图目标：Docker 镜像/容器名、Python 版本（例如 Python 3.14、Python 3.12、Python 3.8）、要截取的内容（具体界面或具体功能状态），以及容器内目标 Python 进程。
+- 如果用户没有明确指定基于哪个 Python 进程截图，默认使用 `peeka-test:3.14` 容器中的本项目 `examples/demo.py` 进程。
 - 不要对非活动 workspace 使用 `grim -g <inactive-window-geometry>`；它会截取当前可见输出中对应几何区域，而不是非活动 workspace。
 - 实际截图必须使用位于 `~/.codex/skills/omarchy-headless-screenshot` 的全局截图 skill。
 - 除非用户要求生成项目资产，否则截图保存在 `/tmp`。
-- 声称截图成功前，必须用可用的视觉工具检查生成图片。
+- 声称截图成功前，必须用可用的视觉工具检查生成图片；检查必须覆盖“正确视图”和“颜色/主题正常”，如果截图近似灰阶或颜色明显缺失，必须先修正终端/主题/环境后重新截图。
 - 如果切换过 Peeka tab，除非用户要求截取其他视图，否则用按键 `1` 恢复到 Dashboard。
+- 截图前后必须记录 Omarchy 自动锁屏状态。不要只依赖单一命令；至少检查 `systemctl --user is-active hypridle` 和 `pgrep -x hypridle`。如果任一检查显示截图前正在运行，结束后必须确保它仍在运行；如果截图前停止，结束后不要主动启动。
 
 ## 查找或打开 Peeka TUI
 
@@ -30,7 +35,7 @@ hyprctl clients -j | jq -r '.[] | [.workspace.id,.address,.class,.title,(.at|joi
 推荐启动模式：
 
 ```bash
-WS=3
+WS=5
 SESSION=peeka-tui-shot
 
 # 启动或复用一个运行 Peeka 的 detached tmux 会话。
@@ -103,6 +108,14 @@ tmux send-keys -t "$SESSION" 'demo.Calculator.add' Enter
 
 ## 截图流程
 
+截图前先声明本次截图参数，例如：
+
+```text
+截图目标：Python 3.14 容器中的 examples/demo.py；Peeka Dashboard 视图。
+```
+
+容器镜像必须来自 `$docker-build` skill 管理的 `peeka-test:<version>`。截图时按用户指定的版本选择容器；没有指定版本时，优先使用 Python 3.14 作为 PEP 768 默认验证环境。不要为了绕过 attach 限制改用本机 Python；应改为启动或复用符合 `$docker-build` 约定的容器。
+
 如果 workspace 已准备好，只需要截取简单截图：
 
 ```bash
@@ -122,5 +135,7 @@ tmux send-keys -t "$SESSION" 'demo.Calculator.add' Enter
 
 - 项目内不能存在 `omarchy-headless-screenshot` 的副本；全局副本是唯一事实来源。
 - 截图必须显示用户请求的 Peeka 视图，而不是用户当前可见的浏览器或视频 workspace。
+- 截图必须来自 `$docker-build` 管理的容器环境；结果说明中列出容器名、镜像 tag、容器内目标 PID 和 Python 版本。
+- 视觉检查必须确认截图不是近似灰阶：能看到 Peeka/Textual 主题色、激活 tab 高亮、按钮/边框色彩或其他非灰色 UI 信号。
 - 任务结束后的 `hyprctl activeworkspace -j` 必须显示用户可见 workspace 已恢复。
-- 如果截图工作开始前 `hypridle` 正在运行，结束后它也必须运行；如果开始前是停止状态，不要启动它。
+- 如果截图工作开始前 `hypridle` 正在运行，结束后它也必须运行；如果开始前是停止状态，不要启动它。最终说明必须报告截图前后的 `hypridle` 状态，不能只报告“脚本应当恢复”。
