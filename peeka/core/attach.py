@@ -288,32 +288,17 @@ class ProcessAttacher:
           - macOS -> raise RuntimeError (extension required)
         """
         system_name = platform.system()
-        target_version = self._get_target_python_version()
-        prefer_legacy_gdb = (
-            system_name == "Linux"
-            and target_version is not None
-            and target_version <= (3, 8)
-        )
-
         if _has_injector():
             if system_name == "Darwin":
                 return self._inject_via_lldb()
             if system_name == "Linux":
-                if prefer_legacy_gdb:
-                    logger.info(
-                        "Using legacy GDB path for Python %d.%d due to known "
-                        "thread-scheduling issues in the dlopen path",
-                        target_version[0],
-                        target_version[1],
+                try:
+                    return self._inject_via_gdb_dlopen()
+                except (TimeoutError, RuntimeError, OSError) as e:
+                    logger.warning(
+                        "GDB dlopen injection failed (%s), falling back to legacy GDB",
+                        e,
                     )
-                else:
-                    try:
-                        return self._inject_via_gdb_dlopen()
-                    except (TimeoutError, RuntimeError, OSError) as e:
-                        logger.warning(
-                            "GDB dlopen injection failed (%s), falling back to legacy GDB",
-                            e,
-                        )
             else:
                 raise NotImplementedError(f"Unsupported platform: {system_name}")
 

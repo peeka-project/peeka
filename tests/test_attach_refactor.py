@@ -143,23 +143,33 @@ class TestAttachFallbackDispatch:
         with patch("peeka.core.attach._has_injector", return_value=True), patch(
             "platform.system", return_value="Linux"
         ), patch.object(
-            attacher, "_get_target_python_version", return_value=(3, 9)
-        ), patch.object(
             attacher, "_inject_via_gdb_dlopen", return_value=True
         ) as mock_gdb_dlopen, patch.object(attacher, "_inject_via_lldb") as mock_lldb:
             assert attacher._attach_fallback() is True
             mock_gdb_dlopen.assert_called_once_with()
             mock_lldb.assert_not_called()
 
-    def test_linux_python38_skips_dlopen_and_uses_legacy_gdb(self):
-        """Python 3.8 should avoid dlopen path and go straight to legacy GDB."""
+    def test_linux_python38_with_injector_prefers_gdb_dlopen(self):
+        """Python 3.8 should prefer native dlopen when the injector exists."""
         attacher = ProcessAttacher(12345)
         with patch("peeka.core.attach._has_injector", return_value=True), patch(
             "platform.system", return_value="Linux"
         ), patch.object(
-            attacher, "_get_target_python_version", return_value=(3, 8)
+            attacher, "_inject_via_gdb_dlopen", return_value=True
+        ) as mock_gdb_dlopen, patch.object(
+            attacher, "_inject_via_gdb_legacy"
+        ) as mock_legacy:
+            assert attacher._attach_fallback() is True
+            mock_gdb_dlopen.assert_called_once_with()
+            mock_legacy.assert_not_called()
+
+    def test_linux_with_injector_falls_back_to_legacy_when_dlopen_fails(self):
+        """Linux + injector should fallback to legacy GDB if dlopen fails."""
+        attacher = ProcessAttacher(12345)
+        with patch("peeka.core.attach._has_injector", return_value=True), patch(
+            "platform.system", return_value="Linux"
         ), patch.object(
-            attacher, "_inject_via_gdb_dlopen"
+            attacher, "_inject_via_gdb_dlopen", side_effect=TimeoutError("boom")
         ) as mock_gdb_dlopen, patch.object(
             attacher, "_check_gdb_available"
         ), patch.object(
@@ -178,7 +188,7 @@ class TestAttachFallbackDispatch:
             "os.path.exists", return_value=False
         ):
             assert attacher._attach_fallback() is True
-            mock_gdb_dlopen.assert_not_called()
+            mock_gdb_dlopen.assert_called_once_with()
             mock_legacy.assert_called_once_with("/tmp/agent.py")
 
     def test_macos_with_injector_dispatches_lldb(self):
