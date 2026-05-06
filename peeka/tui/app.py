@@ -7,6 +7,7 @@ import signal
 import threading
 import time
 import uuid
+import logging
 
 from typing import Any, Callable, Dict, List, Optional
 
@@ -15,6 +16,23 @@ from textual.binding import Binding
 from textual.theme import Theme
 
 from peeka.tui.screens.process_selector import ProcessSelectorScreen
+
+
+class TUILogHandler(logging.Handler):
+    """Custom logging handler that sends log messages to the TUI's activity log."""
+
+    def __init__(self, app: "PeekaApp"):
+        super().__init__()
+        self.app = app
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """Emit a log record to the TUI activity log."""
+        try:
+            message = self.format(record)
+            level = record.levelname
+            self.app.record_client_activity(level, message, source="log")
+        except Exception:
+            self.handleError(record)
 
 # Module constants
 DEFAULT_THEME = "dracula"
@@ -69,9 +87,20 @@ class PeekaApp(App):
         self._activity_lock = threading.Lock()
         self._activity_seq = 0
         self.client_instance_id = f"tui-{uuid.uuid4().hex[:6]}"
+        self._log_handler: Optional[TUILogHandler] = None
 
     def on_mount(self) -> None:
         """Called when app is mounted."""
+        # Configure logging to use TUI handler
+        from peeka.core.output import configure_logging
+        # Remove existing handlers (to prevent stderr output)
+        for handler in logging.root.handlers[:]:
+            if isinstance(handler, logging.StreamHandler):
+                logging.root.removeHandler(handler)
+        # Create and add our custom handler
+        self._log_handler = TUILogHandler(self)
+        configure_logging(add_stream_handler=False, custom_handler=self._log_handler)
+
         # Register high-contrast dark theme
         self.register_theme(
             Theme(
