@@ -11,6 +11,7 @@ build/
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
 
 # Testing / coverage
 .coverage

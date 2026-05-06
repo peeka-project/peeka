@@ -418,7 +418,11 @@ class DashboardView(Container):
         if self._activity_listener_registered:
             return
 
-        register = getattr(self.app, "register_activity_listener", None)
+        app = self._get_optional_app()
+        if app is None:
+            return
+
+        register = getattr(app, "register_activity_listener", None)
         if not callable(register):
             return
 
@@ -430,14 +434,23 @@ class DashboardView(Container):
         if not self._activity_listener_registered:
             return
 
-        unregister = getattr(self.app, "unregister_activity_listener", None)
+        app = self._get_optional_app()
+        if app is None:
+            self._activity_listener_registered = False
+            return
+
+        unregister = getattr(app, "unregister_activity_listener", None)
         if callable(unregister):
             unregister(self._handle_client_activity)
         self._activity_listener_registered = False
 
     def _load_client_activity_history(self) -> None:
         """Replay buffered client activity emitted before the dashboard mounted."""
-        getter = getattr(self.app, "get_client_activity_entries", None)
+        app = self._get_optional_app()
+        if app is None:
+            return
+
+        getter = getattr(app, "get_client_activity_entries", None)
         if not callable(getter):
             return
 
@@ -456,9 +469,20 @@ class DashboardView(Container):
         self, level: str, message: str, source: str = "dashboard"
     ) -> None:
         """Emit a client-side activity entry when the app supports it."""
-        recorder = getattr(self.app, "record_client_activity", None)
+        app = self._get_optional_app()
+        if app is None:
+            return
+
+        recorder = getattr(app, "record_client_activity", None)
         if callable(recorder):
             recorder(level, message, source=source)
+
+    def _get_optional_app(self) -> Optional[Any]:
+        """Return the mounted Textual app when one is available."""
+        try:
+            return self.app
+        except Exception:
+            return None
 
     def _ingest_client_activity_entry(self, entry: Dict[str, Any]) -> None:
         """Render one buffered client activity entry into the activity log."""
