@@ -10,7 +10,7 @@
 | [002](./002-tui-memory-view.md) | TUI Memory View 布局、GC 表格、刷新与交互 | SEV-1 | tui (memory, logger, css) | 13 | 2026-02-26 ~ 2026-03-10 |
 | [003](./003-tui-autocomplete.md) | TUI 自动补全：缓存、触发、光标、`__main__` | SEV-2 | tui, commands (complete) | 5 | 2026-02-07 ~ 2026-03-05 |
 | [004](./004-streaming-client-concurrency.md) | StreamingAgentClient 并发与 BrokenPipe | SEV-1 | core/client, tui views | 6 | 2026-02-28 ~ 2026-03-10 |
-| [005](./005-tui-threading-and-lifecycle.md) | TUI 线程模型、主线程阻塞与关机生命周期 | SEV-1 | tui (app, screens, views) | 6 | 2026-02-07 ~ 2026-03-05 |
+| [005](./005-tui-threading-and-lifecycle.md) | TUI 线程模型、主线程阻塞与关机生命周期 | SEV-1 | tui (app, screens, views) | 8 | 2026-02-07 ~ 2026-05-07 |
 | [006](./006-attach-and-agent-lifecycle.md) | 进程 Attach 就绪探测与 Agent 生命周期 | SEV-0 | core/attach, core/agent | 5 | 2026-02-26 ~ 2026-03-01 |
 | [007](./007-gdb-injection-and-python38.md) | GDB 注入路径与 Python 3.8 兼容性 | SEV-1 | core/attach, core/agent | 4 | 2026-02-05 ~ 2026-03-24 |
 | [008](./008-injector-and-tracing.md) | DecoratorInjector 实例方法、`__main__` 解析与 trace 调用树 | SEV-1 | core/injector, commands/trace | 3 | 2026-01-29 ~ 2026-02-28 |
@@ -26,7 +26,7 @@
 ## 统计
 
 - **话题总数**：16
-- **事故总次数**：76
+- **事故总次数**：78
 - **按严重级别**：SEV-0: 3, SEV-1: 9, SEV-2: 3, SEV-3: 1, SEV-4: 1
 - **按组件**：
   - tui: 7 个话题（002, 003, 004, 005, 010, 012, 013）
@@ -60,6 +60,8 @@
 
 | 日期 | 话题 | 事故 | 变更说明 |
 |------|------|------|----------|
+| 2026-05-07 | [005](./005-tui-threading-and-lifecycle.md) | #8 | 新增事故：Dashboard 未挂载时访问 app 导致 lifecycle 测试崩溃（v0.1.11） |
+| 2026-05-07 | [005](./005-tui-threading-and-lifecycle.md) | #7 | 新增事故：logging 配置向 stderr 输出破坏 TUI 活动日志集成（v0.1.11） |
 | 2026-04-27 | [010](./010-top-profiling.md) | #5 | 新增事故：Agent 并发响应帧写入导致 top 命令 JSON 损坏（v0.1.8） |
 | 2026-04-27 | [009](./009-cli-commands-and-payloads.md) | #5 | 新增事故：peeka-cli run OutputFormatter stdout 捕获缺陷（v0.1.8） |
 | 2026-04-27 | [016](./016-dependencies.md) | #2 | 新增事故：dev-dependencies 使用已废弃 [tool.uv] 字段（v0.1.8） |

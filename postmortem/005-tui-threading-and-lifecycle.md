@@ -5,13 +5,15 @@
 | **话题** | TUI 的 run_worker 使用、主线程阻塞、错误反馈与关机生命周期问题 |
 | **受影响组件** | tui (app, screens, views) |
 | **最高严重级别** | SEV-1 (High) |
-| **事故次数** | 6 |
-| **时间跨度** | 2026-02-07 至 2026-03-05 |
+| **事故次数** | 8 |
+| **时间跨度** | 2026-02-07 至 2026-05-07 |
 
 ## 案例索引
 
 | # | 事故 | 严重级别 | 日期 |
 |---|------|----------|------|
+| [#8](#事故-8dashboard-未挂载时访问-app-导致-lifecycle-测试崩溃) | Dashboard 未挂载时访问 app 导致 lifecycle 测试崩溃 | SEV-3 | 2026-05-07 |
+| [#7](#事故-7logging-配置向-stderr-输出破坏-tui-活动日志集成) | logging 配置向 stderr 输出破坏 TUI 活动日志集成 | SEV-2 | 2026-05-06 |
 | [#6](#事故-6tui-缺少优雅关机信号处理) | TUI 缺少优雅关机信号处理 | SEV-2 | 2026-03-05 |
 | [#5](#事故-5所有视图缺少-workerresult-错误处理) | 所有视图缺少 worker.result 错误处理 | SEV-2 | 2026-02-26 |
 | [#4](#事故-4attach-在进程选择界面阻塞主线程) | attach 在进程选择界面阻塞主线程 | SEV-1 | 2026-02-26 |
@@ -24,6 +26,203 @@
 ## 话题概述
 
 该话题聚焦 Textual 应用的基本运行约束：阻塞 IO 不可在主线程执行、worker 必须在正确上下文启动、后台线程结果必须安全回到 UI 线程、以及进程终止时需执行清理。事故跨越启动、运行、退出全生命周期，反复指向同一系统性原因——线程边界与生命周期边界未在架构层被统一约束。
+
+---
+
+## 事故 #8：Dashboard 未挂载时访问 app 导致 lifecycle 测试崩溃
+
+> **Tag 范围**：`v0.1.10` → `v0.1.11` | **严重级别**：SEV-3 | **日期**：2026-05-07
+
+### 概要
+
+发布前回归测试中，`DashboardView.set_active(True)` 在未挂载到 Textual App 的单元测试上下文中调用 `_load_client_activity_history()`，该方法直接访问 `self.app`，触发 `NoActiveAppError`。
+
+### 根因分析
+
+#### 类别
+Missing Validation
+
+#### 分析
+Dashboard 新增 app 级 activity replay/listener 机制后，辅助方法默认 `self.app` 一定存在。但 lifecycle 单元测试会直接构造 `DashboardView` 并调用 `set_active(True)`，此时 Textual 的 active app 上下文不存在。activity replay/listener 本身是可选增强能力，未挂载时应 no-op，而不应阻断 view 生命周期测试或激活流程。
+
+#### 致因提交
+
+| 提交 | 作者 | 日期 | 描述 |
+|------|------|------|------|
+| 候选范围 | lufeihaidao | 2026-05-06 前 | Dashboard activity log 集成引入对 `self.app` 的直接依赖 |
+
+> 致因提交无法确定性定位；从修复 diff 可确定问题来自 Dashboard activity hook 对挂载状态的隐式假设。
+
+### 复现
+
+#### 前置条件
+- 直接构造 `DashboardView(pid=12345)`，不通过 Textual app mount。
+- 设置 `_active = False` 且注入 fake client。
+
+#### 步骤
+1. 运行 `uv run pytest tests/tui/test_view_lifecycle.py::TestDashboardLifecycle::test_set_active_restarts_dashboard_work -v`。
+2. 调用 `view.set_active(True)`。
+
+#### 预期行为
+未挂载上下文中跳过可选 app-level activity replay/listener，继续重启 dashboard worker。
+
+#### 实际行为
+访问 `self.app` 抛出 `textual._context.NoActiveAppError`。
+
+### 修复
+
+#### 修复提交
+
+| 提交 | 作者 | 日期 | 描述 |
+|------|------|------|------|
+| `15463f9` | lufeihaidao | 2026-05-07 | fix(tui): guard dashboard activity hooks before mount |
+
+#### 变更内容
+1. 新增 `_get_optional_app()`，捕获未挂载时的 app 访问异常。
+2. `_register_client_activity_listener()`、`_unregister_client_activity_listener()`、`_load_client_activity_history()`、`_record_client_activity()` 在无 app 时 no-op。
+3. 本地 extension build 会生成 `.so`，同步把 `*.so` 加入 `.gitignore`，避免 release 前工作区被构建产物污染。
+
+#### 验证
+- `uv run pytest tests/tui/test_view_lifecycle.py::TestDashboardLifecycle::test_set_active_restarts_dashboard_work -v`
+- `uv run pytest tests/tui/test_view_lifecycle.py tests/test_attach_refactor.py -v`
+- `uv run pytest tests/ -v -m "not e2e and not container"` 中该 lifecycle 失败被修复；剩余 native extension import 失败通过 `uv pip install -e .` 构建扩展后验证通过。
+
+### 影响
+
+- **受影响用户**：主要影响测试和未挂载上下文下的 view 生命周期调用；真实已挂载 TUI 行为保持不变。
+- **持续时间**：Dashboard activity hook 引入后至 `15463f9`。
+- **数据影响**：无。
+
+### 时间线
+
+| 时间 | 事件 |
+|------|------|
+| 2026-05-07 | 发布前 CI-safe 本地测试发现 `NoActiveAppError` |
+| 2026-05-07 | `15463f9` 增加 optional app guard |
+| 2026-05-07 | lifecycle 与 attach focused tests 通过 |
+
+### 经验教训
+
+#### 做得好的方面
+- 发布前完整测试矩阵暴露了隐藏 lifecycle 边界。
+- 修复范围保持在可选 app activity hooks，没有改变 mounted TUI 的主路径。
+
+#### 可以改进的方面
+- 新增 app 级集成点时未同步考虑 direct view unit test 场景。
+
+#### 行动项
+
+| 行动 | 优先级 | 状态 |
+|------|--------|------|
+| 为所有可选 app-level view hook 统一使用 optional app 获取模式 | P1 | 待处理 |
+| TUI view lifecycle 测试覆盖 mounted 与 unmounted 两类上下文 | P1 | 待处理 |
+
+### 预防
+
+- **立即执行**：可选 app 能力在未挂载时必须 no-op。
+- **短期**：对 direct view unit tests 中的 `self.app` 访问做审计。
+- **长期**：抽取 ViewBase 生命周期/应用上下文辅助方法，减少每个 view 自行处理。
+
+### 参考
+
+- 修复提交：`15463f9 fix(tui): guard dashboard activity hooks before mount`
+
+---
+
+## 事故 #7：logging 配置向 stderr 输出破坏 TUI 活动日志集成
+
+> **Tag 范围**：`v0.1.10` → `v0.1.11` | **严重级别**：SEV-2 | **日期**：2026-05-06
+
+### 概要
+
+TUI 运行时复用 core 的 `configure_logging()`，该函数默认通过 `logging.basicConfig()` 给 root logger 添加 stderr stream handler。TUI 希望将客户端/内部日志呈现在 Dashboard activity log 中，但默认 stderr handler 会把日志写到终端输出通道，干扰 Textual 渲染与活动日志体验。
+
+### 根因分析
+
+#### 类别
+Integration Error
+
+#### 分析
+`configure_logging()` 最初服务 CLI/JSONL 输出场景，默认向 stderr 写日志是合理的；TUI 场景需要不同输出目标，却只能调用同一个全局配置函数。缺少可注入 handler 和禁用 stream handler 的参数，导致 CLI 与 TUI 对日志目的地的要求耦合在一起。
+
+#### 致因提交
+
+| 提交 | 作者 | 日期 | 描述 |
+|------|------|------|------|
+| 无法确定性定位 | lufeihaidao | 2026-05-06 前 | core logging 配置初始实现默认绑定 stderr stream handler |
+
+### 复现
+
+#### 前置条件
+- 启动 peeka TUI。
+- 触发会写 Python logging 的客户端或 TUI 内部路径。
+
+#### 步骤
+1. TUI `on_mount()` 调用 logging 配置。
+2. 触发日志输出。
+
+#### 预期行为
+日志进入 Dashboard activity log，不污染 TUI 终端渲染。
+
+#### 实际行为
+日志经 root stream handler 写到 stderr，可能破坏 TUI 显示，并且无法统一进入 activity log。
+
+### 修复
+
+#### 修复提交
+
+| 提交 | 作者 | 日期 | 描述 |
+|------|------|------|------|
+| `0d19c22` | lufeihaidao | 2026-05-06 | fix: prevent logging from breaking TUI |
+
+#### 变更内容
+1. `configure_logging()` 增加 `add_stream_handler` 与 `custom_handler` 参数。
+2. TUI 新增 `TUILogHandler`，将 logging record 转为 `record_client_activity(..., source="log")`。
+3. `PeekaApp.on_mount()` 移除 root 上已有的 `StreamHandler`，再用 `configure_logging(add_stream_handler=False, custom_handler=...)` 绑定 TUI activity log handler。
+
+#### 验证
+- 发布前本地测试：`uv run pytest tests/ -v -m "not e2e and not container"`。
+- GitHub Actions release tests：`v0.1.11` 发布 workflow 的 `Run Tests` job 通过。
+
+### 影响
+
+- **受影响用户**：使用 TUI 且启用/触发 logging 输出的用户。
+- **持续时间**：TUI 使用通用 logging 配置后至 `0d19c22`。
+- **数据影响**：无。
+
+### 时间线
+
+| 时间 | 事件 |
+|------|------|
+| 2026-05-06 | 发现 logging 输出破坏 TUI 显示/活动日志路径 |
+| 2026-05-06 | `0d19c22` 支持自定义 logging handler 并接入 TUI activity log |
+| 2026-05-07 | `v0.1.11` release workflow 验证通过 |
+
+### 经验教训
+
+#### 做得好的方面
+- 保留 CLI 默认 stderr 行为，同时给 TUI 提供显式定制入口。
+- 将日志统一进入 existing activity log，而不是新增第二套显示通道。
+
+#### 可以改进的方面
+- core helper 的默认输出副作用在跨入口复用前缺少场景审计。
+
+#### 行动项
+
+| 行动 | 优先级 | 状态 |
+|------|--------|------|
+| 为 `configure_logging(add_stream_handler=False, custom_handler=...)` 增加单元测试 | P1 | 待处理 |
+| TUI smoke 测试覆盖 logging 输出不会写入 stderr/破坏渲染 | P1 | 待处理 |
+
+### 预防
+
+- **立即执行**：跨 CLI/TUI 复用的全局配置函数必须支持注入目标和禁用默认副作用。
+- **短期**：对 TUI `on_mount()` 的全局状态变更做测试覆盖。
+- **长期**：将 CLI logging 与 TUI logging 配置入口拆分为明确场景 API。
+
+### 参考
+
+- 修复提交：`0d19c22 fix: prevent logging from breaking TUI`
 
 ---
 
