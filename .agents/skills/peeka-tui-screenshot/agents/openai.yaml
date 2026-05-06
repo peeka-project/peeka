@@ -1,0 +1,4 @@
+interface:
+  display_name: "Peeka TUI 截图"
+  short_description: "指导 Omarchy 下的 Peeka TUI 截图。"
+  default_prompt: "使用 $peeka-tui-screenshot 准备并截取 Peeka TUI 画面，不打扰当前可见 workspace。"
