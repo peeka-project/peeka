@@ -656,7 +656,7 @@ wheels = [
 
 [[package]]
 name = "peeka"
-version = "0.1.10"
+version = "0.1.11"
 source = { editable = "." }
 
 [package.optional-dependencies]
