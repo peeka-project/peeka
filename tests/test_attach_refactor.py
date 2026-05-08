@@ -3,6 +3,7 @@ Unit tests for attach.py RTLD constants and injector utility functions.
 """
 
 import importlib
+import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -191,6 +192,24 @@ class TestAttachFallbackDispatch:
             mock_gdb_dlopen.assert_called_once_with()
             mock_legacy.assert_called_once_with("/tmp/agent.py")
 
+    def test_linux_with_injector_does_not_fallback_on_symbol_error(self):
+        """Missing Python C API symbols make dlopen and legacy GDB both invalid."""
+        attacher = ProcessAttacher(12345)
+        with patch("peeka.core.attach._has_injector", return_value=True), patch(
+            "platform.system", return_value="Linux"
+        ), patch.object(
+            attacher,
+            "_inject_via_gdb_dlopen",
+            side_effect=attach.GDBSymbolResolutionError("no symbols"),
+        ) as mock_gdb_dlopen, patch.object(
+            attacher, "_inject_via_gdb_legacy"
+        ) as mock_legacy:
+            with pytest.raises(attach.GDBSymbolResolutionError):
+                attacher._attach_fallback()
+
+            mock_gdb_dlopen.assert_called_once_with()
+            mock_legacy.assert_not_called()
+
     def test_macos_with_injector_dispatches_lldb(self):
         """Darwin + injector available should use LLDB path."""
         attacher = ProcessAttacher(12345)
@@ -330,6 +349,11 @@ class TestCheckPythonVersionMatch:
 
 
 class TestAttachOutputIsolation:
+    def test_agent_native_socket_uses_c_socket(self):
+        import _socket
+
+        assert agent_module._NATIVE_SOCKET is _socket.socket
+
     def test_cmd_attach_suppresses_agent_startup_messages(self):
         mock_attacher = MagicMock()
         mock_attacher.attach.return_value = False
@@ -367,3 +391,100 @@ class TestAttachOutputIsolation:
         mock_write_session_log.assert_called_once()
         mock_print.assert_not_called()
         mock_print_exc.assert_not_called()
+
+    def test_init_agent_does_not_register_when_start_returns_false(self):
+        import sys
+
+        old_agents = getattr(sys, "_peeka_agents", None)
+        if old_agents is not None:
+            del sys._peeka_agents
+
+        try:
+            with patch("peeka.core.agent.PeekaAgent.start", return_value=False), patch(
+                "peeka.core.agent._write_session_log"
+            ) as mock_write_session_log:
+                _init_agent("session-3")
+
+            assert not hasattr(sys, "_peeka_agents")
+            mock_write_session_log.assert_called_once()
+        finally:
+            if old_agents is not None:
+                sys._peeka_agents = old_agents
+
+
+class TestGDBSymbolErrors:
+    def test_detects_no_symbol_table_error(self):
+        output = 'No symbol table is loaded.  Use the "file" command.'
+
+        assert attach._looks_like_gdb_symbol_resolution_error(output) is True
+
+    def test_formats_actionable_symbol_error(self):
+        message = attach._format_gdb_symbol_error(
+            "GDB dlopen injection",
+            'No symbol table is loaded.  Use the "file" command.',
+            "[Inferior detached]",
+        )
+
+        assert "GDB could not resolve Python runtime symbols" in message
+        assert "PyRun_SimpleString" in message
+        assert "No symbol table is loaded" in message
+
+
+class TestAgentReadinessProbe:
+    def test_is_agent_responsive_requires_hello_round_trip(self):
+        response = json.dumps({"status": "success"}).encode("utf-8")
+        frame = len(response).to_bytes(4, "big") + response
+
+        class FakeSocket:
+            def __init__(self, *args, **kwargs):
+                self._buffer = bytearray(frame)
+                self.sent = bytearray()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return None
+
+            def settimeout(self, timeout):
+                self.timeout = timeout
+
+            def connect(self, path):
+                self.path = path
+
+            def sendall(self, data):
+                self.sent.extend(data)
+
+            def recv(self, size):
+                data = self._buffer[:size]
+                del self._buffer[:size]
+                return bytes(data)
+
+        with patch("peeka.core.attach.sock_mod.socket", FakeSocket):
+            assert ProcessAttacher._is_agent_responsive("/tmp/peeka-test.sock") is True
+
+    def test_is_agent_responsive_rejects_connect_only_socket(self):
+        class FakeSocket:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return None
+
+            def settimeout(self, timeout):
+                self.timeout = timeout
+
+            def connect(self, path):
+                self.path = path
+
+            def sendall(self, data):
+                pass
+
+            def recv(self, size):
+                return b""
+
+        with patch("peeka.core.attach.sock_mod.socket", FakeSocket):
+            assert ProcessAttacher._is_agent_responsive("/tmp/peeka-test.sock") is False

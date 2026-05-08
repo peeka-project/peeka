@@ -3,6 +3,7 @@ Agent Code - Runs inside target process
 This code is injected into the target process and handles command execution
 """
 
+import _socket
 import _thread
 import json
 import socket
@@ -48,7 +49,10 @@ def _get_original_runtime_attr(
     return fallback
 
 
-_NATIVE_SOCKET = _get_original_runtime_attr("socket", "socket", socket.socket)
+# Use the C socket type directly. gevent/eventlet patch socket.socket at the
+# Python module layer; _socket.socket remains the blocking native socket that
+# is safe to use from the agent's low-level native threads.
+_NATIVE_SOCKET = _socket.socket
 _NATIVE_START_NEW_THREAD = _get_original_runtime_attr(
     "_thread", "start_new_thread", _thread.start_new_thread
 )
@@ -60,6 +64,17 @@ _NATIVE_ALLOCATE_LOCK = _get_original_runtime_attr(
 def _start_native_thread(target: Callable[..., Any], *args: Any) -> None:
     """Start a low-level native thread without target monkey-patched threading."""
     _NATIVE_START_NEW_THREAD(target, args)
+
+
+def _native_accept(server: Any) -> Tuple[Any, Any]:
+    """Accept a connection from either a socket wrapper or a raw _socket."""
+    accept = getattr(server, "accept", None)
+    if callable(accept):
+        return accept()
+
+    fd, address = server._accept()
+    conn = _NATIVE_SOCKET(server.family, server.type, server.proto, fileno=fd)
+    return conn, address
 
 
 class PeekaAgent:
@@ -278,7 +293,7 @@ class PeekaAgent:
             return "success"
         return "success " + " ".join(details[:3])
 
-    def start(self) -> None:
+    def start(self) -> bool:
         try:
             self.server = _NATIVE_SOCKET(socket.AF_UNIX, socket.SOCK_STREAM)
 
@@ -309,17 +324,26 @@ class PeekaAgent:
             # Eagerly load all command handlers now that the socket is
             # ready.  This runs on the agent thread (not GIL-blocking).
             self._register_handlers()
+            return True
 
         except Exception as e:
+            self.running = False
+            if self.server:
+                try:
+                    self.server.close()
+                except OSError:
+                    pass
+            self._cleanup_session_files()
             msg = f"[peeka Agent] Start failed: {e}"
             self._emit_log("ERROR", msg, traceback.format_exc())
+            return False
 
     def _accept_loop(self) -> None:
         while self.running:
             try:
                 if self.server is None:
                     break
-                conn, _ = self.server.accept()
+                conn, _ = _native_accept(self.server)
                 self._client_counter += 1
                 _start_native_thread(self._handle_client, conn, self._client_counter)
             except socket.timeout:
@@ -556,11 +580,13 @@ def _init_agent(
             notify_port=notify_port,
             suppress_startup_messages=suppress_startup_messages,
         )
-        agent.start()
-
-        if not hasattr(sys, "_peeka_agents"):
-            sys._peeka_agents = {}  # type: ignore[attr-defined]
-        sys._peeka_agents[session_id] = agent  # type: ignore[attr-defined]
+        if agent.start():
+            if not hasattr(sys, "_peeka_agents"):
+                sys._peeka_agents = {}  # type: ignore[attr-defined]
+            sys._peeka_agents[session_id] = agent  # type: ignore[attr-defined]
+        else:
+            msg = "[peeka Agent] Start failed; session not registered"
+            _write_session_log(session_id, "ERROR", msg)
 
     except Exception as e:
         msg = f"[peeka Agent] Initialization failed: {e}"

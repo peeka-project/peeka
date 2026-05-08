@@ -4,6 +4,7 @@ Attach to running Python processes and inject agent code
 """
 
 import importlib.util
+import json
 import logging
 import os
 import platform
@@ -34,6 +35,36 @@ except ImportError:
 # RTLD constants for dynamic linking
 _RTLD_DEFAULT = -2
 _RTLD_NOW = 2
+
+
+class GDBSymbolResolutionError(RuntimeError):
+    """Raised when GDB cannot resolve the Python C API symbols we need."""
+
+
+def _looks_like_gdb_symbol_resolution_error(output: str) -> bool:
+    """Return True when GDB failed before it could resolve Python symbols."""
+    lowered = output.lower()
+    symbol_error_markers = (
+        "no symbol table is loaded",
+        "no symbol",
+        "unknown return type",
+        "no function contains program counter",
+    )
+    return any(marker in lowered for marker in symbol_error_markers)
+
+
+def _format_gdb_symbol_error(method: str, stderr: str, stdout: str) -> str:
+    """Build an actionable error for GDB symbol-resolution failures."""
+    return (
+        f"{method} failed because GDB could not resolve Python runtime symbols.\n"
+        "The target process is attachable, but this injection path requires "
+        "symbols such as PyMem_Malloc, Py_AddPendingCall, PyGILState_Ensure, "
+        "or PyRun_SimpleString to be visible to GDB.\n"
+        "Fix: install matching Python debug symbols or use a Python build that "
+        "exports the Python C API symbols for the target interpreter.\n"
+        f"stderr:\n{stderr}\n"
+        f"stdout:\n{stdout}"
+    )
 
 
 def _find_injector_path() -> Optional[str]:
@@ -139,7 +170,7 @@ class ProcessAttacher:
         Check if there's already an active Peeka agent attached to any process.
         Returns (session_id, pid) tuple if found, None otherwise.
 
-        Validates by both process existence AND socket connectivity to avoid
+        Validates by both process existence AND agent responsiveness to avoid
         stale files left after process restarts.
         """
         socket_dir = Path("/tmp")
@@ -158,7 +189,7 @@ class ProcessAttacher:
                             self._cleanup_stale_files(sock_file, pid_file, ready_file)
                             continue
 
-                        if self._is_socket_alive(str(sock_file)):
+                        if self._is_agent_responsive(str(sock_file)):
                             return (session_id, attached_pid)
                         else:
                             self._cleanup_stale_files(sock_file, pid_file, ready_file)
@@ -170,14 +201,73 @@ class ProcessAttacher:
 
     @staticmethod
     def _is_socket_alive(socket_path: str) -> bool:
-        """Try connecting to the socket to verify the agent is actually responsive."""
+        """Try connecting to the socket to verify the path is reachable."""
         try:
-            s = sock_mod.socket(sock_mod.AF_UNIX, sock_mod.SOCK_STREAM)
-            s.settimeout(1.0)
-            s.connect(socket_path)
-            s.close()
+            with sock_mod.socket(sock_mod.AF_UNIX, sock_mod.SOCK_STREAM) as s:
+                s.settimeout(1.0)
+                s.connect(socket_path)
             return True
         except (ConnectionRefusedError, FileNotFoundError, OSError):
+            return False
+
+    @staticmethod
+    def _recv_exact(s: sock_mod.socket, size: int) -> bytes:
+        chunks = []
+        remaining = size
+        while remaining > 0:
+            try:
+                chunk = s.recv(remaining)
+            except sock_mod.timeout:
+                return b""
+            if not chunk:
+                return b""
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        return b"".join(chunks)
+
+    @classmethod
+    def _recv_response_header(cls, s: sock_mod.socket) -> bytes:
+        length_bytes = cls._recv_exact(s, 4)
+        while length_bytes in (b"OBS:", b"LOG:"):
+            frame_len_bytes = cls._recv_exact(s, 4)
+            if not frame_len_bytes:
+                return b""
+            frame_len = int.from_bytes(frame_len_bytes, "big")
+            if frame_len and not cls._recv_exact(s, frame_len):
+                return b""
+            length_bytes = cls._recv_exact(s, 4)
+        return length_bytes
+
+    @classmethod
+    def _is_agent_responsive(cls, socket_path: str) -> bool:
+        """Verify the agent can complete one command/response round trip."""
+        try:
+            with sock_mod.socket(sock_mod.AF_UNIX, sock_mod.SOCK_STREAM) as s:
+                s.settimeout(1.0)
+                s.connect(socket_path)
+
+                payload = json.dumps(
+                    {"type": "client", "action": "hello"}
+                ).encode("utf-8")
+                s.sendall(len(payload).to_bytes(4, "big"))
+                s.sendall(payload)
+
+                length_bytes = cls._recv_response_header(s)
+                if not length_bytes:
+                    return False
+                length = int.from_bytes(length_bytes, "big")
+                data = cls._recv_exact(s, length)
+                if not data:
+                    return False
+                response = json.loads(data.decode("utf-8"))
+                return response.get("status") == "success"
+        except (
+            ConnectionRefusedError,
+            FileNotFoundError,
+            OSError,
+            ValueError,
+            json.JSONDecodeError,
+        ):
             return False
 
     @staticmethod
@@ -294,6 +384,8 @@ class ProcessAttacher:
             if system_name == "Linux":
                 try:
                     return self._inject_via_gdb_dlopen()
+                except GDBSymbolResolutionError:
+                    raise
                 except (TimeoutError, RuntimeError, OSError) as e:
                     logger.warning(
                         "GDB dlopen injection failed (%s), falling back to legacy GDB",
@@ -402,10 +494,15 @@ class ProcessAttacher:
             )
 
             stderr = result.stderr.lower()
+            combined_output = f"{result.stderr}\n{result.stdout}"
             if "permission denied" in stderr or "operation not permitted" in stderr:
                 raise PermissionError("GDB attach failed: permission denied")
-            if "no symbol" in stderr:
-                raise RuntimeError("Python debug symbols not found")
+            if _looks_like_gdb_symbol_resolution_error(combined_output):
+                raise GDBSymbolResolutionError(
+                    _format_gdb_symbol_error(
+                        "GDB dlopen injection", result.stderr, result.stdout
+                    )
+                )
             if result.returncode != 0:
                 raise RuntimeError(
                     f"GDB dlopen injection failed (exit code {result.returncode}):\n"
@@ -629,8 +726,9 @@ class ProcessAttacher:
                 data = conn.recv(16)
                 conn.close()
                 if data == b"READY":
-                    # Double-check the Unix socket is connectable.
-                    if self._is_socket_alive(socket_path):
+                    # Double-check the Unix socket can complete a command
+                    # round trip; connect-only probes miss broken client loops.
+                    if self._is_agent_responsive(socket_path):
                         return True
                     # Socket not yet reachable — fall through to polling.
             except (sock_mod.timeout, OSError):
@@ -648,13 +746,13 @@ class ProcessAttacher:
         else:
             raise TimeoutError("Agent initialization timeout (ready file)")
 
-        # Phase 2: Verify socket is actually connectable
+        # Phase 2: Verify the socket can serve a lightweight hello command.
         while time.time() - start_time < timeout:
-            if self._is_socket_alive(socket_path):
+            if self._is_agent_responsive(socket_path):
                 return True
             time.sleep(0.05)
 
-        raise TimeoutError("Agent initialization timeout (socket not connectable)")
+        raise TimeoutError("Agent initialization timeout (agent not responsive)")
 
     def get_socket_path(self) -> str:
         """Get Unix domain socket path for communication"""
@@ -859,15 +957,17 @@ class ProcessAttacher:
             )
 
             stderr = result.stderr.lower()
+            combined_output = f"{result.stderr}\n{result.stdout}"
             if "permission denied" in stderr or "operation not permitted" in stderr:
                 raise PermissionError(
                     "GDB attach failed: Permission denied.\n"
                     "Check ptrace_scope and process ownership."
                 )
-            elif "no symbol" in stderr and "pygil" in stderr:
-                raise RuntimeError(
-                    "Python debugging symbols not found.\n"
-                    "Install python3-dbg (Debian/Ubuntu) or python3-debuginfo (RHEL/Fedora)"
+            elif _looks_like_gdb_symbol_resolution_error(combined_output):
+                raise GDBSymbolResolutionError(
+                    _format_gdb_symbol_error(
+                        "Legacy GDB injection", result.stderr, result.stdout
+                    )
                 )
             elif result.returncode != 0:
                 raise RuntimeError(

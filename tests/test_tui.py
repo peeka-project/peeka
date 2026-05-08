@@ -125,6 +125,57 @@ class TestProcessSelectorScreen:
 
         assert ProcessSelectorScreen._is_peeka_process("321", "python -m http.server") is True
 
+    @pytest.mark.asyncio
+    async def test_validate_agent_connection_returns_error(self, monkeypatch):
+        """Process selector probes the agent before pushing MainScreen."""
+        disconnected = []
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def connect(self):
+                return {"status": "error", "error": "no response received"}
+
+            def disconnect(self):
+                disconnected.append(True)
+
+        monkeypatch.setattr("peeka.core.client.StreamingAgentClient", FakeClient)
+
+        app = PeekaApp()
+        async with app.run_test():
+            screen = app.screen
+            assert isinstance(screen, ProcessSelectorScreen)
+            assert (
+                screen._validate_agent_connection("/tmp/fake.sock")
+                == "no response received"
+            )
+            assert disconnected == [True]
+
+    @pytest.mark.asyncio
+    async def test_validate_agent_connection_accepts_success(self, monkeypatch):
+        """Successful agent hello allows the TUI to enter MainScreen."""
+        disconnected = []
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def connect(self):
+                return {"status": "success"}
+
+            def disconnect(self):
+                disconnected.append(True)
+
+        monkeypatch.setattr("peeka.core.client.StreamingAgentClient", FakeClient)
+
+        app = PeekaApp()
+        async with app.run_test():
+            screen = app.screen
+            assert isinstance(screen, ProcessSelectorScreen)
+            assert screen._validate_agent_connection("/tmp/fake.sock") is None
+            assert disconnected == [True]
+
 
 class TestMainScreen:
     @pytest.mark.asyncio
