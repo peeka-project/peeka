@@ -21,6 +21,7 @@ description: 指导智能体在 Omarchy/Hyprland 上使用 tmux 控制的 Peeka 
 - 声称截图成功前，必须用可用的视觉工具检查生成图片；检查必须覆盖“正确视图”和“颜色/主题正常”，如果截图近似灰阶或颜色明显缺失，必须先修正终端/主题/环境后重新截图。
 - 如果切换过 Peeka tab，除非用户要求截取其他视图，否则用按键 `1` 恢复到 Dashboard。
 - 截图前后必须记录 Omarchy 自动锁屏状态。不要只依赖单一命令；至少检查 `systemctl --user is-active hypridle` 和 `pgrep -x hypridle`。如果任一检查显示截图前正在运行，结束后必须确保它仍在运行；如果截图前停止，结束后不要主动启动。
+- 截图前后必须检查全局截图脚本输出的 `STATE before` / `STATE after`。如果用户原本在 Omarchy/Hyprland special workspace（隐藏桌面/scratchpad）中，`special=` 必须一致；`monitor=`、`workspace=`、`window=` 也应尽量一致。不一致时先恢复用户状态，再报告。
 
 ## 查找或打开 Peeka TUI
 
@@ -138,4 +139,5 @@ tmux send-keys -t "$SESSION" 'demo.Calculator.add' Enter
 - 截图必须来自 `$docker-build` 管理的容器环境；结果说明中列出容器名、镜像 tag、容器内目标 PID 和 Python 版本。
 - 视觉检查必须确认截图不是近似灰阶：能看到 Peeka/Textual 主题色、激活 tab 高亮、按钮/边框色彩或其他非灰色 UI 信号。
 - 任务结束后的 `hyprctl activeworkspace -j` 必须显示用户可见 workspace 已恢复。
+- 全局截图脚本的 `STATE before` / `STATE after` 必须显示用户 special workspace 状态已恢复；如果用户在隐藏桌面工作，不能只恢复普通 workspace id。
 - 如果截图工作开始前 `hypridle` 正在运行，结束后它也必须运行；如果开始前是停止状态，不要启动它。最终说明必须报告截图前后的 `hypridle` 状态，不能只报告“脚本应当恢复”。
