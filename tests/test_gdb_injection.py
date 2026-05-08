@@ -188,7 +188,7 @@ class TestGDBErrorHandling:
             stderr='No symbol "PyGILState_Ensure" in current context.',
         )
         with patch("subprocess.run", return_value=mock_result):
-            with pytest.raises(RuntimeError, match="debugging symbols"):
+            with pytest.raises(RuntimeError, match="Python runtime symbols"):
                 attacher._inject_via_gdb("/tmp/agent.py")
 
     def test_nonzero_exit_raises(self, attacher):
