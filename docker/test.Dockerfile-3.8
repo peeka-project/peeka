@@ -18,7 +18,8 @@ ENV TERM=xterm-256color
 ENV COLORTERM=truecolor
 
 RUN pip install --no-cache-dir -i https://mirrors.ustc.edu.cn/pypi/web/simple \
-    "textual~=6.2.1"
+    "textual~=6.2.1" \
+    "gevent==24.2.1"  # Gevent regression test: verify attach/watch work with monkey-patched targets
 
 WORKDIR /app
 
