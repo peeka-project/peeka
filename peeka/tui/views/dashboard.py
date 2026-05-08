@@ -51,6 +51,16 @@ _SESSION_LOG_PATTERN = re.compile(
     r"^(?P<timestamp>\d+(?:\.\d+)?) (?P<level>[A-Z]+) (?P<message>.*)$"
 )
 
+_TRANSPORT_ERROR_PATTERNS = (
+    "broken pipe",
+    "connection reset",
+    "connection aborted",
+    "connection refused",
+    "no response received",
+    "incomplete response",
+    "not connected",
+)
+
 
 class DashboardView(Container):
     """Arthas-style dashboard with thread table, memory/GC stats, and runtime info."""
@@ -69,6 +79,7 @@ class DashboardView(Container):
         self._client: Optional["StreamingAgentClient"] = None
         self._own_client: Optional["StreamingAgentClient"] = None
         self._stream_client: Optional["StreamingAgentClient"] = None
+        self._own_client_lock: threading.Lock = threading.Lock()
         self._stream_client_lock: threading.Lock = threading.Lock()
         self._socket_path: Optional[str] = None
         self._refresh_worker: Optional[Worker] = None
@@ -81,11 +92,13 @@ class DashboardView(Container):
         self._last_client_activity_seq = 0
         self._activity_listener_registered = False
         self._activity_log_entries: List[Dict[str, Any]] = []
+        self._dashboard_connection_lost = False
 
     def set_client(self, client: "StreamingAgentClient") -> None:
         self._client = client
         self._socket_path = client.socket_path
         self._session_id = self._extract_session_id(client.socket_path)
+        self._dashboard_connection_lost = False
         self._load_client_activity_history()
         self._register_client_activity_listener()
         self._load_persisted_agent_log_history()
@@ -127,17 +140,23 @@ class DashboardView(Container):
             return
         from peeka.core.client import StreamingAgentClient
 
-        self._own_client = StreamingAgentClient(
-            self._socket_path,
-            activity_reporter=make_activity_reporter(self.app, "dashboard-data"),
-            client_info=make_client_info(self.app, "dashboard-data"),
-        )
-        result = self._own_client.connect()
-        if result.get("status") != "success":
-            error = result.get("error")
-            self._log.warning("Dashboard dedicated client failed: %s", error)
-            self._own_client = None
-            return
+        with self._own_client_lock:
+            if self._own_client:
+                self._own_client.disconnect()
+
+            client = StreamingAgentClient(
+                self._socket_path,
+                activity_reporter=make_activity_reporter(self.app, "dashboard-data"),
+                client_info=make_client_info(self.app, "dashboard-data"),
+            )
+            result = client.connect()
+            if result.get("status") != "success":
+                error = result.get("error")
+                self._log.warning("Dashboard dedicated client failed: %s", error)
+                self._own_client = None
+                return
+
+            self._own_client = client
 
     def _connect_agent_log_stream(self) -> None:
         """Create a dedicated StreamingAgentClient for agent log streaming."""
@@ -290,7 +309,12 @@ class DashboardView(Container):
     # -- Periodic refresh -------------------------------------------------------
 
     def _start_refresh_worker(self) -> None:
-        if not self._active or not self._client or self._refresh_worker:
+        if (
+            not self._active
+            or self._dashboard_connection_lost
+            or not self._client
+            or self._refresh_worker
+        ):
             return
 
         self._refresh_worker = self.run_worker(
@@ -305,7 +329,12 @@ class DashboardView(Container):
 
     def _start_log_worker(self) -> None:
         """Start agent log streaming when the dashboard is active."""
-        if not self._active or not self._stream_client or self._log_worker:
+        if (
+            not self._active
+            or self._dashboard_connection_lost
+            or not self._stream_client
+            or self._log_worker
+        ):
             return
 
         self._log_worker = self.run_worker(
@@ -322,9 +351,10 @@ class DashboardView(Container):
 
     def _disconnect_dedicated_clients(self) -> None:
         """Disconnect dashboard-owned clients."""
-        if self._own_client:
-            self._own_client.disconnect()
-            self._own_client = None
+        with self._own_client_lock:
+            if self._own_client:
+                self._own_client.disconnect()
+                self._own_client = None
         if self._stream_client:
             self._stream_client.disconnect()
             self._stream_client = None
@@ -341,7 +371,7 @@ class DashboardView(Container):
             if worker.is_cancelled:
                 break
 
-            if self._active:
+            if self._active and not self._dashboard_connection_lost:
                 self.app.call_from_thread(self._refresh_dashboard_sync)
 
     # -- Data fetch -------------------------------------------------------------
@@ -349,7 +379,7 @@ class DashboardView(Container):
     def _refresh_dashboard_sync(self) -> None:
         """Launch worker thread to fetch dashboard data."""
         client = self._own_client or self._client
-        if not self._active or not client:
+        if not self._active or self._dashboard_connection_lost or not client:
             return
 
         def worker_fn() -> Dict[str, Any]:
@@ -360,8 +390,13 @@ class DashboardView(Container):
                 return data
 
             # Python version
-            ver_result = c.send_command(
-                {"type": "vmtool", "action": "get", "target": "sys.version", "depth": 1}
+            ver_result = self._send_dashboard_command(
+                {
+                    "type": "vmtool",
+                    "action": "get",
+                    "target": "sys.version",
+                    "depth": 1,
+                }
             )
             if ver_result.get("status") == "success":
                 data["python_version"] = ver_result.get("value", "unknown")
@@ -369,14 +404,14 @@ class DashboardView(Container):
                 self._log.debug("vmtool(version) failed: %s", ver_result.get("error"))
 
             # sys.argv
-            argv_result = c.send_command(
+            argv_result = self._send_dashboard_command(
                 {"type": "vmtool", "action": "get", "target": "sys.argv", "depth": 2}
             )
             if argv_result.get("status") == "success":
                 data["sys_argv"] = argv_result.get("value", [])
 
             # Memory overview
-            mem_result = c.send_command(
+            mem_result = self._send_dashboard_command(
                 {"type": "memory", "action": "overview"}
             )
             if mem_result.get("status") == "success":
@@ -386,7 +421,7 @@ class DashboardView(Container):
                 data["gc"] = mem_result.get("gc", {})
 
             # Thread list
-            thread_result = c.send_command(
+            thread_result = self._send_dashboard_command(
                 {"type": "thread", "action": "list"}
             )
             if thread_result.get("status") == "success":
@@ -399,6 +434,62 @@ class DashboardView(Container):
             return data
 
         self.run_worker(worker_fn, thread=True, exclusive=False)
+
+    @staticmethod
+    def _is_transport_error(result: Dict[str, Any]) -> bool:
+        """Return True for socket/session failures worth reconnecting."""
+        if result.get("status") != "error":
+            return False
+        error = str(result.get("error", "")).lower()
+        return any(pattern in error for pattern in _TRANSPORT_ERROR_PATTERNS)
+
+    def _reconnect_own_client(self) -> bool:
+        """Reconnect the dashboard data client after a transport failure."""
+        if not self._socket_path or self._dashboard_connection_lost:
+            return False
+
+        self._connect_own_client()
+        return self._own_client is not None
+
+    def _send_dashboard_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        """Send a dashboard polling command, retrying once after reconnect."""
+        client = self._own_client or self._client
+        if not client:
+            return {"status": "error", "error": "Not connected"}
+
+        result = client.send_command(command)
+        if not self._is_transport_error(result):
+            return result
+
+        error = str(result.get("error", "unknown transport error"))
+        if self._reconnect_own_client():
+            retry_client = self._own_client
+            if retry_client:
+                retry_result = retry_client.send_command(command)
+                if not self._is_transport_error(retry_result):
+                    return retry_result
+                error = str(retry_result.get("error", error))
+
+        self.app.call_from_thread(self._handle_dashboard_connection_lost, error)
+        return result
+
+    def _handle_dashboard_connection_lost(self, reason: str) -> None:
+        """Stop dashboard polling when the agent session socket is gone."""
+        if self._dashboard_connection_lost:
+            return
+
+        self._dashboard_connection_lost = True
+        self._record_client_activity(
+            "ERROR",
+            (
+                "dashboard connection lost: "
+                f"{reason}. Reattach from the process selector."
+            ),
+            source="dashboard",
+        )
+        self._stop_refresh_worker()
+        self._stop_log_worker()
+        self._disconnect_dedicated_clients()
 
     def _extract_session_id(self, socket_path: str) -> Optional[str]:
         """Extract the peeka session id from a socket path."""
@@ -761,6 +852,12 @@ class DashboardView(Container):
 
             self.app.call_from_thread(
                 self._write_activity_entry, "agent", level, message, timestamp
+            )
+
+        if not worker.is_cancelled and self._active:
+            self.app.call_from_thread(
+                self._handle_dashboard_connection_lost,
+                "agent log stream closed by peer",
             )
 
     def _format_timestamp(self, timestamp: Any) -> str:

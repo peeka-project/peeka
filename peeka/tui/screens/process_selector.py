@@ -164,11 +164,21 @@ class ProcessSelectorScreen(Screen):
 
         try:
             if attacher.attach():
-                result = {
-                    "pid": pid,
-                    "session_id": attacher.session_id,
-                    "socket_path": attacher.get_socket_path(),
-                }
+                socket_path = attacher.get_socket_path()
+                connection_error = self._validate_agent_connection(socket_path)
+                if connection_error:
+                    error_message = (
+                        f"Attached to process {pid}, but the agent connection is not usable.\n\n"
+                        f"Error: {connection_error}\n\n"
+                        "The TUI will stay on the process selector so it does not "
+                        "enter a disconnected main screen."
+                    )
+                else:
+                    result = {
+                        "pid": pid,
+                        "session_id": attacher.session_id,
+                        "socket_path": socket_path,
+                    }
             else:
                 error_message = f"Failed to attach to process {pid}\n\nThis could be due to:\n- Permission issues (ptrace_scope)\n- Python version mismatch\n- GDB/LLDB not available\n- Process already has an agent attached"
         except Exception as e:
@@ -185,6 +195,24 @@ class ProcessSelectorScreen(Screen):
             self.app.call_from_thread(self._on_attach_success, result)
         elif error_message:
             self.app.call_from_thread(self._show_attach_error, error_message)
+
+    def _validate_agent_connection(self, socket_path: str) -> Optional[str]:
+        """Probe the agent with a client hello before entering MainScreen."""
+        from peeka.core.client import StreamingAgentClient
+        from peeka.tui.activity import make_client_info
+
+        client = StreamingAgentClient(
+            socket_path,
+            timeout=2.0,
+            client_info=make_client_info(self.app, "process-selector"),
+        )
+        try:
+            result = client.connect()
+            if result.get("status") == "success":
+                return None
+            return str(result.get("error", "unknown connection error"))
+        finally:
+            client.disconnect()
 
     def _show_attach_error(self, error_msg: str) -> None:
         """Show detailed attach error in a modal dialog."""

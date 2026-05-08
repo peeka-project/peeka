@@ -716,6 +716,8 @@ def cmd_watch(args) -> int:
     )
     sys.stdout.flush()
 
+    observation_count = 0
+
     try:
         for observation in streaming_client.stream_observations():
             # Observations already have type field added by agent._send_observation
@@ -723,8 +725,8 @@ def cmd_watch(args) -> int:
             sys.stdout.flush()
 
             if args.times > 0:
-                count = observation.get("count", 0)
-                if count >= args.times:
+                observation_count += 1
+                if observation_count >= args.times:
                     break
 
     finally:
