@@ -74,12 +74,18 @@ class WatchCommand(BaseCommand):
         try:
             watch_id = self.agent.injector.inject(pattern, watch_config)
             self.agent.observer.register_watch(watch_id, pattern, watch_config)
+            watch_info = self.agent.injector.get_watch_info(watch_id) or {}
 
             return {
                 "status": "success",
                 "watch_id": watch_id,
                 "pattern": pattern,
                 "config": watch_config,
+                "target": {
+                    "is_coroutine_function": watch_info.get(
+                        "is_coroutine_function", False
+                    ),
+                },
             }
 
         except ValueError as e:

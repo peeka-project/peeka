@@ -81,6 +81,7 @@ class DecoratorInjector:
             raise ValueError(f"Cannot find target: {pattern}")
 
         target_func, parent_obj, attr_name = target_info
+        is_coroutine_function = inspect.iscoroutinefunction(target_func)
 
         # Generate watch ID
         watch_id = self._generate_watch_id()
@@ -103,6 +104,7 @@ class DecoratorInjector:
                 "config": watch_config,
                 "count": 0,
                 "times_limit": watch_config.get("times", -1),
+                "is_coroutine_function": is_coroutine_function,
             }
 
             # Replace the function
@@ -234,6 +236,9 @@ class DecoratorInjector:
                     "count": info["count"],
                     "times_limit": info["times_limit"],
                     "config": info["config"],
+                    "is_coroutine_function": info.get(
+                        "is_coroutine_function", False
+                    ),
                 }
             return None
 
@@ -478,19 +483,18 @@ class DecoratorInjector:
         # Reference to self for use in wrapper
         injector = self
 
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            # Stage 0: Check if observation is still active
+        is_coroutine_function = inspect.iscoroutinefunction(func)
+
+        def prepare_call(args, kwargs):
+            """Build per-call helpers shared by sync and async wrappers."""
             with injector._lock:
                 info = injector.instrumented.get(watch_id)
                 if info is None:
-                    return func(*args, **kwargs)
+                    return None
 
-                # Check if we've reached the observation limit
                 if times_limit > 0 and info["count"] >= times_limit:
-                    return func(*args, **kwargs)
+                    return None
 
-            # Extract self object for instance methods (Arthas 'target')
             is_instance_method = config.get("_is_instance_method", False)
             target_self = args[0] if args and is_instance_method else None
 
@@ -575,6 +579,66 @@ class DecoratorInjector:
                     logger.debug(
                         "Failed to send observation for %s", watch_id, exc_info=True
                     )
+
+            return should_observe, send_observation
+
+        if is_coroutine_function:
+
+            @wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                helpers = prepare_call(args, kwargs)
+                if helpers is None:
+                    return await func(*args, **kwargs)
+                should_observe, send_observation = helpers
+
+                # Stage 1: Observe at function entry (AtEnter) if -b flag enabled.
+                if before and should_observe():
+                    send_observation("AtEnter")
+
+                start_time = time.perf_counter()
+                try:
+                    result = await func(*args, **kwargs)
+                    duration_ms = (time.perf_counter() - start_time) * 1000
+
+                    if on_success and should_observe(duration_ms):
+                        send_observation(
+                            "AtExit", result_val=result, duration_ms=duration_ms
+                        )
+                    elif on_finish and not on_success and should_observe(duration_ms):
+                        send_observation(
+                            "AtExit", result_val=result, duration_ms=duration_ms
+                        )
+
+                    return result
+                except Exception as e:
+                    duration_ms = (time.perf_counter() - start_time) * 1000
+                    error = f"{type(e).__name__}: {str(e)}"
+
+                    if on_exception and should_observe(duration_ms):
+                        send_observation(
+                            "AtExceptionExit",
+                            error_msg=error,
+                            duration_ms=duration_ms,
+                        )
+                    elif on_finish and not on_exception and should_observe(
+                        duration_ms
+                    ):
+                        send_observation(
+                            "AtExceptionExit",
+                            error_msg=error,
+                            duration_ms=duration_ms,
+                        )
+
+                    raise
+
+            return async_wrapper
+
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            helpers = prepare_call(args, kwargs)
+            if helpers is None:
+                return func(*args, **kwargs)
+            should_observe, send_observation = helpers
 
             # Stage 1: Observe at function entry (AtEnter) if -b flag enabled
             # Available: params, kwargs, target
