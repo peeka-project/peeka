@@ -16,7 +16,7 @@ import threading
 import time
 import uuid
 from functools import wraps
-from typing import Any, Callable, Dict, Optional, TYPE_CHECKING
+from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
 logger = logging.getLogger(__name__)
 from peeka.core.safeeval.simpleeval import SimpleEval, BASIC_ALLOWED_ATTRS
@@ -82,6 +82,7 @@ class DecoratorInjector:
 
         target_func, parent_obj, attr_name = target_info
         is_coroutine_function = inspect.iscoroutinefunction(target_func)
+        alias_bindings = self._find_module_aliases(target_func, parent_obj, attr_name)
 
         # Generate watch ID
         watch_id = self._generate_watch_id()
@@ -105,10 +106,12 @@ class DecoratorInjector:
                 "count": 0,
                 "times_limit": watch_config.get("times", -1),
                 "is_coroutine_function": is_coroutine_function,
+                "aliases": alias_bindings,
             }
 
             # Replace the function
             self._replace_function(parent_obj, attr_name, wrapper)
+            self._replace_aliases(alias_bindings, wrapper)
 
         return watch_id
 
@@ -187,6 +190,7 @@ class DecoratorInjector:
 
             # Restore original function
             self._replace_function(info["parent"], info["attr_name"], info["original"])
+            self._restore_aliases(info)
 
             return {
                 "watch_id": watch_id,
@@ -209,6 +213,7 @@ class DecoratorInjector:
                     self._replace_function(
                         info["parent"], info["attr_name"], info["original"]
                     )
+                    self._restore_aliases(info)
                 except Exception:
                     logger.debug(
                         "Best-effort restoration failed for %s", watch_id, exc_info=True
@@ -239,6 +244,10 @@ class DecoratorInjector:
                     "is_coroutine_function": info.get(
                         "is_coroutine_function", False
                     ),
+                    "alias_count": len(info.get("aliases", [])),
+                    "aliases": [
+                        alias["label"] for alias in info.get("aliases", [])
+                    ],
                 }
             return None
 
@@ -256,6 +265,7 @@ class DecoratorInjector:
                     "pattern": info["pattern"],
                     "count": info["count"],
                     "times_limit": info["times_limit"],
+                    "alias_count": len(info.get("aliases", [])),
                 }
                 for wid, info in self.instrumented.items()
             ]
@@ -315,6 +325,7 @@ class DecoratorInjector:
                         "pattern": info.get("pattern", "unknown"),
                         "command": info.get("config", {}).get("command", "watch"),
                         "count": info.get("count", 0),
+                        "alias_count": len(info.get("aliases", [])),
                     }
                 )
         return {
@@ -1189,6 +1200,73 @@ class DecoratorInjector:
             new_func: New function to set
         """
         setattr(parent, attr_name, new_func)
+
+    def _find_module_aliases(
+        self, target_func: Callable, parent: Any, attr_name: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Find module-level globals that cache the same function object.
+
+        Frameworks often resolve ``module.func`` once and store the function in
+        a long-lived global such as ``handler``. Replacing only the canonical
+        attribute would leave those cached aliases pointing at the original
+        function, so calls through the framework would bypass the watch wrapper.
+        """
+        aliases: List[Dict[str, Any]] = []
+        seen = set()
+
+        for module in list(sys.modules.values()):
+            namespace = getattr(module, "__dict__", None)
+            if not isinstance(namespace, dict):
+                continue
+
+            module_name = getattr(module, "__name__", None)
+            for name, value in list(namespace.items()):
+                if value is not target_func:
+                    continue
+                if module is parent and name == attr_name:
+                    continue
+
+                key = (id(module), name)
+                if key in seen:
+                    continue
+                seen.add(key)
+
+                label = f"{module_name}.{name}" if module_name else name
+                aliases.append({"parent": module, "attr_name": name, "label": label})
+
+        return aliases
+
+    def _replace_aliases(
+        self, aliases: List[Dict[str, Any]], wrapper: Callable
+    ) -> None:
+        """Replace cached module-global aliases on a best-effort basis."""
+        for alias in aliases:
+            try:
+                setattr(alias["parent"], alias["attr_name"], wrapper)
+            except Exception:
+                logger.debug(
+                    "Best-effort alias replacement failed for %s",
+                    alias.get("label", "<unknown>"),
+                    exc_info=True,
+                )
+
+    def _restore_aliases(self, info: Dict[str, Any]) -> None:
+        """Restore cached aliases if they still point at this watch wrapper."""
+        wrapper = info.get("wrapper")
+        original = info.get("original")
+        for alias in info.get("aliases", []):
+            try:
+                parent = alias["parent"]
+                attr_name = alias["attr_name"]
+                if getattr(parent, attr_name, None) is wrapper:
+                    setattr(parent, attr_name, original)
+            except Exception:
+                logger.debug(
+                    "Best-effort alias restoration failed for %s",
+                    alias.get("label", "<unknown>"),
+                    exc_info=True,
+                )
 
     def _format_value(self, value: Any, depth: int) -> Any:
         """

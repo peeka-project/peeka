@@ -112,6 +112,70 @@ class TestDecoratorInjector:
         finally:
             del sys.modules["test_module_async_exc"]
 
+    def test_inject_updates_module_global_alias(self, injector, mock_agent):
+        def handler(event):
+            return {"value": event["value"] * 2}
+
+        app_module = type(sys)("test_index_alias")
+        app_module.handler = handler
+        wrapper_module = type(sys)("test_bytefaas_wrapper")
+        wrapper_module.handler = handler
+        sys.modules["test_index_alias"] = app_module
+        sys.modules["test_bytefaas_wrapper"] = wrapper_module
+
+        try:
+            watch_id = injector.inject("test_index_alias.handler", {"depth": 2})
+
+            assert app_module.handler is wrapper_module.handler
+            assert app_module.handler is not handler
+
+            result = wrapper_module.handler({"value": 21})
+            assert result == {"value": 42}
+
+            assert len(mock_agent._observations) == 1
+            assert mock_agent._observations[0]["watch_id"] == watch_id
+
+            watch_info = injector.get_watch_info(watch_id)
+            assert watch_info is not None
+            assert watch_info["alias_count"] == 1
+            assert watch_info["aliases"] == ["test_bytefaas_wrapper.handler"]
+
+            injector.uninject(watch_id)
+            assert app_module.handler is handler
+            assert wrapper_module.handler is handler
+
+        finally:
+            injector.uninject_all()
+            sys.modules.pop("test_index_alias", None)
+            sys.modules.pop("test_bytefaas_wrapper", None)
+
+    def test_uninject_all_restores_module_global_alias(self, injector):
+        def handler(event):
+            return event
+
+        app_module = type(sys)("test_index_alias_all")
+        app_module.handler = handler
+        wrapper_module = type(sys)("test_bytefaas_wrapper_all")
+        wrapper_module.handler = handler
+        sys.modules["test_index_alias_all"] = app_module
+        sys.modules["test_bytefaas_wrapper_all"] = wrapper_module
+
+        try:
+            injector.inject("test_index_alias_all.handler", {"depth": 2})
+
+            assert app_module.handler is wrapper_module.handler
+            assert app_module.handler is not handler
+
+            count = injector.uninject_all()
+            assert count == 1
+            assert app_module.handler is handler
+            assert wrapper_module.handler is handler
+
+        finally:
+            injector.uninject_all()
+            sys.modules.pop("test_index_alias_all", None)
+            sys.modules.pop("test_bytefaas_wrapper_all", None)
+
     def test_inject_with_condition(self, injector, mock_agent):
         def sample_function(x):
             return x * 2
