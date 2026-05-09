@@ -9,11 +9,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-cli_main = importlib.import_module("peeka.cli.main")
 from peeka.core import attach
 from peeka.core import agent as agent_module
 from peeka.core.agent import PeekaAgent, _init_agent
 from peeka.core.attach import ProcessAttacher
+
+cli_main = importlib.import_module("peeka.cli.main")
 
 
 class TestRTLDConstants:
@@ -410,6 +411,61 @@ class TestAttachOutputIsolation:
         finally:
             if old_agents is not None:
                 sys._peeka_agents = old_agents
+
+
+class TestAgentCodeSideChannel:
+    def test_serve_agent_code_sends_raw_python_without_length_prefix(self):
+        import socket
+        import threading
+
+        attacher = ProcessAttacher(12345)
+        attacher._create_notify_server()
+        received = []
+
+        def client():
+            with socket.create_connection(("127.0.0.1", attacher._notify_server.getsockname()[1])) as sock:
+                data = b""
+                while True:
+                    chunk = sock.recv(4096)
+                    if not chunk:
+                        break
+                    data += chunk
+                received.append(data)
+
+        thread = threading.Thread(target=client)
+        thread.start()
+        try:
+            attacher._serve_agent_code("print('agent')", timeout=1)
+            thread.join(timeout=1)
+        finally:
+            attacher._close_notify_server()
+
+        assert received == [b"print('agent')"]
+
+    def test_serve_agent_code_logs_injector_error(self):
+        import socket
+        import threading
+
+        attacher = ProcessAttacher(12345)
+        attacher._create_notify_server()
+
+        def client():
+            with socket.create_connection(("127.0.0.1", attacher._notify_server.getsockname()[1])) as sock:
+                while sock.recv(4096):
+                    pass
+                sock.sendall(b"SyntaxError: invalid non-printable character")
+
+        thread = threading.Thread(target=client)
+        thread.start()
+        try:
+            with patch.object(attach.logger, "warning") as mock_warning:
+                attacher._serve_agent_code("print('agent')", timeout=1)
+            thread.join(timeout=1)
+        finally:
+            attacher._close_notify_server()
+
+        mock_warning.assert_called_once()
+        assert "Injector reported agent bootstrap error" in mock_warning.call_args.args[0]
 
 
 class TestGDBSymbolErrors:

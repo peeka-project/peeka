@@ -638,8 +638,24 @@ class ProcessAttacher:
             conn, _ = server.accept()
             try:
                 code_bytes = agent_code.encode("utf-8")
-                conn.sendall(len(code_bytes).to_bytes(4, "big"))
+                # The native injector reads until EOF and passes the bytes
+                # directly to Py_CompileString().  Do not prepend the
+                # length-prefixed protocol used by the agent command socket.
                 conn.sendall(code_bytes)
+                conn.shutdown(sock_mod.SHUT_WR)
+
+                # If the injector fails to compile or execute the script it
+                # sends a short error string back on the same side channel.
+                # Successful injection sends no payload and simply closes.
+                try:
+                    error = conn.recv(4096)
+                    if error:
+                        logger.warning(
+                            "Injector reported agent bootstrap error: %s",
+                            error.decode("utf-8", errors="replace"),
+                        )
+                except sock_mod.timeout:
+                    pass
             finally:
                 conn.close()
         except sock_mod.timeout:
