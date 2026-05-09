@@ -85,6 +85,8 @@ class WatchCommand(BaseCommand):
                     "is_coroutine_function": watch_info.get(
                         "is_coroutine_function", False
                     ),
+                    "alias_count": watch_info.get("alias_count", 0),
+                    "aliases": watch_info.get("aliases", []),
                 },
             }
 
