@@ -299,22 +299,11 @@ static int run_script_impl(const char* script, char** errmsg)
 
 这样做的好处是：agent 代码可以任意长、包含任意字符，不受 GDB 命令行的转义限制。
 
-### 3.5 Legacy 回退——没有 C 扩展时怎么办？
+### 3.5 没有 C 扩展时怎么办？
 
-如果 C 扩展不可用（比如没有编译、或者 GLIBC 版本不兼容），peeka 会回退到类似 pyrasite 的方式，但做了改进：
+没有 C 扩展时，peeka 现在会直接失败并提示安装或构建 `peeka.core._inject`。早期版本曾经保留过类似 pyrasite 的 `GDB + PyRun_SimpleString` 回退，但这个路径会在 ptrace 暂停点同步执行 Python 代码，容易遇到 GIL、import lock 或目标业务线程被长时间暂停的问题。
 
-```python
-# peeka/core/attach.py — _inject_via_gdb_legacy()
-bootstrap = f'_c = open("{agent_script}").read(); exec(_c);'
-
-gdb_commands = [
-    'call (int) PyGILState_Ensure()',
-    f'call (int) PyRun_SimpleString("{bootstrap}")',
-    'call (void) PyGILState_Release($1)',
-]
-```
-
-通过 `exec()` 执行文件内容而非直接内联代码，减少了转义问题。但本质上仍然有 pyrasite 的时机安全隐患，只是作为最后的回退方案存在。
+因此，Python 3.8-3.13 的支持边界被收敛为：必须有可加载的 `_inject` C 扩展，并通过 GDB/LLDB + dlopen + pthread 路径注入；如果该路径失败，应修复环境而不是降级到 legacy 注入。
 
 ---
 
@@ -458,40 +447,34 @@ PEP 768 在安全性上的设计非常审慎：
 | GDB/LLDB + dlopen + pthread | memray, peeka | 3.8 - 3.13 | ✅ 较安全 | GDB/LLDB, ptrace, C 编译器 |
 | sys.remote_exec (PEP 768) | peeka, memray | 3.14+ | ✅ 安全 | 无外部依赖 |
 
-### memray vs peeka 的容错策略
+### memray vs peeka 的 attach 策略
 
-两个项目虽然共享 dlopen + pthread 的核心方案，但在**失败处理**上有本质区别：
+两个项目共享 dlopen + pthread 的核心方案，并且都把 C 扩展视为 Python 3.8-3.13 attach 的前置条件。
 
 **memray：一次选择，不回退。** memray 在启动时通过 `resolve_debugger()` 按优先级（`sys.remote_exec` > `gdb` > `lldb`）选定**一种**注入方法，此后不再切换。GDB 路径硬依赖 C 扩展（`assert injecter.exists()`），dlopen 失败直接报错，没有 legacy 回退。这是刻意的设计选择——memray 作为专业的内存分析器，对运行环境有明确的前置要求。
 
-**peeka：逐级降级，尽力而为。** peeka 的决策树包含多层 fallback：
+**peeka：同样快速失败。** peeka 也不再维护 `GDB + PyRun_SimpleString` 的 legacy fallback：项目只支持 Python 3.8.1+，而 3.8-3.13 的安全路径是 debugger + dlopen + pthread。如果 C 扩展缺失或 dlopen 注入失败，应修复安装包、ABI/GLIBC、debug symbols 或 ptrace 环境，而不是降级到更容易死锁的同步 Python C API 执行。
 
 ```python
 # peeka 的 attach 决策树
 if hasattr(sys, "remote_exec"):     # Python 3.14+
     → sys.remote_exec()              # 最优路径
-elif _has_injector():                # C 扩展可用
-    if Linux:
-        try:
-            → GDB + dlopen + pthread # 安全回退
-        except (TimeoutError, ...):
-            → GDB + PyRun_SimpleString  # 降级到 legacy
-    elif macOS:
-        → LLDB + dlopen + pthread
 elif Linux:
-    → GDB + PyRun_SimpleString       # 最后手段
+    require peeka.core._inject
+    → GDB + dlopen + pthread
+elif macOS:
+    require peeka.core._inject
+    → LLDB + dlopen + pthread
 else:
     → 报错
 ```
 
-这种设计源于 peeka 的定位——作为通用诊断工具，它需要在各种环境下都能工作，包括 GLIBC 版本不匹配（C 扩展无法加载）或 GIL 死锁（dlopen 路径超时）等边缘情况。代价是多了一层复杂度和潜在的时机安全风险（legacy 路径），但换来了更广的兼容性。
-
 | | memray | peeka |
 |---|---|---|
-| C 扩展缺失 | 硬报错 (`assert`) | 回退到 legacy GDB |
-| dlopen 运行时失败 | 报错退出 | 回退到 legacy GDB |
-| dlopen 后 GIL 死锁 | 超时报错 | 超时后回退到 legacy GDB |
-| 设计哲学 | 明确前置要求，快速失败 | 尽力而为，逐级降级 |
+| C 扩展缺失 | 硬报错 (`assert`) | 硬报错（要求安装/构建 `_inject`） |
+| dlopen 运行时失败 | 报错退出 | 报错退出 |
+| dlopen 后 GIL 死锁 | 超时报错 | 超时报错 |
+| 设计哲学 | 明确前置要求，快速失败 | 明确前置要求，快速失败 |
 
 ---
 
@@ -521,18 +504,9 @@ def _has_injector():
 
 ### 6.2 GDB dlopen 后的 GIL 死锁
 
-在 Python 3.12 上，GDB dlopen 注入的 C 扩展创建的 pthread 调用 `PyGILState_Ensure()` 时，可能因为 GDB 操作后 GIL 状态不一致而永远无法获取 GIL。
+GDB dlopen 注入的 C 扩展创建 pthread 后，线程会在目标进程中调用 `PyGILState_Ensure()`。如果目标进程或调试器环境导致它长期无法获取 GIL，attach 会以超时失败。
 
-解决方案是将 dlopen 路径视为**乐观尝试**，失败后回退到 legacy GDB：
-
-```python
-if _has_injector():
-    try:
-        return self._inject_via_gdb_dlopen()
-    except (TimeoutError, RuntimeError, OSError):
-        logger.warning("GDB dlopen failed, falling back to legacy GDB")
-# 控制流落入 legacy 路径
-```
+不要再降级到 `PyRun_SimpleString`：同步执行 Python 代码会把目标进程停在 ptrace/GIL 临界区，死锁和暂停业务线程的风险更高。应优先修复 dlopen 路径（C 扩展 ABI、debug symbols、ptrace 权限、side-channel 协议和目标进程线程状态），并让失败快速暴露。
 
 ### 6.3 ptrace 权限
 

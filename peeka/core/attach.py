@@ -58,8 +58,8 @@ def _format_gdb_symbol_error(method: str, stderr: str, stdout: str) -> str:
     return (
         f"{method} failed because GDB could not resolve Python runtime symbols.\n"
         "The target process is attachable, but this injection path requires "
-        "symbols such as PyMem_Malloc, Py_AddPendingCall, PyGILState_Ensure, "
-        "or PyRun_SimpleString to be visible to GDB.\n"
+        "symbols such as PyMem_Malloc, Py_AddPendingCall, PyCallable_Check, "
+        "and allocator entry points to be visible to GDB.\n"
         "Fix: install matching Python debug symbols or use a Python build that "
         "exports the Python C API symbols for the target interpreter.\n"
         f"stderr:\n{stderr}\n"
@@ -366,82 +366,25 @@ class ProcessAttacher:
         return False
 
     def _attach_fallback(self) -> bool:
-        """
-        Fallback mechanism for older Python versions.
-
-        Dispatch flow:
-        - If C extension available:
-          - macOS -> LLDB + dlopen
-          - Linux -> GDB + dlopen
-        - If C extension NOT available:
-          - Linux -> GDB + PyRun_SimpleString (legacy)
-          - macOS -> raise RuntimeError (extension required)
-        """
+        """Attach on pre-PEP-768 Python versions via debugger + dlopen."""
         system_name = platform.system()
-        if _has_injector():
-            if system_name == "Darwin":
-                return self._inject_via_lldb()
-            if system_name == "Linux":
-                try:
-                    return self._inject_via_gdb_dlopen()
-                except GDBSymbolResolutionError:
-                    raise
-                except (TimeoutError, RuntimeError, OSError) as e:
-                    logger.warning(
-                        "GDB dlopen injection failed (%s), falling back to legacy GDB",
-                        e,
-                    )
-            else:
-                raise NotImplementedError(f"Unsupported platform: {system_name}")
-
-        if system_name == "Linux":
-            logger.info("Using legacy GDB path")
-
-            self._check_gdb_available()
-            self._check_ptrace_permissions()
-
-            agent_code = _read_agent_code()
-            notify_port = self._create_notify_server()
-
-            agent_script = self._create_agent_script(
-                agent_code,
-                notify_port=notify_port,
-                suppress_startup_messages=self.suppress_startup_messages,
-            )
-
-            try:
-                self._inject_via_gdb_legacy(agent_script)
-
-                for attempt in range(self.MAX_ATTEMPTS):
-                    try:
-                        if self._wait_for_agent_ready(timeout=self.READY_TIMEOUT_GDB):
-                            logger.info("Successfully attached to process %d", self.pid)
-                            return True
-                    except TimeoutError:
-                        if attempt < self.MAX_ATTEMPTS - 1:
-                            logger.info(
-                                "Agent not ready yet, retrying... (attempt %d/%d)",
-                                attempt + 1,
-                                self.MAX_ATTEMPTS,
-                            )
-                        else:
-                            raise
-
-                return False
-
-            except Exception as e:
-                logger.error("GDB injection failed: %s", e)
-                raise
-            finally:
-                if os.path.exists(agent_script):
-                    os.remove(agent_script)
-                self._close_notify_server()
 
         if system_name == "Darwin":
-            raise RuntimeError(
-                "C extension required for macOS attach. "
-                "Build with: uv run python setup.py build_ext --inplace"
-            )
+            if not _has_injector():
+                raise RuntimeError(
+                    "C extension required for macOS attach. "
+                    "Build with: uv run python setup.py build_ext --inplace"
+                )
+            return self._inject_via_lldb()
+
+        if system_name == "Linux":
+            if not _has_injector():
+                raise RuntimeError(
+                    "C extension required for Linux attach. "
+                    "Install a wheel with the peeka.core._inject extension or build with: "
+                    "uv run python setup.py build_ext --inplace"
+                )
+            return self._inject_via_gdb_dlopen()
 
         raise NotImplementedError(f"Unsupported platform: {system_name}")
 
@@ -638,8 +581,24 @@ class ProcessAttacher:
             conn, _ = server.accept()
             try:
                 code_bytes = agent_code.encode("utf-8")
-                conn.sendall(len(code_bytes).to_bytes(4, "big"))
+                # The native injector reads until EOF and passes the bytes
+                # directly to Py_CompileString().  Do not prepend the
+                # length-prefixed protocol used by the agent command socket.
                 conn.sendall(code_bytes)
+                conn.shutdown(sock_mod.SHUT_WR)
+
+                # If the injector fails to compile or execute the script it
+                # sends a short error string back on the same side channel.
+                # Successful injection sends no payload and simply closes.
+                try:
+                    error = conn.recv(4096)
+                    if error:
+                        logger.warning(
+                            "Injector reported agent bootstrap error: %s",
+                            error.decode("utf-8", errors="replace"),
+                        )
+                except sock_mod.timeout:
+                    pass
             finally:
                 conn.close()
         except sock_mod.timeout:
@@ -902,93 +861,6 @@ class ProcessAttacher:
                 f"Fix: run peeka with Python {target_str}, e.g.:\n"
                 f"  python{target_str} -m peeka.cli.main attach {self.pid}"
             )
-
-    def _inject_via_gdb_legacy(self, agent_script: str):
-        """
-        Inject agent bootstrap via GDB.
-
-        Instead of executing the full agent script synchronously inside
-        PyRun_SimpleString (which holds the GIL for the entire duration
-        and can deadlock if the target holds the import lock), we run a
-        tiny bootstrap snippet that:
-        1. Reads the agent script into memory
-        2. Executes it directly via exec()
-
-        Calls Python C API functions via GDB:
-        - PyGILState_Ensure(): Acquire GIL
-        - PyRun_SimpleString(): Execute bootstrap snippet
-        - PyGILState_Release(): Release GIL
-        """
-        escaped_script = agent_script.replace("\\", "\\\\").replace('"', '\\"')
-
-        # For Python <= 3.8, there's a bug where threads created during
-        # injection don't get scheduled after GDB detaches.
-        # So instead we just execute directly here while we still hold the GIL.
-        # This takes a bit longer but is guaranteed to work.
-        bootstrap = f'_c = open(\\"{escaped_script}\\").read(); exec(_c);'
-
-        # Use appropriate casts for each function's return type to avoid
-        # "Invalid cast" errors.
-        # PyGILState_Ensure returns PyGILState_STATE (int-like enum)
-        # PyRun_SimpleString returns int
-        # PyGILState_Release returns void
-        gdb_commands = [
-            ("call (int) PyGILState_Ensure()", "Acquire GIL"),
-            (
-                f'call (int) PyRun_SimpleString("{bootstrap}")',
-                "Execute agent bootstrap",
-            ),
-            ("call (void) PyGILState_Release($1)", "Release GIL"),
-        ]
-
-        cmd = ["gdb", "-p", str(self.pid), "-batch", "-q"]
-        for gdb_cmd, description in gdb_commands:
-            cmd.extend(["-eval-command", gdb_cmd])
-
-        logger.info("Injecting agent via GDB...")
-
-        try:
-            result = subprocess.run(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                timeout=30,
-                text=True,
-            )
-
-            stderr = result.stderr.lower()
-            combined_output = f"{result.stderr}\n{result.stdout}"
-            if "permission denied" in stderr or "operation not permitted" in stderr:
-                raise PermissionError(
-                    "GDB attach failed: Permission denied.\n"
-                    "Check ptrace_scope and process ownership."
-                )
-            elif _looks_like_gdb_symbol_resolution_error(combined_output):
-                raise GDBSymbolResolutionError(
-                    _format_gdb_symbol_error(
-                        "Legacy GDB injection", result.stderr, result.stdout
-                    )
-                )
-            elif result.returncode != 0:
-                raise RuntimeError(
-                    f"GDB injection failed (exit code {result.returncode}):\n"
-                    f"stderr: {result.stderr}\n"
-                    f"stdout: {result.stdout}"
-                )
-
-            logger.info("GDB injection completed")
-
-        except subprocess.TimeoutExpired:
-            raise TimeoutError(
-                "GDB injection timed out after 30 seconds. "
-                "Process may be deadlocked or unresponsive."
-            )
-        except FileNotFoundError:
-            raise RuntimeError("GDB executable not found in PATH")
-
-    def _inject_via_gdb(self, agent_script: str):
-        """Backward-compatible wrapper for legacy GDB injection path."""
-        return self._inject_via_gdb_legacy(agent_script)
 
     def cleanup(self):
         """Cleanup agent script only; socket and ready file persist for agent"""
