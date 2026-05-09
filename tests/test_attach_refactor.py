@@ -158,43 +158,25 @@ class TestAttachFallbackDispatch:
             "platform.system", return_value="Linux"
         ), patch.object(
             attacher, "_inject_via_gdb_dlopen", return_value=True
-        ) as mock_gdb_dlopen, patch.object(
-            attacher, "_inject_via_gdb_legacy"
-        ) as mock_legacy:
+        ) as mock_gdb_dlopen:
             assert attacher._attach_fallback() is True
             mock_gdb_dlopen.assert_called_once_with()
-            mock_legacy.assert_not_called()
 
-    def test_linux_with_injector_falls_back_to_legacy_when_dlopen_fails(self):
-        """Linux + injector should fallback to legacy GDB if dlopen fails."""
+    def test_linux_with_injector_propagates_dlopen_failure(self):
+        """Linux dlopen failures should not retry via PyRun_SimpleString."""
         attacher = ProcessAttacher(12345)
         with patch("peeka.core.attach._has_injector", return_value=True), patch(
             "platform.system", return_value="Linux"
         ), patch.object(
             attacher, "_inject_via_gdb_dlopen", side_effect=TimeoutError("boom")
-        ) as mock_gdb_dlopen, patch.object(
-            attacher, "_check_gdb_available"
-        ), patch.object(
-            attacher, "_check_ptrace_permissions"
-        ), patch(
-            "peeka.core.attach._read_agent_code", return_value="print('agent')"
-        ), patch.object(
-            attacher, "_create_notify_server", return_value=54321
-        ), patch.object(
-            attacher, "_create_agent_script", return_value="/tmp/agent.py"
-        ), patch.object(
-            attacher, "_inject_via_gdb_legacy"
-        ) as mock_legacy, patch.object(
-            attacher, "_wait_for_agent_ready", return_value=True
-        ), patch.object(attacher, "_close_notify_server"), patch(
-            "os.path.exists", return_value=False
-        ):
-            assert attacher._attach_fallback() is True
-            mock_gdb_dlopen.assert_called_once_with()
-            mock_legacy.assert_called_once_with("/tmp/agent.py")
+        ) as mock_gdb_dlopen:
+            with pytest.raises(TimeoutError, match="boom"):
+                attacher._attach_fallback()
 
-    def test_linux_with_injector_does_not_fallback_on_symbol_error(self):
-        """Missing Python C API symbols make dlopen and legacy GDB both invalid."""
+            mock_gdb_dlopen.assert_called_once_with()
+
+    def test_linux_with_injector_propagates_symbol_error(self):
+        """Missing Python C API symbols fail the dlopen attach path directly."""
         attacher = ProcessAttacher(12345)
         with patch("peeka.core.attach._has_injector", return_value=True), patch(
             "platform.system", return_value="Linux"
@@ -202,14 +184,11 @@ class TestAttachFallbackDispatch:
             attacher,
             "_inject_via_gdb_dlopen",
             side_effect=attach.GDBSymbolResolutionError("no symbols"),
-        ) as mock_gdb_dlopen, patch.object(
-            attacher, "_inject_via_gdb_legacy"
-        ) as mock_legacy:
+        ) as mock_gdb_dlopen:
             with pytest.raises(attach.GDBSymbolResolutionError):
                 attacher._attach_fallback()
 
             mock_gdb_dlopen.assert_called_once_with()
-            mock_legacy.assert_not_called()
 
     def test_macos_with_injector_dispatches_lldb(self):
         """Darwin + injector available should use LLDB path."""
@@ -225,28 +204,15 @@ class TestAttachFallbackDispatch:
             mock_lldb.assert_called_once_with()
             mock_gdb_dlopen.assert_not_called()
 
-    def test_linux_without_injector_dispatches_legacy_gdb(self):
-        """Linux + no injector should fallback to legacy GDB path."""
+    def test_linux_without_injector_raises_runtime_error(self):
+        """Linux + no injector should fail instead of using legacy GDB."""
         attacher = ProcessAttacher(12345)
         with patch("peeka.core.attach._has_injector", return_value=False), patch(
             "platform.system", return_value="Linux"
-        ), patch.object(attacher, "_check_gdb_available"), patch.object(
-            attacher, "_check_ptrace_permissions"
-        ), patch(
-            "peeka.core.attach._read_agent_code", return_value="print('agent')"
-        ), patch.object(
-            attacher, "_create_notify_server", return_value=54321
-        ), patch.object(
-            attacher, "_create_agent_script", return_value="/tmp/agent.py"
-        ), patch.object(
-            attacher, "_inject_via_gdb_legacy"
-        ) as mock_legacy, patch.object(
-            attacher, "_wait_for_agent_ready", return_value=True
-        ), patch.object(attacher, "_close_notify_server"), patch(
-            "os.path.exists", return_value=False
         ):
-            assert attacher._attach_fallback() is True
-            mock_legacy.assert_called_once_with("/tmp/agent.py")
+            with pytest.raises(RuntimeError) as exc_info:
+                attacher._attach_fallback()
+            assert "C extension required for Linux attach" in str(exc_info.value)
 
     def test_macos_without_injector_raises_runtime_error(self):
         """Darwin + no injector should raise extension-required RuntimeError."""
@@ -482,7 +448,7 @@ class TestGDBSymbolErrors:
         )
 
         assert "GDB could not resolve Python runtime symbols" in message
-        assert "PyRun_SimpleString" in message
+        assert "Py_AddPendingCall" in message
         assert "No symbol table is loaded" in message
 
 
