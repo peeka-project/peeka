@@ -711,9 +711,11 @@ def cmd_watch(args) -> int:
 
     watch_id = response.get("watch_id")
 
-    OutputFormatter.event(
-        "watch_started", data={"watch_id": watch_id, "pattern": pattern}
-    )
+    start_data = {"watch_id": watch_id, "pattern": pattern}
+    target_info = response.get("target")
+    if target_info:
+        start_data["target"] = target_info
+    OutputFormatter.event("watch_started", data=start_data)
     sys.stdout.flush()
 
     observation_count = 0

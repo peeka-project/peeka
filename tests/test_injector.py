@@ -1,3 +1,4 @@
+import inspect
 import sys
 
 import pytest
@@ -51,6 +52,65 @@ class TestDecoratorInjector:
 
         finally:
             del sys.modules["test_module"]
+
+    @pytest.mark.asyncio
+    async def test_inject_async_function_observes_awaited_result(
+        self, injector, mock_agent
+    ):
+        async def async_handler(event):
+            return {"request_id": event["request_id"], "ok": True}
+
+        test_module = type(sys)("test_module_async")
+        test_module.async_handler = async_handler
+        sys.modules["test_module_async"] = test_module
+
+        try:
+            watch_id = injector.inject(
+                "test_module_async.async_handler", {"depth": 2, "times": -1}
+            )
+
+            assert inspect.iscoroutinefunction(test_module.async_handler)
+            result = await test_module.async_handler({"request_id": 42})
+            assert result == {"request_id": 42, "ok": True}
+
+            assert len(mock_agent._observations) == 1
+            obs = mock_agent._observations[0]
+            assert obs["watch_id"] == watch_id
+            assert obs["success"] is True
+            assert obs["returnObj"] == {"request_id": 42, "ok": True}
+
+            watch_info = injector.get_watch_info(watch_id)
+            assert watch_info is not None
+            assert watch_info["is_coroutine_function"] is True
+
+        finally:
+            del sys.modules["test_module_async"]
+
+    @pytest.mark.asyncio
+    async def test_inject_async_function_observes_awaited_exception(
+        self, injector, mock_agent
+    ):
+        async def failing_handler():
+            raise RuntimeError("async boom")
+
+        test_module = type(sys)("test_module_async_exc")
+        test_module.failing_handler = failing_handler
+        sys.modules["test_module_async_exc"] = test_module
+
+        try:
+            injector.inject("test_module_async_exc.failing_handler", {"depth": 2})
+
+            with pytest.raises(RuntimeError, match="async boom"):
+                await test_module.failing_handler()
+
+            assert len(mock_agent._observations) == 1
+            obs = mock_agent._observations[0]
+            assert obs["location"] == "AtExceptionExit"
+            assert obs["success"] is False
+            assert "RuntimeError: async boom" in obs["throwExp"]
+
+        finally:
+            del sys.modules["test_module_async_exc"]
 
     def test_inject_with_condition(self, injector, mock_agent):
         def sample_function(x):
