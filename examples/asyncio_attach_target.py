@@ -150,9 +150,6 @@ async def main(
             await compute_alias(request_id, request_id + 1)
 
             request_id += 1
-
-    except asyncio.CancelledError:
-        pass
     finally:
         # Cancel all tasks
         producer_task.cancel()
