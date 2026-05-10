@@ -62,7 +62,7 @@ TARGET_PID="$(cat "$READY_FILE")"
 # Attach to target
 if ! timeout 30 uv run python -m peeka.cli attach "$TARGET_PID" > /dev/null 2>&1; then
     echo "ERROR: Failed to attach to target process $TARGET_PID" >&2
-    exit 1
+    exit 3
 fi
 
 # Run watch command (no --pid flag - watch resolves attached PID from agent socket)
