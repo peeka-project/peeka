@@ -167,6 +167,55 @@ cat /tmp/target.pid
     return pid
 
 
+def start_async_target_in_container(container, timeout: int = 15) -> str:
+    """Start asyncio target process in container and wait for ready signal.
+
+    Args:
+        container: DockerContainer instance
+        timeout: Maximum wait time for ready signal in seconds
+
+    Returns:
+        PID of target process as string
+
+    Raises:
+        AssertionError: If target fails to start or PID is invalid
+    """
+    # Build compound shell command:
+    # 1. Start asyncio target in background, redirect output, capture PID
+    # 2. Poll for ready file (timeout*10 iterations @ 100ms = timeout seconds)
+    # 3. Return PID
+    shell_cmd = f"""
+PEEKA_TEST_READY_FILE=/tmp/peeka_async_ready python /app/examples/asyncio_attach_target.py --duration 0 >/tmp/asyncio_target.log 2>&1 &
+echo $! > /tmp/asyncio_target.pid
+PID=$!
+for i in $(seq 1 {timeout}0); do
+    if [ -f /tmp/peeka_async_ready ]; then
+        echo "READY"
+        break
+    fi
+    sleep 0.1
+done
+if [ ! -f /tmp/peeka_async_ready ]; then
+    kill $PID 2>/dev/null || true
+    echo "TIMEOUT: Async target failed to start within {timeout} seconds" >&2
+    exit 1
+fi
+cat /tmp/asyncio_target.pid
+""".strip()
+
+    exit_code, output = exec_in_container(container, shell_cmd, timeout=timeout + 5)
+
+    assert exit_code == 0, f"Async target startup failed: {output}"
+
+    # Extract PID from last line
+    lines = output.strip().split("\n")
+    pid = lines[-1].strip()
+
+    assert pid.isdigit(), f"Invalid PID: {pid}"
+
+    return pid
+
+
 def cleanup_peeka_files_in_container(container):
     """Remove peeka temporary files from container.
 
@@ -235,3 +284,38 @@ def container_target(request):
 
     target["type"] = target_type
     yield target
+
+
+# Async target fixtures (asyncio demo)
+
+
+@pytest.fixture(scope="function")
+def gdb_async_target(gdb_container):
+    """Start asyncio target process in GDB container.
+
+    Yields:
+        Tuple of (container, pid_str)
+    """
+    pid = start_async_target_in_container(gdb_container)
+    yield (gdb_container, pid)
+    exec_in_container(
+        gdb_container,
+        f"kill -TERM {pid} 2>/dev/null; pkill -9 -f asyncio_attach_target.py 2>/dev/null; rm -f /tmp/peeka_async_ready /tmp/asyncio_target.pid /tmp/asyncio_target.log; true",
+        timeout=10,
+    )
+
+
+@pytest.fixture(scope="function")
+def py314_async_target(py314_container):
+    """Start asyncio target process in Python 3.14 container.
+
+    Yields:
+        Tuple of (container, pid_str)
+    """
+    pid = start_async_target_in_container(py314_container)
+    yield (py314_container, pid)
+    exec_in_container(
+        py314_container,
+        f"kill -TERM {pid} 2>/dev/null; pkill -9 -f asyncio_attach_target.py 2>/dev/null; rm -f /tmp/peeka_async_ready /tmp/asyncio_target.pid /tmp/asyncio_target.log; true",
+        timeout=10,
+    )
