@@ -144,13 +144,13 @@ class TestAsyncWatchE2E:
             )
             assert watch_result.returncode == 0, f"Watch failed: {watch_result.stderr}"
 
-            # Detach
+            # Detach (happy path assertion)
             detach_result = _run_cli(["detach"], timeout=15)
             assert detach_result.returncode == 0, f"Detach failed: {detach_result.stderr}"
 
         finally:
-            # Best-effort cleanup (no assertions in finally)
-            pass
+            # Best-effort detach (no assertions)
+            _run_cli(["detach"], timeout=15)
 
         # Assert target still alive
         assert proc.poll() is None, "Target process died after detach"

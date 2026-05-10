@@ -60,8 +60,11 @@ fi
 TARGET_PID="$(cat "$READY_FILE")"
 
 # Attach to target
-if ! timeout 30 uv run python -m peeka.cli attach "$TARGET_PID" > /dev/null 2>&1; then
+ATTACH_LOG="$TMP/attach.log"
+if ! timeout 30 uv run python -m peeka.cli attach "$TARGET_PID" > "$ATTACH_LOG" 2>&1; then
     echo "ERROR: Failed to attach to target process $TARGET_PID" >&2
+    echo "Attach command output:" >&2
+    cat "$ATTACH_LOG" >&2
     exit 3
 fi
 
