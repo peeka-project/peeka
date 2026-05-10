@@ -9,16 +9,14 @@ reflects the latest source without rebuilding or pip install.
 """
 
 import shlex
-import time
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Tuple
 
 import pytest
 
 pytest.importorskip("testcontainers")
 
 from testcontainers.core.container import DockerContainer
-from testcontainers.core.image import DockerImage
 
 _PROJECT_ROOT = str(Path(__file__).resolve().parents[2])
 
