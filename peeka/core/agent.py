@@ -73,6 +73,7 @@ class PeekaAgent:
         "detach": ("peeka.commands.detach", "DetachCommand"),
         "thread": ("peeka.commands.thread", "ThreadCommand"),
         "top": ("peeka.commands.top", "TopCommand"),
+        "patch-status": ("peeka.commands.patch_status", "PatchStatusCommand"),
     }
 
     def __init__(
