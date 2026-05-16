@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Gevent-monkey-patched target process for Peeka attach testing.
+Eventlet-monkey-patched target process for Peeka attach testing.
 
 This example intentionally patches socket/threading/time before Peeka attaches.
 It is useful for reproducing the class of failures where an injected agent
 accidentally depends on target-process Python threading/socket primitives.
 
 Run:
-  python examples/gevent_attach_target.py
+  python examples/eventlet_attach_target.py
 
 Then, from another shell:
   peeka-cli attach <PID>
@@ -15,8 +15,8 @@ Then, from another shell:
   peeka-cli watch '__main__.RequestService.handle_request' -n 5
   peeka-cli patch-status --pid <PID>
 
-Install gevent when needed:
-  python -m pip install gevent
+Install eventlet when needed:
+  python -m pip install eventlet
 """
 
 from __future__ import annotations
@@ -29,19 +29,17 @@ from dataclasses import dataclass
 from typing import Any, Dict
 
 try:
-    from gevent import monkey
+    import eventlet
 except ImportError:
     print(
-        "This example requires gevent. Install it with: python -m pip install gevent",
+        "This example requires eventlet. Install it with: python -m pip install eventlet",
         file=sys.stderr,
     )
     raise SystemExit(1)
 
-monkey.patch_all()
+eventlet.monkey_patch()
 
-import gevent  # noqa: E402
 import time  # noqa: E402
-from gevent.pool import Pool  # noqa: E402
 
 # Make the target path look like a common serverless entrypoint.
 # Peeka can watch this function as `index.handler`.
@@ -56,16 +54,16 @@ class RequestStats:
 
 
 def handler(event: Dict[str, Any], context: Any = None) -> Dict[str, Any]:
-    """Serverless-style handler called by gevent greenlets."""
+    """Serverless-style handler called by eventlet greenlets."""
     request_id = int(event["request_id"])
     user_id = int(event["user_id"])
 
-    # Cooperative gevent sleep keeps the hub active while the process runs.
-    gevent.sleep(random.uniform(0.005, 0.025))
+    # Cooperative eventlet sleep keeps the hub active while the process runs.
+    eventlet.sleep(random.uniform(0.005, 0.025))
 
     slow_path = request_id % 9 == 0
     if slow_path:
-        gevent.sleep(random.uniform(0.12, 0.24))
+        eventlet.sleep(random.uniform(0.12, 0.24))
 
     if request_id % 37 == 0:
         raise RuntimeError(f"simulated intermittent failure request_id={request_id}")
@@ -79,7 +77,7 @@ def handler(event: Dict[str, Any], context: Any = None) -> Dict[str, Any]:
 
 
 class RequestService:
-    """Small gevent service that repeatedly calls the watched handler."""
+    """Small eventlet service that repeatedly calls the watched handler."""
 
     def __init__(self) -> None:
         self.stats = RequestStats()
@@ -100,7 +98,7 @@ class RequestService:
 
 def run_traffic(interval: float, duration: float) -> None:
     service = RequestService()
-    pool = Pool(32)
+    pool = eventlet.GreenPool(32)
     request_id = 0
     started = time.monotonic()
 
@@ -125,9 +123,9 @@ def run_traffic(interval: float, duration: float) -> None:
 
         if duration > 0 and time.monotonic() - started >= duration:
             break
-        gevent.sleep(interval)
+        eventlet.sleep(interval)
 
-    pool.join(timeout=5)
+    pool.waitall(timeout=5)
 
 
 def _handle_safely(service: RequestService, event: Dict[str, Any]) -> None:
@@ -139,7 +137,7 @@ def _handle_safely(service: RequestService, event: Dict[str, Any]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Run a gevent-monkey-patched process for Peeka attach testing."
+        description="Run an eventlet-monkey-patched process for Peeka attach testing."
     )
     parser.add_argument(
         "--interval",
@@ -156,20 +154,21 @@ def main() -> None:
     args = parser.parse_args()
 
     print("=" * 70)
-    print("Peeka gevent attach target")
+    print("Peeka eventlet attach target")
     print("=" * 70)
     print(f"PID: {os.getpid()}")
-    print(f"threading patched: {monkey.is_module_patched('threading')}")
-    print(f"socket patched: {monkey.is_module_patched('socket')}")
+    print(f"socket patched: {eventlet.patcher.is_monkey_patched('socket')}")
+    print(f"threading patched: {eventlet.patcher.is_monkey_patched('threading')}")
     print()
     print("Try:")
     print(f"  peeka-cli attach {os.getpid()}")
     print("  peeka-cli watch 'index.handler' -n 5")
     print("  peeka-cli watch '__main__.RequestService.handle_request' -n 5")
+    print(f"  peeka-cli patch-status --pid {os.getpid()}")
     print()
-    print("This process keeps the gevent hub active. Press Ctrl+C to stop.")
+    print("This process keeps the eventlet hub active. Press Ctrl+C to stop.")
     print()
-    print(f"GEVENT_TARGET_READY pid={os.getpid()}")
+    print(f"EVENTLET_TARGET_READY pid={os.getpid()}")
     print()
 
     try:
