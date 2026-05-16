@@ -20,7 +20,7 @@ import time
 import uuid
 import warnings
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, cast
 
 logger = logging.getLogger(__name__)
 # Python 3.9+ uses importlib.resources.files(), Python 3.8 uses read_text()
@@ -618,11 +618,12 @@ class ProcessAttacher:
         The injected agent will connect back to this port once it is
         ready, which is far more reliable than polling for a file.
         """
-        self._notify_server = _rpl.create_socket("AF_INET", "SOCK_STREAM")
-        self._notify_server.setsockopt(sock_mod.SOL_SOCKET, sock_mod.SO_REUSEADDR, 1)
-        self._notify_server.bind(("127.0.0.1", 0))
-        self._notify_server.listen(1)
-        port = self._notify_server.getsockname()[1]
+        server = cast(sock_mod.socket, _rpl.create_socket("AF_INET", "SOCK_STREAM"))
+        self._notify_server = server
+        server.setsockopt(sock_mod.SOL_SOCKET, sock_mod.SO_REUSEADDR, 1)
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        port = server.getsockname()[1]
         return port
 
     def _close_notify_server(self) -> None:
