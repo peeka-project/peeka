@@ -5,10 +5,11 @@ This module provides the ObservationManager class that tracks active watches,
 buffers observations, and delivers them to subscribers (streaming clients).
 """
 
-import threading
 import time
 from collections import deque
 from typing import Any, Callable, Dict, List, Optional
+
+from peeka.core.runtime import primitives as _rpl
 
 
 class ObservationManager:
@@ -42,8 +43,8 @@ class ObservationManager:
         self._buffer: deque = deque(maxlen=buffer_size)
         self._watches: Dict[str, Dict[str, Any]] = {}
         self._subscribers: List[Callable[[Dict[str, Any]], None]] = []
-        self._lock = threading.Lock()
-        self._stats_lock = threading.Lock()
+        self._lock = _rpl.allocate_lock()
+        self._stats_lock = _rpl.allocate_lock()
 
     def register_watch(
             self, watch_id: str, pattern: str, config: Optional[Dict[str, Any]] = None

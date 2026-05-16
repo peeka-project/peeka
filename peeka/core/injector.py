@@ -18,8 +18,10 @@ import uuid
 from functools import wraps
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
-logger = logging.getLogger(__name__)
+from peeka.core.runtime import primitives as _rpl
 from peeka.core.safeeval.simpleeval import SimpleEval, BASIC_ALLOWED_ATTRS
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from peeka.core.agent import PeekaAgent
@@ -51,7 +53,7 @@ class DecoratorInjector:
         """
         self.agent = agent
         self.instrumented: Dict[str, Dict[str, Any]] = {}
-        self._lock = threading.Lock()
+        self._lock = _rpl.allocate_lock()
 
     def inject(self, pattern: str, watch_config: Dict[str, Any]) -> str:
         """
