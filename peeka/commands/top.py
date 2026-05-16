@@ -11,6 +11,7 @@ import uuid
 from typing import Any, Dict, Optional, Set, TYPE_CHECKING
 
 from peeka.commands.base import BaseCommand
+from peeka.core.runtime import primitives as _rpl
 
 if TYPE_CHECKING:
     from peeka.core.agent import PeekaAgent
@@ -30,7 +31,7 @@ class TopCommand(BaseCommand):
         self._stop_event: threading.Event = threading.Event()
         self._sampling_thread: Optional[threading.Thread] = None
         self._observation_thread: Optional[threading.Thread] = None
-        self._lock: threading.Lock = threading.Lock()
+        self._lock: threading.Lock = _rpl.allocate_lock()
 
         # Configuration
         self._top_id: Optional[str] = None
