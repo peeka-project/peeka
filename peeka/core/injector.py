@@ -11,12 +11,18 @@ import logging
 import fnmatch
 import importlib
 import inspect
+import json
 import sys
 import threading
 import time
 import uuid
 from functools import wraps
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
+
+try:
+    import resource
+except ImportError:  # pragma: no cover - resource is unavailable on Windows
+    resource = None
 
 from peeka.core.runtime import primitives as _rpl
 from peeka.core.safeeval.simpleeval import SimpleEval, BASIC_ALLOWED_ATTRS
@@ -496,7 +502,9 @@ class DecoratorInjector:
         # Reference to self for use in wrapper
         injector = self
 
-        is_coroutine_function = inspect.iscoroutinefunction(func)
+        unwrapped = inspect.unwrap(func, stop=lambda f: not hasattr(f, "__wrapped__"))
+        is_async_generator_function = inspect.isasyncgenfunction(unwrapped)
+        is_coroutine_function = inspect.iscoroutinefunction(unwrapped)
 
         def prepare_call(args, kwargs):
             """Build per-call helpers shared by sync and async wrappers."""
@@ -594,6 +602,165 @@ class DecoratorInjector:
                     )
 
             return should_observe, send_observation
+
+        if is_async_generator_function:
+
+            @wraps(func)
+            def async_generator_wrapper(*args, **kwargs):
+                helpers = prepare_call(args, kwargs)
+                if helpers is None:
+                    return func(*args, **kwargs)
+                should_observe, send_observation = helpers
+
+                # Stage 1: Observe at function entry (AtEnter) if -b flag enabled.
+                if before and should_observe():
+                    send_observation("AtEnter")
+
+                # OpenTelemetry async-gen wrapping pattern: wrap full async iterator
+                # protocol (__aiter__, __anext__, asend, athrow, aclose).
+                qualname = getattr(
+                    func,
+                    "__qualname__",
+                    getattr(func, "__name__", repr(func)),
+                )
+                func_name = f"{func.__module__}.{qualname}"
+                start_wall = _rpl.perf_counter()
+                start_cpu = None
+                start_context_switches = None
+                if sys.platform != "win32" and resource is not None:
+                    start_usage = resource.getrusage(resource.RUSAGE_SELF)
+                    start_cpu = start_usage.ru_utime + start_usage.ru_stime
+                    start_context_switches = (
+                        start_usage.ru_nvcsw + start_usage.ru_nivcsw
+                    )
+
+                yield_count = 0
+                profile_emitted = False
+
+                def emit_execution_profile(termination: str, error_msg: Optional[str] = None):
+                    nonlocal profile_emitted
+                    if profile_emitted:
+                        return
+                    profile_emitted = True
+
+                    end_wall = _rpl.perf_counter()
+                    wall_cost = end_wall - start_wall
+                    cpu_cost = None
+                    context_switches = None
+                    if sys.platform != "win32" and resource is not None:
+                        end_usage = resource.getrusage(resource.RUSAGE_SELF)
+                        end_cpu = end_usage.ru_utime + end_usage.ru_stime
+                        if start_cpu is not None:
+                            cpu_cost = end_cpu - start_cpu
+                        if start_context_switches is not None:
+                            context_switches = (
+                                end_usage.ru_nvcsw
+                                + end_usage.ru_nivcsw
+                                - start_context_switches
+                            )
+
+                    profile = {
+                        "type": "execution_profile",
+                        "func_name": func_name,
+                        "mode": "async_generator",
+                        "scheduler": "asyncio",
+                        "yields": yield_count,
+                        "wall_cost": wall_cost,
+                        "cpu_cost": cpu_cost,
+                        "context_switches": context_switches,
+                        "termination": termination,
+                    }
+                    if error_msg is not None:
+                        profile["error"] = error_msg
+                    print(json.dumps(profile), flush=True)
+
+                try:
+                    async_gen = func(*args, **kwargs)
+                except Exception as e:
+                    emit_execution_profile("errored", f"{type(e).__name__}: {str(e)}")
+                    duration_ms = (_rpl.perf_counter() - start_wall) * 1000
+                    error = f"{type(e).__name__}: {str(e)}"
+                    if on_exception and should_observe(duration_ms):
+                        send_observation(
+                            "AtExceptionExit",
+                            error_msg=error,
+                            duration_ms=duration_ms,
+                        )
+                    elif on_finish and not on_exception and should_observe(duration_ms):
+                        send_observation(
+                            "AtExceptionExit",
+                            error_msg=error,
+                            duration_ms=duration_ms,
+                        )
+                    raise
+
+                if on_success and should_observe(0.0):
+                    send_observation("AtExit", result_val=async_gen, duration_ms=0.0)
+                elif on_finish and not on_success and should_observe(0.0):
+                    send_observation("AtExit", result_val=async_gen, duration_ms=0.0)
+
+                class AsyncGeneratorProxy:
+                    def __aiter__(self):
+                        return self
+
+                    async def __anext__(self):
+                        nonlocal yield_count
+                        try:
+                            value = await async_gen.__anext__()
+                            yield_count += 1
+                            return value
+                        except StopAsyncIteration:
+                            emit_execution_profile("exhausted")
+                            raise
+                        except Exception as e:
+                            emit_execution_profile(
+                                "errored", f"{type(e).__name__}: {str(e)}"
+                            )
+                            raise
+
+                    async def asend(self, value):
+                        nonlocal yield_count
+                        try:
+                            result = await async_gen.asend(value)
+                            yield_count += 1
+                            return result
+                        except StopAsyncIteration:
+                            emit_execution_profile("exhausted")
+                            raise
+                        except Exception as e:
+                            emit_execution_profile(
+                                "errored", f"{type(e).__name__}: {str(e)}"
+                            )
+                            raise
+
+                    async def athrow(self, *args):
+                        nonlocal yield_count
+                        try:
+                            result = await async_gen.athrow(*args)
+                            yield_count += 1
+                            return result
+                        except StopAsyncIteration:
+                            emit_execution_profile("exhausted")
+                            raise
+                        except Exception as e:
+                            emit_execution_profile(
+                                "errored", f"{type(e).__name__}: {str(e)}"
+                            )
+                            raise
+
+                    async def aclose(self):
+                        try:
+                            await async_gen.aclose()
+                            emit_execution_profile("closed")
+                        except Exception as e:
+                            emit_execution_profile(
+                                "errored", f"{type(e).__name__}: {str(e)}"
+                            )
+                            raise
+
+                return AsyncGeneratorProxy()
+
+            return async_generator_wrapper
 
         if is_coroutine_function:
 
