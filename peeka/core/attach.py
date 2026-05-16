@@ -12,10 +12,10 @@ import re
 import shutil
 import signal
 import socket as sock_mod
+from peeka.core.runtime import primitives as _rpl
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 import uuid
 import warnings
@@ -420,12 +420,13 @@ class ProcessAttacher:
         cmd.extend(["-eval-command", f"set $peeka_rtld_now = {_RTLD_NOW}"])
         cmd.extend(["-x", gdb_script])
 
-        server_thread = threading.Thread(
+        server_thread_id = _rpl.start_thread(
             target=self._serve_agent_code,
             args=(agent_script_content, 30),
             daemon=True,
+            name="peeka-attach-server",
         )
-        server_thread.start()
+        logger.debug("Started attach server thread id=%s", server_thread_id)
 
         try:
             result = subprocess.run(
@@ -511,12 +512,13 @@ class ProcessAttacher:
         cmd.extend(["--one-line", f"script port = {notify_port}"])
         cmd.extend(["--source", lldb_script])
 
-        server_thread = threading.Thread(
+        server_thread_id = _rpl.start_thread(
             target=self._serve_agent_code,
             args=(agent_script_content, 30),
             daemon=True,
+            name="peeka-attach-server",
         )
-        server_thread.start()
+        logger.debug("Started attach server thread id=%s", server_thread_id)
 
         try:
             result = subprocess.run(
@@ -616,7 +618,7 @@ class ProcessAttacher:
         The injected agent will connect back to this port once it is
         ready, which is far more reliable than polling for a file.
         """
-        self._notify_server = sock_mod.socket(sock_mod.AF_INET, sock_mod.SOCK_STREAM)
+        self._notify_server = _rpl.create_socket("AF_INET", "SOCK_STREAM")
         self._notify_server.setsockopt(sock_mod.SOL_SOCKET, sock_mod.SO_REUSEADDR, 1)
         self._notify_server.bind(("127.0.0.1", 0))
         self._notify_server.listen(1)

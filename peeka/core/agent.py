@@ -15,6 +15,7 @@ from typing import Any, Callable, Dict, Optional, Tuple
 
 from peeka.core.injector import DecoratorInjector
 from peeka.core.observer import ObservationManager
+from peeka.core.runtime import primitives as _rpl
 
 
 def _write_session_log(
@@ -137,7 +138,7 @@ class PeekaAgent:
         self.server: Optional[socket.socket] = None
         self.command_handlers: Dict[str, Any] = {}
         self._client_connections: list = []
-        self._connections_lock = _NATIVE_ALLOCATE_LOCK()
+        self._connections_lock = _rpl.allocate_lock()
 
         self._client_counter = 0
         self.observer = ObservationManager()
@@ -295,7 +296,7 @@ class PeekaAgent:
 
     def start(self) -> bool:
         try:
-            self.server = _NATIVE_SOCKET(socket.AF_UNIX, socket.SOCK_STREAM)
+            self.server = _rpl.create_socket("AF_UNIX", "SOCK_STREAM")
 
             if Path(self.sock_path).exists():
                 Path(self.sock_path).unlink()
@@ -310,7 +311,7 @@ class PeekaAgent:
             # target-process threading primitives here: frameworks such as
             # gevent may monkey-patch threading.Event/Thread and make blocking
             # waits illegal in the injection callback.
-            _start_native_thread(self._accept_loop)
+            _rpl.start_thread(self._accept_loop)
 
             # Signal readiness via TCP reverse-connect (preferred) and
             # .ready file (fallback / backward compatibility).
@@ -343,9 +344,9 @@ class PeekaAgent:
             try:
                 if self.server is None:
                     break
-                conn, _ = _native_accept(self.server)
+                conn, _ = _rpl.native_accept(self.server)
                 self._client_counter += 1
-                _start_native_thread(self._handle_client, conn, self._client_counter)
+                _rpl.start_thread(self._handle_client, (conn, self._client_counter))
             except socket.timeout:
                 # Periodic wakeup to re-check self.running
                 continue
@@ -509,7 +510,7 @@ class PeekaAgent:
         if self._notify_port <= 0:
             return
         try:
-            s = _NATIVE_SOCKET(socket.AF_INET, socket.SOCK_STREAM)
+            s = _rpl.create_socket("AF_INET", "SOCK_STREAM")
             s.settimeout(5.0)
             s.connect(("127.0.0.1", self._notify_port))
             s.sendall(b"READY")
