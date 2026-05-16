@@ -6,8 +6,9 @@ statistics for function calls including total calls, successes, failures,
 and response time metrics (average, min, max).
 """
 
-import threading
 from typing import Any, Dict, Optional
+
+from peeka.core.runtime import primitives as _rpl
 
 
 class MonitorManager:
@@ -34,7 +35,7 @@ class MonitorManager:
     def __init__(self):
         """Initialize the monitor manager."""
         self._stats: Dict[str, Dict[str, Any]] = {}
-        self._lock = threading.Lock()
+        self._lock = _rpl.allocate_lock()
 
     def start_monitor(self, watch_id: str) -> None:
         """
