@@ -11,7 +11,7 @@ import socket
 import sys
 import threading
 import time
-from typing import Any, Callable, Dict, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Optional, Tuple, Union, cast
 
 
 def _get_original_runtime_attr(
@@ -163,10 +163,12 @@ def create_socket(
         type_ = getattr(socket, type_)
 
     # Create socket, passing fileno only if not None.
+    family_int = cast(int, family)
+    type_int = cast(int, type_)
     if fileno is not None:
-        return _NATIVE_SOCKET(family, type_, proto, fileno=fileno)
+        return _NATIVE_SOCKET(family_int, type_int, proto, fileno=fileno)
     else:
-        return _NATIVE_SOCKET(family, type_, proto)
+        return _NATIVE_SOCKET(family_int, type_int, proto)
 
 
 def native_accept(server: Any) -> Tuple[Any, Any]:
@@ -180,7 +182,7 @@ def native_accept(server: Any) -> Tuple[Any, Any]:
     """
     accept = getattr(server, "accept", None)
     if callable(accept):
-        return accept()
+        return cast(Tuple[Any, Any], accept())
 
     fd, address = server._accept()
     conn = _NATIVE_SOCKET(server.family, server.type, server.proto, fileno=fd)
