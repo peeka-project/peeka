@@ -501,6 +501,15 @@ Examples:
         default=50,
         help="Stack depth limit for detail view (default: 50)",
     )
+    patch_status_parser = subparsers.add_parser(
+        "patch-status", help="Check runtime monkey-patch status (must attach first)"
+    )
+    patch_status_parser.add_argument(
+        "--pid",
+        type=int,
+        required=True,
+        help="Process ID to check patch status",
+    )
     _ = subparsers.add_parser("detach", help="Detach from the target process")
     run_parser = subparsers.add_parser(
         "run",
@@ -561,6 +570,8 @@ Examples:
             return cmd_reset(args)
         elif args.command == "thread":
             return cmd_thread(args)
+        elif args.command == "patch-status":
+            return cmd_patch_status(args)
         elif args.command == "top":
             return cmd_top(args)
         elif args.command == "run":
@@ -1022,6 +1033,40 @@ def cmd_thread(args) -> int:
     else:
         OutputFormatter.error(
             "thread", error=response.get("error", "Thread command failed")
+        )
+
+    streaming_client.disconnect()
+
+    return 0 if response.get("status") == "success" else 1
+
+
+def cmd_patch_status(args) -> int:
+    try:
+        socket_path, attached_pid = _check_agent_attached()
+    except ValueError as e:
+        OutputFormatter.error("patch-status", error=str(e))
+        return 1
+
+    streaming_client = StreamingAgentClient(socket_path)
+    connect_result = streaming_client.connect()
+
+    if connect_result.get("status") != "success":
+        OutputFormatter.error(
+            "patch-status", error=connect_result.get("error", "Connection failed")
+        )
+        return 1
+
+    command = {
+        "type": "patch-status",
+    }
+
+    response = streaming_client.send_command(command)
+
+    if response.get("status") == "success":
+        OutputFormatter.result("patch-status", data=response)
+    else:
+        OutputFormatter.error(
+            "patch-status", error=response.get("error", "Patch-status command failed")
         )
 
     streaming_client.disconnect()
