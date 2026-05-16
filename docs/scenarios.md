@@ -1699,4 +1699,229 @@ peeka-cli watch '__main__.func' | jq 'select(.type == "observation") | {func: .f
 - 诊断完成后记得 `reset` 和 `detach`
 
 Happy debugging with Peeka! 🔍
+
+---
+
+## 场景 8: 检测 Monkey-Patched 目标进程
+
+### 问题描述
+
+你的应用使用 gevent 或 eventlet 等异步框架来提升并发性能。这些框架会在运行时替换标准库的 `socket`、`threading`、`time` 等模块（monkey-patching）。你想确认目标进程是否被 patch 了，以及 Peeka 的诊断基础设施是否能正常工作。
+
+### 症状表现
+
+- 应用使用 `gevent.monkey.patch_all()` 或 `eventlet.monkey_patch()`
+- 不确定哪些模块被 patch 了
+- 想验证 Peeka 的 agent 是否能在 patch 环境下正常运行
+
+### 启动示例
+
+```bash
+# 启动 gevent-patched 示例
+python examples/gevent_attach_target.py &
+# 输出：PID: 12345
+# Patched: socket=True, threading=True
+```
+
+### Attach 步骤
+
+```bash
+peeka-cli attach 12345
+```
+
+### 诊断步骤
+
+#### 步骤 1: 查看 Patch 状态
+
+```bash
+peeka-cli patch-status
+```
+
+预期输出（JSONL）：
+```json
+{
+  "type": "result",
+  "command": "patch-status",
+  "data": {
+    "schema_version": "1",
+    "pid": 12345,
+    "timestamp": 1705586200.123,
+    "monkey_patch": {
+      "gevent": {
+        "status": "active",
+        "patched_modules": ["socket", "threading", "time", "select", "ssl"]
+      },
+      "eventlet": "not_imported"
+    },
+    "stdlib_origin": {
+      "socket.socket": {
+        "current_id": 140234567890,
+        "native_id": 140234567800,
+        "matches": false
+      },
+      "_socket.socket": {
+        "current_id": 140234567800,
+        "native_id": 140234567800,
+        "matches": true
+      },
+      "_thread.start_new_thread": {
+        "current_id": 140234568900,
+        "native_id": 140234568800,
+        "matches": false
+      },
+      "threading.RLock": {
+        "current_id": 140234569900,
+        "native_id": 140234569900,
+        "matches": true
+      }
+    },
+    "asyncio_loop": {
+      "running": false,
+      "policy": "DefaultEventLoopPolicy",
+      "loop_class": null
+    },
+    "thread_model": {
+      "main_thread_id": 140234560000,
+      "total_threads": 5,
+      "daemon_threads": 3,
+      "classification": "multi_threaded_with_daemons"
+    },
+    "rpl_integrity": {
+      "status": "ok",
+      "ok": true,
+      "socket_native": true,
+      "thread_native": true,
+      "lock_native": true,
+      "rlock_native": true,
+      "event_native": true,
+      "time_native": true,
+      "perf_counter_native": true,
+      "get_ident_native": true,
+      "captured_at_import": true
+    }
+  }
+}
+```
+
+#### 步骤 2: 解读输出
+
+**monkey_patch 部分**：
+- `gevent.status = "active"`: gevent 已导入且已激活 monkey-patching
+- `patched_modules`: gevent 替换了 5 个标准库模块（socket, threading, time, select, ssl）
+- `eventlet = "not_imported"`: eventlet 未导入
+
+**stdlib_origin 部分**：
+- `socket.socket.matches = false`: Python 层 `socket.socket` 已被 gevent 替换（ID 不匹配）
+- `_socket.socket.matches = true`: C 层 `_socket.socket` 仍然是原生的（gevent 不 patch C 扩展）
+- `_thread.start_new_thread.matches = false`: 原生线程创建函数已被替换
+- `threading.RLock.matches = true`: RLock 未被 patch（gevent 保留了这个）
+
+**rpl_integrity 部分**：
+- `status = "ok"`, `ok = true`: Peeka 的 Runtime Primitive Layer (RPL) 完整性正常
+- 所有 8 个原生 primitive 检查都通过（`*_native = true`）
+- `captured_at_import = true`: RPL 在模块导入时成功捕获了原生引用
+
+**线程模型部分**：
+- `total_threads = 5`: 进程有 5 个线程（包括 main thread + gevent hub + Peeka agent 线程）
+- `daemon_threads = 3`: 其中 3 个是 daemon 线程
+- `classification = "multi_threaded_with_daemons"`: 多线程 + daemon 线程混合模型
+
+### 根因分析
+
+**为什么 RPL 完整性检查通过？**
+
+Peeka 的 agent 使用 Runtime Primitive Layer (RPL) 来绕过 monkey-patching：
+
+1. **Eager Capture**: RPL 在模块导入时（`import peeka.core.runtime.primitives`）就捕获了原生 primitive 的引用，早于任何 monkey-patching
+2. **C 扩展安全**: RPL 使用 `_socket.socket`（C 扩展）而非 `socket.socket`（Python 包装器）— gevent 只 patch Python 层
+3. **原生线程**: RPL 使用 `_thread.start_new_thread`（原生 OS 线程）而非 `threading.Thread`（可能被 patch 的协程）
+
+即使目标进程被 gevent 全面 patch，Peeka 仍然能：
+- 创建真实的 OS 线程（非 greenlet）
+- 使用阻塞的 socket I/O（非协程）
+- 获取精确的时间戳（非 gevent 虚拟时间）
+
+### 检查点解读
+
+当 `rpl_integrity.ok = true` 时，表示：
+- Peeka 的 agent 基础设施能安全运行（不会被 gevent/eventlet 干扰）
+- `watch`, `trace`, `stack` 等命令可以正常工作
+- Agent 和 CLI 之间的通信不会被 greenlet 调度器阻塞
+
+当 `rpl_integrity.ok = false` 时，表示：
+- RPL 未能成功捕获某些原生 primitive（可能在 RPL 导入前就被 patch 了）
+- 部分 Peeka 功能可能不稳定
+- 建议重新 attach 或检查 Python 环境
+
+### 实际场景示例
+
+**场景 A: 纯 gevent 应用**
+```json
+"monkey_patch": {
+  "gevent": {"status": "active", "patched_modules": ["socket", "threading", ...]},
+  "eventlet": "not_imported"
+},
+"rpl_integrity": {"status": "ok", "ok": true}
+```
+解读：gevent 已 patch，但 RPL 完整 → Peeka 可安全使用
+
+**场景 B: 未 patch 的常规应用**
+```json
+"monkey_patch": {
+  "gevent": "not_imported",
+  "eventlet": "not_imported"
+},
+"stdlib_origin": {
+  "socket.socket": {"matches": true},
+  "_thread.start_new_thread": {"matches": true}
+}
+```
+解读：无 monkey-patching → Peeka 和 stdlib 使用相同的 primitive
+
+**场景 C: gevent 和 eventlet 混用（罕见但存在）**
+```json
+"monkey_patch": {
+  "gevent": {"status": "imported_not_active"},
+  "eventlet": {"status": "active"}
+}
+```
+解读：gevent 已导入但未激活，eventlet 已激活 → 只有 eventlet 的 patch 生效
+
+### 清理步骤
+
+```bash
+peeka-cli detach 12345
+kill 12345
+```
+
+### 相关文档
+
+- [Runtime Primitive Layer](runtime-primitive-layer.md) — RPL 的设计原理和 API 文档
+- [Python Process Attach Internals](python-process-attach-internals.md) — Peeka 如何注入代码到运行中的进程
+
+---
+
+## 总结
+
+本教程展示了 8 个典型的 Python 运行时诊断场景：
+
+1. **业务逻辑 Bug**：使用 `watch` 观察函数参数和返回值，定位计算错误
+2. **慢请求**：使用 `monitor` + `watch --condition` + `trace` 渐进式定位性能瓶颈
+3. **CPU 过高**：使用 `top` 采样热点函数，`trace` 分析时间分布
+4. **内存泄漏**：使用 `memory` 命令完整工作流（start → top → snapshot → diff）
+5. **死锁**：使用 `thread` 和 `stack` 识别循环等待
+6. **紧急诊断**：使用 `sc/sm/inspect/logger` 探索未知应用
+7. **调用分析**：使用 `stack` 和 `watch` 识别高频调用方
+8. **Monkey-Patch 检测**：使用 `patch-status` 确认 gevent/eventlet 状态和 RPL 完整性
+
+所有示例脚本位于 `examples/scenario_*.py`，可直接运行和调试。
+
+**关键原则**：
+- 先 attach，再执行命令
+- 内存分析必须先 `memory --action start`
+- 使用 `--condition` 过滤高价值数据
+- 结合 jq 处理 JSONL 输出
+- 诊断完成后记得 `reset` 和 `detach`
+
+Happy debugging with Peeka!
 ```

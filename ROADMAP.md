@@ -68,6 +68,8 @@ attach stability, safety, or platform compatibility issues need attention.
   versions.
 - `Observation` Core commands for `watch`, `trace`, `stack`, `monitor`, `top`,
   `memory`, `inspect`, `thread`, `logger`, `sc`, and `sm`.
+- `Observation` `Safety` Runtime Primitive Layer for gevent and eventlet
+  compatibility.
 - `CLI` JSONL output designed for pipelines and `jq`.
 - `TUI` Multi-view interface with process selection, help screen, themes, and
   autocomplete.
