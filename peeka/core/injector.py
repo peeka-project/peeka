@@ -6,12 +6,13 @@ observation logic into target functions at runtime, enabling function call
 monitoring without modifying the original source code.
 """
 
-import logging
-
+import asyncio
+import concurrent.futures
 import fnmatch
 import importlib
 import inspect
 import json
+import logging
 import sys
 import threading
 import time
@@ -775,10 +776,173 @@ class DecoratorInjector:
                 if before and should_observe():
                     send_observation("AtEnter")
 
-                start_time = time.perf_counter()
+                qualname = getattr(
+                    func,
+                    "__qualname__",
+                    getattr(func, "__name__", repr(func)),
+                )
+                func_name = f"{func.__module__}.{qualname}"
+                start_wall = _rpl.perf_counter()
+                start_cpu = None
+                start_context_switches = None
+                if sys.platform != "win32" and resource is not None:
+                    start_usage = resource.getrusage(resource.RUSAGE_SELF)
+                    start_cpu = start_usage.ru_utime + start_usage.ru_stime
+                    start_context_switches = (
+                        start_usage.ru_nvcsw + start_usage.ru_nivcsw
+                    )
+
+                profile_emitted = False
+
+                def extract_callback(entry: Any) -> Optional[Any]:
+                    if isinstance(entry, tuple) and entry:
+                        return entry[0]
+                    callback = getattr(entry, "_callback", None)
+                    if callback is not None:
+                        return callback
+                    return entry
+
+                def callback_matches_shield(callback: Any) -> bool:
+                    callback_name = getattr(
+                        callback,
+                        "__qualname__",
+                        getattr(callback, "__name__", ""),
+                    )
+                    if "shield" in callback_name and "_inner_done_callback" in callback_name:
+                        return True
+
+                    callback_repr = repr(callback)
+                    if (
+                        "shield" in callback_repr
+                        and "_inner_done_callback" in callback_repr
+                    ):
+                        return True
+
+                    callback_module = getattr(callback, "__module__", "")
+                    return (
+                        callback_module == "asyncio.tasks"
+                        and "_inner_done_callback" in callback_name
+                    )
+
+                def has_concurrent_future(value: Any, depth: int = 0) -> bool:
+                    if isinstance(value, concurrent.futures.Future):
+                        return True
+
+                    if depth >= 2:
+                        return False
+
+                    if isinstance(value, dict):
+                        return any(
+                            has_concurrent_future(v, depth + 1)
+                            for v in value.values()
+                        )
+
+                    if isinstance(value, (list, tuple, set)):
+                        return any(has_concurrent_future(v, depth + 1) for v in value)
+
+                    return False
+
+                def waiter_uses_executor(waiter: Any) -> bool:
+                    if waiter is None:
+                        return False
+                    if has_concurrent_future(waiter):
+                        return True
+
+                    waiter_callbacks = getattr(waiter, "_callbacks", None)
+                    if not waiter_callbacks:
+                        return False
+
+                    for waiter_entry in waiter_callbacks:
+                        waiter_callback = extract_callback(waiter_entry)
+                        if waiter_callback is None:
+                            continue
+                        closure = getattr(waiter_callback, "__closure__", None)
+                        if not closure:
+                            continue
+                        for cell in closure:
+                            try:
+                                cell_value = cell.cell_contents
+                            except ValueError:
+                                continue
+                            if isinstance(cell_value, concurrent.futures.Future):
+                                return True
+
+                    return False
+
+                def detect_marker(coro_obj: Optional[Any]) -> Optional[str]:
+                    current_task = asyncio.current_task()
+                    if current_task is not None:
+                        callbacks = getattr(current_task, "_callbacks", None)
+                        if callbacks:
+                            for entry in callbacks:
+                                callback = extract_callback(entry)
+                                if callback is not None and callback_matches_shield(callback):
+                                    return "shield"
+
+                    if coro_obj is not None:
+                        frame = getattr(coro_obj, "cr_frame", None)
+                        if frame is not None and has_concurrent_future(frame.f_locals):
+                            return "executor"
+
+                        code_obj = getattr(coro_obj, "cr_code", None)
+                        if code_obj is not None and "run_in_executor" in code_obj.co_names:
+                            return "executor"
+
+                    if current_task is not None and waiter_uses_executor(
+                        getattr(current_task, "_fut_waiter", None)
+                    ):
+                        return "executor"
+
+                    return None
+
+                def emit_execution_profile(
+                    termination: str,
+                    marker: Optional[str],
+                    error_msg: Optional[str] = None,
+                ):
+                    nonlocal profile_emitted
+                    if profile_emitted:
+                        return
+                    profile_emitted = True
+
+                    end_wall = _rpl.perf_counter()
+                    wall_cost = end_wall - start_wall
+                    cpu_cost = None
+                    context_switches = None
+                    if sys.platform != "win32" and resource is not None:
+                        end_usage = resource.getrusage(resource.RUSAGE_SELF)
+                        end_cpu = end_usage.ru_utime + end_usage.ru_stime
+                        if start_cpu is not None:
+                            cpu_cost = end_cpu - start_cpu
+                        if start_context_switches is not None:
+                            context_switches = (
+                                end_usage.ru_nvcsw
+                                + end_usage.ru_nivcsw
+                                - start_context_switches
+                            )
+
+                    profile = {
+                        "type": "execution_profile",
+                        "func_name": func_name,
+                        "mode": "coroutine",
+                        "scheduler": "asyncio",
+                        "yields": None,
+                        "wall_cost": wall_cost,
+                        "cpu_cost": cpu_cost,
+                        "context_switches": context_switches,
+                        "marker": marker,
+                        "termination": termination,
+                    }
+                    if error_msg is not None:
+                        profile["error"] = error_msg
+                    print(json.dumps(profile), flush=True)
+
+                coroutine_obj = None
                 try:
-                    result = await func(*args, **kwargs)
-                    duration_ms = (time.perf_counter() - start_time) * 1000
+                    coroutine_obj = func(*args, **kwargs)
+                    result = await coroutine_obj
+                    duration_ms = (_rpl.perf_counter() - start_wall) * 1000
+                    emit_execution_profile("returned", detect_marker(coroutine_obj))
 
                     if on_success and should_observe(duration_ms):
                         send_observation(
@@ -790,9 +954,37 @@ class DecoratorInjector:
                         )
 
                     return result
+                except asyncio.CancelledError:
+                    duration_ms = (_rpl.perf_counter() - start_wall) * 1000
+                    cancel_error = "CancelledError"
+                    emit_execution_profile(
+                        "cancelled",
+                        detect_marker(coroutine_obj),
+                        error_msg=cancel_error,
+                    )
+
+                    if on_exception and should_observe(duration_ms):
+                        send_observation(
+                            "AtExceptionExit",
+                            error_msg=cancel_error,
+                            duration_ms=duration_ms,
+                        )
+                    elif on_finish and not on_exception and should_observe(
+                        duration_ms
+                    ):
+                        send_observation(
+                            "AtExceptionExit",
+                            error_msg=cancel_error,
+                            duration_ms=duration_ms,
+                        )
+
+                    raise
                 except Exception as e:
-                    duration_ms = (time.perf_counter() - start_time) * 1000
+                    duration_ms = (_rpl.perf_counter() - start_wall) * 1000
                     error = f"{type(e).__name__}: {str(e)}"
+                    emit_execution_profile(
+                        "errored", detect_marker(coroutine_obj), error_msg=error
+                    )
 
                     if on_exception and should_observe(duration_ms):
                         send_observation(
