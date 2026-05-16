@@ -8,7 +8,7 @@ import types
 
 import pytest
 
-from peeka.core.runtime import primitives
+from peeka.core.runtime import primitives  # noqa: F401
 
 
 @pytest.fixture
@@ -18,15 +18,8 @@ def fake_gevent_patch(monkeypatch):
     This fixture models the attribute-swap style of monkey-patching where
     the original module remains in sys.modules but its attributes are replaced.
     
-    Teardown assertion ensures no leakage across test boundaries.
+    Monkeypatch auto-cleanup ensures no leakage across test boundaries.
     """
-    original_socket = socket.socket
-    original_thread_lock = threading.Lock
-    original_thread_event = threading.Event
-    original_thread_thread = threading.Thread
-    original_allocate_lock = _thread.allocate_lock
-    original_start_new_thread = _thread.start_new_thread
-
     class RaisingSentinel:
         """Sentinel that raises RuntimeError on any call or instantiation."""
 
@@ -50,7 +43,7 @@ def fake_eventlet_patch(monkeypatch):
     This fixture models the sys.modules replacement style where the entire
     module is swapped out with a stub that raises on attribute access.
     
-    Teardown assertion ensures no leakage across test boundaries.
+    Monkeypatch auto-cleanup ensures no leakage across test boundaries.
     """
     original_socket_module = sys.modules["socket"]
     original_threading_module = sys.modules["threading"]
