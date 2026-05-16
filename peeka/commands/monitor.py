@@ -6,12 +6,12 @@ response time statistics) for injected functions with periodic output.
 """
 
 import threading
-import time
 import uuid
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import Any, Dict, TYPE_CHECKING
 
 from peeka.commands.base import BaseCommand
 from peeka.core.monitor import MonitorManager
+from peeka.core.runtime import primitives as _rpl
 
 if TYPE_CHECKING:
     from peeka.core.agent import PeekaAgent
@@ -51,7 +51,7 @@ class MonitorCommand(BaseCommand):
         self.agent = agent
         self.manager = MonitorManager()
         self._monitors: Dict[str, Dict[str, Any]] = {}
-        self._lock = threading.Lock()
+        self._lock = _rpl.allocate_lock()
 
     def execute(self, params: Dict[str, Any]) -> Dict[str, Any]:
         try:
@@ -137,14 +137,14 @@ class MonitorCommand(BaseCommand):
         manager = self.manager
 
         def wrapper(*args, **kwargs):
-            start_time = time.perf_counter()
+            start_time = _rpl.perf_counter()
             try:
                 result = func(*args, **kwargs)
-                duration_ms = (time.perf_counter() - start_time) * 1000
+                duration_ms = (_rpl.perf_counter() - start_time) * 1000
                 manager.record_call(watch_id, success=True, duration_ms=duration_ms)
                 return result
-            except Exception as e:
-                duration_ms = (time.perf_counter() - start_time) * 1000
+            except Exception:
+                duration_ms = (_rpl.perf_counter() - start_time) * 1000
                 manager.record_call(watch_id, success=False, duration_ms=duration_ms)
                 raise
 
