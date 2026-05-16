@@ -384,11 +384,11 @@ class ProcessAttacher:
                     "Install a wheel with the peeka.core._inject extension or build with: "
                     "uv run python setup.py build_ext --inplace"
                 )
-            return self._inject_via_gdb_dlopen()
+            return self._inject_via_gdb()
 
         raise NotImplementedError(f"Unsupported platform: {system_name}")
 
-    def _inject_via_gdb_dlopen(self) -> bool:
+    def _inject_via_gdb(self) -> bool:
         """
         Inject via GDB using dlopen + C extension.
         """

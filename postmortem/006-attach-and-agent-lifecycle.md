@@ -65,7 +65,7 @@ prefer_legacy_gdb = (
 
 if not prefer_legacy_gdb:
     try:
-        return self._inject_via_gdb_dlopen()
+        return self._inject_via_gdb()
     except (TimeoutError, RuntimeError, OSError) as e:
         logger.warning("GDB dlopen injection failed (%s), falling back to legacy GDB", e)
 
