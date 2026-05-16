@@ -580,7 +580,7 @@ class ProcessAttacher:
                 return
 
             server.settimeout(timeout)
-            conn, _ = server.accept()
+            conn, _ = _rpl.native_accept(server)
             try:
                 code_bytes = agent_code.encode("utf-8")
                 # The native injector reads until EOF and passes the bytes

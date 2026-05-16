@@ -3,7 +3,6 @@ Stack Command - Print call stack when function is invoked
 Similar to Arthas 'stack' command
 """
 
-import inspect
 from typing import Any, Dict, TYPE_CHECKING
 
 from peeka.commands.base import BaseCommand

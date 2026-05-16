@@ -9,7 +9,7 @@ This module provides runtime VM introspection capabilities:
 
 import gc
 import sys
-from typing import Dict, Any, Optional, TYPE_CHECKING
+from typing import Dict, Any, TYPE_CHECKING
 
 from peeka.commands.base import BaseCommand
 from peeka.core.safeeval.simpleeval import SimpleEval, BASIC_ALLOWED_ATTRS
@@ -296,7 +296,6 @@ class VMToolCommand(BaseCommand):
             try:
                 obj = getattr(obj, attr)
             except AttributeError:
-                partial_path = ".".join(parts[: i + 1])
                 raise ValueError(
                     f"Attribute '{attr}' not found in '{'.'.join(parts[:i])}'"
                 )
