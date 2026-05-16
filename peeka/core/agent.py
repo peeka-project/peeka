@@ -611,3 +611,41 @@ if not _session_id.startswith("{{"):
         notify_port=_notify_port,
         suppress_startup_messages=_suppress_startup_messages,
     )
+
+
+# ================================================================ #
+# PEP 562 Module-level Deprecation Shim                            #
+# ================================================================ #
+# Backward-compatible access to relocated _NATIVE_* aliases.
+# This shim coexists with the eager-capture block (lines 6-77)
+# until T8 removes the eager block.
+
+
+def __getattr__(name: str) -> Any:
+    """PEP 562 module-level deprecation shim for relocated _NATIVE_* helpers."""
+    _deprecated_aliases = {
+        "_NATIVE_SOCKET": "_NATIVE_SOCKET",
+        "_NATIVE_START_NEW_THREAD": "_NATIVE_START_NEW_THREAD",
+        "_NATIVE_ALLOCATE_LOCK": "_NATIVE_ALLOCATE_LOCK",
+        "_NATIVE_RLOCK": "_NATIVE_RLOCK",
+        "_NATIVE_EVENT": "_NATIVE_EVENT",
+        "_NATIVE_TIME": "_NATIVE_TIME",
+        "_NATIVE_PERF_COUNTER": "_NATIVE_PERF_COUNTER",
+        "_NATIVE_GET_IDENT": "_NATIVE_GET_IDENT",
+        "_start_native_thread": "start_thread",
+        "_native_accept": "native_accept",
+        "_get_original_runtime_attr": "_get_original_runtime_attr",
+    }
+
+    if name in _deprecated_aliases:
+        import warnings
+
+        from peeka.core.runtime import primitives as _rpl
+
+        warnings.warn(
+            f"peeka.core.agent.{name} is deprecated; import from peeka.core.runtime.primitives instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return getattr(_rpl, _deprecated_aliases[name])
+    raise AttributeError(f"module 'peeka.core.agent' has no attribute {name!r}")
