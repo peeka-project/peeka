@@ -145,10 +145,10 @@ class TestAttachFallbackDispatch:
         with patch("peeka.core.attach._has_injector", return_value=True), patch(
             "platform.system", return_value="Linux"
         ), patch.object(
-            attacher, "_inject_via_gdb_dlopen", return_value=True
-        ) as mock_gdb_dlopen, patch.object(attacher, "_inject_via_lldb") as mock_lldb:
+            attacher, "_inject_via_gdb", return_value=True
+        ) as mock_gdb, patch.object(attacher, "_inject_via_lldb") as mock_lldb:
             assert attacher._attach_fallback() is True
-            mock_gdb_dlopen.assert_called_once_with()
+            mock_gdb.assert_called_once_with()
             mock_lldb.assert_not_called()
 
     def test_linux_python38_with_injector_prefers_gdb_dlopen(self):
@@ -157,10 +157,10 @@ class TestAttachFallbackDispatch:
         with patch("peeka.core.attach._has_injector", return_value=True), patch(
             "platform.system", return_value="Linux"
         ), patch.object(
-            attacher, "_inject_via_gdb_dlopen", return_value=True
-        ) as mock_gdb_dlopen:
+            attacher, "_inject_via_gdb", return_value=True
+        ) as mock_gdb:
             assert attacher._attach_fallback() is True
-            mock_gdb_dlopen.assert_called_once_with()
+            mock_gdb.assert_called_once_with()
 
     def test_linux_with_injector_propagates_dlopen_failure(self):
         """Linux dlopen failures should not retry via PyRun_SimpleString."""
@@ -168,12 +168,12 @@ class TestAttachFallbackDispatch:
         with patch("peeka.core.attach._has_injector", return_value=True), patch(
             "platform.system", return_value="Linux"
         ), patch.object(
-            attacher, "_inject_via_gdb_dlopen", side_effect=TimeoutError("boom")
-        ) as mock_gdb_dlopen:
+            attacher, "_inject_via_gdb", side_effect=TimeoutError("boom")
+        ) as mock_gdb:
             with pytest.raises(TimeoutError, match="boom"):
                 attacher._attach_fallback()
 
-            mock_gdb_dlopen.assert_called_once_with()
+            mock_gdb.assert_called_once_with()
 
     def test_linux_with_injector_propagates_symbol_error(self):
         """Missing Python C API symbols fail the dlopen attach path directly."""
@@ -182,13 +182,13 @@ class TestAttachFallbackDispatch:
             "platform.system", return_value="Linux"
         ), patch.object(
             attacher,
-            "_inject_via_gdb_dlopen",
+            "_inject_via_gdb",
             side_effect=attach.GDBSymbolResolutionError("no symbols"),
-        ) as mock_gdb_dlopen:
+        ) as mock_gdb:
             with pytest.raises(attach.GDBSymbolResolutionError):
                 attacher._attach_fallback()
 
-            mock_gdb_dlopen.assert_called_once_with()
+            mock_gdb.assert_called_once_with()
 
     def test_macos_with_injector_dispatches_lldb(self):
         """Darwin + injector available should use LLDB path."""
@@ -198,11 +198,11 @@ class TestAttachFallbackDispatch:
         ), patch.object(
             attacher, "_inject_via_lldb", return_value=True
         ) as mock_lldb, patch.object(
-            attacher, "_inject_via_gdb_dlopen"
-        ) as mock_gdb_dlopen:
+            attacher, "_inject_via_gdb"
+        ) as mock_gdb:
             assert attacher._attach_fallback() is True
             mock_lldb.assert_called_once_with()
-            mock_gdb_dlopen.assert_not_called()
+            mock_gdb.assert_not_called()
 
     def test_linux_without_injector_raises_runtime_error(self):
         """Linux + no injector should fail instead of using legacy GDB."""
