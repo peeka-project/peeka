@@ -3,15 +3,13 @@ Agent Code - Runs inside target process
 This code is injected into the target process and handles command execution
 """
 
-import _socket
-import _thread
 import json
 import socket
 import sys
 import time as _time
 import traceback
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from peeka.core.injector import DecoratorInjector
 from peeka.core.observer import ObservationManager
@@ -30,52 +28,6 @@ def _write_session_log(
                 log_file.write(details.rstrip() + "\n")
     except OSError:
         pass
-
-
-def _get_original_runtime_attr(
-    module_name: str, attr_name: str, fallback: Any
-) -> Any:
-    """Return an unpatched runtime primitive when gevent exposes one.
-
-    This does not import or depend on gevent. It only avoids already-applied
-    monkey patches in target processes that happen to use gevent.
-    """
-    monkey = sys.modules.get("gevent.monkey")
-    get_original = getattr(monkey, "get_original", None)
-    if callable(get_original):
-        try:
-            return get_original(module_name, attr_name)
-        except Exception:
-            pass
-    return fallback
-
-
-# Use the C socket type directly. gevent/eventlet patch socket.socket at the
-# Python module layer; _socket.socket remains the blocking native socket that
-# is safe to use from the agent's low-level native threads.
-_NATIVE_SOCKET = _socket.socket
-_NATIVE_START_NEW_THREAD = _get_original_runtime_attr(
-    "_thread", "start_new_thread", _thread.start_new_thread
-)
-_NATIVE_ALLOCATE_LOCK = _get_original_runtime_attr(
-    "_thread", "allocate_lock", _thread.allocate_lock
-)
-
-
-def _start_native_thread(target: Callable[..., Any], *args: Any) -> None:
-    """Start a low-level native thread without target monkey-patched threading."""
-    _NATIVE_START_NEW_THREAD(target, args)
-
-
-def _native_accept(server: Any) -> Tuple[Any, Any]:
-    """Accept a connection from either a socket wrapper or a raw _socket."""
-    accept = getattr(server, "accept", None)
-    if callable(accept):
-        return accept()
-
-    fd, address = server._accept()
-    conn = _NATIVE_SOCKET(server.family, server.type, server.proto, fileno=fd)
-    return conn, address
 
 
 class PeekaAgent:
