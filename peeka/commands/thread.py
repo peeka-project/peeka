@@ -10,7 +10,6 @@ Provides:
 
 import sys
 import threading
-import traceback as tb_module
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from peeka.commands.base import BaseCommand

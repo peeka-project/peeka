@@ -7,6 +7,7 @@ Requires: pip install peeka[tui]
 
 import atexit
 import argparse
+import importlib.util
 import os
 import sys
 
@@ -76,8 +77,8 @@ def main() -> None:
 
     # Check for textual
     try:
-        from textual.app import App
-    except ImportError:
+        importlib.util.find_spec("textual.app")
+    except (ImportError, ModuleNotFoundError):
         print("Error: TUI dependencies not installed.", file=sys.stderr)
         print("Install with: pip install peeka[tui]", file=sys.stderr)
         sys.exit(1)

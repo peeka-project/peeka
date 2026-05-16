@@ -105,13 +105,13 @@ def format_object(obj: Any, depth: int = 2, current_depth: int = 0) -> str:
                     val_str = format_value(v, depth, current_depth + 1)
                     formatted_attrs.append(f'{k}={val_str}')
                 return f'<{class_name}({", ".join(formatted_attrs)})>'
-    except:
+    except Exception:
         pass
 
     # Fallback to repr
     try:
         return repr(obj)
-    except:
+    except Exception:
         return f'<{module_name}.{class_name} object at {hex(id(obj))}>'
 
 

@@ -6,6 +6,8 @@ to enable easy parsing by upstream applications.
 """
 
 import json
+import logging
+import os
 import sys
 from typing import Any, Dict, Optional
 
@@ -70,12 +72,6 @@ class OutputFormatter:
         output = {"type": "result", "command": command, "data": data}
         output.update(kwargs)
         print(json.dumps(output), flush=True, file=file or sys.stdout)
-
-
-import logging
-import os
-import sys
-from typing import Optional
 
 
 def configure_logging(
