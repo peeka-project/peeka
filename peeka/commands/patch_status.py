@@ -9,6 +9,7 @@ REPORT-ONLY: This command observes runtime state without modification.
 """
 
 import os
+import sys
 import threading
 from typing import Any, Dict, Optional, TYPE_CHECKING
 
@@ -85,12 +86,19 @@ class PatchStatusCommand(BaseCommand):
         """
         result: Dict[str, Any] = {}
 
-        # gevent detection
-        try:
-            import gevent.monkey
-
-            socket_patched = gevent.monkey.is_module_patched("socket")
-            threading_patched = gevent.monkey.is_module_patched("threading")
+        # gevent detection - use sys.modules.get to avoid import side effects
+        monkey = sys.modules.get("gevent.monkey")
+        if monkey is None:
+            result["gevent"] = "not_imported"
+        else:
+            socket_patched = False
+            threading_patched = False
+            if hasattr(monkey, "is_module_patched") and callable(monkey.is_module_patched):
+                try:
+                    socket_patched = monkey.is_module_patched("socket")
+                    threading_patched = monkey.is_module_patched("threading")
+                except Exception:
+                    pass
 
             if socket_patched or threading_patched:
                 status = "active"
@@ -99,28 +107,25 @@ class PatchStatusCommand(BaseCommand):
 
             # Get list of patched modules (if saved dict is available)
             patched_modules = []
-            if hasattr(gevent.monkey, "saved"):
-                patched_modules = list(gevent.monkey.saved.keys())
+            if hasattr(monkey, "saved") and monkey.saved:
+                patched_modules = list(monkey.saved.keys())
 
             result["gevent"] = {
                 "status": status,
                 "patched_modules": patched_modules,
             }
-        except ImportError:
-            result["gevent"] = "not_imported"
 
-        # eventlet detection
-        try:
-            import eventlet.patcher
-
-            if hasattr(eventlet.patcher, "already_patched") and eventlet.patcher.already_patched:
+        # eventlet detection - use sys.modules.get to avoid import side effects
+        patcher = sys.modules.get("eventlet.patcher")
+        if patcher is None:
+            result["eventlet"] = "not_imported"
+        else:
+            if hasattr(patcher, "already_patched") and patcher.already_patched:
                 status = "active"
             else:
                 status = "imported_not_active"
 
             result["eventlet"] = {"status": status}
-        except ImportError:
-            result["eventlet"] = "not_imported"
 
         return result
 
