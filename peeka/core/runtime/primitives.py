@@ -216,31 +216,42 @@ def perf_counter() -> float:
     return _NATIVE_PERF_COUNTER()
 
 
+def _was_captured_via_get_original(captured: Any) -> bool:
+    return captured is not None and callable(captured)
+
+
 def integrity_check() -> Dict[str, Any]:
     """Verify that all native primitives were captured correctly.
+
+    Semantics: "*_native" means "we captured a callable original function",
+    NOT "current attr is still original". This distinction matters when
+    gevent/eventlet was loaded before peeka attached: in that case,
+    _get_original_runtime_attr successfully returns the original unpatched
+    function via gevent.monkey.get_original, which is different from the
+    current patched module attribute.
 
     Returns:
         Dictionary with keys:
         - "socket_native": bool, True if _NATIVE_SOCKET is _socket.socket
-        - "thread_native": bool, True if _NATIVE_START_NEW_THREAD is native
-        - "lock_native": bool, True if _NATIVE_ALLOCATE_LOCK is native
-        - "rlock_native": bool, True if _NATIVE_RLOCK is native
-        - "event_native": bool, True if _NATIVE_EVENT is native
-        - "time_native": bool, True if _NATIVE_TIME is native
+        - "thread_native": bool, True if _NATIVE_START_NEW_THREAD was captured
+        - "lock_native": bool, True if _NATIVE_ALLOCATE_LOCK was captured
+        - "rlock_native": bool, True if _NATIVE_RLOCK was captured
+        - "event_native": bool, True if _NATIVE_EVENT was captured
+        - "time_native": bool, True if _NATIVE_TIME was captured
         - "perf_counter_native": bool, True if _NATIVE_PERF_COUNTER is native
-        - "get_ident_native": bool, True if _NATIVE_GET_IDENT is native
+        - "get_ident_native": bool, True if _NATIVE_GET_IDENT was captured
         - "captured_at_import": bool, always True (indicates eager capture)
         - "status": str, "ok" if all checks pass, "degraded" otherwise
         - "ok": bool, True if all checks pass, False otherwise
     """
     socket_ok = _NATIVE_SOCKET is _socket.socket
-    thread_ok = _NATIVE_START_NEW_THREAD is _thread.start_new_thread
-    lock_ok = _NATIVE_ALLOCATE_LOCK is _thread.allocate_lock
-    rlock_ok = _NATIVE_RLOCK is threading.RLock
-    event_ok = _NATIVE_EVENT is threading.Event
-    time_ok = _NATIVE_TIME is time.time
+    thread_ok = _was_captured_via_get_original(_NATIVE_START_NEW_THREAD)
+    lock_ok = _was_captured_via_get_original(_NATIVE_ALLOCATE_LOCK)
+    rlock_ok = _was_captured_via_get_original(_NATIVE_RLOCK)
+    event_ok = _was_captured_via_get_original(_NATIVE_EVENT)
+    time_ok = _was_captured_via_get_original(_NATIVE_TIME)
     perf_counter_ok = _NATIVE_PERF_COUNTER is time.perf_counter
-    get_ident_ok = _NATIVE_GET_IDENT is threading.get_ident
+    get_ident_ok = _was_captured_via_get_original(_NATIVE_GET_IDENT)
 
     all_ok = (
         socket_ok
