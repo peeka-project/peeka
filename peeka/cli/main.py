@@ -507,8 +507,8 @@ Examples:
     patch_status_parser.add_argument(
         "--pid",
         type=int,
-        required=True,
-        help="Process ID to check patch status",
+        default=None,
+        help="(optional, ignored) Process ID hint; patch-status reports on the currently attached session",
     )
     _ = subparsers.add_parser("detach", help="Detach from the target process")
     run_parser = subparsers.add_parser(
