@@ -22,7 +22,7 @@ pytestmark = [pytest.mark.container]
 class TestPatchStatusGevent:
     """Test patch-status command with gevent-monkey-patched target."""
 
-    def test_gevent_attach_and_patch_status(self, gdb_container):
+    def test_gevent_attach_and_patch_status(self, gdb_container, tmp_path):
         """Verify patch-status detects gevent patching and RPL integrity."""
         container = gdb_container
 
@@ -122,10 +122,8 @@ cat /tmp/gevent_target.pid
             container, f"cat {evidence_path}", timeout=5
         )
         if exit_code == 0:
-            with open(
-                "/home/haidao/PycharmProjects/peeka-project/peeka/.sisyphus/evidence/task-22-jsonl-snapshot.jsonl",
-                "w"
-            ) as f:
+            evidence_file = tmp_path / "task-22-jsonl-snapshot.jsonl"
+            with open(evidence_file, "w") as f:
                 f.write(cat_output)
 
         # Assertion 1: gevent monkey patch is active
