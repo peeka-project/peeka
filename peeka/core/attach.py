@@ -19,8 +19,10 @@ import tempfile
 import time
 import uuid
 import warnings
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, Tuple, cast
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, cast
 
 logger = logging.getLogger(__name__)
 # Python 3.9+ uses importlib.resources.files(), Python 3.8 uses read_text()
@@ -35,6 +37,47 @@ except ImportError:
 # RTLD constants for dynamic linking
 _RTLD_DEFAULT = -2
 _RTLD_NOW = 2
+
+
+@dataclass
+class AttachProgressEvent:
+    """Structured progress event emitted by ProcessAttacher."""
+
+    phase: str
+    status: str
+    message: str
+    level: str = "info"
+    elapsed_ms: Optional[float] = None
+    details: Dict[str, Any] = field(default_factory=dict)
+    timestamp: float = field(default_factory=time.time)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "phase": self.phase,
+            "status": self.status,
+            "message": self.message,
+            "level": self.level,
+            "elapsed_ms": self.elapsed_ms,
+            "details": dict(self.details),
+            "timestamp": self.timestamp,
+        }
+
+
+class _AttachProgressLogHandler(logging.Handler):
+    """Mirror attach logger records into ProcessAttacher progress events."""
+
+    def __init__(self, attacher: "ProcessAttacher") -> None:
+        super().__init__(level=logging.DEBUG)
+        self.attacher = attacher
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.attacher._emit_progress(
+            "attach_log",
+            "logged",
+            record.getMessage(),
+            level=record.levelname.lower(),
+            details={"logger": record.name},
+        )
 
 
 class GDBSymbolResolutionError(RuntimeError):
@@ -157,6 +200,7 @@ class ProcessAttacher:
         pid: int,
         suppress_startup_messages: bool = False,
         session_id: Optional[str] = None,
+        progress_callback: Optional[Callable[[AttachProgressEvent], None]] = None,
     ):
         self.pid = pid
         self.suppress_startup_messages = suppress_startup_messages
@@ -164,6 +208,118 @@ class ProcessAttacher:
         self.session_id = session_id or str(uuid.uuid4())
         self._existing_session = None
         self._notify_server: Optional[sock_mod.socket] = None
+        self.progress_callback = progress_callback
+        self.progress_events: List[AttachProgressEvent] = []
+        self._progress_callback_error_active = False
+
+    def _emit_progress(
+        self,
+        phase: str,
+        status: str,
+        message: str,
+        *,
+        level: str = "info",
+        elapsed_ms: Optional[float] = None,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> AttachProgressEvent:
+        event = AttachProgressEvent(
+            phase=phase,
+            status=status,
+            message=message,
+            level=level,
+            elapsed_ms=elapsed_ms,
+            details=details or {},
+        )
+        self.progress_events.append(event)
+        if self.progress_callback:
+            try:
+                self.progress_callback(event)
+            except Exception:
+                if not self._progress_callback_error_active:
+                    self._progress_callback_error_active = True
+                    try:
+                        logger.debug("Attach progress callback failed", exc_info=True)
+                    finally:
+                        self._progress_callback_error_active = False
+        return event
+
+    @contextmanager
+    def _progress_phase(
+        self,
+        phase: str,
+        start_message: str,
+        done_message: str,
+        *,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> Iterator[None]:
+        start = time.monotonic()
+        self._emit_progress(phase, "running", start_message, details=details)
+        try:
+            yield
+        except Exception as exc:
+            elapsed_ms = (time.monotonic() - start) * 1000
+            self._emit_progress(
+                phase,
+                "failed",
+                f"{start_message} failed: {exc}",
+                level="error",
+                elapsed_ms=elapsed_ms,
+                details=details,
+            )
+            raise
+        else:
+            elapsed_ms = (time.monotonic() - start) * 1000
+            self._emit_progress(
+                phase,
+                "done",
+                done_message,
+                elapsed_ms=elapsed_ms,
+                details=details,
+            )
+
+    @contextmanager
+    def _capture_attach_diagnostics(self) -> Iterator[None]:
+        """Mirror attach logs and warnings into progress events when requested."""
+        if not self.progress_callback:
+            yield
+            return
+
+        handler = _AttachProgressLogHandler(self)
+        old_level = logger.level
+        old_showwarning = warnings.showwarning
+        old_propagate = logger.propagate
+
+        def showwarning(
+            message: Any,
+            category: Any,
+            filename: str,
+            lineno: int,
+            file: Any = None,
+            line: Optional[str] = None,
+        ) -> None:
+            self._emit_progress(
+                "attach_log",
+                "logged",
+                str(message),
+                level="warning",
+                details={
+                    "warning": category.__name__,
+                    "filename": filename,
+                    "lineno": lineno,
+                },
+            )
+
+        logger.addHandler(handler)
+        logger.setLevel(logging.DEBUG)
+        logger.propagate = False
+        warnings.showwarning = showwarning
+        try:
+            yield
+        finally:
+            warnings.showwarning = old_showwarning
+            logger.setLevel(old_level)
+            logger.propagate = old_propagate
+            logger.removeHandler(handler)
 
     def _check_existing_attachment(self) -> Optional[Tuple[str, int]]:
         """
@@ -174,8 +330,11 @@ class ProcessAttacher:
         stale files left after process restarts.
         """
         socket_dir = Path("/tmp")
+        scanned = 0
+        stale = 0
         for sock_file in socket_dir.glob("peeka_*.sock"):
             if sock_file.is_socket():
+                scanned += 1
                 session_id = sock_file.stem.replace("peeka_", "")
                 pid_file = socket_dir / f"peeka_{session_id}.pid"
                 ready_file = socket_dir / f"peeka_{session_id}.ready"
@@ -186,17 +345,37 @@ class ProcessAttacher:
                         try:
                             os.kill(attached_pid, 0)
                         except (ProcessLookupError, PermissionError):
+                            stale += 1
                             self._cleanup_stale_files(sock_file, pid_file, ready_file)
                             continue
 
                         if self._is_agent_responsive(str(sock_file)):
+                            self._emit_progress(
+                                "check_existing_session",
+                                "done",
+                                f"Found reusable Peeka session for PID {attached_pid}",
+                                details={
+                                    "scanned": scanned,
+                                    "stale_cleaned": stale,
+                                    "session_id": session_id,
+                                    "pid": attached_pid,
+                                },
+                            )
                             return (session_id, attached_pid)
                         else:
+                            stale += 1
                             self._cleanup_stale_files(sock_file, pid_file, ready_file)
                     except (ValueError, OSError):
                         continue
                 else:
+                    stale += 1
                     self._cleanup_stale_files(sock_file, pid_file, ready_file)
+        self._emit_progress(
+            "check_existing_session",
+            "done",
+            "No reusable Peeka session found",
+            details={"scanned": scanned, "stale_cleaned": stale},
+        )
         return None
 
     @staticmethod
@@ -284,6 +463,11 @@ class ProcessAttacher:
         pid_file.write_text(str(self.pid))
 
     def attach(self) -> bool:
+        """Attach to target process while mirroring diagnostics if requested."""
+        with self._capture_attach_diagnostics():
+            return self._attach_internal()
+
+    def _attach_internal(self) -> bool:
         """
         Attach to target process
 
@@ -291,7 +475,26 @@ class ProcessAttacher:
             bool: True if successful, False otherwise
         """
         try:
+            self._emit_progress(
+                "select_target",
+                "done",
+                f"Selected target process {self.pid}",
+                details={"pid": self.pid},
+            )
+
+            check_start = time.monotonic()
+            self._emit_progress(
+                "check_existing_session",
+                "running",
+                "Checking for reusable Peeka sessions",
+            )
             existing = self._check_existing_attachment()
+            self._emit_progress(
+                "check_existing_session",
+                "done",
+                "Existing session check completed",
+                elapsed_ms=(time.monotonic() - check_start) * 1000,
+            )
 
             if existing:
                 existing_session, existing_pid = existing
@@ -299,6 +502,12 @@ class ProcessAttacher:
                     logger.info("Already attached to process %d", self.pid)
                     logger.info("Socket path: /tmp/peeka_%s.sock", existing_session)
                     self._existing_session = existing_session
+                    self._emit_progress(
+                        "attached",
+                        "done",
+                        f"Reused existing attachment for PID {self.pid}",
+                        details={"session_id": existing_session, "pid": self.pid},
+                    )
                     return True
                 else:
                     raise RuntimeError(
@@ -308,21 +517,70 @@ class ProcessAttacher:
 
             logger.info("Attaching to process %d...", self.pid)
 
-            self._check_python_version_match()
+            target_version: Optional[Tuple[int, int]] = None
+            with self._progress_phase(
+                "detect_python_capability",
+                "Detecting target Python version and attach capability",
+                "Python capability check completed",
+            ):
+                target_version = self._get_target_python_version()
+                if target_version is None:
+                    logger.debug(
+                        "Could not determine target Python version, skipping check"
+                    )
+                else:
+                    self._check_python_version_match(target_version)
 
             if hasattr(sys, "remote_exec"):
+                self._emit_progress(
+                    "detect_python_capability",
+                    "done",
+                    "PEP 768 remote_exec is available",
+                    details={
+                        "target_python": self._format_python_version(target_version),
+                        "pep768_available": True,
+                    },
+                )
                 result = self._attach_pep768()
             else:
                 logger.warning("PEP 768 not available (Python 3.14+ required)")
+                self._emit_progress(
+                    "detect_python_capability",
+                    "done",
+                    "PEP 768 not available (Python 3.14+ required)",
+                    level="warning",
+                    details={
+                        "target_python": self._format_python_version(target_version),
+                        "pep768_available": False,
+                        "fallback": "debugger",
+                    },
+                )
                 logger.info("Using fallback mechanism for demonstration")
                 result = self._attach_fallback()
 
             if result:
                 self._save_attachment_state()
+                self._emit_progress(
+                    "attached",
+                    "done",
+                    f"Successfully attached to process {self.pid}",
+                    details={
+                        "pid": self.pid,
+                        "session_id": self.session_id,
+                        "socket_path": self.get_socket_path(),
+                    },
+                )
 
             return result
 
         except Exception as e:
+            self._emit_progress(
+                "attached",
+                "failed",
+                f"Attach failed: {e}",
+                level="error",
+                details={"pid": self.pid},
+            )
             logger.error("Attach failed: %s", e)
             import traceback
 
@@ -331,19 +589,30 @@ class ProcessAttacher:
 
     def _attach_pep768(self) -> bool:
         """Attach using PEP 768 sys.remote_exec()"""
-        agent_code = _read_agent_code()
+        with self._progress_phase(
+            "prepare_injection",
+            "Preparing PEP 768 agent script",
+            "PEP 768 agent script prepared",
+            details={"method": "pep768"},
+        ):
+            agent_code = _read_agent_code()
 
-        # Create agent script
-        self.agent_script = self._create_agent_script(
-            agent_code, suppress_startup_messages=self.suppress_startup_messages
-        )
-        if not os.path.exists(self.agent_script):
-            raise FileNotFoundError(f"Agent script not found: {self.agent_script}")
-        else:
-            logger.debug("Agent script created at %s", self.agent_script)
+            # Create agent script
+            self.agent_script = self._create_agent_script(
+                agent_code, suppress_startup_messages=self.suppress_startup_messages
+            )
+            if not os.path.exists(self.agent_script):
+                raise FileNotFoundError(f"Agent script not found: {self.agent_script}")
+            else:
+                logger.debug("Agent script created at %s", self.agent_script)
 
-        # Inject to target process
-        sys.remote_exec(self.pid, self.agent_script)
+        with self._progress_phase(
+            "run_injector",
+            "Running PEP 768 remote_exec injection",
+            "PEP 768 remote_exec injection completed",
+            details={"method": "pep768"},
+        ):
+            sys.remote_exec(self.pid, self.agent_script)
 
         # Wait for agent ready with retry — agent bootstrap imports 13+
         # command modules and may take longer than a single timeout on
@@ -394,48 +663,61 @@ class ProcessAttacher:
         """
         logger.info("Using GDB dlopen injection for PID %d", self.pid)
 
-        self._check_gdb_available()
-        self._check_ptrace_permissions()
+        agent_script_path: Optional[str] = None
+        with self._progress_phase(
+            "prepare_injection",
+            "Preparing GDB dlopen injection",
+            "GDB dlopen injection prepared",
+            details={"method": "gdb_dlopen"},
+        ):
+            self._check_gdb_available()
+            self._check_ptrace_permissions()
 
-        agent_code = _read_agent_code()
-        notify_port = self._create_notify_server()
+            agent_code = _read_agent_code()
+            notify_port = self._create_notify_server()
 
-        agent_script_path = self._create_agent_script(
-            agent_code,
-            notify_port=notify_port,
-            suppress_startup_messages=self.suppress_startup_messages,
-        )
-        with open(agent_script_path, encoding="utf-8") as f:
-            agent_script_content = f.read()
+            agent_script_path = self._create_agent_script(
+                agent_code,
+                notify_port=notify_port,
+                suppress_startup_messages=self.suppress_startup_messages,
+            )
+            with open(agent_script_path, encoding="utf-8") as f:
+                agent_script_content = f.read()
 
-        injector_path = _find_injector_path()
-        if not injector_path:
-            raise RuntimeError("C extension not found")
+            injector_path = _find_injector_path()
+            if not injector_path:
+                raise RuntimeError("C extension not found")
 
-        gdb_script = os.path.join(os.path.dirname(__file__), "_attach.gdb")
+            gdb_script = os.path.join(os.path.dirname(__file__), "_attach.gdb")
 
-        cmd = ["gdb", "-p", str(self.pid), "-batch", "-q"]
-        cmd.extend(["-eval-command", f"set $peeka_port = {notify_port}"])
-        cmd.extend(["-eval-command", f'set $peeka_injector = "{injector_path}"'])
-        cmd.extend(["-eval-command", f"set $peeka_rtld_now = {_RTLD_NOW}"])
-        cmd.extend(["-x", gdb_script])
+            cmd = ["gdb", "-p", str(self.pid), "-batch", "-q"]
+            cmd.extend(["-eval-command", f"set $peeka_port = {notify_port}"])
+            cmd.extend(["-eval-command", f'set $peeka_injector = "{injector_path}"'])
+            cmd.extend(["-eval-command", f"set $peeka_rtld_now = {_RTLD_NOW}"])
+            cmd.extend(["-x", gdb_script])
 
-        server_thread_id = _rpl.start_thread(
-            target=self._serve_agent_code,
-            args=(agent_script_content, 30),
-            daemon=True,
-            name="peeka-attach-server",
-        )
-        logger.debug("Started attach server thread id=%s", server_thread_id)
+            server_thread_id = _rpl.start_thread(
+                target=self._serve_agent_code,
+                args=(agent_script_content, 30),
+                daemon=True,
+                name="peeka-attach-server",
+            )
+            logger.debug("Started attach server thread id=%s", server_thread_id)
 
         try:
-            result = subprocess.run(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                timeout=30,
-                text=True,
-            )
+            with self._progress_phase(
+                "run_injector",
+                "Running GDB dlopen injector",
+                "GDB dlopen injector completed",
+                details={"method": "gdb_dlopen", "timeout": 30},
+            ):
+                result = subprocess.run(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=30,
+                    text=True,
+                )
 
             stderr = result.stderr.lower()
             combined_output = f"{result.stderr}\n{result.stdout}"
@@ -475,7 +757,7 @@ class ProcessAttacher:
         except FileNotFoundError:
             raise RuntimeError("GDB executable not found in PATH")
         finally:
-            if os.path.exists(agent_script_path):
+            if agent_script_path and os.path.exists(agent_script_path):
                 os.remove(agent_script_path)
             self._close_notify_server()
 
@@ -485,49 +767,62 @@ class ProcessAttacher:
         """
         logger.info("Using LLDB dlopen injection for PID %d", self.pid)
 
-        _check_lldb_available()
-        self._check_ptrace_permissions()
+        agent_script_path: Optional[str] = None
+        with self._progress_phase(
+            "prepare_injection",
+            "Preparing LLDB dlopen injection",
+            "LLDB dlopen injection prepared",
+            details={"method": "lldb_dlopen"},
+        ):
+            _check_lldb_available()
+            self._check_ptrace_permissions()
 
-        agent_code = _read_agent_code()
-        notify_port = self._create_notify_server()
+            agent_code = _read_agent_code()
+            notify_port = self._create_notify_server()
 
-        agent_script_path = self._create_agent_script(
-            agent_code,
-            notify_port=notify_port,
-            suppress_startup_messages=self.suppress_startup_messages,
-        )
-        with open(agent_script_path, encoding="utf-8") as f:
-            agent_script_content = f.read()
+            agent_script_path = self._create_agent_script(
+                agent_code,
+                notify_port=notify_port,
+                suppress_startup_messages=self.suppress_startup_messages,
+            )
+            with open(agent_script_path, encoding="utf-8") as f:
+                agent_script_content = f.read()
 
-        injector_path = _find_injector_path()
-        if not injector_path:
-            raise RuntimeError("C extension not found")
+            injector_path = _find_injector_path()
+            if not injector_path:
+                raise RuntimeError("C extension not found")
 
-        lldb_script = os.path.join(os.path.dirname(__file__), "_attach.lldb")
+            lldb_script = os.path.join(os.path.dirname(__file__), "_attach.lldb")
 
-        cmd = ["lldb", "-p", str(self.pid), "--batch", "--no-lldbinit"]
-        cmd.extend(["--one-line", f"script rtld_default = {_RTLD_DEFAULT}"])
-        cmd.extend(["--one-line", f"script rtld_now = {_RTLD_NOW}"])
-        cmd.extend(["--one-line", f"script libpath = '{injector_path}'"])
-        cmd.extend(["--one-line", f"script port = {notify_port}"])
-        cmd.extend(["--source", lldb_script])
+            cmd = ["lldb", "-p", str(self.pid), "--batch", "--no-lldbinit"]
+            cmd.extend(["--one-line", f"script rtld_default = {_RTLD_DEFAULT}"])
+            cmd.extend(["--one-line", f"script rtld_now = {_RTLD_NOW}"])
+            cmd.extend(["--one-line", f"script libpath = '{injector_path}'"])
+            cmd.extend(["--one-line", f"script port = {notify_port}"])
+            cmd.extend(["--source", lldb_script])
 
-        server_thread_id = _rpl.start_thread(
-            target=self._serve_agent_code,
-            args=(agent_script_content, 30),
-            daemon=True,
-            name="peeka-attach-server",
-        )
-        logger.debug("Started attach server thread id=%s", server_thread_id)
+            server_thread_id = _rpl.start_thread(
+                target=self._serve_agent_code,
+                args=(agent_script_content, 30),
+                daemon=True,
+                name="peeka-attach-server",
+            )
+            logger.debug("Started attach server thread id=%s", server_thread_id)
 
         try:
-            result = subprocess.run(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                timeout=30,
-                text=True,
-            )
+            with self._progress_phase(
+                "run_injector",
+                "Running LLDB dlopen injector",
+                "LLDB dlopen injector completed",
+                details={"method": "lldb_dlopen", "timeout": 30},
+            ):
+                result = subprocess.run(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=30,
+                    text=True,
+                )
 
             try:
                 os.kill(self.pid, signal.SIGCONT)
@@ -565,7 +860,7 @@ class ProcessAttacher:
         except FileNotFoundError:
             raise RuntimeError("LLDB executable not found in PATH")
         finally:
-            if os.path.exists(agent_script_path):
+            if agent_script_path and os.path.exists(agent_script_path):
                 os.remove(agent_script_path)
             self._close_notify_server()
 
@@ -677,6 +972,13 @@ class ProcessAttacher:
         and degraded fallback).
         """
         socket_path = f"/tmp/peeka_{self.session_id}.sock"
+        wait_start = time.monotonic()
+        self._emit_progress(
+            "wait_agent_ready",
+            "running",
+            "Waiting for injected agent readiness",
+            details={"timeout": timeout, "socket_path": socket_path},
+        )
 
         # --- Fast path: TCP reverse-connect -------------------------
         server = getattr(self, "_notify_server", None)
@@ -690,8 +992,36 @@ class ProcessAttacher:
                 if data == b"READY":
                     # Double-check the Unix socket can complete a command
                     # round trip; connect-only probes miss broken client loops.
+                    self._emit_progress(
+                        "wait_agent_ready",
+                        "done",
+                        "Agent readiness signal received",
+                        elapsed_ms=(time.monotonic() - wait_start) * 1000,
+                    )
+                    hello_start = time.monotonic()
+                    self._emit_progress(
+                        "hello_probe",
+                        "running",
+                        "Probing agent command socket",
+                        details={"socket_path": socket_path},
+                    )
                     if self._is_agent_responsive(socket_path):
+                        self._emit_progress(
+                            "hello_probe",
+                            "done",
+                            "Agent command socket responded",
+                            elapsed_ms=(time.monotonic() - hello_start) * 1000,
+                            details={"socket_path": socket_path},
+                        )
                         return True
+                    self._emit_progress(
+                        "hello_probe",
+                        "running",
+                        "Agent readiness signal received but command socket did not respond yet",
+                        level="warning",
+                        elapsed_ms=(time.monotonic() - hello_start) * 1000,
+                        details={"socket_path": socket_path},
+                    )
                     # Socket not yet reachable — fall through to polling.
             except (sock_mod.timeout, OSError):
                 pass  # fall through to file-based polling
@@ -703,17 +1033,54 @@ class ProcessAttacher:
         # Phase 1: Wait for .ready file
         while time.time() - start_time < timeout:
             if ready_file.exists():
+                self._emit_progress(
+                    "wait_agent_ready",
+                    "done",
+                    "Agent ready file detected",
+                    elapsed_ms=(time.monotonic() - wait_start) * 1000,
+                    details={"ready_file": str(ready_file)},
+                )
                 break
             time.sleep(0.1)
         else:
+            self._emit_progress(
+                "wait_agent_ready",
+                "failed",
+                "Agent initialization timeout (ready file)",
+                level="error",
+                elapsed_ms=(time.monotonic() - wait_start) * 1000,
+                details={"ready_file": str(ready_file), "timeout": timeout},
+            )
             raise TimeoutError("Agent initialization timeout (ready file)")
 
         # Phase 2: Verify the socket can serve a lightweight hello command.
+        hello_start = time.monotonic()
+        self._emit_progress(
+            "hello_probe",
+            "running",
+            "Probing agent command socket",
+            details={"socket_path": socket_path},
+        )
         while time.time() - start_time < timeout:
             if self._is_agent_responsive(socket_path):
+                self._emit_progress(
+                    "hello_probe",
+                    "done",
+                    "Agent command socket responded",
+                    elapsed_ms=(time.monotonic() - hello_start) * 1000,
+                    details={"socket_path": socket_path},
+                )
                 return True
             time.sleep(0.05)
 
+        self._emit_progress(
+            "hello_probe",
+            "failed",
+            "Agent initialization timeout (agent not responsive)",
+            level="error",
+            elapsed_ms=(time.monotonic() - hello_start) * 1000,
+            details={"socket_path": socket_path, "timeout": timeout},
+        )
         raise TimeoutError("Agent initialization timeout (agent not responsive)")
 
     def get_socket_path(self) -> str:
@@ -766,6 +1133,12 @@ class ProcessAttacher:
                 f"No permission to access process {self.pid}. "
                 "Requires same UID or CAP_SYS_PTRACE capability."
             )
+
+    @staticmethod
+    def _format_python_version(version: Optional[Tuple[int, int]]) -> Optional[str]:
+        if version is None:
+            return None
+        return f"{version[0]}.{version[1]}"
 
     def _get_target_python_version(self) -> Optional[Tuple[int, int]]:
         """
@@ -839,14 +1212,17 @@ class ProcessAttacher:
 
         return None
 
-    def _check_python_version_match(self) -> None:
+    def _check_python_version_match(
+        self, target_version: Optional[Tuple[int, int]] = None
+    ) -> None:
         """
         Verify the target process Python version matches peeka's version.
 
         Raises:
             RuntimeError: If versions don't match (major.minor mismatch).
         """
-        target_version = self._get_target_python_version()
+        if target_version is None:
+            target_version = self._get_target_python_version()
         if target_version is None:
             logger.debug("Could not determine target Python version, skipping check")
             return
