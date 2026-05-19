@@ -38,6 +38,9 @@ except ImportError:
 _RTLD_DEFAULT = -2
 _RTLD_NOW = 2
 
+# Max progress events to bound memory growth in long-running attach operations
+_MAX_PROGRESS_EVENTS = 256
+
 
 @dataclass
 class AttachProgressEvent:
@@ -212,6 +215,7 @@ class ProcessAttacher:
         self.progress_events: List[AttachProgressEvent] = []
         self._progress_callback_error_active = False
 
+
     def _emit_progress(
         self,
         phase: str,
@@ -231,6 +235,8 @@ class ProcessAttacher:
             details=details or {},
         )
         self.progress_events.append(event)
+        if len(self.progress_events) > _MAX_PROGRESS_EVENTS:
+            del self.progress_events[: len(self.progress_events) - _MAX_PROGRESS_EVENTS]
         if self.progress_callback:
             try:
                 self.progress_callback(event)

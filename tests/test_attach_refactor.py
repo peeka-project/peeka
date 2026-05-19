@@ -448,6 +448,32 @@ class TestAttachProgress:
         ), f"Expected 1 terminal event, got {len(terminal_events)}: {[e.to_dict() for e in terminal_events]}"
         assert terminal_events[0].status in ("done", "failed")
 
+    def test_progress_events_capped_at_256(self):
+        """Verify that progress_events list is capped at 256 entries.
+
+        After emitting 257 events, the list should contain exactly 256 events
+        with the oldest (first) event removed.
+        """
+        events = []
+        attacher = ProcessAttacher(12345, progress_callback=events.append)
+
+        # Emit 257 events
+        for i in range(257):
+            attacher._emit_progress(
+                "test_phase",
+                "info",
+                f"event_{i}",
+            )
+
+        # Assert list is capped at 256
+        assert len(attacher.progress_events) == 256
+
+        # Assert oldest event is event_1 (0-indexed: event 1), not event_0
+        assert attacher.progress_events[0].message == "event_1"
+
+        # Assert newest event is event_256 (the 257th event, 0-indexed: event 256)
+        assert attacher.progress_events[-1].message == "event_256"
+
 
 class TestGetTargetPythonVersion:
     def test_linux_reads_proc_exe_and_runs_binary(self):
