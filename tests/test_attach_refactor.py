@@ -383,6 +383,71 @@ class TestAttachProgress:
 
         assert len(attacher.progress_events) <= 3
 
+    def test_wait_ready_emits_at_most_one_terminal_event(self, monkeypatch, tmp_path):
+        """Verify _wait_for_agent_ready emits at most one terminal event (done or failed).
+
+        Simulates fast-path done emit followed by slow-path hello probe failure.
+        The flag prevents duplicate terminal emits even when code falls through paths.
+        """
+        events = []
+        attacher = ProcessAttacher(12345, progress_callback=events.append)
+
+        # Create .ready file so slow-path can detect it
+        ready_file = tmp_path / "peeka_12345.ready"
+        ready_file.touch()
+
+        # Mock _is_agent_responsive to always return False (socket not ready)
+        monkeypatch.setattr(attacher, "_is_agent_responsive", lambda _: False)
+
+        # Mock the notify server to simulate fast-path triggering done emit,
+        # then hello probe not responsive (falling through to slow-path)
+        class FakeServer:
+            def settimeout(self, timeout):
+                pass
+
+            def accept(self):
+                # Simulate agent sending READY signal
+                class FakeConn:
+                    def recv(self, size):
+                        return b"READY"
+
+                    def close(self):
+                        pass
+
+                return FakeConn(), ("127.0.0.1", 12345)
+
+        monkeypatch.setattr(attacher, "_notify_server", FakeServer())
+
+        # Mock Path to find our tmp_path ready file
+        original_path = __import__("pathlib").Path
+
+        def mock_path(path_str):
+            if path_str == "/tmp/peeka_12345.ready":
+                return ready_file
+            return original_path(path_str)
+
+        monkeypatch.setattr(__import__("pathlib"), "Path", mock_path)
+
+        # Call _wait_for_agent_ready; it should NOT raise despite timeout
+        # because socket responsiveness is verified in slow-path
+        try:
+            attacher._wait_for_agent_ready(timeout=1)
+        except TimeoutError:
+            pass  # Expected if hello probe times out
+
+        # Filter to terminal events (done/failed for wait_agent_ready phase)
+        terminal_events = [
+            e
+            for e in events
+            if e.phase == "wait_agent_ready" and e.status in ("done", "failed")
+        ]
+
+        # Assert exactly one terminal event, not two
+        assert (
+            len(terminal_events) == 1
+        ), f"Expected 1 terminal event, got {len(terminal_events)}: {[e.to_dict() for e in terminal_events]}"
+        assert terminal_events[0].status in ("done", "failed")
+
 
 class TestGetTargetPythonVersion:
     def test_linux_reads_proc_exe_and_runs_binary(self):

@@ -966,6 +966,7 @@ class ProcessAttacher:
         """
         socket_path = f"/tmp/peeka_{self.session_id}.sock"
         wait_start = time.monotonic()
+        wait_ready_done_emitted = False
         self._emit_progress(
             "wait_agent_ready",
             "running",
@@ -991,6 +992,7 @@ class ProcessAttacher:
                         "Agent readiness signal received",
                         elapsed_ms=(time.monotonic() - wait_start) * 1000,
                     )
+                    wait_ready_done_emitted = True
                     hello_start = time.monotonic()
                     self._emit_progress(
                         "hello_probe",
@@ -1026,24 +1028,27 @@ class ProcessAttacher:
         # Phase 1: Wait for .ready file
         while time.time() - start_time < timeout:
             if ready_file.exists():
-                self._emit_progress(
-                    "wait_agent_ready",
-                    "done",
-                    "Agent ready file detected",
-                    elapsed_ms=(time.monotonic() - wait_start) * 1000,
-                    details={"ready_file": str(ready_file)},
-                )
+                if not wait_ready_done_emitted:
+                    self._emit_progress(
+                        "wait_agent_ready",
+                        "done",
+                        "Agent ready file detected",
+                        elapsed_ms=(time.monotonic() - wait_start) * 1000,
+                        details={"ready_file": str(ready_file)},
+                    )
+                    wait_ready_done_emitted = True
                 break
             time.sleep(0.1)
         else:
-            self._emit_progress(
-                "wait_agent_ready",
-                "failed",
-                "Agent initialization timeout (ready file)",
-                level="error",
-                elapsed_ms=(time.monotonic() - wait_start) * 1000,
-                details={"ready_file": str(ready_file), "timeout": timeout},
-            )
+            if not wait_ready_done_emitted:
+                self._emit_progress(
+                    "wait_agent_ready",
+                    "failed",
+                    "Agent initialization timeout (ready file)",
+                    level="error",
+                    elapsed_ms=(time.monotonic() - wait_start) * 1000,
+                    details={"ready_file": str(ready_file), "timeout": timeout},
+                )
             raise TimeoutError("Agent initialization timeout (ready file)")
 
         # Phase 2: Verify the socket can serve a lightweight hello command.
