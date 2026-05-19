@@ -26,6 +26,10 @@ class ProcessSelectorScreen(Screen):
         Binding("q", "quit_app", "Quit"),
     ]
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._attach_phase_states: Dict[str, Dict[str, Any]] = {}
+
     def compose(self) -> ComposeResult:
         yield Header()
         selector = Container(
