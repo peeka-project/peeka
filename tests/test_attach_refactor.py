@@ -4,6 +4,7 @@ Unit tests for attach.py RTLD constants and injector utility functions.
 
 import importlib
 import json
+import logging
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -243,6 +244,120 @@ class TestAttachFallbackDispatch:
             with pytest.raises(NotImplementedError) as exc_info:
                 attacher._attach_fallback()
             assert "Unsupported platform: Windows" in str(exc_info.value)
+
+
+class TestAttachProgress:
+    def test_emit_progress_stores_and_calls_callback(self):
+        events = []
+        attacher = ProcessAttacher(12345, progress_callback=events.append)
+
+        event = attacher._emit_progress(
+            "run_injector",
+            "running",
+            "Running GDB dlopen injector",
+            details={"method": "gdb_dlopen"},
+        )
+
+        assert events == [event]
+        assert attacher.progress_events == [event]
+        assert event.to_dict()["phase"] == "run_injector"
+        assert event.to_dict()["details"] == {"method": "gdb_dlopen"}
+
+    def test_progress_phase_records_elapsed_done_event(self):
+        attacher = ProcessAttacher(12345)
+
+        with attacher._progress_phase(
+            "prepare_injection",
+            "Preparing injection",
+            "Injection prepared",
+        ):
+            pass
+
+        assert [event.status for event in attacher.progress_events] == [
+            "running",
+            "done",
+        ]
+        assert attacher.progress_events[-1].elapsed_ms is not None
+
+    def test_capture_attach_diagnostics_mirrors_logs_and_warnings(self):
+        events = []
+        attacher = ProcessAttacher(12345, progress_callback=events.append)
+
+        with attacher._capture_attach_diagnostics():
+            attach.logger.info("Using GDB dlopen injection for PID %d", 12345)
+            import warnings
+
+            warnings.warn("ptrace_scope is 1", RuntimeWarning)
+
+        log_messages = [
+            event.message for event in events if event.phase == "attach_log"
+        ]
+        assert "Using GDB dlopen injection for PID 12345" in log_messages
+        assert "ptrace_scope is 1" in log_messages
+
+    def test_capture_diag_disables_propagation_during_block(self):
+        """Verify logger.propagate is False inside with-block, restored on exit."""
+        events = []
+        attacher = ProcessAttacher(12345, progress_callback=events.append)
+
+        # Save initial state
+        original_propagate = attach.logger.propagate
+
+        propagate_inside = None
+
+        with attacher._capture_attach_diagnostics():
+            # Capture state inside the with-block
+            propagate_inside = attach.logger.propagate
+
+        # Verify state inside was False
+        assert (
+            propagate_inside is False
+        ), "logger.propagate should be False inside _capture_attach_diagnostics"
+
+        # Verify state was restored outside the with-block
+        assert (
+            attach.logger.propagate == original_propagate
+        ), "logger.propagate should be restored to original state after _capture_attach_diagnostics"
+
+    def test_capture_diag_preserves_debug_capture(self):
+        """Verify logger.setLevel(DEBUG) is preserved (DEBUG events still captured)."""
+        events = []
+        attacher = ProcessAttacher(12345, progress_callback=events.append)
+
+        # Set logger to WARNING level initially
+        original_level = attach.logger.level
+        attach.logger.setLevel(logging.WARNING)
+
+        try:
+            with attacher._capture_attach_diagnostics():
+                # Emit DEBUG, INFO, WARNING logs
+                attach.logger.debug("Debug message")
+                attach.logger.info("Info message")
+                attach.logger.warning("Warning message")
+
+            # Extract log messages
+            log_messages = [
+                event.message for event in events if event.phase == "attach_log"
+            ]
+
+            # All three should be captured, proving setLevel(DEBUG) works
+            assert "Debug message" in log_messages, "DEBUG should be captured"
+            assert "Info message" in log_messages, "INFO should be captured"
+            assert "Warning message" in log_messages, "WARNING should be captured"
+        finally:
+            # Restore original level
+            attach.logger.setLevel(original_level)
+
+    def test_callback_failure_does_not_recurse_through_log_capture(self):
+        def failing_callback(event):
+            raise RuntimeError("callback failed")
+
+        attacher = ProcessAttacher(12345, progress_callback=failing_callback)
+
+        with attacher._capture_attach_diagnostics():
+            attacher._emit_progress("run_injector", "running", "start")
+
+        assert len(attacher.progress_events) <= 3
 
 
 class TestGetTargetPythonVersion:
