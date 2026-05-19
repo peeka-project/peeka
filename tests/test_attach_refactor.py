@@ -348,6 +348,30 @@ class TestAttachProgress:
             # Restore original level
             attach.logger.setLevel(original_level)
 
+    def test_check_existing_session_emits_running_and_one_done(self):
+        """Verify _check_existing_attachment emits one running and one done for check_existing_session."""
+        events = []
+        attacher = ProcessAttacher(12345, progress_callback=events.append)
+
+        # Call _check_existing_attachment (will return None since no session files exist)
+        result = attacher._check_existing_attachment()
+
+        # Filter to check_existing_session events
+        check_events = [e for e in events if e.phase == "check_existing_session"]
+
+        # Verify we got one running and one done
+        assert len(check_events) == 2, f"Expected 2 events, got {len(check_events)}: {check_events}"
+        assert check_events[0].status == "running", "First event should be running"
+        assert check_events[1].status == "done", "Second event should be done"
+
+        # Verify done event has details (even when no session found)
+        assert check_events[1].details is not None
+        assert "scanned" in check_events[1].details
+        assert "stale_cleaned" in check_events[1].details
+
+        # Verify result is None (no session found)
+        assert result is None
+
     def test_callback_failure_does_not_recurse_through_log_capture(self):
         def failing_callback(event):
             raise RuntimeError("callback failed")
