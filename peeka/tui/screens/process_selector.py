@@ -36,6 +36,7 @@ class ProcessSelectorScreen(Screen):
         )
         selector.border_title = "Select Process"
         yield selector
+        yield Static("Attaching...", id="attach-panel", classes="panel")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -216,6 +217,7 @@ class ProcessSelectorScreen(Screen):
 
     def _show_attach_error(self, error_msg: str) -> None:
         """Show detailed attach error in a modal dialog."""
+        self._set_attach_panel_visible(False)
         self._enable_interaction()
 
         # Create a simple error modal
@@ -308,6 +310,17 @@ class ProcessSelectorScreen(Screen):
             table.disabled = False
             filter_input = self.query_one("#filter", Input)
             filter_input.disabled = False
+        except Exception:
+            pass
+
+    def _set_attach_panel_visible(self, visible: bool) -> None:
+        """Show or hide the attach progress panel."""
+        try:
+            panel = self.query_one("#attach-panel", Static)
+            if visible:
+                panel.styles.display = "block"
+            else:
+                panel.styles.display = "none"
         except Exception:
             pass
 
