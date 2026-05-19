@@ -202,6 +202,12 @@ class TestProcessSelectorScreen:
             panel = screen.query_one("#attach-panel")
             assert str(panel.styles.display) == "none"
 
+    def test_attach_phase_states_initialized_before_mount(self):
+        """_attach_phase_states is initialized in __init__ as empty dict."""
+        screen = ProcessSelectorScreen()
+        assert hasattr(screen, "_attach_phase_states")
+        assert screen._attach_phase_states == {}
+
 
 class TestMainScreen:
     @pytest.mark.asyncio
