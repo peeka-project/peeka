@@ -329,6 +329,11 @@ class ProcessAttacher:
         Validates by both process existence AND agent responsiveness to avoid
         stale files left after process restarts.
         """
+        self._emit_progress(
+            "check_existing_session",
+            "running",
+            "Scanning for reusable Peeka sessions",
+        )
         socket_dir = Path("/tmp")
         scanned = 0
         stale = 0
@@ -482,19 +487,7 @@ class ProcessAttacher:
                 details={"pid": self.pid},
             )
 
-            check_start = time.monotonic()
-            self._emit_progress(
-                "check_existing_session",
-                "running",
-                "Checking for reusable Peeka sessions",
-            )
             existing = self._check_existing_attachment()
-            self._emit_progress(
-                "check_existing_session",
-                "done",
-                "Existing session check completed",
-                elapsed_ms=(time.monotonic() - check_start) * 1000,
-            )
 
             if existing:
                 existing_session, existing_pid = existing
