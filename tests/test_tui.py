@@ -176,6 +176,32 @@ class TestProcessSelectorScreen:
             assert screen._validate_agent_connection("/tmp/fake.sock") is None
             assert disconnected == [True]
 
+    @pytest.mark.asyncio
+    async def test_attach_panel_hidden_on_error(self, monkeypatch):
+        """Attach panel is hidden when attach fails."""
+        push_screen_calls = []
+
+        def mock_push_screen(screen):
+            push_screen_calls.append(screen)
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            screen = app.screen
+            assert isinstance(screen, ProcessSelectorScreen)
+
+            screen._set_attach_panel_visible(True)
+            await pilot.pause()
+            panel = screen.query_one("#attach-panel")
+            assert str(panel.styles.display) == "block"
+
+            monkeypatch.setattr(app, "push_screen", mock_push_screen)
+
+            screen._show_attach_error("synthetic failure")
+            await pilot.pause()
+
+            panel = screen.query_one("#attach-panel")
+            assert str(panel.styles.display) == "none"
+
 
 class TestMainScreen:
     @pytest.mark.asyncio
