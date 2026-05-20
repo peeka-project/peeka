@@ -273,6 +273,75 @@ class TestProcessSelectorScreen:
             assert error.styles.background is not None
 
 
+    @pytest.mark.asyncio
+    async def test_escape_resets_error_panel(self):
+        """Esc resets error panel when error is visible."""
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            screen = app.screen
+            assert isinstance(screen, ProcessSelectorScreen)
+            await pilot.pause()
+
+            error = screen.query_one("#attach-error")
+            error.update("✗ Attach failed: Connection error")
+            error.styles.display = "block"
+
+            await pilot.pause()
+            assert str(error.styles.display) == "block"
+
+            screen.action_quit_app()
+            await pilot.pause()
+
+            assert str(error.styles.display) == "none"
+            assert error.render().plain.strip() == ""
+
+    @pytest.mark.asyncio
+    async def test_escape_during_attach_is_noop(self):
+        """Esc during attach is no-op (does not quit)."""
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            screen = app.screen
+            assert isinstance(screen, ProcessSelectorScreen)
+            await pilot.pause()
+
+            screen._attaching = True
+
+            original_exit = app.exit
+            from unittest.mock import Mock
+            app.exit = Mock()
+
+            screen.action_quit_app()
+            await pilot.pause()
+
+            app.exit.assert_not_called()
+            app.exit = original_exit
+
+    @pytest.mark.asyncio
+    async def test_escape_quits_when_idle(self):
+        """Esc quits when idle (no error, not attaching)."""
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            screen = app.screen
+            assert isinstance(screen, ProcessSelectorScreen)
+            await pilot.pause()
+
+            error = screen.query_one("#attach-error")
+            error.styles.display = "none"
+
+            screen._attaching = False
+
+            original_exit = app.exit
+            from unittest.mock import Mock
+            app.exit = Mock()
+
+            screen.action_quit_app()
+            await pilot.pause()
+
+            app.exit.assert_called_once()
+            app.exit = original_exit
+
+
+
 class TestMainScreen:
     @pytest.mark.asyncio
     async def test_main_screen_has_correct_number_of_tabs(self):
