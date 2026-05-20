@@ -208,6 +208,70 @@ class TestProcessSelectorScreen:
         assert hasattr(screen, "_attach_phase_states")
         assert screen._attach_phase_states == {}
 
+    def test_attach_generation_starts_at_zero(self):
+        """_attach_generation counter is initialized to 0 in __init__."""
+        screen = ProcessSelectorScreen()
+        assert hasattr(screen, "_attach_generation")
+        assert screen._attach_generation == 0
+
+    @pytest.mark.asyncio
+    async def test_reset_attach_panel_clears_widgets(self):
+        """_reset_attach_panel clears all 3 attach panel widgets."""
+        from textual.widgets import RichLog
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            screen = app.screen
+            assert isinstance(screen, ProcessSelectorScreen)
+
+            progress = screen.query_one("#attach-progress")
+            progress.update("25% attached...")
+
+            log_widget = screen.query_one("#attach-log", RichLog)
+            log_widget.write("[INFO] Starting attach...\n[DEBUG] Agent loaded\n")
+
+            error = screen.query_one("#attach-error")
+            error.update("⚠️ Connection error")
+            error.styles.display = "block"
+
+            await pilot.pause()
+
+            assert len(log_widget.lines) > 0
+            assert str(error.styles.display) == "block"
+
+            screen._reset_attach_panel()
+            await pilot.pause()
+
+            assert len(log_widget.lines) == 0
+            assert str(error.styles.display) == "none"
+
+    @pytest.mark.asyncio
+    async def test_attach_panel_has_three_children(self):
+        """Attach panel is a Container with 3 child widgets: progress, log, error."""
+        from textual.containers import Container
+        from textual.widgets import RichLog
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            assert isinstance(app.screen, ProcessSelectorScreen)
+            await pilot.pause()
+            panel = app.screen.query_one("#attach-panel", Container)
+            assert panel is not None
+            progress = app.screen.query_one("#attach-progress")
+            assert progress is not None
+            log_widget = app.screen.query_one("#attach-log", RichLog)
+            assert log_widget is not None
+            assert log_widget.max_lines == 500
+            assert log_widget.wrap is True
+            assert log_widget.highlight is True
+            assert log_widget.markup is True
+            assert log_widget.auto_scroll is True
+            error = app.screen.query_one("#attach-error")
+            assert error is not None
+            assert str(error.styles.display) == "none"
+            assert error.styles.color is not None
+            assert error.styles.background is not None
+
 
 class TestMainScreen:
     @pytest.mark.asyncio
