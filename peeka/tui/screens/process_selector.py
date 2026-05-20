@@ -10,7 +10,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container
 from textual.screen import Screen
-from textual.widgets import DataTable, Header, Footer, Input, Static
+from textual.widgets import DataTable, Header, Footer, Input, RichLog, Static
 
 
 class ProcessSelectorScreen(Screen):
@@ -28,6 +28,7 @@ class ProcessSelectorScreen(Screen):
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
+        self._attach_generation: int = 0
         self._attach_phase_states: Dict[str, Dict[str, Any]] = {}
 
     def compose(self) -> ComposeResult:
@@ -40,11 +41,23 @@ class ProcessSelectorScreen(Screen):
         )
         selector.border_title = "Select Process"
         yield selector
-        yield Static("Attaching...", id="attach-panel", classes="panel")
+        yield Container(
+            Static("", id="attach-progress"),
+            RichLog(id="attach-log", max_lines=500, wrap=True, highlight=True, markup=True, auto_scroll=True),
+            Static("", id="attach-error"),
+            id="attach-panel",
+            classes="panel",
+        )
         yield Footer()
 
     def on_mount(self) -> None:
         """Initialize the process table."""
+        error_widget = self.query_one("#attach-error")
+        error_widget.styles.display = "none"
+        error_widget.styles.color = "white"
+        error_widget.styles.background = "red"
+        error_widget.styles.padding = (0, 1)
+
         if self.app.size.width < self.MIN_WIDTH:
             warning = Static(
                 f" ⚠ Terminal width ({self.app.size.width} cols) is below "
@@ -320,7 +333,7 @@ class ProcessSelectorScreen(Screen):
     def _set_attach_panel_visible(self, visible: bool) -> None:
         """Show or hide the attach progress panel."""
         try:
-            panel = self.query_one("#attach-panel", Static)
+            panel = self.query_one("#attach-panel")
             if visible:
                 panel.styles.display = "block"
             else:
