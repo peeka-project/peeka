@@ -38,6 +38,8 @@ from peeka.tui.screens.main import MainScreen
 
 from peeka.tui.screens.process_selector import ProcessSelectorScreen
 
+from textual.widgets import Static, RichLog
+
 
 
 
@@ -356,9 +358,9 @@ class TestProcessSelectorScreen:
 
     @pytest.mark.asyncio
 
-    async def test_attach_panel_hidden_on_error(self, monkeypatch):
+    async def test_attach_panel_stays_visible_on_error(self, monkeypatch):
 
-        """Attach panel is hidden when attach fails."""
+        """Attach panel stays visible when attach fails, showing error banner."""
 
         push_screen_calls = []
 
@@ -402,8 +404,68 @@ class TestProcessSelectorScreen:
 
             panel = screen.query_one("#attach-panel")
 
-            assert str(panel.styles.display) == "none"
+            assert str(panel.styles.display) != "none"
 
+            error = screen.query_one("#attach-error")
+
+            assert error.styles.display == "block"
+
+
+    @pytest.mark.asyncio
+    async def test_error_banner_shows_message(self):
+        """Error banner displays message text and is visible."""
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            await pilot.pause(0.1)
+            screen = app.screen
+            
+            screen._show_attach_error("custom error message")
+            await pilot.pause()
+            
+            error = screen.query_one("#attach-error", Static)
+            assert error.styles.display == "block"
+            error_text = error.render().plain
+            assert "custom error message" in error_text
+            assert "✗" in error_text
+
+
+    def test_error_modal_class_removed(self):
+        """ErrorModal class is completely removed from source."""
+        from pathlib import Path
+        src_file = Path(__file__).parent.parent / "peeka" / "tui" / "screens" / "process_selector.py"
+        src = src_file.read_text()
+        assert "class ErrorModal" not in src, "ErrorModal class should be removed"
+
+
+    @pytest.mark.asyncio
+    async def test_retry_clears_prior_panel_state(self):
+        """Second attach attempt clears first attempt's progress/log/error data."""
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            await pilot.pause(0.1)
+            screen = app.screen
+            
+            screen._attach_generation = 1
+            screen._attach_phase_states["init"] = {
+                "status": "completed",
+                "message": "first",
+                "elapsed_ms": 100,
+                "icon": "✓",
+                "level": "info"
+            }
+            screen._render_attach_progress()
+            await pilot.pause()
+            
+            screen._reset_attach_panel()
+            await pilot.pause()
+            
+            progress = screen.query_one("#attach-progress", Static)
+            assert progress.render().plain.strip() == ""
+            log = screen.query_one("#attach-log", RichLog)
+            assert len(log.lines) == 0
+            error = screen.query_one("#attach-error", Static)
+            assert error.styles.display == "none"
+            assert len(screen._attach_phase_states) == 0
 
 
     def test_attach_phase_states_initialized_before_mount(self):
