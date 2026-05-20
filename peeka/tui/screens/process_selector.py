@@ -164,6 +164,9 @@ class ProcessSelectorScreen(Screen):
         if getattr(self, "_attaching", False):
             return
         self._attaching = True
+        self._attach_generation += 1
+        self._reset_attach_panel()
+        self._set_attach_panel_visible(True)
         self._disable_interaction()
         self.notify(f"Attaching to process {pid}...", severity="information")
         self.run_worker(
@@ -207,7 +210,7 @@ class ProcessSelectorScreen(Screen):
             # fire-and-forget and the target process may not have read the
             # agent script yet. The script is a small temp file in /tmp and
             # will be cleaned up on reboot or by a future attach session.
-            self._attaching = False
+            pass
 
         if result:
             self.app.call_from_thread(self._on_attach_success, result)
@@ -232,8 +235,23 @@ class ProcessSelectorScreen(Screen):
         finally:
             client.disconnect()
 
+    def _reset_attach_panel(self) -> None:
+        """Clear progress / log / error widgets before a new attach attempt."""
+        try:
+            progress = self.query_one("#attach-progress", Static)
+            progress.update("")
+            log = self.query_one("#attach-log", RichLog)
+            log.clear()
+            error = self.query_one("#attach-error", Static)
+            error.update("")
+            error.styles.display = "none"
+        except Exception:
+            pass
+        self._attach_phase_states.clear()
+
     def _show_attach_error(self, error_msg: str) -> None:
         """Show detailed attach error in a modal dialog."""
+        self._attaching = False
         self._set_attach_panel_visible(False)
         self._enable_interaction()
 
@@ -300,6 +318,7 @@ class ProcessSelectorScreen(Screen):
 
     def _on_attach_success(self, result: Dict[str, Any]) -> None:
         """Called on main thread after successful attachment."""
+        self._attaching = False
         from peeka.tui.screens.main import MainScreen
 
         self.notify(
