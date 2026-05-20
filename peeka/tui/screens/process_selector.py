@@ -12,6 +12,8 @@ from textual.containers import Container
 from textual.screen import Screen
 from textual.widgets import DataTable, Header, Footer, Input, RichLog, Static
 
+from peeka.core.attach import AttachProgressEvent
+
 
 class ProcessSelectorScreen(Screen):
     """Screen for selecting a Python process to attach to."""
@@ -179,7 +181,14 @@ class ProcessSelectorScreen(Screen):
 
         from peeka.core.attach import ProcessAttacher
 
-        attacher = ProcessAttacher(pid, suppress_startup_messages=True)
+        # Capture generation BEFORE defining callback closure to avoid race
+        gen = self._attach_generation
+
+        def _cb(event: AttachProgressEvent) -> None:
+            """Thread-safe callback routing progress events to UI."""
+            self.app.call_from_thread(self._on_progress, gen, event)
+
+        attacher = ProcessAttacher(pid, suppress_startup_messages=True, progress_callback=_cb)
         result: Optional[Dict[str, Any]] = None
         error_message: Optional[str] = None
 
@@ -249,72 +258,75 @@ class ProcessSelectorScreen(Screen):
             pass
         self._attach_phase_states.clear()
 
+    def _on_progress(self, gen: int, event: AttachProgressEvent) -> None:
+        """Handle progress event from attachment worker. Drops stale generations."""
+        if gen != self._attach_generation:
+            return
+
+        try:
+            log = self.query_one("#attach-log", RichLog)
+        except Exception:
+            return
+
+        if event.phase == "attach_log":
+            log.write(f"{event.message}")
+            return
+
+        status_icon_map = {
+            "running": "⏳",
+            "completed": "✓",
+            "failed": "✗",
+            "logged": "•",
+        }
+        status_icon = status_icon_map.get(event.status, "?")
+
+        self._attach_phase_states[event.phase] = {
+            "status": event.status,
+            "message": event.message,
+            "elapsed_ms": event.elapsed_ms,
+            "icon": status_icon,
+            "level": event.level,
+        }
+
+        formatted_msg = f"{status_icon} [{event.phase}] {event.message}"
+        if event.elapsed_ms is not None:
+            formatted_msg += f" ({int(event.elapsed_ms)}ms)"
+
+        log.write(formatted_msg)
+        self._render_attach_progress()
+
+    def _render_attach_progress(self) -> None:
+        """Render phase states into #attach-progress Static widget."""
+        try:
+            progress_widget = self.query_one("#attach-progress", Static)
+        except Exception:
+            return
+
+        if not self._attach_phase_states:
+            return
+
+        lines = []
+        for phase in sorted(self._attach_phase_states.keys()):
+            state = self._attach_phase_states[phase]
+            icon = state.get("icon", "?")
+            message = state.get("message", phase)
+            lines.append(f"{icon} {phase}: {message}")
+
+        progress_widget.update("\n".join(lines))
+
+
+
+
     def _show_attach_error(self, error_msg: str) -> None:
-        """Show detailed attach error in a modal dialog."""
+        """Show attach error as inline red banner in #attach-error widget."""
         self._attaching = False
-        self._set_attach_panel_visible(False)
         self._enable_interaction()
-
-        # Create a simple error modal
-        from textual.containers import Container
-        from textual.widgets import Markdown, Button
-        from textual.screen import Screen
-
-        class ErrorModal(Screen):
-            CSS = """
-            ErrorModal {
-                align: center middle;
-            }
-
-            #error-container {
-                background: $surface;
-                border: thick $error;
-                padding: 1;
-                width: 80%;
-                height: 80%;
-                max-width: 100;
-                max-height: 40;
-            }
-
-            #error-title {
-                background: $error;
-                color: white;
-                padding: 1;
-                text-align: center;
-                margin-bottom: 1;
-            }
-
-            #error-content {
-                height: 80%;
-                overflow-y: scroll;
-                margin-bottom: 1;
-            }
-
-            #error-dismiss {
-                align: center bottom;
-            }
-            """
-
-            def __init__(self, error_msg: str) -> None:
-                super().__init__()
-                self.error_msg = error_msg
-
-            def compose(self) -> ComposeResult:
-                yield Container(
-                    Static("⚠️ Attach Failed", id="error-title"),
-                    Markdown(self.error_msg, id="error-content"),
-                    Container(
-                        Button("Dismiss", variant="default", id="error-dismiss"),
-                        id="error-controls",
-                    ),
-                    id="error-container",
-                )
-
-            def on_button_pressed(self, event: Button.Pressed) -> None:
-                if event.button.id == "error-dismiss":
-                    self.dismiss()
-
-        self.app.push_screen(ErrorModal(error_msg))
+        try:
+            error = self.query_one("#attach-error", Static)
+            error.update(f"✗ Attach failed: {error_msg}\n(Press Esc to return)")
+            error.styles.display = "block"
+        except Exception:
+            pass
 
     def _on_attach_success(self, result: Dict[str, Any]) -> None:
         """Called on main thread after successful attachment."""
@@ -367,5 +379,26 @@ class ProcessSelectorScreen(Screen):
         self._attach_to_process(pid)
 
     def action_quit_app(self) -> None:
-        """Quit the application."""
+        """Context-aware Esc behavior: reset on error, no-op mid-attach, quit when idle.
+
+        States:
+        1. Error visible: Esc → reset panel, hide it, return (no quit)
+        2. Attach in progress: Esc → no-op (must wait for result)
+        3. Idle: Esc → quit (original behavior)
+        """
+        # State 1: showing attach error → reset panel, return to idle
+        try:
+            error = self.query_one("#attach-error", Static)
+            if error.styles.display == "block":
+                self._reset_attach_panel()
+                self._set_attach_panel_visible(False)
+                return
+        except Exception:
+            pass
+
+        # State 2: attach in progress → no-op (must wait for result)
+        if self._attaching:
+            return
+
+        # State 3: idle → quit
         self.app.exit()
