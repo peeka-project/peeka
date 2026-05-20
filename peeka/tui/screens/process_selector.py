@@ -54,6 +54,8 @@ class ProcessSelectorScreen(Screen):
 
     def on_mount(self) -> None:
         """Initialize the process table."""
+        attach_panel = self.query_one("#attach-panel")
+        attach_panel.styles.display = "none"
         error_widget = self.query_one("#attach-error")
         error_widget.styles.display = "none"
         error_widget.styles.color = "white"

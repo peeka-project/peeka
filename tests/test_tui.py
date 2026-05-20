@@ -358,6 +358,25 @@ class TestProcessSelectorScreen:
 
     @pytest.mark.asyncio
 
+    async def test_attach_panel_initially_hidden(self):
+
+        """Attach panel should be hidden on mount until attach starts."""
+
+        app = PeekaApp()
+
+        async with app.run_test() as pilot:
+
+            screen = app.screen
+
+            assert isinstance(screen, ProcessSelectorScreen)
+
+            panel = screen.query_one("#attach-panel")
+
+            assert str(panel.styles.display) == "none", "attach-panel should be hidden on mount"
+
+
+    @pytest.mark.asyncio
+
     async def test_attach_panel_stays_visible_on_error(self, monkeypatch):
 
         """Attach panel stays visible when attach fails, showing error banner."""
