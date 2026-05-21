@@ -64,6 +64,12 @@ class ProcessSelectorScreen(Screen):
         error_widget.styles.background = "red"
         error_widget.styles.padding = (0, 1)
 
+        # Set border titles for attach panel sections
+        progress = self.query_one("#attach-progress", Static)
+        progress.border_title = "Progress"
+        log = self.query_one("#attach-log", RichLog)
+        log.border_title = "Attach Log"
+
         if self.app.size.width < self.MIN_WIDTH:
             warning = Static(
                 f" ⚠ Terminal width ({self.app.size.width} cols) is below "
