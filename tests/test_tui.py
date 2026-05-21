@@ -848,6 +848,205 @@ class TestProcessSelectorScreen:
             app.exit = original_exit
 
 
+    @pytest.mark.asyncio
+    async def test_done_status_renders_check_icon(self):
+        """Done status renders ✓ icon in status_icon_map."""
+        from peeka.core.attach import AttachProgressEvent
+        from textual.widgets import RichLog
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            screen = app.screen
+            assert isinstance(screen, ProcessSelectorScreen)
+            screen._set_attach_panel_visible(True)
+            await pilot.pause()
+
+            event = AttachProgressEvent(
+                phase="test_phase",
+                status="done",
+                message="Test completed",
+                level="info",
+                elapsed_ms=100.0,
+            )
+            screen._on_progress(screen._attach_generation, event)
+            await pilot.pause()
+
+            assert "test_phase" in screen._attach_phase_states
+            assert screen._attach_phase_states["test_phase"]["icon"] == "✓"
+
+            log_widget = screen.query_one("#attach-log", RichLog)
+            assert len(log_widget.lines) > 0
+            log_content = " ".join(line.text for line in log_widget.lines)
+            assert "✓" in log_content
+
+
+    @pytest.mark.asyncio
+    async def test_richlog_entry_has_timestamp_prefix(self):
+        """RichLog entries have [HH:MM:SS] timestamp prefix."""
+        import re
+        from peeka.core.attach import AttachProgressEvent
+        from textual.widgets import RichLog
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            screen = app.screen
+            assert isinstance(screen, ProcessSelectorScreen)
+            screen._set_attach_panel_visible(True)
+            await pilot.pause()
+
+            event = AttachProgressEvent(
+                phase="test_phase",
+                status="running",
+                message="Test message",
+                level="info",
+                elapsed_ms=50.0,
+            )
+            screen._on_progress(screen._attach_generation, event)
+            await pilot.pause()
+
+            log_widget = screen.query_one("#attach-log", RichLog)
+            assert len(log_widget.lines) > 0
+            log_content = " ".join(line.text for line in log_widget.lines)
+
+            timestamp_pattern = r"\[\d{2}:\d{2}:\d{2}\]"
+            assert re.search(timestamp_pattern, log_content), \
+                f"Expected timestamp pattern [{timestamp_pattern}] in log content: {log_content}"
+
+
+    @pytest.mark.asyncio
+    async def test_message_with_brackets_is_escaped(self):
+        """Messages with brackets are escaped to prevent Rich markup breakage."""
+        from peeka.core.attach import AttachProgressEvent
+        from textual.widgets import RichLog
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            screen = app.screen
+            assert isinstance(screen, ProcessSelectorScreen)
+            screen._set_attach_panel_visible(True)
+            await pilot.pause()
+
+            event = AttachProgressEvent(
+                phase="test_phase",
+                status="running",
+                message="[INFO] Processing [data] with [brackets]",
+                level="info",
+                elapsed_ms=25.0,
+            )
+            screen._on_progress(screen._attach_generation, event)
+            await pilot.pause()
+
+            log_widget = screen.query_one("#attach-log", RichLog)
+            assert len(log_widget.lines) > 0
+            log_content = " ".join(line.text for line in log_widget.lines)
+
+            assert "[INFO]" in log_content
+            assert "[data]" in log_content
+            assert "[brackets]" in log_content
+
+
+    @pytest.mark.asyncio
+    async def test_phase_summary_uses_insertion_order(self):
+        """Phase summary displays phases in insertion order, not alphabetical."""
+        from peeka.core.attach import AttachProgressEvent
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            screen = app.screen
+            assert isinstance(screen, ProcessSelectorScreen)
+            screen._set_attach_panel_visible(True)
+            await pilot.pause()
+
+            # Post events in specific order: zebra, alpha, mike
+            events = [
+                AttachProgressEvent(phase="zebra", status="done", message="Z done", level="info", elapsed_ms=10.0),
+                AttachProgressEvent(phase="alpha", status="running", message="A running", level="info", elapsed_ms=20.0),
+                AttachProgressEvent(phase="mike", status="completed", message="M completed", level="info", elapsed_ms=30.0),
+            ]
+            for event in events:
+                screen._on_progress(screen._attach_generation, event)
+                await pilot.pause(0.01)
+
+            # Render progress widget
+            progress_widget = screen.query_one("#attach-progress")
+            progress_text = progress_widget.render().plain
+
+            # Extract phase order from rendered text
+            zebra_pos = progress_text.find("zebra")
+            alpha_pos = progress_text.find("alpha")
+            mike_pos = progress_text.find("mike")
+
+            # Verify insertion order preserved: zebra, alpha, mike
+            assert zebra_pos < alpha_pos < mike_pos, \
+                f"Expected insertion order (zebra, alpha, mike), got positions: zebra={zebra_pos}, alpha={alpha_pos}, mike={mike_pos}"
+
+
+    @pytest.mark.asyncio
+    async def test_attach_header_in_log_not_toast(self):
+        """Attach header appears in RichLog, not as toast notification."""
+        from peeka.core.attach import AttachProgressEvent
+        from textual.widgets import RichLog
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            screen = app.screen
+            assert isinstance(screen, ProcessSelectorScreen)
+            screen._set_attach_panel_visible(True)
+            await pilot.pause()
+
+            log_event = AttachProgressEvent(
+                phase="attach_log",
+                status="logged",
+                message="Attaching to process 12345...",
+                level="info",
+                elapsed_ms=None,
+            )
+            screen._on_progress(screen._attach_generation, log_event)
+            await pilot.pause()
+
+            log_widget = screen.query_one("#attach-log", RichLog)
+            assert len(log_widget.lines) > 0
+            log_content = " ".join(line.text for line in log_widget.lines)
+            assert "Attaching to process" in log_content
+
+            assert "attach_log" not in screen._attach_phase_states
+
+
+    @pytest.mark.asyncio
+    async def test_panel_danger_class_applied(self):
+        """Error widget has panel--danger class applied."""
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            screen = app.screen
+            assert isinstance(screen, ProcessSelectorScreen)
+            await pilot.pause()
+
+            error = screen.query_one("#attach-error")
+
+            assert "panel--danger" in error.classes, \
+                f"Expected 'panel--danger' in error.classes, got: {error.classes}"
+
+
+    @pytest.mark.asyncio
+    async def test_border_titles_set(self):
+        """Progress and Attach Log widgets have correct border titles."""
+        from textual.widgets import RichLog
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            screen = app.screen
+            assert isinstance(screen, ProcessSelectorScreen)
+            await pilot.pause()
+
+            progress = screen.query_one("#attach-progress")
+            log = screen.query_one("#attach-log", RichLog)
+
+            assert progress.border_title == "Progress", \
+                f"Expected border_title='Progress', got: {progress.border_title}"
+            assert log.border_title == "Attach Log", \
+                f"Expected border_title='Attach Log', got: {log.border_title}"
+
+
 
 
 
