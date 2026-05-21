@@ -619,9 +619,7 @@ class TestProcessSelectorScreen:
 
             assert str(error.styles.display) == "none"
 
-            assert error.styles.color is not None
-
-            assert error.styles.background is not None
+            assert "panel--danger" in error.classes
 
 
 

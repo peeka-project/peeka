@@ -48,7 +48,7 @@ class ProcessSelectorScreen(Screen):
         yield Container(
             Static("", id="attach-progress"),
             RichLog(id="attach-log", max_lines=500, wrap=True, highlight=True, markup=True, auto_scroll=True),
-            Static("", id="attach-error"),
+            Static("", id="attach-error", classes="panel panel--danger"),
             id="attach-panel",
             classes="panel",
         )
@@ -60,9 +60,6 @@ class ProcessSelectorScreen(Screen):
         attach_panel.styles.display = "none"
         error_widget = self.query_one("#attach-error")
         error_widget.styles.display = "none"
-        error_widget.styles.color = "white"
-        error_widget.styles.background = "red"
-        error_widget.styles.padding = (0, 1)
 
         # Set border titles for attach panel sections
         progress = self.query_one("#attach-progress", Static)
