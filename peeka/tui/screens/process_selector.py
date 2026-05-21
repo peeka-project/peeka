@@ -46,8 +46,8 @@ class ProcessSelectorScreen(Screen):
         selector.border_title = "Select Process"
         yield selector
         yield Container(
-            Static("", id="attach-progress"),
-            RichLog(id="attach-log", max_lines=500, wrap=True, highlight=True, markup=True, auto_scroll=True),
+            Static("", id="attach-progress", classes="panel"),
+            RichLog(id="attach-log", max_lines=500, wrap=True, highlight=True, markup=True, auto_scroll=True, classes="panel"),
             Static("", id="attach-error", classes="panel panel--danger"),
             id="attach-panel",
             classes="panel",

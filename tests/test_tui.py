@@ -984,32 +984,41 @@ class TestProcessSelectorScreen:
     @pytest.mark.asyncio
     async def test_attach_header_in_log_not_toast(self):
         """Attach header appears in RichLog, not as toast notification."""
-        from peeka.core.attach import AttachProgressEvent
         from textual.widgets import RichLog
+        from unittest.mock import Mock
 
         app = PeekaApp()
         async with app.run_test() as pilot:
             screen = app.screen
             assert isinstance(screen, ProcessSelectorScreen)
-            screen._set_attach_panel_visible(True)
             await pilot.pause()
 
-            log_event = AttachProgressEvent(
-                phase="attach_log",
-                status="logged",
-                message="Attaching to process 12345...",
-                level="info",
-                elapsed_ms=None,
-            )
-            screen._on_progress(screen._attach_generation, log_event)
+            original_notify = screen.notify
+            notify_calls = []
+            
+            def mock_notify(message, **kwargs):
+                notify_calls.append((message, kwargs))
+                return original_notify(message, **kwargs)
+            
+            screen.notify = mock_notify
+
+            original_run_worker = screen.run_worker
+            screen.run_worker = Mock()
+
+            screen._attach_to_process(12345)
             await pilot.pause()
+
+            attaching_toast = [call for call in notify_calls if "Attaching to process" in str(call[0])]
+            assert len(attaching_toast) == 0, \
+                f"Expected no 'Attaching to process' toast, but found: {attaching_toast}"
 
             log_widget = screen.query_one("#attach-log", RichLog)
             assert len(log_widget.lines) > 0
             log_content = " ".join(line.text for line in log_widget.lines)
-            assert "Attaching to process" in log_content
+            assert "Attaching to process 12345" in log_content
 
-            assert "attach_log" not in screen._attach_phase_states
+            screen.notify = original_notify
+            screen.run_worker = original_run_worker
 
 
     @pytest.mark.asyncio
