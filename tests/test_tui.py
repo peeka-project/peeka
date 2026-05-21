@@ -528,9 +528,7 @@ class TestProcessSelectorScreen:
             screen = app.screen
 
             assert isinstance(screen, ProcessSelectorScreen)
-
-
-
+            screen._set_attach_panel_visible(True)
             progress = screen.query_one("#attach-progress")
 
             progress.update("25% attached...")
@@ -641,6 +639,7 @@ class TestProcessSelectorScreen:
         async with app.run_test() as pilot:
             screen = app.screen
             assert isinstance(screen, ProcessSelectorScreen)
+            screen._set_attach_panel_visible(True)
             await pilot.pause()
 
             event = AttachProgressEvent(
@@ -670,6 +669,7 @@ class TestProcessSelectorScreen:
         async with app.run_test() as pilot:
             screen = app.screen
             assert isinstance(screen, ProcessSelectorScreen)
+            screen._set_attach_panel_visible(True)
             await pilot.pause()
 
             log_event = AttachProgressEvent(
