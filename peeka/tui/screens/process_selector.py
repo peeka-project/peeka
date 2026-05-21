@@ -176,8 +176,10 @@ class ProcessSelectorScreen(Screen):
         self._attach_generation += 1
         self._reset_attach_panel()
         self._set_attach_panel_visible(True)
+        ts = time.strftime("%H:%M:%S", time.localtime())
+        log = self.query_one("#attach-log", RichLog)
+        log.write(f"[dim cyan]\\[{ts}][/] Attaching to process {pid}...")
         self._disable_interaction()
-        self.notify(f"Attaching to process {pid}...", severity="information")
         self.run_worker(
             self._do_attach(pid), thread=True, exclusive=True
         )
