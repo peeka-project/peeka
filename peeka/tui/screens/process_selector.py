@@ -4,8 +4,10 @@ Process Selector Screen - List and select Python processes to attach.
 
 import os
 import subprocess
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
+from rich.markup import escape
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container
@@ -272,8 +274,11 @@ class ProcessSelectorScreen(Screen):
         except Exception:
             return
 
+        ts = time.strftime("%H:%M:%S", time.localtime(event.timestamp or time.time()))
+        safe_msg = escape(event.message)
+
         if event.phase == "attach_log":
-            log.write(f"{event.message}")
+            log.write(f"[dim cyan]\\[{ts}][/] {safe_msg}")
             return
 
         status_icon_map = {
@@ -293,9 +298,18 @@ class ProcessSelectorScreen(Screen):
             "level": event.level,
         }
 
-        formatted_msg = f"{status_icon} [{event.phase}] {event.message}"
+        color_map = {
+            "running": "yellow",
+            "done": "green",
+            "completed": "green",
+            "failed": "red",
+            "logged": "dim",
+        }
+        color = color_map.get(event.status, "white")
+
+        formatted_msg = f"[dim cyan]\\[{ts}][/] [{color}]{status_icon}[/] \\[{event.phase}] {safe_msg}"
         if event.elapsed_ms is not None:
-            formatted_msg += f" ({int(event.elapsed_ms)}ms)"
+            formatted_msg += f" [dim]({int(event.elapsed_ms)}ms)[/]"
 
         log.write(formatted_msg)
         self._render_attach_progress()
@@ -311,11 +325,12 @@ class ProcessSelectorScreen(Screen):
             return
 
         lines = []
-        for phase in sorted(self._attach_phase_states.keys()):
-            state = self._attach_phase_states[phase]
+        for phase, state in self._attach_phase_states.items():
             icon = state.get("icon", "?")
             message = state.get("message", phase)
-            lines.append(f"{icon} {phase}: {message}")
+            elapsed = state.get("elapsed_ms")
+            suffix = f" ({int(elapsed)}ms)" if elapsed is not None else ""
+            lines.append(f"{icon} {phase}: {message}{suffix}")
 
         progress_widget.update("\n".join(lines))
 
