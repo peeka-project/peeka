@@ -265,6 +265,8 @@ class ProcessSelectorScreen(Screen):
         if gen != self._attach_generation:
             return
 
+        self._set_attach_panel_visible(True)
+
         try:
             log = self.query_one("#attach-log", RichLog)
         except Exception:
@@ -277,6 +279,7 @@ class ProcessSelectorScreen(Screen):
         status_icon_map = {
             "running": "⏳",
             "completed": "✓",
+            "done": "✓",
             "failed": "✗",
             "logged": "•",
         }
