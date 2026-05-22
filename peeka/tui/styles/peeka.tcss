@@ -156,6 +156,7 @@ Screen {
 
 #process-selector {
     padding: 0 1;
+    height: auto;
 }
 
 #process-selector #title {
@@ -178,7 +179,7 @@ Screen {
 
 #process-table {
     height: auto;
-    max-height: 15;
+    max-height: 6;
 }
 
 /* ============================================================================
