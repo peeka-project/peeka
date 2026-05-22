@@ -50,7 +50,6 @@ class ProcessSelectorScreen(Screen):
             RichLog(id="attach-log", max_lines=500, wrap=True, highlight=True, markup=True, auto_scroll=True, classes="panel"),
             Static("", id="attach-error", classes="panel panel--danger"),
             id="attach-panel",
-            classes="panel",
         )
         yield Footer()
 
