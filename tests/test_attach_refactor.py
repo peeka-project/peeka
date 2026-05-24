@@ -418,15 +418,16 @@ class TestAttachProgress:
 
         monkeypatch.setattr(attacher, "_notify_server", FakeServer())
 
-        # Mock Path to find our tmp_path ready file
-        original_path = __import__("pathlib").Path
+        # Mock attach.Path only. Patching pathlib.Path globally can corrupt
+        # pytest/pathlib internals on Python 3.9.
+        original_path = attach.Path
 
         def mock_path(path_str):
-            if path_str == "/tmp/peeka_12345.ready":
+            if path_str == f"/tmp/peeka_{attacher.session_id}.ready":
                 return ready_file
             return original_path(path_str)
 
-        monkeypatch.setattr(__import__("pathlib"), "Path", mock_path)
+        monkeypatch.setattr(attach, "Path", mock_path)
 
         # Call _wait_for_agent_ready; it should NOT raise despite timeout
         # because socket responsiveness is verified in slow-path
