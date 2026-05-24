@@ -214,6 +214,7 @@ class ProcessAttacher:
         self.progress_callback = progress_callback
         self.progress_events: List[AttachProgressEvent] = []
         self._progress_callback_error_active = False
+        self._last_attach_error: Optional[str] = None
 
 
     def _emit_progress(
@@ -478,6 +479,14 @@ class ProcessAttacher:
         with self._capture_attach_diagnostics():
             return self._attach_internal()
 
+    def get_last_error(self) -> Optional[str]:
+        """Get the last attach error message, if any.
+        
+        Returns:
+            Optional[str]: Error message from the most recent attach failure, or None
+        """
+        return self._last_attach_error
+
     def _attach_internal(self) -> bool:
         """
         Attach to target process
@@ -631,6 +640,7 @@ class ProcessAttacher:
                 else:
                     raise
 
+        self._last_attach_error = "Agent did not become ready after waiting"
         return False
 
     def _attach_fallback(self) -> bool:
@@ -853,6 +863,7 @@ class ProcessAttacher:
                     else:
                         raise
 
+            self._last_attach_error = "Agent did not become ready after waiting"
             return False
         except subprocess.TimeoutExpired:
             raise TimeoutError("LLDB dlopen injection timed out after 30 seconds")

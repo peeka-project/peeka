@@ -218,7 +218,17 @@ class ProcessSelectorScreen(Screen):
                         "socket_path": socket_path,
                     }
             else:
-                error_message = f"Failed to attach to process {pid}\n\nThis could be due to:\n- Permission issues (ptrace_scope)\n- Python version mismatch\n- GDB/LLDB not available\n- Process already has an agent attached"
+                real_error = attacher.get_last_error()
+                error_details = f"Error: {real_error}\n\n" if real_error else ""
+                error_message = (
+                    f"Failed to attach to process {pid}\n\n"
+                    f"{error_details}"
+                    "This could be due to:\n"
+                    "- Permission issues (ptrace_scope)\n"
+                    "- Python version mismatch\n"
+                    "- GDB/LLDB not available\n"
+                    "- Process already has an agent attached"
+                )
         except Exception as e:
             tb = traceback.format_exc()
             error_message = f"Failed to attach to process {pid}\n\nError: {e}\n\nDetails:\n{tb}"
