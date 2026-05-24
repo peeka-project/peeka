@@ -985,7 +985,7 @@ class ProcessAttacher:
         if server:
             server.settimeout(timeout)
             try:
-                conn, _ = server.accept()
+                conn, _ = _rpl.native_accept(server)
                 # Agent sends a short "READY" payload.
                 data = conn.recv(16)
                 conn.close()
