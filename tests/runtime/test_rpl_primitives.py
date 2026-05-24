@@ -184,19 +184,18 @@ def test_integrity_check_status_ok_clean_env():
 
 @pytest.mark.unit
 def test_rlock_uses_threading_not_thread():
-    """Verify _NATIVE_RLOCK is threading.RLock (not _thread.RLock which is 3.13+ only).
-    
-    threading.RLock is a factory function that returns an RLock instance.
-    In Python < 3.13, _thread.RLock doesn't exist.
+    """Verify _NATIVE_RLOCK is threading.RLock (the public, portable API).
+
+    threading.RLock is a factory function that returns an RLock instance and
+    is the supported public API on every Python version peeka targets (3.8+).
+    We deliberately avoid binding to the private _thread implementation, whose
+    shape (factory vs class) and identity vary across CPython releases.
     """
     assert primitives._NATIVE_RLOCK is threading.RLock
-    
+
     rlock = primitives.allocate_rlock()
     assert hasattr(rlock, "acquire")
     assert hasattr(rlock, "release")
-    
-    if sys.version_info < (3, 13):
-        assert not hasattr(_thread, "RLock")
 
 
 @pytest.mark.unit
