@@ -22,12 +22,13 @@
 | [014](./014-security-safeeval.md) | simpleeval 异常处理与 fail-closed 安全机制 | SEV-0 | security, injector | 1 | 2026-01-29 |
 | [015](./015-basecommand-and-command-system.md) | BaseCommand 缺少 agent 参数 | SEV-1 | commands/base.py | 1 | 2026-02-05 |
 | [016](./016-dependencies.md) | 依赖配置问题：版本约束不兼容与格式废弃 | SEV-3 | dependencies, pyproject.toml | 2 | 2026-03-20 ~ 2026-04-12 |
+| [017](./017-rpl-primitives-rollout.md) | Runtime Primitives Layer (RPL) 的引入与稳定化 | SEV-1 | core/runtime, core/attach, tests/runtime | 3 | 2026-05-17 ~ 2026-05-24 |
 
 ## 统计
 
-- **话题总数**：16
-- **事故总次数**：78
-- **按严重级别**：SEV-0: 3, SEV-1: 9, SEV-2: 3, SEV-3: 1, SEV-4: 1
+- **话题总数**：17
+- **事故总次数**：81
+- **按严重级别**：SEV-0: 3, SEV-1: 10, SEV-2: 4, SEV-3: 2, SEV-4: 1
 - **按组件**：
   - tui: 7 个话题（002, 003, 004, 005, 010, 012, 013）
   - core: 4 个话题（006, 007, 008, 014）
@@ -60,6 +61,7 @@
 
 | 日期 | 话题 | 事故 | 变更说明 |
 |------|------|------|----------|
+| 2026-05-24 | [017](./017-rpl-primitives-rollout.md) | #1-3 | 新增话题：RPL 引入与稳定化（v0.1.14 发布） |
 | 2026-05-07 | [005](./005-tui-threading-and-lifecycle.md) | #8 | 新增事故：Dashboard 未挂载时访问 app 导致 lifecycle 测试崩溃（v0.1.11） |
 | 2026-05-07 | [005](./005-tui-threading-and-lifecycle.md) | #7 | 新增事故：logging 配置向 stderr 输出破坏 TUI 活动日志集成（v0.1.11） |
 | 2026-04-27 | [010](./010-top-profiling.md) | #5 | 新增事故：Agent 并发响应帧写入导致 top 命令 JSON 损坏（v0.1.8） |
