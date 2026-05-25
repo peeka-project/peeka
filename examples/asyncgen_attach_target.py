@@ -32,7 +32,7 @@ from typing import AsyncGenerator
 async def stream_items() -> AsyncGenerator[int, None]:
     """
     Async generator that yields items with sleep between yields.
-    
+
     Yields:
         Sequential integers from 0 to 99.
     """
@@ -56,7 +56,7 @@ async def main() -> None:
     print(f"PID: {os.getpid()}", flush=True)
     print(f"ASYNCGEN_TARGET_READY pid={os.getpid()}", flush=True)
     print("Starting async generator consumer...", flush=True)
-    
+
     try:
         await consumer()
     except KeyboardInterrupt:

@@ -9,18 +9,18 @@ import re
 def match_pattern(pattern: str, target: str) -> bool:
     """
     Match a pattern against a target string
-    
+
     Supports wildcards:
         * - matches any characters
         ? - matches single character
-    
+
     Args:
         pattern: Pattern with optional wildcards
         target: Target string to match
-        
+
     Returns:
         True if matches, False otherwise
-        
+
     Examples:
         >>> match_pattern("mymodule.*", "mymodule.MyClass")
         True
@@ -41,13 +41,13 @@ def match_pattern(pattern: str, target: str) -> bool:
 def parse_pattern(pattern: str) -> dict:
     """
     Parse a pattern into components
-    
+
     Args:
         pattern: Pattern like "module.Class.method"
-        
+
     Returns:
         Dictionary with parsed components
-        
+
     Examples:
         >>> parse_pattern("mymodule.MyClass.my_method")
         {'full': 'mymodule.MyClass.my_method',
@@ -78,14 +78,14 @@ def parse_pattern(pattern: str) -> dict:
 def expand_pattern(pattern: str, available_targets: list) -> list:
     """
     Expand a pattern with wildcards to matching targets
-    
+
     Args:
         pattern: Pattern with wildcards
         available_targets: List of available target names
-        
+
     Returns:
         List of matching targets
-        
+
     Examples:
         >>> expand_pattern("test_*", ["test_a", "test_b", "other"])
         ['test_a', 'test_b']

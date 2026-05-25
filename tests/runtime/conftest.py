@@ -14,10 +14,10 @@ from peeka.core.runtime import primitives  # noqa: F401
 @pytest.fixture
 def fake_gevent_patch(monkeypatch):
     """Simulate gevent.monkey.patch_all() by replacing stdlib attributes with raising sentinels.
-    
+
     This fixture models the attribute-swap style of monkey-patching where
     the original module remains in sys.modules but its attributes are replaced.
-    
+
     Monkeypatch auto-cleanup ensures no leakage across test boundaries.
     """
     class RaisingSentinel:
@@ -39,10 +39,10 @@ def fake_gevent_patch(monkeypatch):
 @pytest.fixture
 def fake_eventlet_patch(monkeypatch):
     """Simulate eventlet.monkey_patch() by replacing sys.modules entries.
-    
+
     This fixture models the sys.modules replacement style where the entire
     module is swapped out with a stub that raises on attribute access.
-    
+
     Monkeypatch auto-cleanup ensures no leakage across test boundaries.
     """
     original_socket_module = sys.modules["socket"]

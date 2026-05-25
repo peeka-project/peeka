@@ -20,14 +20,14 @@ def test_native_socket_identity():
 @pytest.mark.unit
 def test_native_thread_identity():
     """Verify _NATIVE_START_NEW_THREAD is the original _thread.start_new_thread.
-    
+
     Handles both cases:
     - Clean environment: _NATIVE_START_NEW_THREAD is _thread.start_new_thread
     - Gevent environment: _NATIVE_START_NEW_THREAD is gevent.monkey.get_original("_thread", "start_new_thread")
     """
     monkey = sys.modules.get("gevent.monkey")
     get_original = getattr(monkey, "get_original", None) if monkey else None
-    
+
     if callable(get_original):
         try:
             expected = get_original("_thread", "start_new_thread")
@@ -41,14 +41,14 @@ def test_native_thread_identity():
 @pytest.mark.unit
 def test_native_lock_identity():
     """Verify _NATIVE_ALLOCATE_LOCK is the original _thread.allocate_lock.
-    
+
     Handles both cases:
     - Clean environment: _NATIVE_ALLOCATE_LOCK is _thread.allocate_lock
     - Gevent environment: _NATIVE_ALLOCATE_LOCK is gevent.monkey.get_original("_thread", "allocate_lock")
     """
     monkey = sys.modules.get("gevent.monkey")
     get_original = getattr(monkey, "get_original", None) if monkey else None
-    
+
     if callable(get_original):
         try:
             expected = get_original("_thread", "allocate_lock")
@@ -70,11 +70,11 @@ def test_native_captured_at_import():
     assert hasattr(primitives, "_NATIVE_TIME")
     assert hasattr(primitives, "_NATIVE_PERF_COUNTER")
     assert hasattr(primitives, "_NATIVE_GET_IDENT")
-    
+
     assert not isinstance(
         type(primitives).__dict__.get("_NATIVE_SOCKET", None), property
     )
-    
+
     result = primitives.integrity_check()
     assert result["captured_at_import"] is True
 
@@ -87,47 +87,47 @@ def test_public_api_returns_native_types():
     assert hasattr(lock, "release")
     assert callable(lock.acquire)
     assert callable(lock.release)
-    
+
     rlock = primitives.allocate_rlock()
     assert hasattr(rlock, "acquire")
     assert hasattr(rlock, "release")
     assert callable(rlock.acquire)
     assert callable(rlock.release)
-    
+
     event = primitives.create_event()
     assert hasattr(event, "set")
     assert hasattr(event, "is_set")
     assert hasattr(event, "wait")
     assert callable(event.set)
     assert callable(event.is_set)
-    
+
     sock = primitives.create_socket("AF_UNIX", "SOCK_STREAM")
     assert isinstance(sock, _socket.socket)
     sock.close()
-    
+
     sock2 = primitives.create_socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
     assert isinstance(sock2, _socket.socket)
     sock2.close()
-    
+
     ident = primitives.get_ident()
     assert isinstance(ident, int)
     assert ident > 0
-    
+
     now = primitives.time_now()
     assert isinstance(now, float)
     assert now > 0
-    
+
     counter = primitives.perf_counter()
     assert isinstance(counter, float)
     assert counter >= 0
-    
+
     result_holder = []
     thread_ident = primitives.start_thread(
         lambda: result_holder.append(1), args=(), name="test-thread"
     )
     assert isinstance(thread_ident, int)
     assert thread_ident > 0
-    
+
     integrity = primitives.integrity_check()
     assert isinstance(integrity, dict)
 
@@ -136,7 +136,7 @@ def test_public_api_returns_native_types():
 def test_integrity_check_schema():
     """Verify integrity_check() returns dict with all required keys."""
     result = primitives.integrity_check()
-    
+
     required_keys = {
         "socket_native",
         "thread_native",
@@ -150,9 +150,9 @@ def test_integrity_check_schema():
         "status",
         "ok",
     }
-    
+
     assert set(result.keys()) == required_keys
-    
+
     for key in required_keys:
         if key == "status":
             assert isinstance(result[key], str)
@@ -167,10 +167,10 @@ def test_integrity_check_schema():
 def test_integrity_check_status_ok_clean_env():
     """Verify integrity_check() returns status='ok' and ok=True in clean environment."""
     result = primitives.integrity_check()
-    
+
     assert result["status"] == "ok"
     assert result["ok"] is True
-    
+
     assert result["socket_native"] is True
     assert result["thread_native"] is True
     assert result["lock_native"] is True
@@ -202,7 +202,7 @@ def test_rlock_uses_threading_not_thread():
 def test_perf_counter_is_unpatched_reference():
     """Verify _NATIVE_PERF_COUNTER is time.perf_counter (unpatched by gevent/eventlet)."""
     assert primitives._NATIVE_PERF_COUNTER is time.perf_counter
-    
+
     counter = primitives.perf_counter()
     assert isinstance(counter, float)
     assert counter >= 0
@@ -212,6 +212,6 @@ def test_perf_counter_is_unpatched_reference():
 def test_module_docstring_marks_target_side_only():
     """Verify module docstring contains warning about target-side usage."""
     assert primitives.__doc__ is not None
-    
+
     docstring_upper = primitives.__doc__.upper()
     assert "TARGET" in docstring_upper or "AGENT" in docstring_upper or "RUNTIME" in docstring_upper

@@ -131,7 +131,7 @@ cat /tmp/gevent_target.pid
             f"Missing 'monkey_patch' field in payload: {payload.keys()}"
         )
         mp_gevent = payload["monkey_patch"]["gevent"]
-        
+
         # Handle two possible formats: string "active" or dict with status
         if isinstance(mp_gevent, str):
             assert mp_gevent == "active", (
