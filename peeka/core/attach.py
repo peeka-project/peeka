@@ -582,6 +582,7 @@ class ProcessAttacher:
             return result
 
         except Exception as e:
+            self._last_attach_error = str(e)
             self._emit_progress(
                 "attached",
                 "failed",
