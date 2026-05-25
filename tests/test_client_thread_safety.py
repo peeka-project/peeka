@@ -24,7 +24,7 @@ from peeka.core.client import AgentClient, StreamingAgentClient
 class ThreadSafeMockServer:
     """
     Mock agent server that tracks concurrent requests to verify thread-safety.
-    
+
     Uses threading.Lock to ensure its own operations are thread-safe for
     verification purposes.
     """
@@ -91,7 +91,7 @@ class ThreadSafeMockServer:
     def _handle_one_request(self, conn: socket.socket) -> bool:
         """
         Handle a single request on the connection.
-        
+
         Returns:
             True if more requests should be processed, False if connection should close.
         """
@@ -321,7 +321,7 @@ class TestTextualWorkerPattern:
         """
         Simulate the Textual pattern where multiple views call run_worker()
         with lambdas that invoke send_command().
-        
+
         This is the actual bug pattern from peeka TUI views.
         """
         client = StreamingAgentClient(mock_server.sock_path)

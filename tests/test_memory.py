@@ -253,7 +253,7 @@ class TestMemoryCommand:
         # Start tracking first
         start_result = memory_cmd.execute({"action": "start", "nframe": 10})
         assert start_result["status"] == "success"
-        
+
         # Take snapshot
         result = memory_cmd.execute({"action": "snapshot"})
         assert result["status"] == "success"
@@ -264,12 +264,12 @@ class TestMemoryCommand:
     def test_snapshot_fifo_max_2(self, memory_cmd):
         """Test FIFO behavior: max 2 snapshots, oldest replaced."""
         memory_cmd.execute({"action": "start", "nframe": 10})
-        
+
         # Take 3 snapshots
         memory_cmd.execute({"action": "snapshot"})
         memory_cmd.execute({"action": "snapshot"})
         result = memory_cmd.execute({"action": "snapshot"})
-        
+
         # Should still be 2 (FIFO)
         assert result["snapshot_count"] == 2
         assert len(memory_cmd._snapshots) == 2
@@ -277,10 +277,10 @@ class TestMemoryCommand:
     def test_diff_requires_two_snapshots(self, memory_cmd):
         """Test diff returns error if < 2 snapshots."""
         memory_cmd.execute({"action": "start", "nframe": 10})
-        
+
         # Only 1 snapshot
         memory_cmd.execute({"action": "snapshot"})
-        
+
         # Try diff
         result = memory_cmd.execute({"action": "diff"})
         assert result["status"] == "error"
@@ -289,19 +289,19 @@ class TestMemoryCommand:
     def test_diff_returns_stat_diffs(self, memory_cmd):
         """Test diff returns StatisticDiff entries."""
         memory_cmd.execute({"action": "start", "nframe": 10})
-        
+
         # Take 2 snapshots with allocations between
         memory_cmd.execute({"action": "snapshot"})
         _ = [object() for _ in range(100)]  # Allocate some objects
         memory_cmd.execute({"action": "snapshot"})
-        
+
         # Get diff
         result = memory_cmd.execute({"action": "diff"})
         assert result["status"] == "success"
         assert result["action"] == "diff"
         assert "diffs" in result
         assert isinstance(result["diffs"], list)
-        
+
         # Check structure of first diff entry
         if result["diffs"]:
             diff = result["diffs"][0]
@@ -313,7 +313,7 @@ class TestMemoryCommand:
     def test_referrers_returns_tree(self, memory_cmd):
         """Test referrers action returns tree structure."""
         memory_cmd.execute({"action": "start", "nframe": 10})
-        
+
         result = memory_cmd.execute({"action": "referrers", "type_name": "dict"})
         assert result["status"] == "success"
         assert result["action"] == "referrers"
@@ -326,7 +326,7 @@ class TestMemoryCommand:
     def test_referrers_unknown_type_error(self, memory_cmd):
         """Test referrers with unknown type returns error."""
         memory_cmd.execute({"action": "start", "nframe": 10})
-        
+
         result = memory_cmd.execute({"action": "referrers", "type_name": "FakeType999"})
         assert result["status"] == "error"
         assert "FakeType999" in result["error"]
@@ -334,7 +334,7 @@ class TestMemoryCommand:
     def test_referrers_respects_depth_limit(self, memory_cmd):
         """Test referrers respects max_depth parameter."""
         memory_cmd.execute({"action": "start", "nframe": 10})
-        
+
         result = memory_cmd.execute({
             "action": "referrers",
             "type_name": "dict",
@@ -342,7 +342,7 @@ class TestMemoryCommand:
         })
         assert result["status"] == "success"
         assert "referrers" in result
-        
+
         # Check that depth is limited (no nested referrers at depth 1)
         if result["referrers"]:
             # At depth 1, first-level referrers should exist
@@ -358,7 +358,7 @@ class TestMemoryCommand:
     def test_referents_returns_tree(self, memory_cmd):
         """Test referents action returns tree structure."""
         memory_cmd.execute({"action": "start", "nframe": 10})
-        
+
         result = memory_cmd.execute({"action": "referents", "type_name": "dict"})
         assert result["status"] == "success"
         assert result["action"] == "referents"

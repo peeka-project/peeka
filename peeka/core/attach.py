@@ -481,7 +481,7 @@ class ProcessAttacher:
 
     def get_last_error(self) -> Optional[str]:
         """Get the last attach error message, if any.
-        
+
         Returns:
             Optional[str]: Error message from the most recent attach failure, or None
         """

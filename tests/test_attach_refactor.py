@@ -141,15 +141,15 @@ class TestHasInjector:
     def test_attach_internal_saves_last_error_on_exception(self, monkeypatch):
         """Verify that exceptions in _attach_internal are saved to _last_attach_error."""
         attacher = ProcessAttacher(12345)
-        
+
         # Mock _check_existing_attachment to raise an exception
         def mock_check(*args, **kwargs):
             raise RuntimeError("Mocked attach failure")
-        
+
         monkeypatch.setattr(attacher, "_check_existing_attachment", mock_check)
-        
+
         result = attacher._attach_internal()
-        
+
         assert result is False
         assert attacher._last_attach_error == "Mocked attach failure"
 

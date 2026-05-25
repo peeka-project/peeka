@@ -114,28 +114,28 @@ if __name__ == "__main__":
 @pytest.fixture
 def async_target_process() -> Generator[Tuple[subprocess.Popen, int], None, None]:
     """Spawn asyncio_attach_target.py and yield (process, PID).
-    
+
     Waits up to 15s for ready file; reads PID from file and validates against proc.pid.
     Gracefully terminates on teardown with 8s timeout before kill.
     """
     target_path = EXAMPLES_DIR / ASYNC_TARGET_FILENAME
     if not target_path.exists():
         pytest.fail(f"Target script not found: {target_path}")
-    
+
     ready_dir = tempfile.mkdtemp()
     ready_file = Path(ready_dir) / "ready"
-    
+
     env = os.environ.copy()
     env["PEEKA_TEST_READY_FILE"] = str(ready_file)
     env["PYTHONUNBUFFERED"] = "1"
-    
+
     proc = subprocess.Popen(
         [sys.executable, str(target_path), "--duration", "0"],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         env=env,
     )
-    
+
     # Poll up to 15s for ready file
     for _ in range(150):
         if ready_file.exists():
@@ -144,7 +144,7 @@ def async_target_process() -> Generator[Tuple[subprocess.Popen, int], None, None
     else:
         proc.terminate()
         pytest.fail("asyncio target failed to become ready")
-    
+
     # Read PID from ready file
     pid_content = ready_file.read_text().strip()
     try:
@@ -152,21 +152,21 @@ def async_target_process() -> Generator[Tuple[subprocess.Popen, int], None, None
     except ValueError:
         proc.terminate()
         pytest.fail(f"Invalid PID in ready file: {pid_content}")
-    
+
     # Validate PID matches process
     if pid_from_file != proc.pid:
         proc.terminate()
         pytest.fail(f"PID mismatch: file={pid_from_file}, proc={proc.pid}")
-    
+
     yield (proc, proc.pid)
-    
+
     # Teardown: terminate gracefully, then kill if needed
     proc.terminate()
     try:
         proc.wait(timeout=8)
     except subprocess.TimeoutExpired:
         proc.kill()
-    
+
     # Cleanup tempdir
     import shutil
     shutil.rmtree(ready_dir, ignore_errors=True)

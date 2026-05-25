@@ -500,20 +500,20 @@ class MemoryCommand(BaseCommand):
     def _get_referrers(self, type_name: str, max_depth: int = 2, max_per_level: int = 10) -> Dict[str, Any]:
         """
         Get referrer tree for objects of given type.
-        
+
         Args:
             type_name: Type name to search for
             max_depth: Maximum recursion depth (hard capped at 3)
             max_per_level: Maximum referrers per level (hard capped at 20)
-        
+
         Returns:
             Dict with status, target info, and referrers tree
         """
         import gc
-        
+
         if not type_name:
             return {"status": "error", "error": "type_name is required"}
-        
+
         # Find first object of given type
         target_obj = None
         count = 0
@@ -522,30 +522,30 @@ class MemoryCommand(BaseCommand):
                 if target_obj is None:
                     target_obj = obj
                 count += 1
-        
+
         if target_obj is None:
             return {
                 "status": "error",
                 "error": f"No objects of type '{type_name}' found"
             }
-        
+
         def safe_repr(o: Any) -> str:
             """Get safe truncated repr of object."""
             try:
                 return repr(o)[:80]
             except Exception:
                 return "<repr error>"
-        
+
         def traverse(o: Any, depth: int, visited: Set[int]) -> List[Dict[str, Any]]:
             """Recursively traverse referrers."""
             if depth >= max_depth:
                 return []
-            
+
             obj_id = id(o)
             if obj_id in visited:
                 return []
             visited.add(obj_id)
-            
+
             referrers = gc.get_referrers(o)[:max_per_level]
             result = []
             for ref in referrers:
@@ -557,7 +557,7 @@ class MemoryCommand(BaseCommand):
                     ref_info["referrers"] = traverse(ref, depth + 1, visited)
                 result.append(ref_info)
             return result
-        
+
         return {
             "status": "success",
             "action": "referrers",
@@ -568,24 +568,24 @@ class MemoryCommand(BaseCommand):
             },
             "referrers": traverse(target_obj, 0, set())
         }
-    
+
     def _get_referents(self, type_name: str, max_depth: int = 2, max_per_level: int = 10) -> Dict[str, Any]:
         """
         Get referent tree for objects of given type (what the object references).
-        
+
         Args:
             type_name: Type name to search for
             max_depth: Maximum recursion depth (hard capped at 3)
             max_per_level: Maximum referents per level (hard capped at 20)
-        
+
         Returns:
             Dict with status, target info, and referents tree
         """
         import gc
-        
+
         if not type_name:
             return {"status": "error", "error": "type_name is required"}
-        
+
         # Find first object of given type
         target_obj = None
         count = 0
@@ -594,30 +594,30 @@ class MemoryCommand(BaseCommand):
                 if target_obj is None:
                     target_obj = obj
                 count += 1
-        
+
         if target_obj is None:
             return {
                 "status": "error",
                 "error": f"No objects of type '{type_name}' found"
             }
-        
+
         def safe_repr(o: Any) -> str:
             """Get safe truncated repr of object."""
             try:
                 return repr(o)[:80]
             except Exception:
                 return "<repr error>"
-        
+
         def traverse(o: Any, depth: int, visited: Set[int]) -> List[Dict[str, Any]]:
             """Recursively traverse referents."""
             if depth >= max_depth:
                 return []
-            
+
             obj_id = id(o)
             if obj_id in visited:
                 return []
             visited.add(obj_id)
-            
+
             referents = gc.get_referents(o)[:max_per_level]
             result = []
             for ref in referents:
@@ -629,7 +629,7 @@ class MemoryCommand(BaseCommand):
                     ref_info["referents"] = traverse(ref, depth + 1, visited)
                 result.append(ref_info)
             return result
-        
+
         return {
             "status": "success",
             "action": "referents",

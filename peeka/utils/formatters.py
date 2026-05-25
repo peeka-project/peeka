@@ -9,12 +9,12 @@ from typing import Any
 def format_value(value: Any, depth: int = 2, current_depth: int = 0) -> str:
     """
     Format a Python value for display
-    
+
     Args:
         value: Value to format
         depth: Maximum depth to traverse
         current_depth: Current traversal depth
-        
+
     Returns:
         Formatted string representation
     """
@@ -77,12 +77,12 @@ def format_value(value: Any, depth: int = 2, current_depth: int = 0) -> str:
 def format_object(obj: Any, depth: int = 2, current_depth: int = 0) -> str:
     """
     Format a Python object for display
-    
+
     Args:
         obj: Object to format
         depth: Maximum depth
         current_depth: Current depth
-        
+
     Returns:
         Formatted string
     """
@@ -118,12 +118,12 @@ def format_object(obj: Any, depth: int = 2, current_depth: int = 0) -> str:
 def format_table(headers: list, rows: list, max_width: int = 100) -> str:
     """
     Format data as a table
-    
+
     Args:
         headers: List of column headers
         rows: List of row data (each row is a list)
         max_width: Maximum width for each column
-        
+
     Returns:
         Formatted table string
     """
@@ -164,13 +164,13 @@ def format_table(headers: list, rows: list, max_width: int = 100) -> str:
 def format_duration(seconds: float) -> str:
     """
     Format duration in human-readable form
-    
+
     Args:
         seconds: Duration in seconds
-        
+
     Returns:
         Formatted string
-        
+
     Examples:
         >>> format_duration(0.001)
         '1.00ms'

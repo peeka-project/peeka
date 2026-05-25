@@ -364,7 +364,7 @@ class TestProcessSelectorScreen:
 
         app = PeekaApp()
 
-        async with app.run_test() as pilot:
+        async with app.run_test():
 
             screen = app.screen
 
@@ -437,10 +437,10 @@ class TestProcessSelectorScreen:
         async with app.run_test() as pilot:
             await pilot.pause(0.1)
             screen = app.screen
-            
+
             screen._show_attach_error("custom error message")
             await pilot.pause()
-            
+
             error = screen.query_one("#attach-error", Static)
             assert error.styles.display == "block"
             error_text = error.render().plain
@@ -463,7 +463,7 @@ class TestProcessSelectorScreen:
         async with app.run_test() as pilot:
             await pilot.pause(0.1)
             screen = app.screen
-            
+
             screen._attach_generation = 1
             screen._attach_phase_states["init"] = {
                 "status": "completed",
@@ -474,10 +474,10 @@ class TestProcessSelectorScreen:
             }
             screen._render_attach_progress()
             await pilot.pause()
-            
+
             screen._reset_attach_panel()
             await pilot.pause()
-            
+
             progress = screen.query_one("#attach-progress", Static)
             assert progress.render().plain.strip() == ""
             log = screen.query_one("#attach-log", RichLog)
@@ -995,15 +995,19 @@ class TestProcessSelectorScreen:
 
             original_notify = screen.notify
             notify_calls = []
-            
+
             def mock_notify(message, **kwargs):
                 notify_calls.append((message, kwargs))
                 return original_notify(message, **kwargs)
-            
+
             screen.notify = mock_notify
 
             original_run_worker = screen.run_worker
-            screen.run_worker = Mock()
+            def mock_run_worker(work, **kwargs):
+                if hasattr(work, "close"):
+                    work.close()
+                return Mock()
+            screen.run_worker = mock_run_worker
 
             screen._attach_to_process(12345)
             await pilot.pause()
