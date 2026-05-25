@@ -115,6 +115,36 @@ Patterns use fully qualified function names such as `module.function` or `module
 | `reset` | Remove injected observations and restore wrapped functions |
 | `run` | Start a script with Peeka injected from launch |
 
+## Gevent Compatibility
+
+Peeka separates its gevent support into two layers:
+
+- **Control plane**: attach, the in-process agent socket, RPL primitives, and `patch-status`. This layer avoids target-process monkey-patched socket/threading primitives.
+- **Data plane**: observation commands such as `trace` and `top`. These commands report their gevent compatibility in JSONL `meta` fields when runtime behavior is degraded.
+
+| Command | No gevent | gevent imported | gevent patched / active hub |
+|---------|-----------|-----------------|-----------------------------|
+| `watch` | safe | safe | safe |
+| `monitor` | safe | safe | safe |
+| `stack` | safe | safe | degraded stack inspection |
+| `trace` | full trace backend | full trace backend | degraded to `wrapper_only` |
+| `top` | frame-walk sampling | frame-walk sampling | `greenlet_blind` frame-walk sampling |
+
+When Peeka detects gevent monkey patching, affected JSONL records include metadata such as:
+
+```json
+{
+  "meta": {
+    "gevent_state": "patched",
+    "backend": "wrapper_only",
+    "greenlet_blind": false,
+    "degraded_reason": "sys.settrace under gevent can violate frame stack invariants; using wrapper-only tracing without recursive call tree"
+  }
+}
+```
+
+For gevent targets, prefer `watch` when wrapper-level entry/exit observations are enough. `trace` remains available, but under patched gevent it uses wrapper-only tracing instead of recursive `sys.settrace` call trees. `top` remains available, but its frame-walk samples only represent the active greenlet on each OS thread.
+
 ## Read More
 
 - [Documentation](https://peeka-project.github.io/) - command reference, TUI usage, installation details, and troubleshooting.

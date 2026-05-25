@@ -3,7 +3,6 @@ Tests for peeka.core.output.OutputFormatter
 """
 
 import json
-import pytest
 
 from peeka.core.output import OutputFormatter
 
@@ -203,6 +202,16 @@ class TestOutputFormatterResult:
         assert output["command"] == "sc"
         assert output["data"]["items"] == 10
         assert output["elapsed_ms"] == 50
+
+    def test_result_with_none_data_defaults_empty(self, capsys):
+        """Test result with None data explicitly."""
+        OutputFormatter.result("logger", None)
+        captured = capsys.readouterr()
+        output = json.loads(captured.out.strip())
+
+        assert output["type"] == "result"
+        assert output["command"] == "logger"
+        assert output["data"] == {}
 
 
 class TestOutputFormatterMultipleOutputs:

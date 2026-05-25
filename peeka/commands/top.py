@@ -4,17 +4,36 @@ Top Command - Function-level sampling profiler
 
 import os
 import sys
-import threading
-
 import uuid
-
-from typing import Any, Dict, Optional, Set, TYPE_CHECKING
+from typing import Any, Callable, Dict, Optional, Set, TYPE_CHECKING
 
 from peeka.commands.base import BaseCommand
 from peeka.core.runtime import primitives as _rpl
+from peeka.core.runtime.compat import get_policy, policy_meta
+from peeka.core.runtime.gevent_probe import GeventState, probe
 
 if TYPE_CHECKING:
     from peeka.core.agent import PeekaAgent
+
+
+class _NativeThreadHandle:
+    """Small handle around RPL native threads with Thread-like test hooks."""
+
+    def __init__(self, target: Callable[[], None], name: str):
+        self._done_event = _rpl.create_event()
+        self.ident = _rpl.start_thread(self._run, args=(target,), name=name)
+
+    def _run(self, target: Callable[[], None]) -> None:
+        try:
+            target()
+        finally:
+            self._done_event.set()
+
+    def is_alive(self) -> bool:
+        return not self._done_event.is_set()
+
+    def join(self, timeout: Optional[float] = None) -> None:
+        self._done_event.wait(timeout=timeout)
 
 
 class TopCommand(BaseCommand):
@@ -28,16 +47,19 @@ class TopCommand(BaseCommand):
         self._total_samples: int = 0
 
         # Threading
-        self._stop_event: threading.Event = threading.Event()
-        self._sampling_thread: Optional[threading.Thread] = None
-        self._observation_thread: Optional[threading.Thread] = None
-        self._lock: threading.Lock = _rpl.allocate_lock()
+        self._stop_event: Any = _rpl.create_event()
+        self._sampling_thread: Optional[_NativeThreadHandle] = None
+        self._observation_thread: Optional[_NativeThreadHandle] = None
+        self._lock: Any = _rpl.allocate_lock()
 
         # Configuration
         self._top_id: Optional[str] = None
         self._interval: float = 0.01  # 10ms default
         self._stream: bool = False
         self._filter_peeka: bool = True
+        self._meta: Dict[str, Any] = policy_meta(
+            GeventState.NONE, get_policy("top", GeventState.NONE)
+        )
 
         # Resolve peeka package directory for thread filtering
         self._peeka_pkg_dir: str = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + os.sep
@@ -86,7 +108,12 @@ class TopCommand(BaseCommand):
                     "status": "success",
                     "top_id": self._top_id,
                     "message": "Profiler already running",
+                    "meta": dict(self._meta),
                 }
+
+            gevent_state = probe()
+            policy = get_policy("top", gevent_state)
+            self._meta = policy_meta(gevent_state, policy)
 
             # Generate unique top_id
             self._top_id = f"top_{uuid.uuid4().hex[:8]}"
@@ -108,27 +135,24 @@ class TopCommand(BaseCommand):
                 )
 
             # Start sampling thread
-            self._sampling_thread = threading.Thread(
+            self._sampling_thread = _NativeThreadHandle(
                 target=self._sampling_loop,
                 name=f"peeka-top-{self._top_id}",
-                daemon=True,
             )
-            self._sampling_thread.start()
 
             # Start observation thread if streaming
             if self._stream and self.agent:
-                self._observation_thread = threading.Thread(
+                self._observation_thread = _NativeThreadHandle(
                     target=self._send_periodic_observations,
                     name=f"peeka-top-obs-{self._top_id}",
-                    daemon=True,
                 )
-                self._observation_thread.start()
 
             return {
                 "status": "success",
                 "top_id": self._top_id,
                 "interval": self._interval,
                 "stream": self._stream,
+                "meta": dict(self._meta),
             }
 
     def _stop(self, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -166,7 +190,12 @@ class TopCommand(BaseCommand):
             self._observation_thread = None
             self._top_id = None
 
-        return {"status": "success", "top_id": top_id, "snapshot": snapshot}
+        return {
+            "status": "success",
+            "top_id": top_id,
+            "snapshot": snapshot,
+            "meta": dict(self._meta),
+        }
 
     def _snapshot(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -176,7 +205,7 @@ class TopCommand(BaseCommand):
             Dict with current statistics
         """
         snapshot = self._build_snapshot()
-        return {"status": "success", "snapshot": snapshot}
+        return {"status": "success", "snapshot": snapshot, "meta": dict(self._meta)}
 
     def _reset(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -319,6 +348,7 @@ class TopCommand(BaseCommand):
             "total_samples": total_samples,
             "sample_interval": interval,
             "functions": functions,
+            "meta": dict(self._meta),
         }
 
     def _is_peeka_thread(self, thread_id: int, frame) -> bool:
@@ -339,22 +369,17 @@ class TopCommand(BaseCommand):
         ):
             return True
 
+        if (
+            self._observation_thread
+            and self._observation_thread.ident == thread_id
+        ):
+            return True
+
         # Check if frame is in peeka package code (not just any path containing 'peeka/')
         if frame:
             fname = frame.f_code.co_filename
             if fname.startswith(self._peeka_pkg_dir):
                 return True
-
-        # Check thread name
-        try:
-            for thread in threading.enumerate():
-                if thread.ident == thread_id:
-                    thread_name = thread.name or ""
-                    if thread_name.startswith("peeka-"):
-                        return True
-                    break
-        except Exception:
-            pass
 
         return False
 

@@ -15,6 +15,7 @@ from typing import Any, Dict, Optional, TYPE_CHECKING
 
 from peeka.commands.base import BaseCommand
 from peeka.commands import patch_status_schema
+from peeka.core.runtime.gevent_probe import GeventState, probe
 from peeka.core.runtime import primitives as _rpl
 
 if TYPE_CHECKING:
@@ -91,16 +92,8 @@ class PatchStatusCommand(BaseCommand):
         if monkey is None:
             result["gevent"] = "not_imported"
         else:
-            socket_patched = False
-            threading_patched = False
-            if hasattr(monkey, "is_module_patched") and callable(monkey.is_module_patched):
-                try:
-                    socket_patched = monkey.is_module_patched("socket")
-                    threading_patched = monkey.is_module_patched("threading")
-                except Exception:
-                    pass
-
-            if socket_patched or threading_patched:
+            gevent_state = probe()
+            if gevent_state in (GeventState.PATCHED, GeventState.ACTIVE_HUB):
                 status = "active"
             else:
                 status = "imported_not_active"
