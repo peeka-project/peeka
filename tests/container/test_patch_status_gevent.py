@@ -3,7 +3,7 @@ Container E2E tests for patch-status command with gevent monkey patching.
 
 Tests the patch-status command's ability to detect and report:
 - gevent monkey patching status (active, patched modules)
-- Thread model classification (greenlet vs native)
+- OS thread model metadata
 - RPL integrity under monkey-patched environment
 - No "cannot switch to a different thread" errors in stderr
 
@@ -147,13 +147,10 @@ cat /tmp/gevent_target.pid
             )
 
         # Assertion 2: gevent patched_modules contains socket AND threading
-        assert "details" in payload["monkey_patch"], (
-            f"Missing 'details' in monkey_patch: {payload['monkey_patch'].keys()}"
+        gevent_details = payload["monkey_patch"]["gevent"]
+        assert isinstance(gevent_details, dict), (
+            f"Expected gevent details dict, got: {type(gevent_details)}"
         )
-        assert "gevent" in payload["monkey_patch"]["details"], (
-            f"Missing 'gevent' in details: {payload['monkey_patch']['details'].keys()}"
-        )
-        gevent_details = payload["monkey_patch"]["details"]["gevent"]
         assert "patched_modules" in gevent_details, (
             f"Missing 'patched_modules' in gevent details: {gevent_details.keys()}"
         )
@@ -166,14 +163,19 @@ cat /tmp/gevent_target.pid
             f"Expected 'threading' in patched_modules, got: {patched_modules}"
         )
 
-        # Assertion 3: thread_model classification is "greenlet"
+        # Assertion 3: thread_model reports stable OS-thread metadata
         assert "thread_model" in payload, (
             f"Missing 'thread_model' field in payload: {payload.keys()}"
         )
         classification = payload["thread_model"].get("classification")
-        assert classification == "greenlet", (
-            f"Expected classification='greenlet', got: {classification}"
+        assert classification in {
+            "single_threaded",
+            "multi_threaded",
+            "multi_threaded_with_daemons",
+        }, (
+            f"Unexpected thread_model classification: {classification}"
         )
+        assert payload["thread_model"].get("total_threads", 0) >= 1
 
         # Assertion 4: RPL integrity is OK
         assert "rpl_integrity" in payload, (

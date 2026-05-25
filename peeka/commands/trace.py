@@ -6,6 +6,8 @@ Similar to Arthas 'trace' command
 from typing import Any, Dict, TYPE_CHECKING
 
 from peeka.commands.base import BaseCommand
+from peeka.core.runtime.compat import get_policy, policy_meta
+from peeka.core.runtime.gevent_probe import probe
 
 if TYPE_CHECKING:
     from peeka.core.agent import PeekaAgent
@@ -67,9 +69,14 @@ class TraceCommand(BaseCommand):
             "min_duration": params.get("min_duration", 0),
             "command": "trace",  # mark this as trace command
         }
+        gevent_state = probe()
+        policy = get_policy("trace", gevent_state)
+        meta = policy_meta(gevent_state, policy)
 
         try:
-            watch_id = self.agent.injector.inject_trace(pattern, trace_config)
+            watch_id = self.agent.injector.inject_trace(
+                pattern, trace_config, force_backend=policy.backend
+            )
             self.agent.observer.register_watch(watch_id, pattern, trace_config)
 
             return {
@@ -77,6 +84,7 @@ class TraceCommand(BaseCommand):
                 "watch_id": watch_id,
                 "pattern": pattern,
                 "config": trace_config,
+                "meta": meta,
             }
 
         except ValueError as e:

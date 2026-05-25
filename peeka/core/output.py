@@ -9,7 +9,7 @@ import json
 import logging
 import os
 import sys
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 
 class OutputFormatter:
@@ -26,6 +26,20 @@ class OutputFormatter:
     """
 
     @staticmethod
+    def _split_data_meta(
+        data: Optional[Dict[str, Any]],
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+        """Return data without meta plus top-level meta when present."""
+        if not isinstance(data, dict):
+            return data, None
+        meta = data.get("meta")
+        if not isinstance(meta, dict):
+            return data, None
+        stripped_data = dict(data)
+        stripped_data.pop("meta", None)
+        return stripped_data, meta
+
+    @staticmethod
     def status(message: str, file=None, **kwargs) -> None:
         output = {"type": "status", "level": "info", "message": message}
         output.update(kwargs)
@@ -36,8 +50,11 @@ class OutputFormatter:
         command: str, data: Optional[Dict[str, Any]] = None, file=None, **kwargs
     ) -> None:
         output = {"type": "success", "command": command}
+        data, meta = OutputFormatter._split_data_meta(data)
         if data:
             output["data"] = data
+        if meta is not None and "meta" not in kwargs:
+            output["meta"] = meta
         output.update(kwargs)
         print(json.dumps(output), flush=True, file=file or sys.stdout)
 
@@ -56,20 +73,31 @@ class OutputFormatter:
         event: str, data: Optional[Dict[str, Any]] = None, file=None, **kwargs
     ) -> None:
         output = {"type": "event", "event": event}
+        data, meta = OutputFormatter._split_data_meta(data)
         if data:
             output["data"] = data
+        if meta is not None and "meta" not in kwargs:
+            output["meta"] = meta
         output.update(kwargs)
         print(json.dumps(output), flush=True, file=file or sys.stdout)
 
     @staticmethod
     def observation(data: Dict[str, Any], file=None, **kwargs) -> None:
-        output = {"type": "observation", "data": data}
+        data, meta = OutputFormatter._split_data_meta(data)
+        output = {"type": "observation", "data": data or {}}
+        if data:
+            output["data"] = data
+        if meta is not None and "meta" not in kwargs:
+            output["meta"] = meta
         output.update(kwargs)
         print(json.dumps(output), flush=True, file=file or sys.stdout)
 
     @staticmethod
     def result(command: str, data: Dict[str, Any], file=None, **kwargs) -> None:
-        output = {"type": "result", "command": command, "data": data}
+        data, meta = OutputFormatter._split_data_meta(data)
+        output = {"type": "result", "command": command, "data": data or {}}
+        if meta is not None and "meta" not in kwargs:
+            output["meta"] = meta
         output.update(kwargs)
         print(json.dumps(output), flush=True, file=file or sys.stdout)
 

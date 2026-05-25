@@ -124,7 +124,12 @@ class DecoratorInjector:
 
         return watch_id
 
-    def inject_trace(self, pattern: str, trace_config: Dict[str, Any]) -> str:
+    def inject_trace(
+        self,
+        pattern: str,
+        trace_config: Dict[str, Any],
+        force_backend: Optional[str] = None,
+    ) -> str:
         """
         Inject trace wrapper into target function.
 
@@ -136,6 +141,8 @@ class DecoratorInjector:
                 - times: int, max observations (-1 for infinite)
                 - skip_builtin: bool, skip built-in and stdlib functions (default: True)
                 - min_duration: float, minimum duration in ms to record (default: 0)
+            force_backend: Optional backend override. ``wrapper_only`` avoids
+                sys.monitoring/sys.settrace and records only the traced root call.
 
         Returns:
             watch_id: Unique identifier for this trace
@@ -156,6 +163,8 @@ class DecoratorInjector:
         # Detect if this is an instance method
         is_instance_method = inspect.isclass(parent_obj)
         trace_config["_is_instance_method"] = is_instance_method
+        if force_backend is not None:
+            trace_config["_force_backend"] = force_backend
 
         # Create trace wrapper
         wrapper = self._create_trace_wrapper(target_func, watch_id, trace_config)
@@ -1089,6 +1098,7 @@ class DecoratorInjector:
         times_limit = config.get("times", -1)
         skip_builtin = config.get("skip_builtin", True)
         min_duration = config.get("min_duration", 0)
+        force_backend = config.get("_force_backend")
 
         safe_evaluator = None
         if condition_express:
@@ -1113,7 +1123,11 @@ class DecoratorInjector:
         injector = self
 
         # Check if sys.monitoring is available (Python 3.12+)
-        use_monitoring = sys.version_info >= (3, 12) and hasattr(sys, "monitoring")
+        use_monitoring = (
+            force_backend != "wrapper_only"
+            and sys.version_info >= (3, 12)
+            and hasattr(sys, "monitoring")
+        )
 
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -1152,7 +1166,9 @@ class DecoratorInjector:
             call_tree = []
             call_stack = []
 
-            if use_monitoring:
+            if force_backend == "wrapper_only":
+                call_tree = injector._trace_with_wrapper_only(func, args, kwargs)
+            elif use_monitoring:
                 # Use sys.monitoring for Python 3.12+
                 call_tree = injector._trace_with_monitoring(
                     func,
@@ -1186,14 +1202,17 @@ class DecoratorInjector:
                 return call_tree[0].get("_result") if call_tree else None
 
             # Count observation
+            current_count = 0
             with injector._lock:
                 info = injector.instrumented.get(watch_id)
                 if info:
                     info["count"] += 1
+                    current_count = info["count"]
 
             # Send observation
             observation = {
                 "watch_id": watch_id,
+                "count": current_count,
                 "timestamp": time.time(),
                 "location": "AtExit",
                 "func_name": f"{func.__module__}.{func.__qualname__}",
@@ -1222,6 +1241,60 @@ class DecoratorInjector:
 
         return wrapper
 
+    def _trace_with_wrapper_only(
+        self,
+        func: Callable,
+        args: tuple,
+        kwargs: Dict[str, Any],
+    ) -> list:
+        """
+        Trace only the wrapped root call without global tracing APIs.
+
+        Args:
+            func: Function to trace
+            args: Function arguments
+            kwargs: Function keyword arguments
+
+        Returns:
+            Single-node call tree containing the root call.
+        """
+        start_time = time.perf_counter()
+        try:
+            result = func(*args, **kwargs)
+            duration_ms = (time.perf_counter() - start_time) * 1000
+            return [
+                {
+                    "depth": 0,
+                    "function": f"{func.__module__}.{func.__qualname__}",
+                    "filename": func.__code__.co_filename
+                    if hasattr(func, "__code__")
+                    else "unknown",
+                    "lineno": func.__code__.co_firstlineno
+                    if hasattr(func, "__code__")
+                    else 0,
+                    "duration_ms": round(duration_ms, 3),
+                    "children": [],
+                    "_result": result,
+                }
+            ]
+        except Exception as e:
+            duration_ms = (time.perf_counter() - start_time) * 1000
+            return [
+                {
+                    "depth": 0,
+                    "function": f"{func.__module__}.{func.__qualname__}",
+                    "filename": func.__code__.co_filename
+                    if hasattr(func, "__code__")
+                    else "unknown",
+                    "lineno": func.__code__.co_firstlineno
+                    if hasattr(func, "__code__")
+                    else 0,
+                    "duration_ms": round(duration_ms, 3),
+                    "children": [],
+                    "_exception": e,
+                }
+            ]
+
     def _trace_with_monitoring(
         self,
         func: Callable,
@@ -1234,6 +1307,8 @@ class DecoratorInjector:
     ) -> list:
         """
         Trace function execution using sys.monitoring (Python 3.12+).
+
+        Caller must enforce runtime compatibility before selecting this backend.
 
         Args:
             func: Function to trace
@@ -1417,6 +1492,8 @@ class DecoratorInjector:
     ) -> list:
         """
         Trace function execution using sys.settrace (fallback for Python < 3.12).
+
+        Caller must enforce runtime compatibility before selecting this backend.
 
         Args:
             func: Function to trace

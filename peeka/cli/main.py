@@ -812,7 +812,9 @@ def cmd_trace(args) -> int:
     trace_id = response.get("watch_id")
 
     OutputFormatter.event(
-        "trace_started", data={"trace_id": trace_id, "pattern": pattern}
+        "trace_started",
+        data={"trace_id": trace_id, "pattern": pattern},
+        meta=response.get("meta"),
     )
     sys.stdout.flush()
 
@@ -1292,6 +1294,7 @@ def cmd_top(args) -> int:
             "interval": args.interval,
             "filter_peeka": not args.no_filter_peeka,
         },
+        meta=response.get("meta"),
     )
     sys.stdout.flush()
 
