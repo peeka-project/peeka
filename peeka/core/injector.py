@@ -26,6 +26,11 @@ except ImportError:  # pragma: no cover - resource is unavailable on Windows
     resource = None
 
 from peeka.core.runtime import primitives as _rpl
+from peeka.core.runtime.compat import (
+    BACKEND_SETTRACE,
+    BACKEND_SYS_MONITORING,
+    BACKEND_WRAPPER_ONLY,
+)
 from peeka.core.safeeval.simpleeval import SimpleEval, BASIC_ALLOWED_ATTRS
 
 logger = logging.getLogger(__name__)
@@ -1122,12 +1127,17 @@ class DecoratorInjector:
         # Reference to self for use in wrapper
         injector = self
 
-        # Check if sys.monitoring is available (Python 3.12+)
-        use_monitoring = (
-            force_backend != "wrapper_only"
-            and sys.version_info >= (3, 12)
-            and hasattr(sys, "monitoring")
-        )
+        # Check if sys.monitoring is available (Python 3.12+).
+        if force_backend == BACKEND_SETTRACE:
+            use_monitoring = False
+        elif force_backend == BACKEND_SYS_MONITORING:
+            use_monitoring = sys.version_info >= (3, 12) and hasattr(sys, "monitoring")
+        else:
+            use_monitoring = (
+                force_backend != BACKEND_WRAPPER_ONLY
+                and sys.version_info >= (3, 12)
+                and hasattr(sys, "monitoring")
+            )
 
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -1166,7 +1176,7 @@ class DecoratorInjector:
             call_tree = []
             call_stack = []
 
-            if force_backend == "wrapper_only":
+            if force_backend == BACKEND_WRAPPER_ONLY:
                 call_tree = injector._trace_with_wrapper_only(func, args, kwargs)
             elif use_monitoring:
                 # Use sys.monitoring for Python 3.12+

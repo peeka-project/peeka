@@ -1,5 +1,6 @@
 """Data-plane compatibility policy for monkey-patched runtimes."""
 
+import sys
 from dataclasses import dataclass
 from typing import Dict, Optional
 
@@ -11,9 +12,11 @@ DECISION_DEGRADED = "degraded"
 DECISION_REFUSE = "refuse"
 
 BACKEND_WRAPPER = "wrapper"
-BACKEND_SETTRACE_OR_MONITORING = "settrace_or_monitoring"
+BACKEND_SETTRACE = "settrace"
+BACKEND_SYS_MONITORING = "sys_monitoring"
 BACKEND_WRAPPER_ONLY = "wrapper_only"
 BACKEND_FRAME_WALK = "frame_walk"
+BACKEND_GREENLET_AWARE_SAMPLING = "greenlet_aware_sampling"
 BACKEND_INSPECT_STACK = "inspect_stack"
 
 
@@ -22,10 +25,8 @@ TRACE_GEVENT_REASON = (
     "using wrapper-only tracing without recursive call tree"
 )
 TOP_GEVENT_REASON = (
-    "frame-walk sampling under gevent sees only the active greenlet per OS thread"
-)
-STACK_GEVENT_REASON = (
-    "stack inspection under gevent may only reflect the currently active greenlet"
+    "Frame sampling under gevent only sees the active greenlet per OS thread. "
+    "Suspended greenlets are not represented."
 )
 
 
@@ -40,7 +41,14 @@ class Policy:
 
 
 _SAFE_WRAPPER = Policy(DECISION_SAFE, BACKEND_WRAPPER, None, False)
-_SAFE_TRACE = Policy(DECISION_SAFE, BACKEND_SETTRACE_OR_MONITORING, None, False)
+def _select_safe_trace_backend() -> str:
+    """Return the precise trace backend available in this interpreter."""
+    if sys.version_info >= (3, 12) and hasattr(sys, "monitoring"):
+        return BACKEND_SYS_MONITORING
+    return BACKEND_SETTRACE
+
+
+_SAFE_TRACE = Policy(DECISION_SAFE, _select_safe_trace_backend(), None, False)
 _SAFE_TOP = Policy(DECISION_SAFE, BACKEND_FRAME_WALK, None, False)
 _SAFE_STACK = Policy(DECISION_SAFE, BACKEND_INSPECT_STACK, None, False)
 _DEGRADED_TRACE = Policy(
@@ -51,14 +59,8 @@ _DEGRADED_TRACE = Policy(
 )
 _DEGRADED_TOP = Policy(
     DECISION_DEGRADED,
-    BACKEND_FRAME_WALK,
+    BACKEND_GREENLET_AWARE_SAMPLING,
     TOP_GEVENT_REASON,
-    True,
-)
-_DEGRADED_STACK = Policy(
-    DECISION_DEGRADED,
-    BACKEND_INSPECT_STACK,
-    STACK_GEVENT_REASON,
     True,
 )
 
@@ -78,8 +80,8 @@ _MATRIX: Dict[str, Dict[GeventState, Policy]] = {
     "stack": {
         GeventState.NONE: _SAFE_STACK,
         GeventState.IMPORTED: _SAFE_STACK,
-        GeventState.PATCHED: _DEGRADED_STACK,
-        GeventState.ACTIVE_HUB: _DEGRADED_STACK,
+        GeventState.PATCHED: _SAFE_STACK,
+        GeventState.ACTIVE_HUB: _SAFE_STACK,
     },
     "trace": {
         GeventState.NONE: _SAFE_TRACE,
