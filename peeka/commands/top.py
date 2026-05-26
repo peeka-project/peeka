@@ -2,6 +2,7 @@
 Top Command - Function-level sampling profiler
 """
 
+import logging
 import os
 import sys
 import uuid
@@ -9,11 +10,18 @@ from typing import Any, Callable, Dict, Optional, Set, TYPE_CHECKING
 
 from peeka.commands.base import BaseCommand
 from peeka.core.runtime import primitives as _rpl
-from peeka.core.runtime.compat import get_policy, policy_meta
+from peeka.core.runtime.compat import (
+    BACKEND_FRAME_WALK,
+    BACKEND_GREENLET_AWARE_SAMPLING,
+    get_policy,
+    policy_meta,
+)
 from peeka.core.runtime.gevent_probe import GeventState, probe
 
 if TYPE_CHECKING:
     from peeka.core.agent import PeekaAgent
+
+logger = logging.getLogger(__name__)
 
 
 class _NativeThreadHandle:
@@ -60,6 +68,8 @@ class TopCommand(BaseCommand):
         self._meta: Dict[str, Any] = policy_meta(
             GeventState.NONE, get_policy("top", GeventState.NONE)
         )
+        self._greenlet_switch_counts: Dict[int, int] = {}
+        self._greenlet_throw_count: int = 0
 
         # Resolve peeka package directory for thread filtering
         self._peeka_pkg_dir: str = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + os.sep
@@ -114,6 +124,18 @@ class TopCommand(BaseCommand):
             gevent_state = probe()
             policy = get_policy("top", gevent_state)
             self._meta = policy_meta(gevent_state, policy)
+            sampling_target = self._sampling_loop
+            if policy.backend == BACKEND_GREENLET_AWARE_SAMPLING:
+                if self._greenlet_module_available():
+                    sampling_target = self._sampling_loop_greenlet_aware
+                else:
+                    self._apply_greenlet_fallback_meta(
+                        "greenlet module unavailable; fell back to frame_walk sampling"
+                    )
+                    logger.warning(
+                        "top greenlet-aware sampling requested but greenlet is unavailable; "
+                        "falling back to frame_walk"
+                    )
 
             # Generate unique top_id
             self._top_id = f"top_{uuid.uuid4().hex[:8]}"
@@ -124,6 +146,8 @@ class TopCommand(BaseCommand):
             # Reset state
             self._stats.clear()
             self._total_samples = 0
+            self._greenlet_switch_counts.clear()
+            self._greenlet_throw_count = 0
             self._stop_event.clear()
 
             # Register watch
@@ -136,7 +160,7 @@ class TopCommand(BaseCommand):
 
             # Start sampling thread
             self._sampling_thread = _NativeThreadHandle(
-                target=self._sampling_loop,
+                target=sampling_target,
                 name=f"peeka-top-{self._top_id}",
             )
 
@@ -279,6 +303,75 @@ class TopCommand(BaseCommand):
             if self._stop_event.wait(timeout=self._interval):
                 break
 
+    def _greenlet_module_available(self) -> bool:
+        """Return True when greenlet is already loaded with trace hooks."""
+        greenlet_module = sys.modules.get("greenlet")
+        if greenlet_module is None:
+            return False
+        return callable(getattr(greenlet_module, "gettrace", None)) and callable(
+            getattr(greenlet_module, "settrace", None)
+        )
+
+    def _apply_greenlet_fallback_meta(self, reason: str) -> None:
+        """Mark top metadata when greenlet-aware sampling must fall back."""
+        meta = dict(self._meta)
+        existing_reason = meta.get("degraded_reason")
+        if existing_reason:
+            reason = f"{existing_reason}; {reason}"
+        meta["backend"] = BACKEND_FRAME_WALK
+        meta["greenlet_blind"] = True
+        meta["degraded_reason"] = reason
+        self._meta = meta
+
+    def _record_greenlet_event(self, event: str, args: Any) -> None:
+        """Record best-effort greenlet switch/throw counters."""
+        try:
+            if event == "switch":
+                target = args[1]
+                with self._lock:
+                    target_id = id(target)
+                    current = self._greenlet_switch_counts.get(target_id, 0)
+                    self._greenlet_switch_counts[target_id] = current + 1
+            elif event == "throw":
+                with self._lock:
+                    self._greenlet_throw_count += 1
+        except Exception:
+            logger.debug("failed to record greenlet trace event", exc_info=True)
+
+    def _sampling_loop_greenlet_aware(self) -> None:
+        """Run top sampling with a chained greenlet switch tracer installed."""
+        greenlet_module = sys.modules.get("greenlet")
+        gettrace = getattr(greenlet_module, "gettrace", None)
+        settrace = getattr(greenlet_module, "settrace", None)
+        if greenlet_module is None or not callable(gettrace) or not callable(settrace):
+            self._apply_greenlet_fallback_meta(
+                "greenlet trace hooks unavailable; fell back to frame_walk sampling"
+            )
+            logger.warning(
+                "top greenlet-aware sampling requested but greenlet trace hooks "
+                "are unavailable; falling back to frame_walk"
+            )
+            self._sampling_loop()
+            return
+
+        prev_tracer = gettrace()
+
+        def our_tracer(event, args):
+            self._record_greenlet_event(event, args)
+            if prev_tracer is not None:
+                try:
+                    prev_tracer(event, args)
+                except Exception:
+                    logger.debug(
+                        "previous greenlet trace callback failed", exc_info=True
+                    )
+
+        settrace(our_tracer)
+        try:
+            self._sampling_loop()
+        finally:
+            settrace(prev_tracer)
+
     def _send_periodic_observations(self) -> None:
         """Background thread that sends periodic observation updates."""
         # Send every 1 second
@@ -341,8 +434,10 @@ class TopCommand(BaseCommand):
 
             # Sort by own_pct descending
             functions.sort(key=lambda x: x["own_pct"], reverse=True)
+            greenlet_switch_counts = dict(self._greenlet_switch_counts)
+            greenlet_throw_count = self._greenlet_throw_count
 
-        return {
+        snapshot = {
             "type": "top_snapshot",
             "top_id": top_id,
             "total_samples": total_samples,
@@ -350,6 +445,15 @@ class TopCommand(BaseCommand):
             "functions": functions,
             "meta": dict(self._meta),
         }
+        if self._meta.get("backend") == BACKEND_GREENLET_AWARE_SAMPLING:
+            snapshot["greenlet_events"] = {
+                "switch_counts": {
+                    str(greenlet_id): count
+                    for greenlet_id, count in greenlet_switch_counts.items()
+                },
+                "throw_count": greenlet_throw_count,
+            }
+        return snapshot
 
     def _is_peeka_thread(self, thread_id: int, frame) -> bool:
         """

@@ -1,10 +1,15 @@
 """Tests for top command gevent policy metadata."""
 
+import sys
 import threading
 import time
 
 import pytest
 
+from peeka.core.runtime.compat import (
+    BACKEND_FRAME_WALK,
+    BACKEND_GREENLET_AWARE_SAMPLING,
+)
 from peeka.core.runtime.gevent_probe import GeventState
 
 
@@ -30,6 +35,42 @@ class MockAgent:
         self._observations.append(observation)
 
 
+class FakeThreadHandle:
+    """Thread handle stub that records the selected sampling target."""
+
+    created = []
+
+    def __init__(self, target, name):
+        self.target = target
+        self.name = name
+        self.ident = 12345 + len(self.created)
+        self._alive = True
+        self.created.append(self)
+
+    def is_alive(self):
+        """Return whether the fake thread is considered alive."""
+        return self._alive
+
+    def join(self, timeout=None):
+        """Mark the fake thread as stopped."""
+        self._alive = False
+
+
+class FakeGreenletModule:
+    """Minimal greenlet module stub with trace callback support."""
+
+    def __init__(self, tracer=None):
+        self.tracer = tracer
+
+    def gettrace(self):
+        """Return the installed tracer."""
+        return self.tracer
+
+    def settrace(self, tracer):
+        """Install the tracer."""
+        self.tracer = tracer
+
+
 @pytest.mark.unit
 class TestTopCommandPolicy:
     """Top command policy metadata tests."""
@@ -51,27 +92,51 @@ class TestTopCommandPolicy:
             assert result["status"] == "success"
             assert result["meta"] == {
                 "gevent_state": "none",
-                "backend": "frame_walk",
+                "backend": BACKEND_FRAME_WALK,
                 "greenlet_blind": False,
                 "degraded_reason": None,
             }
         finally:
             top_command.execute({"action": "stop"})
 
-    def test_patched_runtime_start_returns_degraded_meta(
+    def test_none_state_uses_frame_walk_sampling_target(
         self, top_command, monkeypatch
     ):
-        """Patched gevent runtime marks top as greenlet-blind."""
+        """NONE state starts the existing frame-walk sampling loop."""
+        FakeThreadHandle.created = []
+        monkeypatch.setattr("peeka.commands.top.probe", lambda: GeventState.NONE)
+        monkeypatch.setattr("peeka.commands.top._NativeThreadHandle", FakeThreadHandle)
+
+        result = top_command.execute({"action": "start", "interval": 0.01})
+
+        try:
+            assert result["status"] == "success"
+            assert FakeThreadHandle.created[0].target.__name__ == "_sampling_loop"
+            assert result["meta"]["backend"] == BACKEND_FRAME_WALK
+        finally:
+            top_command.execute({"action": "stop"})
+
+    def test_patched_runtime_uses_greenlet_aware_sampling_target(
+        self, top_command, monkeypatch
+    ):
+        """PATCHED state starts the greenlet-aware sampling backend."""
+        FakeThreadHandle.created = []
         monkeypatch.setattr("peeka.commands.top.probe", lambda: GeventState.PATCHED)
+        monkeypatch.setitem(sys.modules, "greenlet", FakeGreenletModule())
+        monkeypatch.setattr("peeka.commands.top._NativeThreadHandle", FakeThreadHandle)
 
         result = top_command.execute({"action": "start", "interval": 0.01})
 
         try:
             assert result["status"] == "success"
             assert result["meta"]["gevent_state"] == "patched"
-            assert result["meta"]["backend"] == "frame_walk"
+            assert result["meta"]["backend"] == BACKEND_GREENLET_AWARE_SAMPLING
             assert result["meta"]["greenlet_blind"] is True
             assert isinstance(result["meta"]["degraded_reason"], str)
+            assert (
+                FakeThreadHandle.created[0].target.__name__
+                == "_sampling_loop_greenlet_aware"
+            )
         finally:
             top_command.execute({"action": "stop"})
 
@@ -105,6 +170,91 @@ class TestTopCommandPolicy:
         finally:
             top_command.execute({"action": "stop"})
 
+    def test_greenlet_tracer_chains_previous_callback(self, top_command, monkeypatch):
+        """greenlet-aware sampler calls the previous trace callback."""
+        calls = []
+
+        def prev_tracer(event, args):
+            calls.append((event, args))
+
+        fake_greenlet = FakeGreenletModule(prev_tracer)
+        monkeypatch.setitem(sys.modules, "greenlet", fake_greenlet)
+
+        def sample_once():
+            fake_greenlet.tracer("switch", ("source", "target"))
+
+        monkeypatch.setattr(top_command, "_sampling_loop", sample_once)
+
+        top_command._sampling_loop_greenlet_aware()
+
+        assert calls == [("switch", ("source", "target"))]
+        assert fake_greenlet.gettrace() is prev_tracer
+
+    def test_greenlet_tracer_isolates_previous_callback_errors(
+        self, top_command, monkeypatch
+    ):
+        """previous greenlet tracer exceptions do not propagate."""
+        def prev_tracer(event, args):
+            raise RuntimeError("host tracer failed")
+
+        fake_greenlet = FakeGreenletModule(prev_tracer)
+        monkeypatch.setitem(sys.modules, "greenlet", fake_greenlet)
+
+        def sample_once():
+            fake_greenlet.tracer("throw", ("source", "target"))
+
+        monkeypatch.setattr(top_command, "_sampling_loop", sample_once)
+
+        top_command._sampling_loop_greenlet_aware()
+
+        assert fake_greenlet.gettrace() is prev_tracer
+        assert top_command._greenlet_throw_count == 1
+
+    def test_greenlet_tracer_restores_previous_callback_on_error(
+        self, top_command, monkeypatch
+    ):
+        """greenlet trace callback is restored in finally."""
+        def prev_tracer(event, args):
+            return None
+
+        fake_greenlet = FakeGreenletModule(prev_tracer)
+        monkeypatch.setitem(sys.modules, "greenlet", fake_greenlet)
+
+        def fail_sampling():
+            raise RuntimeError("sampling failed")
+
+        monkeypatch.setattr(top_command, "_sampling_loop", fail_sampling)
+
+        with pytest.raises(RuntimeError):
+            top_command._sampling_loop_greenlet_aware()
+
+        assert fake_greenlet.gettrace() is prev_tracer
+
+    def test_greenlet_missing_falls_back_to_frame_walk(
+        self, top_command, monkeypatch, caplog
+    ):
+        """Missing greenlet module falls back to frame walk and updates meta."""
+        called = []
+        monkeypatch.delitem(sys.modules, "greenlet", raising=False)
+        top_command._meta = {
+            "gevent_state": "patched",
+            "backend": BACKEND_GREENLET_AWARE_SAMPLING,
+            "greenlet_blind": True,
+            "degraded_reason": "gevent active",
+        }
+
+        def fallback_sampling():
+            called.append(True)
+
+        monkeypatch.setattr(top_command, "_sampling_loop", fallback_sampling)
+
+        top_command._sampling_loop_greenlet_aware()
+
+        assert called == [True]
+        assert top_command._meta["backend"] == BACKEND_FRAME_WALK
+        assert "fell back to frame_walk" in top_command._meta["degraded_reason"]
+        assert "falling back to frame_walk" in caplog.text
+
     def test_start_uses_native_thread_primitives(self, monkeypatch):
         """Top start survives a patched threading module."""
         from peeka.commands.top import TopCommand
@@ -118,6 +268,7 @@ class TestTopCommandPolicy:
         monkeypatch.setattr(threading, "Thread", fail_thread)
         monkeypatch.setattr(threading, "Event", fail_event)
         monkeypatch.setattr("peeka.commands.top.probe", lambda: GeventState.PATCHED)
+        monkeypatch.setitem(sys.modules, "greenlet", FakeGreenletModule())
 
         top_command = TopCommand(MockAgent())
         result = top_command.execute({"action": "start", "interval": 0.01})
