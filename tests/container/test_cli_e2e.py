@@ -5,6 +5,7 @@ GDB-based (Python 3.12) and PEP 768 (Python 3.14) containers.
 """
 
 import json
+import shlex
 from typing import Dict, List
 
 import pytest
@@ -32,7 +33,9 @@ def run_cli_command(
             - success_msg: dict or None (first success message)
             - error_msg: dict or None (first error message)
     """
-    cli_cmd = f"python -m peeka.cli.main {' '.join(cmd_parts)}"
+    cli_cmd = "python -m peeka.cli.main " + " ".join(
+        shlex.quote(part) for part in cmd_parts
+    )
     exit_code, output = exec_in_container(container, cli_cmd, timeout=timeout)
 
     # Parse JSONL output
@@ -260,10 +263,6 @@ class TestCLIWorkflowE2E:
         )
         assert watch_result["exit_code"] in [0, 124], "Watch with condition failed"
 
-        # Verify observations received (may be fewer due to filtering)
-        observations = [
-            m for m in watch_result["messages"] if m.get("type") == "observation"
-        ]
         # At least watch_started event should exist
         events = [m for m in watch_result["messages"] if m.get("type") == "event"]
         assert len(events) >= 1, "No watch_started event"
@@ -337,12 +336,7 @@ class TestCLIWorkflowE2E:
         # Second attach (should fail or warn)
         attach2_result = run_cli_command(container, ["attach", pid], timeout=10)
 
-        # Expect error or already attached message
-        already_attached = (
-            attach2_result["error_msg"] is not None
-            or "already" in attach2_result["raw_output"].lower()
-            or "exists" in attach2_result["raw_output"].lower()
-        )
+        assert attach2_result["raw_output"].strip()
 
         # Cleanup
         run_cli_command(container, ["detach"])
@@ -403,10 +397,6 @@ class TestCLIWorkflowE2E:
         assert trace_result["exit_code"] in [0, 124], (
             f"Trace failed: {trace_result['raw_output']}"
         )
-        trace_observations = [
-            m for m in trace_result["messages"] if m.get("type") == "observation"
-        ]
-
         watch_result = run_cli_command(
             container,
             ["watch", "__main__.Calculator.add", "-n", "1"],
