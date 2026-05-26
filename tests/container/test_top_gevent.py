@@ -60,7 +60,7 @@ class TestTopGeventDataPlane:
     """Top command gevent metadata tests."""
 
     def test_top_gevent_returns_greenlet_blind_meta(self, gdb_container):
-        """Top marks frame-walk sampling as greenlet-blind under gevent."""
+        """Top uses greenlet-aware sampling metadata under gevent."""
         container = gdb_container
         pid = _start_gevent_target(container)
 
@@ -87,7 +87,7 @@ class TestTopGeventDataPlane:
             meta = top_started.get("meta")
             assert isinstance(meta, dict), f"Missing top meta:\n{top_started}"
             assert meta["gevent_state"] in ("patched", "active_hub")
-            assert meta["backend"] == "frame_walk"
+            assert meta["backend"] == "greenlet_aware_sampling"
             assert meta["greenlet_blind"] is True
 
             observations = [
@@ -96,8 +96,10 @@ class TestTopGeventDataPlane:
             assert observations, f"No top observations:\n{output}"
             assert any(
                 record.get("meta", {}).get("greenlet_blind") is True
+                and record.get("meta", {}).get("backend")
+                == "greenlet_aware_sampling"
                 for record in observations
-            ), f"No greenlet_blind observation meta:\n{output}"
+            ), f"No greenlet-aware observation meta:\n{output}"
 
             exit_code, status_output = exec_in_container(
                 container, "python -m peeka.cli.main patch-status", timeout=10
