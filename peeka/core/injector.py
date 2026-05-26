@@ -533,6 +533,7 @@ class DecoratorInjector:
 
             is_instance_method = config.get("_is_instance_method", False)
             target_self = args[0] if args and is_instance_method else None
+            user_args = args[1:] if target_self is not None else args
 
             def should_observe(duration_cost=None):
                 """
@@ -545,7 +546,7 @@ class DecoratorInjector:
                     return True
                 try:
                     local_vars = {
-                        "params": args,
+                        "params": user_args,
                         "kwargs": kwargs,
                         "target": target_self,
                     }
@@ -579,7 +580,7 @@ class DecoratorInjector:
                     "timestamp": time.time(),
                     "location": location,
                     "func_name": f"{func.__module__}.{func.__qualname__}",
-                    "params": injector._format_value(args, depth),
+                    "params": injector._format_value(user_args, depth),
                     "kwargs": injector._format_value(kwargs, depth),
                     "target": injector._format_value(target_self, depth)
                     if target_self
@@ -608,6 +609,7 @@ class DecoratorInjector:
                         }
                         for frame in stack_frames
                     ]
+                    observation["data"] = {"stack_trace": observation["stack"]}
 
                 try:
                     injector.agent._send_observation(observation)
@@ -1154,6 +1156,7 @@ class DecoratorInjector:
             # Extract self object for instance methods
             is_instance_method = config.get("_is_instance_method", False)
             target_self = args[0] if args and is_instance_method else None
+            user_args = args[1:] if target_self is not None else args
 
             def should_observe(duration_cost=None):
                 """Evaluate condition expression."""
@@ -1161,7 +1164,7 @@ class DecoratorInjector:
                     return True
                 try:
                     local_vars = {
-                        "params": args,
+                        "params": user_args,
                         "kwargs": kwargs,
                         "target": target_self,
                     }

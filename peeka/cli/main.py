@@ -240,6 +240,8 @@ Examples:
     )
     logger_parser.add_argument(
         "--logger",
+        "--name",
+        dest="logger",
         type=str,
         help="Logger name for get/set actions",
     )

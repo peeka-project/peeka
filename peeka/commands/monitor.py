@@ -168,6 +168,8 @@ class MonitorCommand(BaseCommand):
                 cycle_count += 1
 
                 # Add cycle information to stats
+                stats["count"] = stats.get("total", 0)
+                stats["call_count"] = stats.get("total", 0)
                 stats["cycle"] = cycle_count
                 stats["watch_id"] = watch_id
 

@@ -26,7 +26,7 @@ class TestContainerTUI:
         """
         exit_code, output = exec_in_container(
             gdb_container,
-            "cd /app && python -m pytest tests/container/tui_inner_test.py -v --timeout=30",
+            "cd /app && python tests/container/tui_smoke_inner.py",
             timeout=60,
         )
         assert exit_code == 0, f"TUI tests failed inside container:\n{output}"
