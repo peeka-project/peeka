@@ -3,6 +3,7 @@
 import pytest
 
 from peeka.commands.trace import TraceCommand
+from peeka.core.runtime.compat import get_policy
 from peeka.core.runtime.gevent_probe import GeventState
 
 
@@ -48,20 +49,21 @@ class TestTraceCommandPolicy:
     """Trace command policy tests."""
 
     def test_clean_runtime_uses_existing_backend_selection(self, monkeypatch):
-        """Clean runtime passes settrace_or_monitoring to injector."""
+        """Clean runtime passes a precise safe backend to injector."""
         monkeypatch.setattr("peeka.commands.trace.probe", lambda: GeventState.NONE)
         agent = FakeAgent()
         command = TraceCommand(agent)
+        expected_backend = get_policy("trace", GeventState.NONE).backend
 
         result = command.execute(
             {"action": "start", "pattern": "module.func", "depth": 3}
         )
 
         assert result["status"] == "success"
-        assert agent.injector.calls[0]["force_backend"] == "settrace_or_monitoring"
+        assert agent.injector.calls[0]["force_backend"] == expected_backend
         assert result["meta"] == {
             "gevent_state": "none",
-            "backend": "settrace_or_monitoring",
+            "backend": expected_backend,
             "greenlet_blind": False,
             "degraded_reason": None,
         }
