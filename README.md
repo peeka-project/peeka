@@ -126,9 +126,9 @@ Peeka separates its gevent support into two layers:
 |---------|-----------|-----------------|-----------------------------|
 | `watch` | safe | safe | safe |
 | `monitor` | safe | safe | safe |
-| `stack` | safe | safe | degraded stack inspection |
+| `stack` | safe | safe | safe |
 | `trace` | full trace backend | full trace backend | degraded to `wrapper_only` |
-| `top` | frame-walk sampling | frame-walk sampling | `greenlet_blind` frame-walk sampling |
+| `top` | frame-walk sampling | frame-walk sampling | `greenlet_aware_sampling` with `greenlet_blind` meta |
 
 When Peeka detects gevent monkey patching, affected JSONL records include metadata such as:
 
@@ -143,7 +143,7 @@ When Peeka detects gevent monkey patching, affected JSONL records include metada
 }
 ```
 
-For gevent targets, prefer `watch` when wrapper-level entry/exit observations are enough. `trace` remains available, but under patched gevent it uses wrapper-only tracing instead of recursive `sys.settrace` call trees. `top` remains available, but its frame-walk samples only represent the active greenlet on each OS thread.
+For gevent targets, prefer `watch` when wrapper-level entry/exit observations are enough. `trace` remains available, but under patched gevent it uses wrapper-only tracing instead of recursive `sys.settrace` call trees. `top` remains available through a chained `greenlet.settrace` backend that preserves any existing greenlet tracer, while still marking `greenlet_blind` because suspended greenlets cannot be fully enumerated.
 
 ## Read More
 
