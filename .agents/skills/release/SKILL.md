@@ -5,7 +5,7 @@ description: "Create a versioned release for peeka. Triggers: /release, version 
 
 # Release Skill
 
-Automate the complete release workflow for peeka: version updates, git commits, tags, and push. GitHub Actions handles PyPI publishing and GitHub Release creation automatically.
+Automate the complete release workflow for peeka: version updates, git commits, tags, push, and a concise GitHub Release description. GitHub Actions handles PyPI publishing and creates the initial GitHub Release; this skill must replace the generated commit-list notes with a short, user-facing summary.
 
 ## Prerequisites
 
@@ -62,7 +62,9 @@ Phase 6: Post-release Postmortem Analysis
 GitHub Actions automatically handles (triggered by tag push):
 - Running tests
 - Building and publishing to PyPI
-- Creating GitHub Release with auto-generated notes
+- Creating an initial GitHub Release
+
+The release agent must then update the GitHub Release body with a summarized, social-ready description. Do not leave the final release notes as a raw commit list.
 
 **Total Duration**: ~5-15 minutes (depends on GitHub Actions queue and postmortem analysis scope)
 
@@ -434,7 +436,60 @@ git tag -a v0.2.0 -m "Release v0.2.0"
 - Version: `X.Y.Z` (semantic version)
 - Annotation: `Release vX.Y.Z`
 
-### 4.3 Push Commit and Tag
+### 4.3 Draft GitHub Release Description
+
+Before pushing the tag, draft the final GitHub Release body from the release commit range. This draft will replace the workflow's initial auto-generated notes in Phase 5.
+
+**Collect commit context**:
+```bash
+previous_tag=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
+if [ -n "$previous_tag" ]; then
+    release_range="$previous_tag..HEAD"
+else
+    release_range="HEAD"
+fi
+
+git log "$release_range" --pretty=format:"%h%x09%s" --no-merges
+if [ -n "$previous_tag" ]; then
+    git diff --stat "$previous_tag..HEAD"
+else
+    empty_tree=$(git hash-object -t tree /dev/null)
+    git diff --stat "$empty_tree" HEAD
+fi
+```
+
+**Summarization rules**:
+- Summarize the release by user value and product impact, not by commit order.
+- Group related commits into 3-5 concise bullets. Merge tiny style/test/docs commits into the nearest meaningful theme.
+- Ignore `chore(release): ...` version bump commits.
+- Mention fixes only when they affect reliability, usability, compatibility, diagnostics, or release confidence.
+- Skip raw commit hashes and avoid a complete commit list in the primary release body.
+- Keep the description clear enough to paste directly into a social post: short intro, compact bullets, no internal process noise.
+- Do not oversell. If a change is internal, phrase it as stability, compatibility, or maintainability only when that is true.
+
+**Release body template**:
+```markdown
+Peeka vX.Y.Z is out.
+
+This release <one-sentence summary of the main user-facing outcome>.
+
+- <Highlight 1: concrete user value>
+- <Highlight 2: concrete user value>
+- <Highlight 3: fix, compatibility, or workflow improvement>
+
+Upgrade:
+`pip install -U peeka`
+```
+
+If the release has a larger surface area, add at most one extra bullet. Avoid separate "Features/Fixes/Docs" sections unless the release is too broad for a single compact list.
+
+Save the draft outside the repository:
+```bash
+notes_file="/tmp/peeka-release-v$new_version.md"
+# Write the curated Markdown body to $notes_file.
+```
+
+### 4.4 Push Commit and Tag
 
 ```bash
 # Push both in one command (atomic, safer)
@@ -449,15 +504,15 @@ git ls-remote --tags origin v0.2.0
 # abc123...  refs/tags/v0.2.0
 ```
 
-### 4.4 Automated GitHub Actions Trigger
+### 4.5 Automated GitHub Actions Trigger
 
 The tag push automatically triggers `.github/workflows/publish-pypi.yml` which:
 
 1. **test** job: Runs unit tests
 2. **publish** job: Builds wheel and publishes to PyPI via Trusted Publisher (OIDC)
-3. **release** job: Creates GitHub Release with auto-generated release notes
+3. **release** job: Creates the initial GitHub Release
 
-**No manual intervention required** — everything is fully automated after the push.
+The generated release body is only a placeholder. Phase 5 must replace it with the curated summary drafted in 4.3.
 
 ---
 
@@ -475,11 +530,27 @@ gh run watch  # watches the latest run until completion
 
 The workflow typically completes in 2-5 minutes.
 
-### 5.2 Verify GitHub Release
+### 5.2 Verify and Update GitHub Release Description
 
 ```bash
 gh release view v0.2.0
 ```
+
+After the workflow creates the release, replace the generated commit-list body with the curated summary from Phase 4.3:
+
+```bash
+notes_file="/tmp/peeka-release-v$new_version.md"
+gh release edit "v$new_version" --notes-file "$notes_file"
+gh release view "v$new_version"
+```
+
+Verify the release body:
+- Starts with a concise announcement line (`Peeka vX.Y.Z is out.` or equivalent).
+- Contains one clear summary sentence and 3-5 user-facing bullets.
+- Does not present the commit history as the main content.
+- Can be copied directly into a short social-network post without editing.
+
+If the workflow has not created the release yet, wait for the release job to finish and retry `gh release edit`.
 
 ### 5.3 Verify Package on PyPI
 
@@ -509,6 +580,7 @@ Summary:
   - Commit: abc1234 "chore(release): bump version to 0.2.0"
   - Tag: v0.2.0 (pushed to origin)
   - GitHub Release: https://github.com/wwulfric/peeka/releases/tag/v0.2.0
+  - Release notes: curated summary applied
   - PyPI Package: https://pypi.org/project/peeka/0.2.0/
   - Workflow: https://github.com/wwulfric/peeka/actions/workflows/publish-pypi.yml
 ```
@@ -615,6 +687,8 @@ Summary:
 | Version mismatch between files | Error, abort | `Error: Version mismatch between files` |
 | Network error during push | Error, retry | `Error: Failed to push to origin. Check network connection.` |
 | GitHub Actions workflow fails | Warning, check Actions tab | `Warning: Check workflow at https://github.com/wwulfric/peeka/actions` |
+| GitHub Release body is still a commit list | Replace with curated notes from Phase 4.3 | `gh release edit vX.Y.Z --notes-file /tmp/peeka-release-vX.Y.Z.md` |
+| GitHub Release is not created yet | Wait for the release job, then retry notes update | `Warning: Release not found yet; retry after workflow completes` |
 | PyPI publishing fails | Warning, check Actions tab | `Warning: PyPI publish failed. Check Trusted Publisher config.` |
 | No postmortem directory exists | Phase 2 skips pattern check, Phase 6 creates directory | `(No existing postmortems — skipping pre-release check)` |
 | Pre-release check finds HIGH risk | Present report, ask user to fix or continue | `⚠ HIGH risk: <details>. Fix before release?` |
@@ -755,6 +829,22 @@ $ git commit -m "chore(release): bump version to 0.2.0"
 
 $ git tag -a v0.2.0 -m "Release v0.2.0"
 
+# Draft curated release notes
+$ git log v0.1.0..HEAD --pretty=format:"%h%x09%s" --no-merges
+$ git diff --stat v0.1.0..HEAD
+$ notes_file="/tmp/peeka-release-v0.2.0.md"
+# Agent writes a concise, user-facing summary to $notes_file:
+# Peeka v0.2.0 is out.
+#
+# This release makes runtime diagnostics smoother and more reliable across TUI and attach workflows.
+#
+# - Adds ...
+# - Improves ...
+# - Fixes ...
+#
+# Upgrade:
+# `pip install -U peeka`
+
 $ git push origin master --follow-tags
 To github.com:wwulfric/peeka.git
    def5678..abc1234  master -> master
@@ -767,6 +857,9 @@ To github.com:wwulfric/peeka.git
 # Wait 2-5 minutes for workflow to complete
 # Check: https://github.com/wwulfric/peeka/actions/workflows/publish-pypi.yml
 
+$ gh release edit v0.2.0 --notes-file /tmp/peeka-release-v0.2.0.md
+✓ GitHub Release description replaced with curated summary
+
 $ curl -s https://pypi.org/pypi/peeka/json | python3 -c "import sys,json; print(json.load(sys.stdin)['info']['version'])"
 0.2.0
 
@@ -776,6 +869,7 @@ Summary:
   - Commit: abc1234 "chore(release): bump version to 0.2.0"
   - Tag: v0.2.0 (pushed to origin)
   - GitHub Release: https://github.com/wwulfric/peeka/releases/tag/v0.2.0
+  - Release notes: curated summary applied
   - PyPI Package: https://pypi.org/project/peeka/0.2.0/
   - Workflow: ✓ automated via GitHub Actions
 
