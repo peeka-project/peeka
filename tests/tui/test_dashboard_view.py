@@ -338,7 +338,7 @@ class TestDashboardView:
             await pilot.pause()
             await pilot.pause()
 
-            rich_log = app.screen.query_one("#dash-agent-log", RichLog)
+            rich_log = app.screen.query_one("#dash-activity-log", RichLog)
             content = _rich_log_lines(rich_log)
 
             assert "AGENT" in content
@@ -373,7 +373,7 @@ class TestDashboardView:
             await pilot.pause()
             await pilot.pause()
 
-            rich_log = app.screen.query_one("#dash-agent-log", RichLog)
+            rich_log = app.screen.query_one("#dash-activity-log", RichLog)
             content = _rich_log_lines(rich_log)
 
             assert "CLIENT" in content
@@ -421,7 +421,7 @@ class TestDashboardView:
             await pilot.pause()
             await pilot.pause()
 
-            rich_log = app.screen.query_one("#dash-agent-log", RichLog)
+            rich_log = app.screen.query_one("#dash-activity-log", RichLog)
             content = _rich_log_lines(rich_log)
 
             assert "CLIENT" in content

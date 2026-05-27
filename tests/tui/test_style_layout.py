@@ -267,8 +267,8 @@ class TestDashboardStyles:
 
     @pytest.mark.asyncio
     @pytest.mark.tui
-    async def test_agent_log_has_stream_panel(self, mock_client):
-        """Dashboard agent log section has panel--stream class."""
+    async def test_activity_log_has_stream_panel(self, mock_client):
+        """Dashboard activity log section has panel--stream class."""
         mock_client.connect()
 
         app = PeekaApp()
@@ -283,9 +283,9 @@ class TestDashboardStyles:
             dashboard.set_client(mock_client)
             await pilot.pause()
 
-            agent_log_section = app.screen.query_one("#dash-agent-log-section", Vertical)
-            assert "panel" in agent_log_section.classes
-            assert "panel--stream" in agent_log_section.classes
+            activity_log_section = app.screen.query_one("#dash-activity-log-section", Vertical)
+            assert "panel" in activity_log_section.classes
+            assert "panel--stream" in activity_log_section.classes
 
     @pytest.mark.asyncio
     @pytest.mark.tui
@@ -305,14 +305,14 @@ class TestDashboardStyles:
             memory_section = app.query_one("#dash-memory-section", Vertical)
             gc_section = app.query_one("#dash-gc-section", Vertical)
             runtime_section = app.query_one("#dash-runtime-section", Vertical)
-            agent_log_section = app.query_one("#dash-agent-log-section", Vertical)
+            activity_log_section = app.query_one("#dash-activity-log-section", Vertical)
 
             assert memory_section.region.x == gc_section.region.x
             assert gc_section.region.x == runtime_section.region.x
             assert memory_section.region.y < gc_section.region.y < runtime_section.region.y
-            assert summary_column.region.y == agent_log_section.region.y
-            assert summary_column.region.height == agent_log_section.region.height
-            assert summary_column.region.x + summary_column.region.width <= agent_log_section.region.x
+            assert summary_column.region.y == activity_log_section.region.y
+            assert summary_column.region.height == activity_log_section.region.height
+            assert summary_column.region.x + summary_column.region.width <= activity_log_section.region.x
 
     @pytest.mark.asyncio
     @pytest.mark.tui
@@ -330,12 +330,12 @@ class TestDashboardStyles:
 
             detail_row = app.query_one("#dash-detail-row", Horizontal)
             summary_column = app.query_one("#dash-summary-column", Vertical)
-            agent_log_section = app.query_one("#dash-agent-log-section", Vertical)
+            activity_log_section = app.query_one("#dash-activity-log-section", Vertical)
 
             assert detail_row.region.x + detail_row.region.width <= 80
             assert summary_column.region.width > 0
-            assert agent_log_section.region.width > 0
-            assert agent_log_section.region.y >= detail_row.region.y
+            assert activity_log_section.region.width > 0
+            assert activity_log_section.region.y >= detail_row.region.y
 
     @pytest.mark.asyncio
     @pytest.mark.tui
@@ -351,8 +351,8 @@ class TestDashboardStyles:
         async with app.run_test(size=(80, 24)) as pilot:
             await pilot.pause()
 
-            activity_log = app.query_one("#dash-agent-log", RichLog)
-            activity_panel = app.query_one("#dash-agent-log-section", Vertical)
+            activity_log = app.query_one("#dash-activity-log", RichLog)
+            activity_panel = app.query_one("#dash-activity-log-section", Vertical)
 
             assert activity_log.wrap is True
             assert activity_log.min_width == DashboardView.ACTIVITY_LOG_MIN_RENDER_WIDTH
@@ -374,8 +374,8 @@ class TestDashboardStyles:
         async with app.run_test(size=(140, 24)) as pilot:
             await pilot.pause()
 
-            activity_log = app.query_one("#dash-agent-log", RichLog)
-            activity_panel = app.query_one("#dash-agent-log-section", Vertical)
+            activity_log = app.query_one("#dash-activity-log", RichLog)
+            activity_panel = app.query_one("#dash-activity-log-section", Vertical)
 
             assert activity_log.wrap is True
             assert activity_log.min_width == DashboardView.ACTIVITY_LOG_MIN_RENDER_WIDTH
@@ -398,7 +398,7 @@ class TestDashboardStyles:
             await pilot.pause()
 
             dashboard = app.query_one("DashboardView", DashboardView)
-            activity_log = app.query_one("#dash-agent-log", RichLog)
+            activity_log = app.query_one("#dash-activity-log", RichLog)
 
             dashboard._write_activity_entry(
                 "agent",
@@ -427,7 +427,7 @@ class TestDashboardStyles:
             await pilot.pause()
 
             dashboard = app.query_one("DashboardView", DashboardView)
-            activity_log = app.query_one("#dash-agent-log", RichLog)
+            activity_log = app.query_one("#dash-activity-log", RichLog)
             captured = []
 
             def capture_write(content, *args, **kwargs):

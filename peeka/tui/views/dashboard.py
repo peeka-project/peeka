@@ -67,7 +67,7 @@ class DashboardView(Container):
 
     BINDINGS = [
         Binding("r", "refresh", "Refresh"),
-        Binding("c", "clear_agent_log", "Clear Activity Log"),
+        Binding("c", "clear_activity_log", "Clear Activity Log"),
         Binding("y", "copy_activity_log", "Copy Activity Log"),
     ]
 
@@ -102,11 +102,11 @@ class DashboardView(Container):
         self._dashboard_connection_lost = False
         self._load_client_activity_history()
         self._register_client_activity_listener()
-        self._load_persisted_agent_log_history()
+        self._load_persisted_activity_history()
         # Create a dedicated connection for dashboard worker to avoid
         # socket contention with other views sharing the same client.
         self._connect_own_client()
-        self._connect_agent_log_stream()
+        self._connect_activity_log_stream()
         self._refresh_dashboard_sync()
         self._start_refresh_worker()
 
@@ -122,12 +122,12 @@ class DashboardView(Container):
         self._active = active
         if active:
             if self._client:
-                self._load_persisted_agent_log_history()
+                self._load_persisted_activity_history()
                 self._load_client_activity_history()
                 if not self._own_client:
                     self._connect_own_client()
                 if not self._stream_client:
-                    self._connect_agent_log_stream()
+                    self._connect_activity_log_stream()
                 self._refresh_dashboard_sync()
                 self._start_refresh_worker()
         else:
@@ -159,8 +159,8 @@ class DashboardView(Container):
 
             self._own_client = client
 
-    def _connect_agent_log_stream(self) -> None:
-        """Create a dedicated StreamingAgentClient for agent log streaming."""
+    def _connect_activity_log_stream(self) -> None:
+        """Create a dedicated StreamingAgentClient for the activity log."""
         if not self._socket_path:
             return
         try:
@@ -176,17 +176,17 @@ class DashboardView(Container):
             result = self._stream_client.connect()
             if result.get("status") != "success":
                 error = result.get("error")
-                self._log.warning("Agent log stream client failed: %s", error)
+                self._log.warning("Activity log stream client failed: %s", error)
                 self._stream_client = None
                 return
             self._start_log_worker()
         except Exception as e:
-            self._log.warning("Agent log stream client error: %s", e)
+            self._log.warning("Activity log stream client error: %s", e)
             self._stream_client = None
 
-    def action_clear_agent_log(self) -> None:
+    def action_clear_activity_log(self) -> None:
         """Clear the activity log display."""
-        rich_log = self.query_one("#dash-agent-log", RichLog)
+        rich_log = self.query_one("#dash-activity-log", RichLog)
         rich_log.clear()
         self._activity_log_entries.clear()
 
@@ -246,19 +246,19 @@ class DashboardView(Container):
         runtime_section.border_title = "Runtime"
 
         # -- Activity Log (agent-side logs + current client activity) --
-        agent_log_section = Vertical(
+        activity_log_section = Vertical(
             RichLog(
-                id="dash-agent-log",
+                id="dash-activity-log",
                 highlight=True,
                 max_lines=self.MAX_LOG_LINES,
                 auto_scroll=True,
                 wrap=True,
                 min_width=self.ACTIVITY_LOG_MIN_RENDER_WIDTH,
             ),
-            id="dash-agent-log-section",
+            id="dash-activity-log-section",
             classes="panel panel--stream",
         )
-        agent_log_section.border_title = "Activity Log (c to clear)"
+        activity_log_section.border_title = "Activity Log (c to clear)"
 
         yield Horizontal(
             thread_summary,
@@ -276,7 +276,7 @@ class DashboardView(Container):
                     runtime_section,
                     id="dash-summary-column",
                 ),
-                agent_log_section,
+                activity_log_section,
                 id="dash-detail-row",
             ),
             id="dashboard-container",
@@ -344,7 +344,7 @@ class DashboardView(Container):
             self._refresh_worker = None
 
     def _start_log_worker(self) -> None:
-        """Start agent log streaming when the dashboard is active."""
+        """Start activity log streaming when the dashboard is active."""
         if (
             not self._active
             or self._dashboard_connection_lost
@@ -354,13 +354,13 @@ class DashboardView(Container):
             return
 
         self._log_worker = self.run_worker(
-            lambda: self._stream_agent_log_messages(),
+            lambda: self._stream_activity_log_messages(),
             thread=True,
             exclusive=False,
         )
 
     def _stop_log_worker(self) -> None:
-        """Cancel the agent log streaming worker."""
+        """Cancel the activity log streaming worker."""
         if self._log_worker:
             self._log_worker.cancel()
             self._log_worker = None
@@ -610,7 +610,7 @@ class DashboardView(Container):
             entry.get("timestamp", ""),
         )
 
-    def _load_persisted_agent_log_history(self) -> None:
+    def _load_persisted_activity_history(self) -> None:
         """Replay the persisted session log so late-opened dashboards aren't blank."""
         if self._agent_history_loaded:
             return
@@ -846,8 +846,8 @@ class DashboardView(Container):
 
     # -- Activity Log Streaming ----------------------------------------------
 
-    def _stream_agent_log_messages(self) -> None:
-        """Stream log messages from the agent in background thread."""
+    def _stream_activity_log_messages(self) -> None:
+        """Stream agent log messages into the activity log in a background thread."""
         stream = self._stream_client or self._client
         if not stream:
             return
@@ -873,7 +873,7 @@ class DashboardView(Container):
         if not worker.is_cancelled and self._active:
             self.app.call_from_thread(
                 self._handle_dashboard_connection_lost,
-                "agent log stream closed by peer",
+                "activity log stream closed by peer",
             )
 
     def _format_timestamp(self, timestamp: Any) -> str:
@@ -939,14 +939,14 @@ class DashboardView(Container):
         if not self.is_mounted:
             return
 
-        rich_log = self.query_one("#dash-agent-log", RichLog)
+        rich_log = self.query_one("#dash-activity-log", RichLog)
         rich_log.clear()
         for entry in self._activity_log_entries[-self.MAX_LOG_LINES :]:
             self._render_activity_entry(entry)
 
     def _render_activity_entry(self, entry: Dict[str, Any]) -> None:
         """Render one cached activity entry to the RichLog."""
-        rich_log = self.query_one("#dash-agent-log", RichLog)
+        rich_log = self.query_one("#dash-activity-log", RichLog)
         source = str(entry.get("source", ""))
         level = str(entry.get("level", "INFO"))
         message = str(entry.get("message", ""))
