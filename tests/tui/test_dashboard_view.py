@@ -429,3 +429,39 @@ class TestDashboardView:
             assert "GDB dlopen injector completed" in content
             assert "attach: attach.attached done" in content
             assert "5598ms total" in content
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_copy_activity_log_copies_plain_text(self, mock_client):
+        """Dashboard copies the current activity log without terminal selection."""
+        mock_client.connect()
+
+        app = PeekaApp()
+        copied = []
+
+        def copy_to_clipboard(text):
+            copied.append(text)
+
+        app.copy_to_clipboard = copy_to_clipboard
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            dashboard = app.screen.query_one("DashboardView", DashboardView)
+            dashboard.set_client(mock_client)
+            dashboard._write_activity_entry(
+                "client",
+                "INFO",
+                "attach: attach.run_injector done: GDB dlopen injector completed (1430ms)",
+                1000.0,
+            )
+
+            dashboard.action_copy_activity_log()
+            await pilot.pause()
+
+            assert copied
+            assert "CLIENT INFO attach: attach.run_injector done" in copied[-1]
+            assert "GDB dlopen injector completed" in copied[-1]

@@ -68,6 +68,7 @@ class DashboardView(Container):
     BINDINGS = [
         Binding("r", "refresh", "Refresh"),
         Binding("c", "clear_agent_log", "Clear Activity Log"),
+        Binding("y", "copy_activity_log", "Copy Activity Log"),
     ]
 
     MAX_LOG_LINES = 1000
@@ -188,6 +189,21 @@ class DashboardView(Container):
         rich_log = self.query_one("#dash-agent-log", RichLog)
         rich_log.clear()
         self._activity_log_entries.clear()
+
+    def action_copy_activity_log(self) -> None:
+        """Copy the current activity log entries to the terminal clipboard."""
+        text = self._activity_log_text()
+        if not text:
+            self.notify("Activity Log is empty", severity="warning")
+            return
+
+        try:
+            self.app.copy_to_clipboard(text)
+        except Exception as e:
+            self.notify(f"Failed to copy Activity Log: {e}", severity="error")
+            return
+
+        self.notify("Activity Log copied", severity="information")
 
     def compose(self) -> ComposeResult:
         # -- Controls bar (status + refresh button) --
@@ -892,6 +908,24 @@ class DashboardView(Container):
             self._activity_log_entries = self._activity_log_entries[-self.MAX_LOG_LINES :]
 
         self._render_activity_entry(entry)
+
+    def _activity_log_text(self) -> str:
+        """Return visible activity log entries as plain text."""
+        lines = [
+            self._format_activity_entry_plain(entry)
+            for entry in self._activity_log_entries[-self.MAX_LOG_LINES :]
+        ]
+        return "\n".join(line for line in lines if line)
+
+    def _format_activity_entry_plain(self, entry: Dict[str, Any]) -> str:
+        """Format one activity entry as copy-friendly plain text."""
+        timestamp = self._format_timestamp(entry.get("timestamp", ""))
+        source = str(entry.get("source", "")).upper()
+        level = str(entry.get("level", "INFO")).upper()
+        message = str(entry.get("message", ""))
+
+        prefix = f"[{timestamp}] " if timestamp else ""
+        return f"{prefix}{source} {level} {message}".strip()
 
     def _activity_log_render_width(self, rich_log: RichLog) -> int:
         """Return the current render width, falling back only before layout."""
