@@ -786,6 +786,41 @@ class TestProcessSelectorScreen:
             assert len(log_widget.lines) > 0
 
     @pytest.mark.asyncio
+    async def test_copy_attach_log_copies_plain_text(self):
+        """Process selector copies attach log text without terminal selection."""
+        from peeka.core.attach import AttachProgressEvent
+
+        app = PeekaApp()
+        copied = []
+
+        def copy_to_clipboard(text):
+            copied.append(text)
+
+        app.copy_to_clipboard = copy_to_clipboard
+        async with app.run_test() as pilot:
+            screen = app.screen
+            assert isinstance(screen, ProcessSelectorScreen)
+            screen._set_attach_panel_visible(True)
+            await pilot.pause()
+
+            event = AttachProgressEvent(
+                phase="run_injector",
+                status="done",
+                message="GDB dlopen injector completed",
+                level="info",
+                elapsed_ms=1430.0,
+            )
+            screen._on_progress(screen._attach_generation, event)
+            await pilot.pause()
+
+            screen.action_copy_attach_log()
+            await pilot.pause()
+
+            assert copied
+            assert "attach.run_injector done" in copied[-1]
+            assert "GDB dlopen injector completed" in copied[-1]
+
+    @pytest.mark.asyncio
     async def test_attach_log_debug_event_not_recorded_to_activity(self):
         """Debug attach logs stay out of dashboard activity history."""
         from peeka.core.attach import AttachProgressEvent
