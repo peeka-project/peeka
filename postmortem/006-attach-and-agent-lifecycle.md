@@ -5,13 +5,14 @@
 | **话题** | 进程 attach 就绪探测、会话文件清理、accept 循环时序与 agent 线程生命周期问题 |
 | **受影响组件** | core/attach, core/agent, tui process attach flow |
 | **最高严重级别** | SEV-0 (Critical) |
-| **事故次数** | 6 |
-| **时间跨度** | 2026-02-26 至 2026-05-03 |
+| **事故次数** | 7 |
+| **时间跨度** | 2026-02-26 至 2026-05-25 |
 
 ## 案例索引
 
 | # | 事故 | 严重级别 | 日期 |
 |---|------|----------|------|
+| [#7](#事故-7attach-异常路径未同步-_last_attach_error) | attach 异常路径未同步 `_last_attach_error` | SEV-2 | 2026-05-25 |
 | [#6](#事故-6attach-错误传播改进与-gdb-附加状态解析) | attach 错误传播改进与 GDB 附加状态解析 | SEV-2 | 2026-05-03 |
 | [#5](#事故-5首次-attach-间歇性超时) | 首次 attach 间歇性超时 | SEV-2 | 2026-03-01 |
 | [#4](#事故-4快速-attachdetach-后-connection-refused) | 快速 attach/detach 后 Connection refused | SEV-1 | 2026-03-01 |
@@ -24,6 +25,123 @@
 ## 话题概述
 
 该话题集中暴露 attach 与 agent 的“就绪判定—运行—清理”全链路时序问题：仅依赖 `.ready` 文件会误判就绪；accept 线程 event 设置过早导致连接窗口竞态；首次冷启动导入耗时与固定超时冲突；rapid attach 场景出现脚本清理时序与 stale 文件误判；最终在多次 attach/detach 循环中演化为线程泄漏（SEV-0）。
+
+2026-05-25 的新增事故说明，attach 链路的“错误可观测性”也是同一生命周期合同的一部分。`_attach_internal()` 在捕获异常后会返回 `False` 并发送 progress 事件，但若没有同步 `_last_attach_error`，CLI/TUI 上层只能看到泛化失败状态，无法稳定展示真实错误原因。
+
+---
+
+## 事故 #7：attach 异常路径未同步 `_last_attach_error`
+
+> **Tag 范围**：`v0.1.14` → `v0.1.15` | **严重级别**：SEV-2 | **日期**：2026-05-25
+
+### 概要
+
+`ProcessAttacher._attach_internal()` 的总异常捕获路径会记录日志并发出失败 progress，但没有把异常文本写入 `_last_attach_error`。当上层依赖该字段构造最终错误消息时，用户会看到缺失或陈旧的失败原因，降低 attach 问题的可诊断性。
+
+### 根因分析
+
+#### 类别
+Observability Gap / Integration Error
+
+#### 分析
+
+异常处理块只做了 progress 事件和日志输出：
+
+```python
+except Exception as e:
+    self._emit_progress(...)
+    logger.error("Attach failed: %s", e)
+    return False
+```
+
+这使 `_attach_internal()` 的返回值和进度流能表达失败，但对象状态中的 `_last_attach_error` 没有被更新。后续调用者若读取该字段，就无法获得导致失败的原始异常信息。该缺口与话题 #6 的“attach 错误传播”同属一类：错误已经发生，但没有被完整传递到最终用户可见层。
+
+#### 致因提交
+
+| 提交 | 作者 | 日期 | 描述 |
+|------|------|------|------|
+| 无法确定性定位 | - | 2026-05-25 前 | `_last_attach_error` 字段被引入后，`_attach_internal()` 的通用异常捕获路径未同步维护该字段 |
+
+### 复现
+
+#### 前置条件
+- 构造一个会在 `_check_existing_attachment()` 或 attach 准备阶段抛异常的 attach 流程。
+
+#### 步骤
+1. 创建 `ProcessAttacher(12345)`。
+2. 让 `_check_existing_attachment()` 抛出 `RuntimeError("Mocked attach failure")`。
+3. 调用 `_attach_internal()`。
+4. 检查返回值和 `_last_attach_error`。
+
+#### 预期行为
+`_attach_internal()` 返回 `False`，且 `_last_attach_error == "Mocked attach failure"`。
+
+#### 实际行为
+`_attach_internal()` 返回 `False`，但 `_last_attach_error` 未记录本次异常。
+
+### 修复
+
+#### 修复提交
+
+| 提交 | 作者 | 日期 | 描述 |
+|------|------|------|------|
+| [`09a825e`](https://github.com/peeka-project/peeka/commit/09a825e56b4e1418e87e77301d2082d94027c976) | lufeihaidao | 2026-05-25 | fix(core): save exception to _last_attach_error in _attach_internal |
+
+#### 变更内容
+
+在 `_attach_internal()` 的通用异常处理块中写入异常文本：
+
+```python
+except Exception as e:
+    self._last_attach_error = str(e)
+    self._emit_progress(...)
+    return False
+```
+
+同时新增回归测试 `test_attach_internal_saves_last_error_on_exception`，直接覆盖异常路径。
+
+#### 验证
+- `tests/test_attach_refactor.py` 新增异常路径断言。
+- `v0.1.15` 发布流水线 `publish-pypi.yml` 的测试 job 通过。
+
+### 影响
+
+- **受影响用户**：attach 失败并依赖 CLI/TUI 最终错误信息定位问题的用户。
+- **持续时间**：无法从 git 历史确定；缺口存在于 `_last_attach_error` 字段被上层消费之后。
+- **数据影响**：无。影响仅限错误诊断质量。
+
+### 时间线
+
+| 时间 | 事件 |
+|------|------|
+| 2026-05-25 前 | `_attach_internal()` 异常路径未维护 `_last_attach_error` |
+| 2026-05-25 | 修复提交 `09a825e` 合入 |
+| 2026-05-27 | `v0.1.15` 发布流水线验证通过 |
+
+### 经验教训
+
+#### 做得好的方面
+- 修复范围很小，直接在唯一异常出口补齐状态更新。
+- 回归测试使用故障注入覆盖精确路径，避免只验证日志或返回值。
+
+#### 可以改进的方面
+- attach 错误传播字段应有统一不变量：任何返回 `False` 的失败路径都必须设置可读错误原因。
+
+#### 行动项
+
+| 行动 | 优先级 | 状态 |
+|------|--------|------|
+| 为 attach 失败路径补充“返回 False 必须携带错误原因”的参数化测试 | P1 | 待处理 |
+
+### 预防
+
+- **立即执行**：保持新增回归测试，防止通用异常路径再次丢失错误状态。
+- **短期**：审计 `_attach_pep768()`、`_attach_fallback()` 和 `_wait_for_agent_ready()` 的所有 `False` 返回路径。
+- **长期**：将 attach 失败结果建模为结构化错误对象，减少“返回值 + side-channel 字段”的同步风险。
+
+### 参考
+
+- 修复提交：`09a825e`
 
 ---
 
