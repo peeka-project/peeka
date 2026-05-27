@@ -153,6 +153,55 @@ class TestHasInjector:
         assert result is False
         assert attacher._last_attach_error == "Mocked attach failure"
 
+
+class TestAttachProgressEvents:
+    """Test structured attach progress event contracts."""
+
+    def test_attached_done_event_has_total_elapsed(self, monkeypatch):
+        """Successful attach emits attached done with total elapsed time."""
+        events = []
+        attacher = ProcessAttacher(12345, progress_callback=events.append)
+
+        monkeypatch.delattr(attach.sys, "remote_exec", raising=False)
+        monkeypatch.setattr(attacher, "_check_existing_attachment", lambda: None)
+        monkeypatch.setattr(attacher, "_get_target_python_version", lambda: None)
+        monkeypatch.setattr(attacher, "_attach_fallback", lambda: True)
+        monkeypatch.setattr(attacher, "_save_attachment_state", lambda: None)
+
+        assert attacher._attach_internal() is True
+
+        attached = [
+            event
+            for event in events
+            if event.phase == "attached" and event.status == "done"
+        ][-1]
+        assert attached.elapsed_ms is not None
+        assert attached.elapsed_ms >= 0
+
+    def test_attached_failed_event_has_total_elapsed(self, monkeypatch):
+        """Failed attach emits attached failed with total elapsed time."""
+        events = []
+        attacher = ProcessAttacher(12345, progress_callback=events.append)
+
+        def fail_existing_check():
+            raise RuntimeError("Mocked attach failure")
+
+        monkeypatch.setattr(
+            attacher, "_check_existing_attachment", fail_existing_check
+        )
+
+        assert attacher._attach_internal() is False
+
+        attached = [
+            event
+            for event in events
+            if event.phase == "attached" and event.status == "failed"
+        ][-1]
+        assert attached.elapsed_ms is not None
+        assert attached.elapsed_ms >= 0
+        assert "Mocked attach failure" in attached.message
+
+
 class TestAttachFallbackDispatch:
     """Test _attach_fallback platform and injector dispatch logic."""
 

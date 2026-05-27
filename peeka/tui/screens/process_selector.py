@@ -15,6 +15,7 @@ from textual.screen import Screen
 from textual.widgets import DataTable, Header, Footer, Input, RichLog, Static
 
 from peeka.core.attach import AttachProgressEvent
+from peeka.tui.activity import attach_activity_metadata, format_attach_activity
 
 
 class ProcessSelectorScreen(Screen):
@@ -281,6 +282,7 @@ class ProcessSelectorScreen(Screen):
         if gen != self._attach_generation:
             return
 
+        self._record_attach_activity(event)
         self._set_attach_panel_visible(True)
 
         try:
@@ -289,7 +291,9 @@ class ProcessSelectorScreen(Screen):
             return
 
         ts = time.strftime("%H:%M:%S", time.localtime(event.timestamp or time.time()))
-        safe_msg = escape(event.message)
+        activity_entry = format_attach_activity(event)
+        log_message = activity_entry[1] if activity_entry else event.message
+        safe_msg = escape(log_message)
 
         if event.phase == "attach_log":
             log.write(f"[dim cyan]\\[{ts}][/] {safe_msg}")
@@ -321,12 +325,29 @@ class ProcessSelectorScreen(Screen):
         }
         color = color_map.get(event.status, "white")
 
-        formatted_msg = f"[dim cyan]\\[{ts}][/] [{color}]{status_icon}[/] \\[{event.phase}] {safe_msg}"
-        if event.elapsed_ms is not None:
-            formatted_msg += f" [dim]({int(event.elapsed_ms)}ms)[/]"
+        formatted_msg = f"[dim cyan]\\[{ts}][/] [{color}]{status_icon}[/] {safe_msg}"
 
         log.write(formatted_msg)
         self._render_attach_progress()
+
+    def _record_attach_activity(self, event: AttachProgressEvent) -> None:
+        """Mirror attach progress into the app-level client activity buffer."""
+        formatted = format_attach_activity(event)
+        if formatted is None:
+            return
+
+        recorder = getattr(self.app, "record_client_activity", None)
+        if not callable(recorder):
+            return
+
+        level, message = formatted
+        recorder(
+            level,
+            message,
+            source="attach",
+            timestamp=event.timestamp,
+            metadata=attach_activity_metadata(event),
+        )
 
     def _render_attach_progress(self) -> None:
         """Render phase states into #attach-progress Static widget."""

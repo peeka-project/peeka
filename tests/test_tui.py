@@ -658,6 +658,106 @@ class TestProcessSelectorScreen:
             assert "init" in progress_text
 
     @pytest.mark.asyncio
+    async def test_progress_event_records_attach_activity(self):
+        """Progress event mirrors to app-level attach activity buffer."""
+        from peeka.core.attach import AttachProgressEvent
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            screen = app.screen
+            assert isinstance(screen, ProcessSelectorScreen)
+            await pilot.pause()
+
+            event = AttachProgressEvent(
+                phase="run_injector",
+                status="done",
+                message="GDB dlopen injector completed",
+                level="info",
+                elapsed_ms=1430.0,
+            )
+            screen._on_progress(screen._attach_generation, event)
+            await pilot.pause()
+
+            entries = [
+                entry
+                for entry in app.get_client_activity_entries()
+                if entry.get("source") == "attach"
+            ]
+            assert len(entries) == 1
+            assert entries[0]["level"] == "INFO"
+            assert entries[0]["message"] == (
+                "attach.run_injector done: GDB dlopen injector completed (1430ms)"
+            )
+            assert entries[0]["phase"] == "run_injector"
+            assert entries[0]["status"] == "done"
+            assert entries[0]["elapsed_ms"] == 1430.0
+
+    @pytest.mark.asyncio
+    async def test_attached_done_records_total_elapsed_activity(self):
+        """attached done activity keeps total elapsed time for dashboard replay."""
+        from peeka.core.attach import AttachProgressEvent
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            screen = app.screen
+            assert isinstance(screen, ProcessSelectorScreen)
+            await pilot.pause()
+
+            event = AttachProgressEvent(
+                phase="attached",
+                status="done",
+                message="Successfully attached to process 24",
+                level="info",
+                elapsed_ms=5598.0,
+            )
+            screen._on_progress(screen._attach_generation, event)
+            await pilot.pause()
+
+            entries = [
+                entry
+                for entry in app.get_client_activity_entries()
+                if entry.get("source") == "attach"
+            ]
+            assert entries[-1]["message"] == (
+                "attach.attached done: Successfully attached to process 24 "
+                "(5598ms total)"
+            )
+            assert entries[-1]["phase"] == "attached"
+            assert entries[-1]["status"] == "done"
+
+    @pytest.mark.asyncio
+    async def test_attached_failed_records_error_activity(self):
+        """attached failed activity keeps the real attach error."""
+        from peeka.core.attach import AttachProgressEvent
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            screen = app.screen
+            assert isinstance(screen, ProcessSelectorScreen)
+            await pilot.pause()
+
+            event = AttachProgressEvent(
+                phase="attached",
+                status="failed",
+                message="Attach failed: missing Python symbols",
+                level="error",
+                elapsed_ms=250.0,
+            )
+            screen._on_progress(screen._attach_generation, event)
+            await pilot.pause()
+
+            entries = [
+                entry
+                for entry in app.get_client_activity_entries()
+                if entry.get("source") == "attach"
+            ]
+            assert entries[-1]["level"] == "ERROR"
+            assert entries[-1]["message"] == (
+                "attach.attached failed: Attach failed: missing Python symbols "
+                "(250ms total)"
+            )
+
+    @pytest.mark.asyncio
     async def test_attach_log_event_only_in_richlog(self):
         """attach_log phase events route only to RichLog, not phase states."""
         from peeka.core.attach import AttachProgressEvent
@@ -684,6 +784,33 @@ class TestProcessSelectorScreen:
 
             log_widget = screen.query_one("#attach-log", RichLog)
             assert len(log_widget.lines) > 0
+
+    @pytest.mark.asyncio
+    async def test_attach_log_debug_event_not_recorded_to_activity(self):
+        """Debug attach logs stay out of dashboard activity history."""
+        from peeka.core.attach import AttachProgressEvent
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            screen = app.screen
+            assert isinstance(screen, ProcessSelectorScreen)
+            await pilot.pause()
+
+            log_event = AttachProgressEvent(
+                phase="attach_log",
+                status="logged",
+                message="internal debug detail",
+                level="debug",
+            )
+            screen._on_progress(screen._attach_generation, log_event)
+            await pilot.pause()
+
+            entries = [
+                entry
+                for entry in app.get_client_activity_entries()
+                if entry.get("source") == "attach"
+            ]
+            assert entries == []
 
     @pytest.mark.asyncio
     async def test_stale_generation_progress_dropped(self):
@@ -713,6 +840,12 @@ class TestProcessSelectorScreen:
 
             assert len(log_widget.lines) == initial_line_count
             assert "init" not in screen._attach_phase_states
+            entries = [
+                entry
+                for entry in app.get_client_activity_entries()
+                if entry.get("source") == "attach"
+            ]
+            assert entries == []
 
 
     @pytest.mark.asyncio

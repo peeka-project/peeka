@@ -167,15 +167,25 @@ class PeekaApp(App):
         return level_map.get(str(severity).lower(), str(severity).upper())
 
     def record_client_activity(
-        self, level: str, message: str, source: str = "client"
+        self,
+        level: str,
+        message: str,
+        source: str = "client",
+        *,
+        timestamp: Optional[float] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Store a client-side activity entry and notify listeners."""
         entry = {
             "level": level.upper(),
             "message": message,
             "source": source,
-            "timestamp": time.time(),
+            "timestamp": timestamp if timestamp is not None else time.time(),
         }
+        if metadata:
+            for key, value in metadata.items():
+                if key not in entry:
+                    entry[key] = value
 
         with self._activity_lock:
             self._activity_seq += 1
