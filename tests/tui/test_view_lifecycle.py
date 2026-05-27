@@ -61,7 +61,7 @@ class TestDashboardLifecycle:
         view._active = False
         view._client = FakeClient()  # type: ignore[assignment]
         view._connect_own_client = lambda: calls.append("own_client")  # type: ignore[method-assign]
-        view._connect_agent_log_stream = lambda: calls.append("log_stream")  # type: ignore[method-assign]
+        view._connect_activity_log_stream = lambda: calls.append("log_stream")  # type: ignore[method-assign]
         view._refresh_dashboard_sync = lambda: calls.append("refresh")  # type: ignore[method-assign]
         view._start_refresh_worker = lambda: calls.append("worker")  # type: ignore[method-assign]
 

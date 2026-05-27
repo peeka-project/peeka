@@ -323,14 +323,14 @@ TabPane {
     min-height: 5;
 }
 
-#dash-agent-log-section {
+#dash-activity-log-section {
     width: 50%;
     height: 1fr;
 }
 
 #dash-mem-table,
 #dash-gc-table,
-#dash-agent-log {
+#dash-activity-log {
     height: 100%;
 }
 
