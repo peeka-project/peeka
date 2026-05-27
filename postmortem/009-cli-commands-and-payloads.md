@@ -2,16 +2,17 @@
 
 | 字段 | 值 |
 |------|-----|
-| **话题** | CLI 到 Agent 的命令分发与参数键契约不一致问题，以及 CLI run 命令实现缺陷 |
-| **受影响组件** | cli/main.py, core/output.py, core/bootstrap.py |
+| **话题** | CLI 到 Agent 的命令分发、参数键和 JSONL payload 契约不一致问题，以及 CLI run 命令实现缺陷 |
+| **受影响组件** | cli/main.py, core/output.py, core/bootstrap.py, core/injector.py, commands/monitor.py, tests/container/ |
 | **最高严重级别** | SEV-1 (High) |
-| **事故次数** | 5 |
-| **时间跨度** | 2026-01-29 至 2026-04-03 |
+| **事故次数** | 6 |
+| **时间跨度** | 2026-01-29 至 2026-05-27 |
 
 ## 案例索引
 
 | # | 事故 | 严重级别 | 日期 |
 |---|------|----------|------|
+| [#6](#事故-6容器诊断-cli-兼容性回归) | 容器诊断 CLI 兼容性回归 | SEV-2 | 2026-05-27 |
 | [#5](#事故-5peeka-cli-run-命令-outputformatter-stdout-捕获缺陷及多处实现问题) | peeka-cli run 命令 OutputFormatter stdout 捕获缺陷及多处实现问题 | SEV-2 | 2026-04-03 |
 | [#4](#事故-4cli-与-agent-payload-键名重构后失配) | CLI 与 Agent payload 键名重构后失配 | SEV-2 | 2026-03-18 |
 | [#3](#事故-3sm-命令参数键与结构错误导致完全失败) | `sm` 命令参数键与结构错误导致完全失败 | SEV-1 | 2026-03-01 |
@@ -25,6 +26,132 @@
 该话题聚焦 CLI 入口与 Agent 命令契约的演化失步：包括命令未接入主分发、字段命名不一致、参数结构不匹配及历史模块结构冲突。共同模式是"接口定义变更后未端到端同步验证"，导致命令可见但不可用，或直接返回缺参错误。
 
 2026-04-03 新增第五类问题：`peeka-cli run` 命令初始实现中存在多处缺陷，包括 `OutputFormatter` 的 `file=` 参数默认值在 pytest 环境下捕获了 monkeypatch 前的 stdout 对象，导致测试输出路由错误；bootstrap 模板内联维护困难；run 命令缺少 `--output-file` 等实用参数；临时文件未在异常路径下清理。
+
+2026-05-27 新增第六类问题：容器级诊断测试暴露了 CLI shell 参数拼接、logger 参数别名、monitor 统计字段、instance method 参数语义、stack observation 兼容字段和 TUI smoke 覆盖之间的多点契约漂移。这类问题不一定表现为单个命令完全不可用，但会让真实容器中的 CLI/TUI 工作流出现断言失败、条件表达式误判或输出字段缺失。
+
+---
+
+## 事故 #6：容器诊断 CLI 兼容性回归
+
+> **Tag 范围**：`v0.1.14` → `v0.1.15` | **严重级别**：SEV-2 | **日期**：2026-05-27
+
+### 概要
+
+`v0.1.15` 发布前的容器测试发现多个诊断命令在真实 CLI/TUI 工作流中存在兼容性问题：测试 helper 用裸字符串拼接命令导致带空格/特殊字符的参数被 shell 重新解释；logger 只接受 `--logger`，缺少历史 `--name` 别名；monitor observation 缺少 `count`/`call_count` 兼容字段；watch/trace 条件表达式在实例方法上把 `self` 暴露进 `params`；stack observation 没有同时提供 `data.stack_trace`。
+
+### 根因分析
+
+#### 类别
+Integration Error / Contract Drift
+
+#### 分析
+
+该事故由多个小契约漂移叠加而成，根因是单元测试覆盖了各模块局部行为，但缺少足够的真实容器 CLI 工作流约束。
+
+1. 容器测试 helper 直接拼接 shell 命令：
+
+```python
+cli_cmd = f"python -m peeka.cli.main {' '.join(cmd_parts)}"
+```
+
+当参数中包含 `params[0] > 5`、函数 pattern 或其他 shell 敏感字符时，命令行语义可能被 shell 改写。修复改为逐参数 `shlex.quote()`。
+
+2. logger CLI 参数在文档/旧测试中仍使用 `--name`，但 parser 只保留了 `--logger`。这属于历史别名兼容性缺失。
+
+3. monitor 输出只包含 manager 内部字段，未提供下游测试和用户常用的 `count`/`call_count` 兼容键。
+
+4. `DecoratorInjector` 在实例方法上把 `self` 放进 `params`，导致 Arthas 风格条件 `params[0] > 5` 实际取到目标对象而非第一个用户参数。相同问题也影响 trace 条件过滤。
+
+5. stack observation 顶层有 `stack`，但容器 E2E 期望 `data.stack_trace`。字段命名没有做到 additive 兼容。
+
+#### 致因提交
+
+| 提交 | 作者 | 日期 | 描述 |
+|------|------|------|------|
+| 无法确定性定位 | - | 2026-05-27 前 | 多个历史 CLI/Agent/测试契约分别演化，缺少统一 schema 或容器级契约测试 |
+
+### 复现
+
+#### 前置条件
+- 使用 `peeka-test:3.12` 或 `peeka-test:3.14` 容器镜像。
+- 目标进程已启动，CLI 通过 attach 连接到目标。
+
+#### 步骤
+1. 运行 watch 条件过滤：`peeka-cli watch "__main__.Calculator.add" --condition "params[0] > 5" -n 2`。
+2. 运行 logger list/get/set，尤其使用 `--name` 历史参数。
+3. 运行 monitor 并检查 observation 中是否有 `count`/`call_count`。
+4. 运行 stack 并检查 observation 中是否有 `data.stack_trace`。
+5. 在容器中运行 TUI smoke，切换主要 tab。
+
+#### 预期行为
+真实容器中的 CLI/TUI 诊断工作流可以稳定解析参数、执行命令，并输出兼容 JSONL 字段。
+
+#### 实际行为
+部分命令因参数解析或字段缺失失败；部分测试只能通过放宽断言而不能证明诊断输出完整。
+
+### 修复
+
+#### 修复提交
+
+| 提交 | 作者 | 日期 | 描述 |
+|------|------|------|------|
+| [`75b09c4`](https://github.com/peeka-project/peeka/commit/75b09c45bdc66ad8717b7a32ff2f71887e15ae8c) | lufeihaidao | 2026-05-27 | fix(container): restore diagnostic CLI compatibility |
+
+#### 变更内容
+
+- `tests/container/test_cli_e2e.py` 的 `run_cli_command()` 改为 `shlex.quote()` 逐参数构造命令。
+- `peeka/cli/main.py` 为 logger 参数恢复 `--name` 兼容别名，并统一写入 `dest="logger"`。
+- `peeka/commands/monitor.py` 在周期输出中补充 `count` 和 `call_count`。
+- `peeka/core/injector.py` 对实例方法引入 `user_args`，条件表达式和 observation `params` 都排除 `self`；stack observation additive 增加 `data.stack_trace`。
+- 新增 `tests/container/tui_smoke_inner.py`，在容器内用 Textual headless mode 验证 TUI 启动、help 快捷键和主 tab 切换。
+- 调整容器测试对长时间观察命令的退出码期望，允许在已产生有效输出后由外层 timeout 结束。
+
+#### 验证
+- `uv run pytest tests/container/ -v -m container --timeout=180`：176 passed。
+- `v0.1.15` 发布流水线 `publish-pypi.yml` 的测试 job 通过。
+
+### 影响
+
+- **受影响用户**：通过 CLI 使用 watch/trace/stack/monitor/logger 的用户，以及依赖容器 E2E 验证真实诊断工作流的开发者。
+- **持续时间**：无法精确定位；多个契约漂移来自不同历史提交，在 `v0.1.15` 发布前集中修复。
+- **数据影响**：无。影响为命令可用性、条件过滤语义和 JSONL 字段兼容性。
+
+### 时间线
+
+| 时间 | 事件 |
+|------|------|
+| 2026-05-27 前 | CLI、Agent 输出和容器测试契约分别演化 |
+| 2026-05-27 | 容器测试暴露多点兼容性问题 |
+| 2026-05-27 | `75b09c4` 修复 CLI 参数、输出字段和 TUI smoke 覆盖 |
+| 2026-05-27 | `v0.1.15` 发布流水线验证通过 |
+
+### 经验教训
+
+#### 做得好的方面
+- 容器测试覆盖了真实 shell、真实 CLI 入口、agent socket 和 TUI headless 生命周期，发现了单元测试难以暴露的问题。
+- 修复采用 additive 字段策略，没有删除现有输出字段。
+
+#### 可以改进的方面
+- CLI 参数别名和 JSONL observation 字段需要集中声明，避免通过测试期望隐式维护。
+- 诊断命令的“实例方法 params 不含 self”语义应写入命令契约，而不是只靠 Arthas 习惯推断。
+
+#### 行动项
+
+| 行动 | 优先级 | 状态 |
+|------|--------|------|
+| 为 watch/trace/stack/monitor/logger 建立最小 CLI contract 表，覆盖参数别名和 JSONL 字段 | P1 | 待处理 |
+| 容器测试 helper 必须使用 argv quoting，禁止裸 `' '.join(args)` | P0 | 已完成 |
+| 对 instance method 条件表达式增加非容器单元回归测试 | P1 | 待处理 |
+
+### 预防
+
+- **立即执行**：保留容器 E2E 中的条件表达式、stack payload 和 TUI smoke 覆盖。
+- **短期**：将常用 JSONL observation 字段加入 schema/contract 测试。
+- **长期**：为 CLI parser 和 Agent command 参数生成共享契约，减少双端手写漂移。
+
+### 参考
+
+- 修复提交：`75b09c4`
 
 ---
 

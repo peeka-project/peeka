@@ -5,13 +5,14 @@
 | **话题** | Runtime Primitives Layer (RPL) 的引入与稳定化 — 在 agent/attach 路径中替换裸 stdlib 调用，以抵御 gevent/eventlet monkey-patching |
 | **受影响组件** | `peeka/core/runtime/primitives.py`、`peeka/core/attach.py`、`peeka/core/agent.py`、`tests/runtime/` |
 | **最高严重级别** | SEV-1 (High) |
-| **事故次数** | 3 |
-| **时间跨度** | 2026-05-17 至 2026-05-24 |
+| **事故次数** | 4 |
+| **时间跨度** | 2026-05-17 至 2026-05-26 |
 
 ## 案例索引
 
 | # | 事故 | 严重级别 | 日期 |
 |---|------|----------|------|
+| [#4](#事故-4gevent-data-plane-兼容矩阵契约漂移) | gevent data-plane 兼容矩阵契约漂移 | SEV-2 | 2026-05-26 |
 | [#3](#事故-3rpl-混沌测试与-rlock-版本检查与设计语义脱节) | RPL 混沌测试与 RLock 版本检查与设计语义脱节 | SEV-3 | 2026-05-24 |
 | [#2](#事故-2attach-notify-server-在-pep-768-路径上调用了被遮蔽的-acceptaccept-在被-monkey-patch-时不安全) | attach notify server 在 PEP 768 路径上调用了被遮蔽的 `accept()`（accept 在被 monkey-patch 时不安全） | SEV-1 | 2026-05-24 |
 | [#1](#事故-1integrity_check-自创身份判断错误判定-rpl-为-degraded) | `integrity_check` 自创身份判断错误判定 RPL 为 degraded | SEV-2 | 2026-05-17 |
@@ -27,8 +28,135 @@
 1. **遗漏迁移点**：仍有热路径直接调用 stdlib 高层 API（如 `server.accept()`），在协程化目标进程中会触发协程切换甚至抛 `RuntimeError`。
 2. **完整性自检的语义混淆**：`integrity_check` 早期版本对每个 native 引用做"是否与当前模块属性同一对象"的硬身份比对，导致正常 gevent 环境下被判为 degraded。
 3. **测试假设与设计语义脱节**：随 RPL 一起加入的混沌测试沿用了"运行期检测 monkey-patching"的心智模型，与 RPL "import 期抓取即固化"的真实合同冲突；同时 RLock 测试基于错误的 Python 版本前提（`_thread.RLock` 实为自 Python 3.2 起存在）。
+4. **公开兼容矩阵合同漂移**：gevent data-plane 策略在首次实现时合并了 trace backend 字符串、把 stack 标为 degraded，并让 top 继续报告 frame-walk backend。这些值会进入 JSONL `meta`，属于外部可观察契约，必须用冻结矩阵测试守住。
 
 RPL 是 peeka 在异步/协程框架下生存的基础设施。其设计合同必须在源代码和测试中同时清晰表达，任何"现态检测"的语义都属于反模式，应交由真正的端到端 chaos 用例覆盖。
+
+---
+
+## 事故 #4：gevent data-plane 兼容矩阵契约漂移
+
+> **Tag 范围**：`v0.1.14` → `v0.1.15` | **严重级别**：SEV-2 | **日期**：2026-05-26
+
+### 概要
+
+gevent data-plane 策略首次落地后，与计划中的公开 JSONL 元数据合同存在偏差：trace 的 safe backend 被合并为 `settrace_or_monitoring`，top 在 gevent patched/active hub 状态下仍报告 `frame_walk`，stack 被标记为 degraded。由于这些字段会透传到 `meta.backend`、`meta.greenlet_blind` 和 `meta.degraded_reason`，偏差会让用户和自动化工具误读命令行为。
+
+### 根因分析
+
+#### 类别
+Integration Error / Regression
+
+#### 分析
+
+`peeka/core/runtime/compat.py` 最初将 trace 的安全路径抽象为单一 backend：
+
+```python
+BACKEND_SETTRACE_OR_MONITORING = "settrace_or_monitoring"
+_SAFE_TRACE = Policy(DECISION_SAFE, BACKEND_SETTRACE_OR_MONITORING, None, False)
+```
+
+这降低了实现复杂度，但破坏了“backend 字符串是精确公开契约”的要求。top 的 gevent 降级策略仍复用 `frame_walk`：
+
+```python
+_DEGRADED_TOP = Policy(DECISION_DEGRADED, BACKEND_FRAME_WALK, ..., True)
+```
+
+而计划要求使用后续实现的 `greenlet_aware_sampling`，并明确标注 suspended greenlet 盲区。stack 则被过度保守地标为 degraded，和矩阵规格的“全四态 safe + inspect_stack”不一致。
+
+问题本质不是功能崩溃，而是策略层、命令实现层和测试合同之间没有一次性冻结同一张矩阵。对 peeka 这类 JSONL 诊断工具，`meta` 字段属于机器可读 API，不能只按内部实现便利命名。
+
+#### 致因提交
+
+| 提交 | 作者 | 日期 | 描述 |
+|------|------|------|------|
+| `9cdd618` | lufeihaidao | 2026-05-26 | feat(runtime): add gevent-aware data plane policy |
+
+### 复现
+
+#### 前置条件
+- 目标进程已导入或 monkey-patch gevent。
+- 使用 `trace`、`top` 或 `stack` 命令并读取 JSONL `meta`。
+
+#### 步骤
+1. 在 clean runtime 下启动 `trace`，观察 `meta.backend`。
+2. 在 gevent patched/active hub 下启动 `top`，观察 `meta.backend`。
+3. 在 gevent patched/active hub 下启动 `stack`，观察 `meta.decision`/`meta.greenlet_blind`。
+
+#### 预期行为
+- trace safe backend 精确为 `sys_monitoring` 或 `settrace`。
+- top gevent backend 为 `greenlet_aware_sampling`，`greenlet_blind` 为 `true`。
+- stack 四态均为 safe，backend 为 `inspect_stack`。
+
+#### 实际行为
+- trace safe backend 被合并为 `settrace_or_monitoring`。
+- top gevent backend 仍为 `frame_walk`。
+- stack gevent 状态被标为 degraded。
+
+### 修复
+
+#### 修复提交
+
+| 提交 | 作者 | 日期 | 描述 |
+|------|------|------|------|
+| [`a0c5075`](https://github.com/peeka-project/peeka/commit/a0c5075ce100754e1834641ed3f3bbf98e1c4d0a) | lufeihaidao | 2026-05-26 | fix(runtime): align gevent compatibility matrix contract |
+
+#### 变更内容
+
+- 新增 `BACKEND_SETTRACE`、`BACKEND_SYS_MONITORING`、`BACKEND_GREENLET_AWARE_SAMPLING` 三个稳定 backend 字符串。
+- 通过 `_select_safe_trace_backend()` 按解释器能力选择精确 trace backend。
+- 将 top 的 gevent 降级 backend 改为 `greenlet_aware_sampling`。
+- 将 stack 的 patched/active hub 单元恢复为 safe + `inspect_stack`。
+- 将测试文件移到计划要求的根层路径：`tests/test_compat_matrix.py`、`tests/test_gevent_probe.py`。
+- 增加 `test_public_string_sets_are_frozen()`，显式冻结 decision/backend 字符串集合。
+
+#### 验证
+- `tests/test_compat_matrix.py` 覆盖 5 个命令 x 4 个 gevent 状态。
+- `tests/test_trace_command_policy.py` 根据矩阵期望断言 `force_backend` 和 JSONL meta。
+- `v0.1.15` 发布流水线 `publish-pypi.yml` 的测试 job 通过。
+
+### 影响
+
+- **受影响用户**：读取 JSONL `meta` 判断运行时兼容性的 CLI、TUI 或外部自动化工具用户。
+- **持续时间**：从 `9cdd618` 到 `a0c5075`，约 1 小时内在同一开发周期内修复，未进入正式 PyPI 版本。
+- **数据影响**：无。影响为诊断元数据合同不准确。
+
+### 时间线
+
+| 时间 | 事件 |
+|------|------|
+| 2026-05-26 | `9cdd618` 引入 gevent-aware data-plane policy |
+| 2026-05-26 | review 发现矩阵与计划契约偏差 |
+| 2026-05-26 | `a0c5075` 修复矩阵、backend 字符串和测试路径 |
+| 2026-05-27 | `v0.1.15` 发布流水线验证通过 |
+
+### 经验教训
+
+#### 做得好的方面
+- 偏差在发布前通过计划对照 review 发现，未进入 PyPI。
+- 修复后用矩阵测试冻结公开字符串，避免后续“内部重命名”破坏外部合同。
+
+#### 可以改进的方面
+- 任何会进入 JSONL 的新增 `meta` 字段，都应在实现前定义字段值表和兼容性矩阵。
+- top、trace、stack 的命令实现和 compat 矩阵需要在同一个测试维度里被审计，而不是分散验证。
+
+#### 行动项
+
+| 行动 | 优先级 | 状态 |
+|------|--------|------|
+| 保留 `test_public_string_sets_are_frozen()`，新增 backend 时必须显式更新测试 | P0 | 已完成 |
+| 对输出到 JSONL `meta` 的枚举字符串建立文档化 registry | P1 | 待处理 |
+
+### 预防
+
+- **立即执行**：所有 data-plane 策略改动必须同时更新矩阵测试和 command policy 测试。
+- **短期**：为 `meta.backend`、`meta.gevent_state` 等字段补充公开契约文档。
+- **长期**：考虑将 compat 矩阵导出为单一数据源，用它生成测试参数和用户文档，减少手写漂移。
+
+### 参考
+
+- 修复提交：`a0c5075`
+- 致因提交：`9cdd618`
 
 ---
 
