@@ -379,3 +379,53 @@ class TestDashboardView:
             assert "CLIENT" in content
             assert "watch: watch list refreshed" in content
             assert "trace started" in content
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_activity_log_replays_buffered_attach_timeline(self, mock_client):
+        """Dashboard replays attach activity emitted before MainScreen mounted."""
+        mock_client.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            app.record_client_activity(
+                "INFO",
+                "attach.run_injector done: GDB dlopen injector completed (1430ms)",
+                source="attach",
+                metadata={
+                    "phase": "run_injector",
+                    "status": "done",
+                    "elapsed_ms": 1430.0,
+                },
+            )
+            app.record_client_activity(
+                "INFO",
+                "attach.attached done: Successfully attached to process 24 (5598ms total)",
+                source="attach",
+                metadata={
+                    "phase": "attached",
+                    "status": "done",
+                    "elapsed_ms": 5598.0,
+                },
+            )
+
+            main_screen = MainScreen(
+                pid=24, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            dashboard = app.screen.query_one("DashboardView", DashboardView)
+            dashboard.set_client(mock_client)
+
+            await pilot.pause()
+            await pilot.pause()
+
+            rich_log = app.screen.query_one("#dash-agent-log", RichLog)
+            content = _rich_log_lines(rich_log)
+
+            assert "CLIENT" in content
+            assert "attach: attach.run_injector done" in content
+            assert "GDB dlopen injector completed" in content
+            assert "attach: attach.attached done" in content
+            assert "5598ms total" in content

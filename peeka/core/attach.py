@@ -494,9 +494,10 @@ class ProcessAttacher:
         Returns:
             bool: True if successful, False otherwise
         """
+        attach_start = time.monotonic()
         try:
             self._emit_progress(
-                "select_target",
+                "target_selected",
                 "done",
                 f"Selected target process {self.pid}",
                 details={"pid": self.pid},
@@ -514,6 +515,7 @@ class ProcessAttacher:
                         "attached",
                         "done",
                         f"Reused existing attachment for PID {self.pid}",
+                        elapsed_ms=(time.monotonic() - attach_start) * 1000,
                         details={"session_id": existing_session, "pid": self.pid},
                     )
                     return True
@@ -572,6 +574,7 @@ class ProcessAttacher:
                     "attached",
                     "done",
                     f"Successfully attached to process {self.pid}",
+                    elapsed_ms=(time.monotonic() - attach_start) * 1000,
                     details={
                         "pid": self.pid,
                         "session_id": self.session_id,
@@ -588,6 +591,7 @@ class ProcessAttacher:
                 "failed",
                 f"Attach failed: {e}",
                 level="error",
+                elapsed_ms=(time.monotonic() - attach_start) * 1000,
                 details={"pid": self.pid},
             )
             logger.error("Attach failed: %s", e)
