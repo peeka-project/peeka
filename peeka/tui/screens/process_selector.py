@@ -27,6 +27,7 @@ class ProcessSelectorScreen(Screen):
     BINDINGS = [
         Binding("r", "refresh", "Refresh"),
         Binding("enter", "select", "Select"),
+        Binding("y", "copy_attach_log", "Copy Attach Log"),
         Binding("escape", "quit_app", "Quit", priority=True),
         Binding("q", "quit_app", "Quit"),
     ]
@@ -167,6 +168,31 @@ class ProcessSelectorScreen(Screen):
             row = table.get_row(row_key)
             pid = int(row[0])
             self._attach_to_process(pid)
+
+    def action_copy_attach_log(self) -> None:
+        """Copy the current attach log to the terminal clipboard."""
+        text = self._attach_log_text()
+        if not text:
+            self.notify("Attach Log is empty", severity="warning")
+            return
+
+        try:
+            self.app.copy_to_clipboard(text)
+        except Exception as e:
+            self.notify(f"Failed to copy Attach Log: {e}", severity="error")
+            return
+
+        self.notify("Attach Log copied", severity="information")
+
+    def _attach_log_text(self) -> str:
+        """Return visible attach log lines as plain text."""
+        log = self.query_one("#attach-log", RichLog)
+        lines = []
+        for line in log.lines:
+            text = getattr(line, "text", str(line)).rstrip()
+            if text.strip():
+                lines.append(text)
+        return "\n".join(lines)
 
     def _attach_to_process(self, pid: int) -> None:
         """Attach to the selected process in a background worker."""
