@@ -4,8 +4,9 @@ Provides Docker image building, container lifecycle management, and helper
 functions for running target processes inside containers.
 
 Images only contain base environment (Python + system deps). Host code is
-mounted via volume at /app with PYTHONPATH=/app, so the container always
-reflects the latest source without rebuilding or pip install.
+mounted via volume at /app with PYTHONPATH=/app, so Python sources always
+reflect the latest checkout. GDB-based containers build the native _inject
+extension inside the container before attach tests run.
 """
 
 import shlex
@@ -61,6 +62,7 @@ def gdb_container(gdb_image):
         ) as container
     ):
         container.start()
+        ensure_injector_built_in_container(container)
         yield container
 
 
@@ -77,6 +79,7 @@ def py38_container(py38_image):
         ) as container
     ):
         container.start()
+        ensure_injector_built_in_container(container)
         yield container
 
 
@@ -114,6 +117,34 @@ def exec_in_container(container, cmd: str, timeout: int = 30) -> Tuple[int, str]
         ["bash", "-c", f"timeout {timeout} bash -c {shlex.quote(cmd)}"]
     )
     return exit_code, output_bytes.decode("utf-8", errors="replace")
+
+
+def ensure_injector_built_in_container(container) -> None:
+    """Build peeka.core._inject in a GDB test container if it is missing."""
+    check_cmd = """
+cd /app
+python - <<'PY'
+import peeka.core._inject as inject
+print(inject.__file__)
+PY
+""".strip()
+    exit_code, _ = exec_in_container(container, check_cmd, timeout=10)
+    if exit_code == 0:
+        return
+
+    build_cmd = "cd /app && python setup.py build_ext --inplace"
+    exit_code, output = exec_in_container(container, build_cmd, timeout=120)
+    assert exit_code == 0, (
+        "Failed to build peeka.core._inject inside the test container.\n"
+        f"Command: {build_cmd}\n"
+        f"Output:\n{output}"
+    )
+
+    exit_code, output = exec_in_container(container, check_cmd, timeout=10)
+    assert exit_code == 0, (
+        "peeka.core._inject still cannot be imported after container build.\n"
+        f"Output:\n{output}"
+    )
 
 
 def start_target_in_container(container, timeout: int = 10) -> str:
