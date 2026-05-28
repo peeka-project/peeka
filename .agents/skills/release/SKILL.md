@@ -465,6 +465,7 @@ fi
 - Mention fixes only when they affect reliability, usability, compatibility, diagnostics, or release confidence.
 - Skip raw commit hashes and avoid a complete commit list in the primary release body.
 - Keep the description clear enough to paste directly into a social post: short intro, compact bullets, no internal process noise.
+- Do not include install or upgrade commands unless the user explicitly asks for them.
 - Do not oversell. If a change is internal, phrase it as stability, compatibility, or maintainability only when that is true.
 
 **Release body template**:
@@ -476,9 +477,6 @@ This release <one-sentence summary of the main user-facing outcome>.
 - <Highlight 1: concrete user value>
 - <Highlight 2: concrete user value>
 - <Highlight 3: fix, compatibility, or workflow improvement>
-
-Upgrade:
-`pip install -U peeka`
 ```
 
 If the release has a larger surface area, add at most one extra bullet. Avoid separate "Features/Fixes/Docs" sections unless the release is too broad for a single compact list.
@@ -841,9 +839,6 @@ $ notes_file="/tmp/peeka-release-v0.2.0.md"
 # - Adds ...
 # - Improves ...
 # - Fixes ...
-#
-# Upgrade:
-# `pip install -U peeka`
 
 $ git push origin master --follow-tags
 To github.com:wwulfric/peeka.git
