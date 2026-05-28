@@ -41,6 +41,13 @@ _RTLD_NOW = 2
 # Max progress events to bound memory growth in long-running attach operations
 _MAX_PROGRESS_EVENTS = 256
 
+_INJECTOR_BUILD_HINT = (
+    "Install a wheel that includes peeka.core._inject, or build the extension "
+    "in the active Python environment. Source checkout command: "
+    "python setup.py build_ext --inplace. Editable install command: "
+    "python -m pip install -e ."
+)
+
 
 @dataclass
 class AttachProgressEvent:
@@ -656,7 +663,7 @@ class ProcessAttacher:
             if not _has_injector():
                 raise RuntimeError(
                     "C extension required for macOS attach. "
-                    "Build with: uv run python setup.py build_ext --inplace"
+                    f"{_INJECTOR_BUILD_HINT}"
                 )
             return self._inject_via_lldb()
 
@@ -664,8 +671,7 @@ class ProcessAttacher:
             if not _has_injector():
                 raise RuntimeError(
                     "C extension required for Linux attach. "
-                    "Install a wheel with the peeka.core._inject extension or build with: "
-                    "uv run python setup.py build_ext --inplace"
+                    f"{_INJECTOR_BUILD_HINT}"
                 )
             return self._inject_via_gdb()
 

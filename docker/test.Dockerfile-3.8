@@ -2,11 +2,12 @@
 # Test-only image for container-based E2E testing
 # Used by testcontainers in tests/container/ — do not rename without updating conftest.py
 #
-# Usage: mount host code as volume at /app, then pip install -e inside container
+# Usage: mount host code as volume at /app, then build _inject inside container
 #   docker run -v /path/to/peeka:/app --cap-add=SYS_PTRACE peeka-test:3.8
+#   cd /app && python setup.py build_ext --inplace
 #
 # Code is NOT baked into the image — mount via volume so the container
-# always reflects the latest source without rebuilding.
+# reflects the latest Python source without rebuilding the image.
 
 FROM peeka-base:3.8
 

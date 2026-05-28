@@ -278,7 +278,11 @@ class TestAttachFallbackDispatch:
         ):
             with pytest.raises(RuntimeError) as exc_info:
                 attacher._attach_fallback()
-            assert "C extension required for Linux attach" in str(exc_info.value)
+            error = str(exc_info.value)
+            assert "C extension required for Linux attach" in error
+            assert "python setup.py build_ext --inplace" in error
+            assert "python -m pip install -e ." in error
+            assert "uv run" not in error
 
     def test_macos_without_injector_raises_runtime_error(self):
         """Darwin + no injector should raise extension-required RuntimeError."""
@@ -288,7 +292,11 @@ class TestAttachFallbackDispatch:
         ):
             with pytest.raises(RuntimeError) as exc_info:
                 attacher._attach_fallback()
-            assert "C extension required for macOS attach" in str(exc_info.value)
+            error = str(exc_info.value)
+            assert "C extension required for macOS attach" in error
+            assert "python setup.py build_ext --inplace" in error
+            assert "python -m pip install -e ." in error
+            assert "uv run" not in error
 
     def test_windows_with_injector_raises_not_implemented(self):
         """Unsupported platform should raise NotImplementedError when injector exists."""

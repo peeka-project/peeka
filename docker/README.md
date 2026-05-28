@@ -3,7 +3,10 @@
 本目录包含测试用 Dockerfile，供 `testcontainers` 自动化测试和手动验证使用。
 
 镜像**不包含** peeka 代码，只提供基础运行环境。代码通过 volume mount 挂载，镜像内设置 `PYTHONPATH=/app`，
-无需 pip install 即可直接使用。只要镜像存在就能反映最新代码，无需重新构建。
+所以 Python 源码改动无需重新构建镜像即可生效。
+
+注意：Python 3.8/3.12 的 GDB attach 路径需要原生扩展 `peeka.core._inject`。自动化容器测试会在容器内执行
+`python setup.py build_ext --inplace`，为当前容器 Python 构建扩展。Python 3.14 的 PEP 768 路径不需要该扩展。
 
 ## 命名约定
 
@@ -85,10 +88,18 @@ docker run -it --cap-add=SYS_PTRACE --security-opt seccomp=unconfined \
   -v $(pwd):/app peeka-test:3.14
 ```
 
+进入 Python 3.8/3.12 GDB 容器后，第一次 attach 前需要构建 `_inject`：
+
+```bash
+cd /app
+python setup.py build_ext --inplace
+```
+
 ## 自动化测试（testcontainers）
 
 容器测试位于 `tests/container/`，由 pytest + testcontainers 自动管理容器生命周期。
-conftest.py 会自动挂载宿主机项目目录到 `/app`，通过 `PYTHONPATH=/app` 直接使用挂载的代码。
+conftest.py 会自动挂载宿主机项目目录到 `/app`，通过 `PYTHONPATH=/app` 使用挂载的 Python 代码；
+对 Python 3.8/3.12 GDB 容器，还会在容器内自动构建 `_inject`。
 
 ```bash
 # 运行全部容器测试
