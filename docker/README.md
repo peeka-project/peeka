@@ -5,8 +5,9 @@
 镜像**不包含** peeka 代码，只提供基础运行环境。代码通过 volume mount 挂载，镜像内设置 `PYTHONPATH=/app`，
 所以 Python 源码改动无需重新构建镜像即可生效。
 
-注意：Python 3.8/3.12 的 GDB attach 路径需要原生扩展 `peeka.core._inject`。自动化容器测试会在容器内执行
-`python setup.py build_ext --inplace`，为当前容器 Python 构建扩展。Python 3.14 的 PEP 768 路径不需要该扩展。
+注意：Python 3.8-3.13 的 GDB/LLDB attach 路径需要原生扩展 `peeka.core._inject`。
+当前 Docker 测试矩阵覆盖其中的 3.8 和 3.12；自动化容器测试会在容器内执行
+`python setup.py build_ext --inplace`，为当前容器 Python 构建扩展。Python 3.14+ 的 PEP 768 路径不需要该扩展。
 
 ## 命名约定
 
@@ -88,7 +89,8 @@ docker run -it --cap-add=SYS_PTRACE --security-opt seccomp=unconfined \
   -v $(pwd):/app peeka-test:3.14
 ```
 
-进入 Python 3.8/3.12 GDB 容器后，第一次 attach 前需要构建 `_inject`：
+进入 Python 3.8-3.13 GDB/LLDB 环境后，第一次 attach 前需要构建 `_inject`。
+当前手动测试容器覆盖 Python 3.8 和 3.12：
 
 ```bash
 cd /app
@@ -99,7 +101,7 @@ python setup.py build_ext --inplace
 
 容器测试位于 `tests/container/`，由 pytest + testcontainers 自动管理容器生命周期。
 conftest.py 会自动挂载宿主机项目目录到 `/app`，通过 `PYTHONPATH=/app` 使用挂载的 Python 代码；
-对 Python 3.8/3.12 GDB 容器，还会在容器内自动构建 `_inject`。
+对当前矩阵中的 Python 3.8/3.12 GDB 容器，还会在容器内自动构建 `_inject`。
 
 ```bash
 # 运行全部容器测试
