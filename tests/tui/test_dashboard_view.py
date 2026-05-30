@@ -408,6 +408,22 @@ class TestDashboardView:
                     "elapsed_ms": 5598.0,
                 },
             )
+            app.record_client_activity(
+                "INFO",
+                "attach.summary done: total=5598ms, "
+                "slowest=wait_agent_ready 3800ms, "
+                "timed_phases=2, method=gdb_dlopen",
+                source="attach",
+                metadata={
+                    "phase": "summary",
+                    "status": "done",
+                    "elapsed_ms": 5598.0,
+                    "details": {
+                        "slowest_phase": "wait_agent_ready",
+                        "slowest_elapsed_ms": 3800.0,
+                    },
+                },
+            )
 
             main_screen = MainScreen(
                 pid=24, session_id="test-session", socket_path="/tmp/test.sock"
@@ -429,6 +445,8 @@ class TestDashboardView:
             assert "GDB dlopen injector completed" in content
             assert "attach: attach.attached done" in content
             assert "5598ms total" in content
+            assert "attach: attach.summary done" in content
+            assert "slowest=wait_agent_ready 3800ms" in content
 
     @pytest.mark.asyncio
     @pytest.mark.tui
