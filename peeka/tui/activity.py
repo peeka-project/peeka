@@ -2,7 +2,7 @@
 
 import os
 
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from peeka.core.attach import AttachProgressEvent
 
@@ -41,6 +41,62 @@ def attach_activity_metadata(event: AttachProgressEvent) -> Dict[str, Any]:
         "elapsed_ms": event.elapsed_ms,
         "details": dict(event.details),
     }
+
+
+def format_attach_summary(
+    events: List[AttachProgressEvent],
+) -> Optional[Tuple[str, str, Dict[str, Any]]]:
+    """Summarize a completed attach attempt for client activity logs."""
+    if not events:
+        return None
+
+    terminal = events[-1]
+    if terminal.phase != "attached" or terminal.status not in ("done", "failed"):
+        return None
+
+    timed_events = [
+        event
+        for event in events
+        if event.phase not in ("attach_log", "attached")
+        and event.elapsed_ms is not None
+    ]
+    slowest = max(timed_events, key=lambda event: event.elapsed_ms or 0, default=None)
+    total_elapsed = terminal.elapsed_ms
+    method = _extract_attach_method(events)
+
+    details: Dict[str, Any] = {
+        "timed_phase_count": len(timed_events),
+    }
+    parts = []
+    if total_elapsed is not None:
+        details["total_elapsed_ms"] = total_elapsed
+        parts.append(f"total={int(total_elapsed)}ms")
+    if slowest is not None and slowest.elapsed_ms is not None:
+        details["slowest_phase"] = slowest.phase
+        details["slowest_elapsed_ms"] = slowest.elapsed_ms
+        parts.append(f"slowest={slowest.phase} {int(slowest.elapsed_ms)}ms")
+    parts.append(f"timed_phases={len(timed_events)}")
+    if method:
+        details["method"] = method
+        parts.append(f"method={method}")
+
+    summary = ", ".join(parts) if parts else "no timing data"
+    metadata = {
+        "phase": "summary",
+        "status": terminal.status,
+        "elapsed_ms": total_elapsed,
+        "details": details,
+    }
+    return terminal.level.upper(), f"attach.summary {terminal.status}: {summary}", metadata
+
+
+def _extract_attach_method(events: List[AttachProgressEvent]) -> Optional[str]:
+    """Return the most specific attach method observed in progress metadata."""
+    for event in reversed(events):
+        method = event.details.get("method")
+        if method:
+            return str(method)
+    return None
 
 
 def _format_attach_elapsed(event: AttachProgressEvent) -> str:

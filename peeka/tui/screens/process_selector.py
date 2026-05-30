@@ -15,7 +15,11 @@ from textual.screen import Screen
 from textual.widgets import DataTable, Header, Footer, Input, RichLog, Static
 
 from peeka.core.attach import AttachProgressEvent
-from peeka.tui.activity import attach_activity_metadata, format_attach_activity
+from peeka.tui.activity import (
+    attach_activity_metadata,
+    format_attach_activity,
+    format_attach_summary,
+)
 
 
 class ProcessSelectorScreen(Screen):
@@ -36,6 +40,7 @@ class ProcessSelectorScreen(Screen):
         super().__init__(*args, **kwargs)
         self._attach_generation: int = 0
         self._attach_phase_states: Dict[str, Dict[str, Any]] = {}
+        self._attach_activity_events: List[AttachProgressEvent] = []
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -302,12 +307,14 @@ class ProcessSelectorScreen(Screen):
         except Exception:
             pass
         self._attach_phase_states.clear()
+        self._attach_activity_events.clear()
 
     def _on_progress(self, gen: int, event: AttachProgressEvent) -> None:
         """Handle progress event from attachment worker. Drops stale generations."""
         if gen != self._attach_generation:
             return
 
+        self._attach_activity_events.append(event)
         self._record_attach_activity(event)
         self._set_attach_panel_visible(True)
 
@@ -358,22 +365,31 @@ class ProcessSelectorScreen(Screen):
 
     def _record_attach_activity(self, event: AttachProgressEvent) -> None:
         """Mirror attach progress into the app-level client activity buffer."""
-        formatted = format_attach_activity(event)
-        if formatted is None:
-            return
-
         recorder = getattr(self.app, "record_client_activity", None)
         if not callable(recorder):
             return
 
-        level, message = formatted
-        recorder(
-            level,
-            message,
-            source="attach",
-            timestamp=event.timestamp,
-            metadata=attach_activity_metadata(event),
-        )
+        formatted = format_attach_activity(event)
+        if formatted is not None:
+            level, message = formatted
+            recorder(
+                level,
+                message,
+                source="attach",
+                timestamp=event.timestamp,
+                metadata=attach_activity_metadata(event),
+            )
+
+        summary = format_attach_summary(self._attach_activity_events)
+        if summary is not None:
+            level, message, metadata = summary
+            recorder(
+                level,
+                message,
+                source="attach",
+                timestamp=event.timestamp,
+                metadata=metadata,
+            )
 
     def _render_attach_progress(self) -> None:
         """Render phase states into #attach-progress Static widget."""

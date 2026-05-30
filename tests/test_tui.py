@@ -459,6 +459,8 @@ class TestProcessSelectorScreen:
     @pytest.mark.asyncio
     async def test_retry_clears_prior_panel_state(self):
         """Second attach attempt clears first attempt's progress/log/error data."""
+        from peeka.core.attach import AttachProgressEvent
+
         app = PeekaApp()
         async with app.run_test() as pilot:
             await pilot.pause(0.1)
@@ -472,6 +474,15 @@ class TestProcessSelectorScreen:
                 "icon": "✓",
                 "level": "info"
             }
+            screen._attach_activity_events.append(
+                AttachProgressEvent(
+                    phase="init",
+                    status="completed",
+                    message="first",
+                    level="info",
+                    elapsed_ms=100,
+                )
+            )
             screen._render_attach_progress()
             await pilot.pause()
 
@@ -485,6 +496,7 @@ class TestProcessSelectorScreen:
             error = screen.query_one("#attach-error", Static)
             assert error.styles.display == "none"
             assert len(screen._attach_phase_states) == 0
+            assert len(screen._attach_activity_events) == 0
 
 
     def test_attach_phase_states_initialized_before_mount(self):
@@ -508,6 +520,12 @@ class TestProcessSelectorScreen:
         assert hasattr(screen, "_attach_generation")
 
         assert screen._attach_generation == 0
+
+    def test_attach_activity_events_initialized_before_mount(self):
+        """_attach_activity_events is initialized in __init__ as empty list."""
+        screen = ProcessSelectorScreen()
+        assert hasattr(screen, "_attach_activity_events")
+        assert screen._attach_activity_events == []
 
 
 
@@ -718,12 +736,81 @@ class TestProcessSelectorScreen:
                 for entry in app.get_client_activity_entries()
                 if entry.get("source") == "attach"
             ]
-            assert entries[-1]["message"] == (
+            terminal_entries = [
+                entry for entry in entries if entry.get("phase") == "attached"
+            ]
+            assert terminal_entries[-1]["message"] == (
                 "attach.attached done: Successfully attached to process 24 "
                 "(5598ms total)"
             )
-            assert entries[-1]["phase"] == "attached"
-            assert entries[-1]["status"] == "done"
+            assert terminal_entries[-1]["phase"] == "attached"
+            assert terminal_entries[-1]["status"] == "done"
+
+    @pytest.mark.asyncio
+    async def test_attached_done_records_attach_summary(self):
+        """Terminal attach event records a synthetic timing summary."""
+        from peeka.core.attach import AttachProgressEvent
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            screen = app.screen
+            assert isinstance(screen, ProcessSelectorScreen)
+            await pilot.pause()
+
+            events = [
+                AttachProgressEvent(
+                    phase="prepare_injection",
+                    status="done",
+                    message="GDB dlopen injection prepared",
+                    level="info",
+                    elapsed_ms=120.0,
+                    details={"method": "gdb_dlopen"},
+                ),
+                AttachProgressEvent(
+                    phase="wait_agent_ready",
+                    status="done",
+                    message="Agent ready file detected",
+                    level="info",
+                    elapsed_ms=3800.0,
+                ),
+                AttachProgressEvent(
+                    phase="attach_log",
+                    status="logged",
+                    message="debug detail",
+                    level="debug",
+                    elapsed_ms=9999.0,
+                ),
+                AttachProgressEvent(
+                    phase="attached",
+                    status="done",
+                    message="Successfully attached to process 24",
+                    level="info",
+                    elapsed_ms=5598.0,
+                ),
+            ]
+            for event in events:
+                screen._on_progress(screen._attach_generation, event)
+            await pilot.pause()
+
+            entries = [
+                entry
+                for entry in app.get_client_activity_entries()
+                if entry.get("source") == "attach"
+            ]
+            summary = [entry for entry in entries if entry.get("phase") == "summary"][-1]
+            assert summary["level"] == "INFO"
+            assert summary["message"] == (
+                "attach.summary done: total=5598ms, "
+                "slowest=wait_agent_ready 3800ms, "
+                "timed_phases=2, method=gdb_dlopen"
+            )
+            assert summary["status"] == "done"
+            assert summary["elapsed_ms"] == 5598.0
+            assert summary["details"]["total_elapsed_ms"] == 5598.0
+            assert summary["details"]["slowest_phase"] == "wait_agent_ready"
+            assert summary["details"]["slowest_elapsed_ms"] == 3800.0
+            assert summary["details"]["timed_phase_count"] == 2
+            assert summary["details"]["method"] == "gdb_dlopen"
 
     @pytest.mark.asyncio
     async def test_attached_failed_records_error_activity(self):
@@ -751,8 +838,11 @@ class TestProcessSelectorScreen:
                 for entry in app.get_client_activity_entries()
                 if entry.get("source") == "attach"
             ]
-            assert entries[-1]["level"] == "ERROR"
-            assert entries[-1]["message"] == (
+            terminal_entries = [
+                entry for entry in entries if entry.get("phase") == "attached"
+            ]
+            assert terminal_entries[-1]["level"] == "ERROR"
+            assert terminal_entries[-1]["message"] == (
                 "attach.attached failed: Attach failed: missing Python symbols "
                 "(250ms total)"
             )
