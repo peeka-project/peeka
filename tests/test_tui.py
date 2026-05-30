@@ -911,8 +911,8 @@ class TestProcessSelectorScreen:
             assert "GDB dlopen injector completed" in copied[-1]
 
     @pytest.mark.asyncio
-    async def test_attach_log_debug_event_not_recorded_to_activity(self):
-        """Debug attach logs stay out of dashboard activity history."""
+    async def test_attach_log_debug_and_info_events_not_recorded_to_activity(self):
+        """Debug/info attach logs stay out of dashboard activity history."""
         from peeka.core.attach import AttachProgressEvent
 
         app = PeekaApp()
@@ -921,13 +921,21 @@ class TestProcessSelectorScreen:
             assert isinstance(screen, ProcessSelectorScreen)
             await pilot.pause()
 
-            log_event = AttachProgressEvent(
-                phase="attach_log",
-                status="logged",
-                message="internal debug detail",
-                level="debug",
-            )
-            screen._on_progress(screen._attach_generation, log_event)
+            for log_event in [
+                AttachProgressEvent(
+                    phase="attach_log",
+                    status="logged",
+                    message="internal debug detail",
+                    level="debug",
+                ),
+                AttachProgressEvent(
+                    phase="attach_log",
+                    status="logged",
+                    message="Using GDB dlopen injection for PID 10",
+                    level="info",
+                ),
+            ]:
+                screen._on_progress(screen._attach_generation, log_event)
             await pilot.pause()
 
             entries = [
@@ -936,6 +944,72 @@ class TestProcessSelectorScreen:
                 if entry.get("source") == "attach"
             ]
             assert entries == []
+
+    @pytest.mark.asyncio
+    async def test_attach_log_pep768_warning_not_recorded_to_activity(self):
+        """PEP 768 warning logger event is covered by the phase event."""
+        from peeka.core.attach import AttachProgressEvent
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            screen = app.screen
+            assert isinstance(screen, ProcessSelectorScreen)
+            await pilot.pause()
+
+            warning_event = AttachProgressEvent(
+                phase="attach_log",
+                status="logged",
+                message="PEP 768 not available (Python 3.14+ required)",
+                level="warning",
+            )
+            screen._on_progress(screen._attach_generation, warning_event)
+            await pilot.pause()
+
+            entries = [
+                entry
+                for entry in app.get_client_activity_entries()
+                if entry.get("source") == "attach"
+            ]
+            assert entries == []
+
+    @pytest.mark.asyncio
+    async def test_attach_log_ptrace_warning_records_compact_activity(self):
+        """ptrace_scope warnings are compact in Dashboard but verbose in Attach Log."""
+        from peeka.core.attach import AttachProgressEvent
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            screen = app.screen
+            assert isinstance(screen, ProcessSelectorScreen)
+            await pilot.pause()
+
+            warning_event = AttachProgressEvent(
+                phase="attach_log",
+                status="logged",
+                message=(
+                    "ptrace_scope is 1 (restricted mode). "
+                    "Injection may fail if target is not a child process.\n"
+                    "To enable: echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope"
+                ),
+                level="warning",
+            )
+            screen._on_progress(screen._attach_generation, warning_event)
+            await pilot.pause()
+
+            entries = [
+                entry
+                for entry in app.get_client_activity_entries()
+                if entry.get("source") == "attach"
+            ]
+            assert entries[-1]["level"] == "WARNING"
+            assert entries[-1]["message"] == (
+                "attach.prepare_injection warning: ptrace_scope=1; "
+                "GDB attach may fail for non-child targets"
+            )
+
+            log_widget = screen.query_one("#attach-log", RichLog)
+            log_content = " ".join(line.text for line in log_widget.lines)
+            assert "To enable: echo 0" in log_content
 
     @pytest.mark.asyncio
     async def test_stale_generation_progress_dropped(self):

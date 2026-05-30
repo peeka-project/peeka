@@ -61,6 +61,14 @@ _TRANSPORT_ERROR_PATTERNS = (
     "not connected",
 )
 
+_AGENT_CONNECTION_LIFECYCLE_PATTERN = re.compile(
+    r"^\[peeka Agent\] (?:"
+    r"client .+ conn#\d+ connected \(|"
+    r"client .+ conn#\d+ disconnected\b|"
+    r"conn#\d+ disconnected\b"
+    r")"
+)
+
 
 class DashboardView(Container):
     """Arthas-style dashboard with thread table, memory/GC stats, and runtime info."""
@@ -598,6 +606,9 @@ class DashboardView(Container):
             return
 
         self._last_client_activity_seq = seq
+        if not self._should_render_client_activity(entry):
+            return
+
         message = str(entry.get("message", ""))
         source = str(entry.get("source", "client"))
         if source and source not in ("client", "main"):
@@ -609,6 +620,18 @@ class DashboardView(Container):
             message,
             entry.get("timestamp", ""),
         )
+
+    def _should_render_client_activity(self, entry: Dict[str, Any]) -> bool:
+        """Return False for low-signal client connection lifecycle entries."""
+        level = str(entry.get("level", "INFO")).upper()
+        message = str(entry.get("message", ""))
+        source = str(entry.get("source", "client"))
+
+        if level == "INFO" and message in ("connected", "disconnected"):
+            if source == "main" or source.endswith("-data") or source.endswith("-stream"):
+                return False
+
+        return True
 
     def _load_persisted_activity_history(self) -> None:
         """Replay the persisted session log so late-opened dashboards aren't blank."""
@@ -897,6 +920,9 @@ class DashboardView(Container):
             message: Log message text
             timestamp: Optional timestamp or timestamp string
         """
+        if not self._should_render_activity_entry(source, level, message):
+            return
+
         entry = {
             "source": source,
             "level": level,
@@ -908,6 +934,15 @@ class DashboardView(Container):
             self._activity_log_entries = self._activity_log_entries[-self.MAX_LOG_LINES :]
 
         self._render_activity_entry(entry)
+
+    def _should_render_activity_entry(
+        self, source: str, level: str, message: str
+    ) -> bool:
+        """Return False for verbose activity entries hidden by default."""
+        if source == "agent" and str(level).upper() == "INFO":
+            if _AGENT_CONNECTION_LIFECYCLE_PATTERN.search(str(message)):
+                return False
+        return True
 
     def _activity_log_text(self) -> str:
         """Return visible activity log entries as plain text."""

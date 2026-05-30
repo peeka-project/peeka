@@ -382,6 +382,89 @@ class TestDashboardView:
 
     @pytest.mark.asyncio
     @pytest.mark.tui
+    async def test_activity_log_filters_client_connection_lifecycle(self, mock_client):
+        """Dashboard hides low-signal client connected/disconnected entries."""
+        mock_client.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            app.record_client_activity("INFO", "connected", source="main")
+            app.record_client_activity(
+                "INFO",
+                "connected to agent session test-session for pid 12345",
+                source="main",
+            )
+            app.record_client_activity("INFO", "connected", source="dashboard-data")
+            app.record_client_activity(
+                "ERROR", "connect failed: timeout", source="dashboard-data"
+            )
+
+            dashboard = app.screen.query_one("DashboardView", DashboardView)
+            dashboard.set_client(mock_client)
+            await pilot.pause()
+            await pilot.pause()
+
+            rich_log = app.screen.query_one("#dash-activity-log", RichLog)
+            content = _rich_log_lines(rich_log)
+
+            assert "connected to agent session test-session" in content
+            assert "dashboard-data: connect failed: timeout" in content
+            assert "dashboard-data: connected" not in content
+            assert "CLIENT INFO connected CLIENT" not in content
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_activity_log_filters_agent_connection_lifecycle(self, mock_client):
+        """Dashboard hides agent-side info connection lifecycle entries."""
+        mock_client.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            dashboard = app.screen.query_one("DashboardView", DashboardView)
+            dashboard.set_client(mock_client)
+            dashboard.action_clear_activity_log()
+            dashboard._write_activity_entry(
+                "agent",
+                "INFO",
+                "[peeka Agent] client tui-test01/dashboard-stream conn#5 "
+                "connected (1 total) kind=tui pid=12345",
+                1000.0,
+            )
+            dashboard._write_activity_entry(
+                "agent",
+                "INFO",
+                "[peeka Agent] client tui-test01/dashboard-stream conn#5 disconnected",
+                1001.0,
+            )
+            dashboard._write_activity_entry(
+                "agent",
+                "INFO",
+                "[peeka Agent] Ready for commands",
+                1002.0,
+            )
+            await pilot.pause()
+
+            rich_log = app.screen.query_one("#dash-activity-log", RichLog)
+            content = _rich_log_lines(rich_log)
+
+            assert "dashboard-stream conn#5 connected" not in content
+            assert "dashboard-stream conn#5 disconnected" not in content
+            assert "Ready for commands" in content
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
     async def test_activity_log_replays_buffered_attach_timeline(self, mock_client):
         """Dashboard replays attach activity emitted before MainScreen mounted."""
         mock_client.connect()

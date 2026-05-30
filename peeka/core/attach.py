@@ -535,11 +535,13 @@ class ProcessAttacher:
             logger.info("Attaching to process %d...", self.pid)
 
             target_version: Optional[Tuple[int, int]] = None
-            with self._progress_phase(
+            capability_start = time.monotonic()
+            self._emit_progress(
                 "detect_python_capability",
+                "running",
                 "Detecting target Python version and attach capability",
-                "Python capability check completed",
-            ):
+            )
+            try:
                 target_version = self._get_target_python_version()
                 if target_version is None:
                     logger.debug(
@@ -547,12 +549,24 @@ class ProcessAttacher:
                     )
                 else:
                     self._check_python_version_match(target_version)
+            except Exception as exc:
+                self._emit_progress(
+                    "detect_python_capability",
+                    "failed",
+                    f"Python capability check failed: {exc}",
+                    level="error",
+                    elapsed_ms=(time.monotonic() - capability_start) * 1000,
+                )
+                raise
+
+            capability_elapsed_ms = (time.monotonic() - capability_start) * 1000
 
             if hasattr(sys, "remote_exec"):
                 self._emit_progress(
                     "detect_python_capability",
                     "done",
-                    "PEP 768 remote_exec is available",
+                    "PEP 768 available; using remote_exec",
+                    elapsed_ms=capability_elapsed_ms,
                     details={
                         "target_python": self._format_python_version(target_version),
                         "pep768_available": True,
@@ -564,8 +578,9 @@ class ProcessAttacher:
                 self._emit_progress(
                     "detect_python_capability",
                     "done",
-                    "PEP 768 not available (Python 3.14+ required)",
+                    "PEP 768 unavailable; using debugger fallback",
                     level="warning",
+                    elapsed_ms=capability_elapsed_ms,
                     details={
                         "target_python": self._format_python_version(target_version),
                         "pep768_available": False,
