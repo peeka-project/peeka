@@ -325,7 +325,10 @@ class ProcessSelectorScreen(Screen):
 
         ts = time.strftime("%H:%M:%S", time.localtime(event.timestamp or time.time()))
         activity_entry = format_attach_activity(event)
-        log_message = activity_entry[1] if activity_entry else event.message
+        if event.phase == "attach_log":
+            log_message = event.message
+        else:
+            log_message = activity_entry[1] if activity_entry else event.message
         safe_msg = escape(log_message)
 
         if event.phase == "attach_log":

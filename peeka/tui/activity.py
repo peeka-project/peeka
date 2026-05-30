@@ -1,10 +1,13 @@
 """Helpers for wiring TUI client identity and activity into diagnostics."""
 
 import os
+import re
 
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from peeka.core.attach import AttachProgressEvent
+
+_PTRACE_SCOPE_PATTERN = re.compile(r"ptrace_scope is (?P<scope>\d+)")
 
 
 def format_attach_activity(
@@ -24,10 +27,16 @@ def format_attach_activity(
     level = event.level.upper()
 
     if phase == "attach_log":
-        if level == "DEBUG":
+        if level in ("DEBUG", "INFO"):
             return None
+        if event.message.startswith("PEP 768 not available"):
+            return None
+        ptrace_warning = _format_ptrace_scope_warning(event.message)
+        if ptrace_warning:
+            return level, ptrace_warning
         elapsed = _format_attach_elapsed(event)
-        return level, f"attach.log {event.level.lower()}: {event.message}{elapsed}"
+        message = " ".join(event.message.split())
+        return level, f"attach.log {event.level.lower()}: {message}{elapsed}"
 
     elapsed = _format_attach_elapsed(event)
     return level, f"attach.{phase} {status}: {event.message}{elapsed}"
@@ -97,6 +106,18 @@ def _extract_attach_method(events: List[AttachProgressEvent]) -> Optional[str]:
         if method:
             return str(method)
     return None
+
+
+def _format_ptrace_scope_warning(message: str) -> Optional[str]:
+    """Return a compact Dashboard warning for ptrace scope diagnostics."""
+    match = _PTRACE_SCOPE_PATTERN.search(message)
+    if not match:
+        return None
+
+    return (
+        f"attach.prepare_injection warning: ptrace_scope={match.group('scope')}; "
+        "GDB attach may fail for non-child targets"
+    )
 
 
 def _format_attach_elapsed(event: AttachProgressEvent) -> str:

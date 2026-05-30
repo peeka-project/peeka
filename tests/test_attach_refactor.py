@@ -228,6 +228,41 @@ class TestAttachFallbackDispatch:
             assert attacher._attach_fallback() is True
             mock_gdb.assert_called_once_with()
 
+    def test_attach_internal_fallback_capability_has_single_conclusion(
+        self, monkeypatch
+    ):
+        """Fallback capability detection emits one concrete conclusion."""
+        events = []
+        attacher = ProcessAttacher(12345, progress_callback=events.append)
+        monkeypatch.delattr(attach.sys, "remote_exec", raising=False)
+
+        with patch.object(
+            attacher, "_check_existing_attachment", return_value=None
+        ), patch.object(
+            attacher, "_get_target_python_version", return_value=(3, 12)
+        ), patch.object(
+            attacher, "_check_python_version_match"
+        ), patch.object(
+            attacher, "_attach_fallback", return_value=False
+        ):
+            assert attacher._attach_internal() is False
+
+        capability_events = [
+            event for event in events if event.phase == "detect_python_capability"
+        ]
+        assert [event.status for event in capability_events] == ["running", "done"]
+        assert capability_events[-1].level == "warning"
+        assert capability_events[-1].message == (
+            "PEP 768 unavailable; using debugger fallback"
+        )
+        assert capability_events[-1].elapsed_ms is not None
+        assert capability_events[-1].details["target_python"] == "3.12"
+        assert capability_events[-1].details["pep768_available"] is False
+        assert all(
+            event.message != "Python capability check completed"
+            for event in capability_events
+        )
+
     def test_linux_with_injector_propagates_dlopen_failure(self):
         """Linux dlopen failures should not retry via PyRun_SimpleString."""
         attacher = ProcessAttacher(12345)
