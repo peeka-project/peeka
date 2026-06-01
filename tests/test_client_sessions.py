@@ -23,6 +23,7 @@ EXPECTED_KEYS = [
     "foreground_job_id",
     "created_at",
     "last_access_at",
+    "result_consumers",
     "auth",
 ]
 
@@ -37,6 +38,7 @@ def _build_client() -> ClientSession:
         foreground_job_id=None,
         created_at=10.5,
         last_access_at=20.5,
+        result_consumers=["consumer_1"],
         auth={"token_type": "bearer"},
     )
 
@@ -71,6 +73,7 @@ class TestClientRegistry:
         assert created.last_access_at == 100.0
         assert created.input_status == "idle"
         assert created.foreground_job_id is None
+        assert created.result_consumers == []
         assert created.auth is None
 
         fetched = registry.get(created.client_session_id)

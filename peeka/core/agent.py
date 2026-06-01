@@ -1,3 +1,4 @@
+# pyright: reportImportCycles=false
 """
 Agent Code - Runs inside target process
 This code is injected into the target process and handles command execution
@@ -9,7 +10,7 @@ import sys
 import time as _time
 import traceback
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 from peeka.core.injector import DecoratorInjector
 from peeka.core.observer import ObservationManager
@@ -26,6 +27,20 @@ def _get_client_registry():
         from peeka.core.client_sessions import ClientRegistry
         _client_registry = ClientRegistry()
     return _client_registry
+
+
+def _client_success(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a standard success envelope for client namespace handlers."""
+    return {"status": "success", "data": data}
+
+
+def _client_error(error_code: str, message: str) -> Dict[str, Any]:
+    """Return a standard error envelope for client namespace handlers."""
+    return {
+        "status": "error",
+        "error_code": error_code,
+        "message": message,
+    }
 
 
 def _write_session_log(
@@ -106,7 +121,7 @@ class PeekaAgent:
         self.sock_path = f"/tmp/peeka_{session_id}.sock"
         self.server: Optional[socket.socket] = None
         self.command_handlers: Dict[str, Any] = {}
-        self._client_connections: list = []
+        self._client_connections: List[socket.socket] = []
         self._connections_lock = _rpl.allocate_lock()
 
         self._client_counter = 0
@@ -124,7 +139,7 @@ class PeekaAgent:
             self.injection_mode = "pep768" if sys.version_info >= (3, 14) else "gdb_dlopen"
         
         # Error ring buffer for target.status (last 5 errors)
-        self._recent_errors: list = []
+        self._recent_errors: List[Dict[str, Any]] = []
         self._error_ring_lock = _rpl.allocate_lock()
         self._last_seen_at = _time.time()
 
@@ -225,122 +240,98 @@ class PeekaAgent:
                 "traceback": traceback.format_exc(),
             }
 
-    def _handle_client_create(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    def _handle_client_create(self, command: Dict[str, Any]) -> Dict[str, Any]:
         """Handle client.create command - create and register a client session."""
         try:
             from peeka.core.client_sessions import to_dict as client_to_dict
             
-            target_id = params.get("target_id", "")
-            source = params.get("source", "")
-            user_id = params.get("user_id")
+            target_id = command.get("target_id", "")
+            source = command.get("source", "")
+            user_id = command.get("user_id")
             
             if not target_id:
-                return {
-                    "ok": False,
-                    "error_code": "UNSUPPORTED_CAPABILITY",
-                    "message": "target_id is required and cannot be empty",
-                }
+                return _client_error(
+                    "UNSUPPORTED_CAPABILITY",
+                    "target_id is required and cannot be empty",
+                )
             
             valid_sources = {"cli", "tui", "mcp", "api", "internal"}
             if source not in valid_sources:
-                return {
-                    "ok": False,
-                    "error_code": "UNSUPPORTED_CAPABILITY",
-                    "message": f"source must be one of {valid_sources}, got {source!r}",
-                }
+                return _client_error(
+                    "UNSUPPORTED_CAPABILITY",
+                    f"source must be one of {valid_sources}, got {source!r}",
+                )
             
             registry = _get_client_registry()
             client = registry.create(target_id=target_id, source=source, user_id=user_id)
             
-            return {"ok": True, "data": client_to_dict(client)}
+            return _client_success(client_to_dict(client))
         except Exception as e:
-            return {
-                "ok": False,
-                "error_code": "TRANSPORT_ERROR",
-                "message": str(e),
-                "traceback": traceback.format_exc(),
-            }
+            result = _client_error("COMMAND_EXECUTION_ERROR", str(e))
+            result["traceback"] = traceback.format_exc()
+            return result
 
-    def _handle_client_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    def _handle_client_list(self, command: Dict[str, Any]) -> Dict[str, Any]:
         """Handle client.list command - list client sessions optionally filtered by target_id."""
         try:
             from peeka.core.client_sessions import to_dict as client_to_dict
             
-            target_id = params.get("target_id")
+            target_id = command.get("target_id")
             
             registry = _get_client_registry()
             clients = registry.list(target_id=target_id)
             
-            return {"ok": True, "data": {"clients": [client_to_dict(c) for c in clients]}}
+            return _client_success({"clients": [client_to_dict(c) for c in clients]})
         except Exception as e:
-            return {
-                "ok": False,
-                "error_code": "TRANSPORT_ERROR",
-                "message": str(e),
-                "traceback": traceback.format_exc(),
-            }
+            result = _client_error("TRANSPORT_ERROR", str(e))
+            result["traceback"] = traceback.format_exc()
+            return result
 
-    def _handle_client_status(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    def _handle_client_status(self, command: Dict[str, Any]) -> Dict[str, Any]:
         """Handle client.status command - get client session details by ID."""
         try:
             from peeka.core.client_sessions import to_dict as client_to_dict
             
-            client_session_id = params.get("client_session_id", "")
+            client_session_id = command.get("client_session_id", "")
             if not client_session_id:
-                return {
-                    "ok": False,
-                    "error_code": "CLIENT_NOT_FOUND",
-                    "message": "client_session_id is required",
-                }
+                return _client_error("CLIENT_NOT_FOUND", "client_session_id is required")
             
             registry = _get_client_registry()
             client = registry.get(client_session_id)
             
             if client is None:
-                return {
-                    "ok": False,
-                    "error_code": "CLIENT_NOT_FOUND",
-                    "message": f"Client session {client_session_id!r} not found",
-                }
+                return _client_error(
+                    "CLIENT_NOT_FOUND",
+                    f"Client session {client_session_id!r} not found",
+                )
             
-            return {"ok": True, "data": client_to_dict(client)}
+            return _client_success(client_to_dict(client))
         except Exception as e:
-            return {
-                "ok": False,
-                "error_code": "TRANSPORT_ERROR",
-                "message": str(e),
-                "traceback": traceback.format_exc(),
-            }
+            result = _client_error("TRANSPORT_ERROR", str(e))
+            result["traceback"] = traceback.format_exc()
+            return result
 
-    def _handle_client_close(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    def _handle_client_close(self, command: Dict[str, Any]) -> Dict[str, Any]:
         """Handle client.close command - close a client session by ID."""
         try:
-            client_session_id = params.get("client_session_id", "")
+            client_session_id = command.get("client_session_id", "")
             if not client_session_id:
-                return {
-                    "ok": False,
-                    "error_code": "CLIENT_NOT_FOUND",
-                    "message": "client_session_id is required",
-                }
+                return _client_error("CLIENT_NOT_FOUND", "client_session_id is required")
             
             registry = _get_client_registry()
             removed = registry.close(client_session_id)
             
             if not removed:
-                return {
-                    "ok": False,
-                    "error_code": "CLIENT_NOT_FOUND",
-                    "message": f"Client session {client_session_id!r} not found",
-                }
+                return _client_error(
+                    "CLIENT_NOT_FOUND",
+                    f"Client session {client_session_id!r} not found",
+                )
             
-            return {"ok": True, "data": {"closed": True}}
+            return _client_success({"closed": True, "client_session_id": client_session_id})
         except Exception as e:
-            return {
-                "ok": False,
-                "error_code": "TRANSPORT_ERROR",
-                "message": str(e),
-                "traceback": traceback.format_exc(),
-            }
+            result = _client_error("TRANSPORT_ERROR", str(e))
+            result["traceback"] = traceback.format_exc()
+            return result
 
     def _register_handlers(self) -> None:
         """Eagerly import and register ALL command handlers.
@@ -459,6 +450,7 @@ class PeekaAgent:
             if Path(self.sock_path).exists():
                 Path(self.sock_path).unlink()
 
+            assert self.server is not None
             self.server.bind(self.sock_path)
             self.server.listen(5)
             # Set a timeout so accept() doesn't block forever,
@@ -625,17 +617,21 @@ class PeekaAgent:
 
         if cmd_type == "client":
             action = command.get("action", "")
-            params = command.get("params", {})
+            registry = _get_client_registry()
+            registry.cleanup_idle(idle_threshold_seconds=900)
             if action == "create":
-                return self._handle_client_create(params)
+                return self._handle_client_create(command)
             elif action == "list":
-                return self._handle_client_list(params)
+                return self._handle_client_list(command)
             elif action == "status":
-                return self._handle_client_status(params)
+                return self._handle_client_status(command)
             elif action == "close":
-                return self._handle_client_close(params)
+                return self._handle_client_close(command)
             else:
-                return {"ok": False, "error_code": "COMMAND_NOT_FOUND", "message": f"Unknown client action: {action}"}
+                return _client_error(
+                    "UNSUPPORTED_CAPABILITY",
+                    f"Unknown client action: {action}",
+                )
 
         handler = self._get_handler(cmd_type)
         if handler:
@@ -724,8 +720,8 @@ class PeekaAgent:
         self._cleanup_session_files()
 
         # Remove self from the global agent registry
-        if hasattr(sys, "_peeka_agents"):
-            agents = sys._peeka_agents  # type: ignore[attr-defined]
+        agents = cast(Optional[Dict[str, "PeekaAgent"]], getattr(sys, "_peeka_agents", None))
+        if agents is not None:
             keys_to_remove = [k for k, v in agents.items() if v is self]
             for k in keys_to_remove:
                 del agents[k]
@@ -754,8 +750,9 @@ def _init_agent(
         # Stop ALL existing agents from previous sessions to prevent thread leaks.
         # Each sys.remote_exec() call creates a new agent; without this cleanup,
         # old accept-loop and client-handler threads accumulate indefinitely.
-        if hasattr(sys, "_peeka_agents"):
-            old_agents = list(sys._peeka_agents.values())  # type: ignore[attr-defined]
+        agents = cast(Optional[Dict[str, PeekaAgent]], getattr(sys, "_peeka_agents", None))
+        if agents is not None:
+            old_agents = list(agents.values())
             for old_agent in old_agents:
                 try:
                     old_agent.stop()
@@ -765,7 +762,7 @@ def _init_agent(
                     old_agent._emit_log("INFO", msg)
                 except Exception:
                     pass
-            sys._peeka_agents.clear()  # type: ignore[attr-defined]
+            agents.clear()
 
         agent = PeekaAgent(
             session_id,
@@ -774,9 +771,11 @@ def _init_agent(
             suppress_startup_messages=suppress_startup_messages,
         )
         if agent.start():
-            if not hasattr(sys, "_peeka_agents"):
-                sys._peeka_agents = {}  # type: ignore[attr-defined]
-            sys._peeka_agents[session_id] = agent  # type: ignore[attr-defined]
+            agents = cast(Optional[Dict[str, PeekaAgent]], getattr(sys, "_peeka_agents", None))
+            if agents is None:
+                agents = {}
+                setattr(sys, "_peeka_agents", agents)
+            agents[session_id] = agent
         else:
             msg = "[peeka Agent] Start failed; session not registered"
             _write_session_log(session_id, "ERROR", msg)

@@ -11,12 +11,11 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import peeka
 from peeka.cli._client_helper import ephemeral_client
 from peeka.core.attach import ProcessAttacher
-from peeka.core.client import AgentClient
 from peeka.core.client import StreamingAgentClient
 from peeka.core.output import OutputFormatter
 from peeka.core.output import configure_logging
@@ -954,11 +953,9 @@ def cmd_watch(args) -> int:
     streaming_client: Optional[StreamingAgentClient] = None
     watch_id: Optional[str] = None
     pattern: Optional[str] = None
-    agent_client: Optional[AgentClient] = None
-    ephemeral_client_id: Optional[str] = None
 
     def cleanup_watch(signum=None, frame=None):
-        nonlocal streaming_client, watch_id, pattern, agent_client, ephemeral_client_id
+        nonlocal streaming_client, watch_id, pattern
         if streaming_client and watch_id:
             try:
                 streaming_client.send_command(
@@ -970,17 +967,6 @@ def cmd_watch(args) -> int:
             except Exception:
                 pass
             streaming_client.disconnect()
-        if ephemeral_client_id is not None and agent_client is not None:
-            try:
-                agent_client.send_command(
-                    {
-                        "type": "client",
-                        "action": "close",
-                        "client_session_id": ephemeral_client_id,
-                    }
-                )
-            except Exception:
-                pass
         if signum is not None:
             sys.exit(130)
 
@@ -1000,14 +986,12 @@ def cmd_watch(args) -> int:
 
     if not hasattr(args, "client") or args.client is None:
         target_id = _socket_path_to_target_id(socket_path)
-        agent_client = AgentClient(socket_path)
         try:
-            with ephemeral_client(target_id, agent_client) as cid:
-                ephemeral_client_id = cid
-
+            with ephemeral_client(target_id) as cid:
                 command = {
                     "type": "watch",
                     "action": "start",
+                    "client_session_id": cid,
                     "pattern": pattern,
                     "depth": args.depth,
                     "times": args.times,
@@ -1060,6 +1044,7 @@ def cmd_watch(args) -> int:
         command = {
             "type": "watch",
             "action": "start",
+            "client_session_id": args.client,
             "pattern": pattern,
             "depth": args.depth,
             "times": args.times,
@@ -1107,7 +1092,6 @@ def cmd_watch(args) -> int:
 
 
 def cmd_trace(args) -> int:
-    # TODO(client-session): wrap with ephemeral_client per boulder client-session.md T4
     try:
         socket_path, attached_pid = _check_agent_attached()
     except ValueError as e:
@@ -1117,11 +1101,9 @@ def cmd_trace(args) -> int:
     streaming_client: Optional[StreamingAgentClient] = None
     trace_id: Optional[str] = None
     pattern: Optional[str] = None
-    agent_client: Optional[AgentClient] = None
-    ephemeral_client_id: Optional[str] = None
 
     def cleanup_trace(signum=None, frame=None):
-        nonlocal streaming_client, trace_id, pattern, agent_client, ephemeral_client_id
+        nonlocal streaming_client, trace_id, pattern
         if streaming_client and trace_id:
             try:
                 streaming_client.send_command(
@@ -1133,17 +1115,6 @@ def cmd_trace(args) -> int:
             except Exception:
                 pass
             streaming_client.disconnect()
-        if ephemeral_client_id is not None and agent_client is not None:
-            try:
-                agent_client.send_command(
-                    {
-                        "type": "client",
-                        "action": "close",
-                        "client_session_id": ephemeral_client_id,
-                    }
-                )
-            except Exception:
-                pass
         if signum is not None:
             sys.exit(130)
 
@@ -1163,14 +1134,12 @@ def cmd_trace(args) -> int:
 
     if not hasattr(args, "client") or args.client is None:
         target_id = _socket_path_to_target_id(socket_path)
-        agent_client = AgentClient(socket_path)
         try:
-            with ephemeral_client(target_id, agent_client) as cid:
-                ephemeral_client_id = cid
-
+            with ephemeral_client(target_id) as cid:
                 command = {
                     "type": "trace",
                     "action": "start",
+                    "client_session_id": cid,
                     "pattern": pattern,
                     "depth": args.depth,
                     "times": args.times,
@@ -1219,6 +1188,7 @@ def cmd_trace(args) -> int:
         command = {
             "type": "trace",
             "action": "start",
+            "client_session_id": args.client,
             "pattern": pattern,
             "depth": args.depth,
             "times": args.times,
@@ -1821,7 +1791,9 @@ def cmd_sm(args) -> int:
     return 0 if response.get("status") == "success" else 1
 
 
-def _build_run_command(command_type: str, command_parts: list) -> Optional[dict]:
+def _build_run_command(
+    command_type: str, command_parts: List[str]
+) -> Optional[Dict[str, Any]]:
     """
     Build command dict from command parts for supported streaming commands.
     Supports: watch, trace, stack, monitor, top
@@ -1830,7 +1802,7 @@ def _build_run_command(command_type: str, command_parts: list) -> Optional[dict]
     # This ensures consistency with existing command parsing
     parser = argparse.ArgumentParser(prog=f"peeka-cli run ... -- {command_type}")
 
-    command: dict = {"type": command_type, "action": "start"}
+    command: Dict[str, Any] = {"type": command_type, "action": "start"}
 
     if command_type in ("watch", "trace", "stack"):
         if len(command_parts) < 2:
@@ -2069,6 +2041,7 @@ def cmd_run(args) -> int:
 
             # Signal handlers: forward to child process then cleanup
             def cleanup_and_exit(signum=None, frame=None):
+                exit_code = 0
                 try:
                     if signum is not None:
                         os.kill(child_pid, signum)
@@ -2483,7 +2456,7 @@ def cmd_client_create(args) -> int:
     response = streaming_client.send_command(command)
     streaming_client.disconnect()
 
-    if response.get("ok"):
+    if response.get("status") == "success":
         data = response.get("data", {})
         if args.format == "json":
             OutputFormatter.success("client.create", data=data)
@@ -2529,7 +2502,7 @@ def cmd_client_list(args) -> int:
     response = streaming_client.send_command(command)
     streaming_client.disconnect()
 
-    if response.get("ok"):
+    if response.get("status") == "success":
         data = response.get("data", {})
         clients = data.get("clients", [])
         
@@ -2589,7 +2562,7 @@ def cmd_client_status(args) -> int:
     response = streaming_client.send_command(command)
     streaming_client.disconnect()
 
-    if response.get("ok"):
+    if response.get("status") == "success":
         data = response.get("data", {})
         if args.format == "json":
             OutputFormatter.success("client.status", data=data)
@@ -2640,7 +2613,7 @@ def cmd_client_close(args) -> int:
     response = streaming_client.send_command(command)
     streaming_client.disconnect()
 
-    if response.get("ok"):
+    if response.get("status") == "success":
         data = response.get("data", {})
         if args.format == "json":
             OutputFormatter.success("client.close", data=data)
@@ -2655,4 +2628,3 @@ def cmd_client_close(args) -> int:
         else:
             print(f"{error_code}: {message}", file=sys.stderr)
         return 2 if error_code == "CLIENT_NOT_FOUND" else 1
-

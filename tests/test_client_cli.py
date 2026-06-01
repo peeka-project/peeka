@@ -25,7 +25,7 @@ class TestClientCLICreate:
                 assert command["source"] == "cli"
                 assert command.get("user_id") == "alice"
                 return {
-                    "ok": True,
+                    "status": "success",
                     "data": {
                         "client_session_id": "client_abcd1234",
                         "target_id": "target_12345678",
@@ -86,7 +86,7 @@ class TestClientCLIList:
                 assert command["action"] == "list"
                 assert command["target_id"] == "target_12345678"
                 return {
-                    "ok": True,
+                    "status": "success",
                     "data": {
                         "clients": [
                             {
@@ -163,7 +163,7 @@ class TestClientCLIStatus:
                 assert command["action"] == "status"
                 assert command["client_session_id"] == "client_abcd1234"
                 return {
-                    "ok": True,
+                    "status": "success",
                     "data": {
                         "client_session_id": "client_abcd1234",
                         "target_id": "target_12345678",
@@ -217,7 +217,7 @@ class TestClientCLIStatus:
                 assert command["type"] == "client"
                 assert command["action"] == "status"
                 return {
-                    "ok": False,
+                    "status": "error",
                     "error_code": "CLIENT_NOT_FOUND",
                     "message": "Client session 'client_notfound' not found",
                 }
@@ -264,7 +264,7 @@ class TestClientCLIClose:
                 assert command["type"] == "client"
                 assert command["action"] == "close"
                 return {
-                    "ok": True,
+                    "status": "success",
                     "data": {"closed": True},
                 }
 
@@ -282,7 +282,7 @@ class TestClientCLIClose:
                 assert command["type"] == "client"
                 assert command["action"] == "close"
                 return {
-                    "ok": False,
+                    "status": "error",
                     "error_code": "CLIENT_NOT_FOUND",
                     "message": "Client session not found",
                 }
