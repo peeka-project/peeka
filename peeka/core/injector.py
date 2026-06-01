@@ -1111,8 +1111,8 @@ class DecoratorInjector:
         return wrapper
 
     def _create_trace_wrapper(
-        self, func: Callable, watch_id: str, config: Dict[str, Any]
-    ) -> Callable:
+        self, func: Callable[..., Any], watch_id: str, config: Dict[str, Any]
+    ) -> Callable[..., Any]:
         """
         Create a trace wrapper that captures call tree and timing using sys.monitoring.
 
@@ -1293,10 +1293,10 @@ class DecoratorInjector:
 
     def _trace_with_wrapper_only(
         self,
-        func: Callable,
-        args: tuple,
+        func: Callable[..., Any],
+        args: tuple[Any, ...],
         kwargs: Dict[str, Any],
-    ) -> list:
+    ) -> List[Dict[str, Any]]:
         """
         Trace only the wrapped root call without global tracing APIs.
 
@@ -1347,14 +1347,14 @@ class DecoratorInjector:
 
     def _trace_with_monitoring(
         self,
-        func: Callable,
-        args: tuple,
+        func: Callable[..., Any],
+        args: tuple[Any, ...],
         kwargs: Dict[str, Any],
         max_depth: int,
         skip_builtin: bool,
         min_duration: float,
-        call_stack: list,
-    ) -> list:
+        call_stack: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
         """
         Trace function execution using sys.monitoring (Python 3.12+).
 
@@ -1532,14 +1532,14 @@ class DecoratorInjector:
 
     def _trace_with_settrace(
         self,
-        func: Callable,
-        args: tuple,
+        func: Callable[..., Any],
+        args: tuple[Any, ...],
         kwargs: Dict[str, Any],
         max_depth: int,
         skip_builtin: bool,
         min_duration: float,
-        call_stack: list,
-    ) -> list:
+        call_stack: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
         """
         Trace function execution using sys.settrace (fallback for Python < 3.12).
 
@@ -1659,7 +1659,7 @@ class DecoratorInjector:
         finally:
             sys.settrace(None)
 
-    def _count_nodes(self, call_tree: list) -> int:
+    def _count_nodes(self, call_tree: List[Dict[str, Any]]) -> int:
         """
         Count total number of nodes in call tree.
 
@@ -1677,7 +1677,7 @@ class DecoratorInjector:
         return count
 
     def _replace_function(
-        self, parent: Any, attr_name: str, new_func: Callable
+        self, parent: Any, attr_name: str, new_func: Callable[..., Any]
     ) -> None:
         """
         Replace a function/method on its parent object.
@@ -1690,7 +1690,7 @@ class DecoratorInjector:
         setattr(parent, attr_name, new_func)
 
     def _find_module_aliases(
-        self, target_func: Callable, parent: Any, attr_name: str
+        self, target_func: Callable[..., Any], parent: Any, attr_name: str
     ) -> List[Dict[str, Any]]:
         """
         Find module-level globals that cache the same function object.
@@ -1726,7 +1726,7 @@ class DecoratorInjector:
         return aliases
 
     def _replace_aliases(
-        self, aliases: List[Dict[str, Any]], wrapper: Callable
+        self, aliases: List[Dict[str, Any]], wrapper: Callable[..., Any]
     ) -> None:
         """Replace cached module-global aliases on a best-effort basis."""
         for alias in aliases:

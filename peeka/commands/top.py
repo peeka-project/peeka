@@ -6,6 +6,7 @@ import logging
 import os
 import sys
 import uuid
+from typing import cast
 from typing import Any, Callable, ClassVar, Dict, Optional, Set, TYPE_CHECKING
 
 from peeka.commands.base import BaseCommand
@@ -370,7 +371,7 @@ class TopCommand(BaseCommand):
             self._sampling_loop()
             return
 
-        prev_tracer = gettrace()
+        prev_tracer = cast(Optional[Callable[[Any, Any], None]], gettrace())
 
         def our_tracer(event, args):
             self._record_greenlet_event(event, args)
