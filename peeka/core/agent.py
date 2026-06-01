@@ -7,6 +7,7 @@ This code is injected into the target process and handles command execution
 import json
 import socket
 import sys
+import threading
 import time as _time
 import traceback
 from pathlib import Path
@@ -14,6 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple, cast
 
 from peeka.core.injector import DecoratorInjector
 from peeka.core.jobs import JobCategory
+from peeka.core.jobs import TERMINAL_STATUSES
 from peeka.core.jobs import job_registry
 from peeka.core.observer import ObservationManager
 from peeka.core.runtime import primitives as _rpl
@@ -125,6 +127,7 @@ class PeekaAgent:
         self.command_handlers: Dict[str, Any] = {}
         self._client_connections: List[socket.socket] = []
         self._connections_lock = _rpl.allocate_lock()
+        self._mutation_lock: threading.RLock = threading.RLock()
 
         self._client_counter = 0
         self.observer = ObservationManager()
@@ -652,36 +655,100 @@ class PeekaAgent:
                 if key not in {"type", "action", "client_session_id", "background"}
             }
             category = getattr(type(handler), "category", "snapshot")
+            allows_concurrent = bool(getattr(type(handler), "allows_concurrent", False))
             if category not in {"snapshot", "probe", "mutation"}:
                 category = "snapshot"
             job_category = cast(JobCategory, category)
 
-            job = job_registry.create(
-                target_id=self._target_id_for_jobs(),
-                client_session_id=client_session_id,
-                command_type=str(cmd_type),
-                action=action,
-                params=params,
-                category=job_category,
-                foreground=foreground,
+            client_registry = None
+            client = None
+            foreground_rule_applies = (
+                (category != "snapshot" or not allows_concurrent)
+                and foreground
+                and bool(client_session_id)
             )
-            job_registry.set_status(job.id, "running")
+            if foreground_rule_applies:
+                client_registry = _get_client_registry()
+                client = client_registry.get(client_session_id)
+                if client is not None and client.foreground_job_id:
+                    existing_job = job_registry.get(client.foreground_job_id)
+                    if (
+                        existing_job is not None
+                        and existing_job.status not in TERMINAL_STATUSES
+                    ):
+                        message = (
+                            f"Client {client_session_id} already has foreground job "
+                            f"{client.foreground_job_id}"
+                        )
+                        return {
+                            "status": "error",
+                            "error_code": "JOB_ALREADY_RUNNING",
+                            "message": message,
+                            "error": f"JOB_ALREADY_RUNNING: {message}",
+                        }
 
+            mutation_lock_acquired = False
+            if category == "mutation":
+                mutation_lock_acquired = self._mutation_lock.acquire(timeout=5.0)
+                if not mutation_lock_acquired:
+                    message = "mutation in progress"
+                    return {
+                        "status": "error",
+                        "error_code": "JOB_ALREADY_RUNNING",
+                        "message": message,
+                        "error": f"JOB_ALREADY_RUNNING: {message}",
+                    }
+
+            job = None
             try:
+                if foreground and client_session_id and client is None:
+                    client_registry = client_registry or _get_client_registry()
+                    client = client_registry.get(client_session_id)
+
+                job = job_registry.create(
+                    target_id=self._target_id_for_jobs(),
+                    client_session_id=client_session_id,
+                    command_type=str(cmd_type),
+                    action=action,
+                    params=params,
+                    category=job_category,
+                    foreground=foreground,
+                )
+                if (
+                    job.foreground
+                    and client_session_id
+                    and client is not None
+                    and client_registry is not None
+                ):
+                    client_registry.set_foreground_job(client_session_id, job.id)
+                job_registry.set_status(job.id, "running")
+
                 result = handler.execute(command)
 
                 result_summary = result.get("data") if "data" in result else result
+                final_status = "completed"
                 if category == "probe" and result.get("status") == "success":
+                    final_status = "streaming"
                     job_registry.set_status(
                         job.id,
-                        "streaming",
+                        final_status,
                         result_summary=result_summary,
                     )
                 else:
                     job_registry.set_status(
                         job.id,
-                        "completed",
+                        final_status,
                         result_summary=result_summary,
+                    )
+                if (
+                    final_status in TERMINAL_STATUSES
+                    and job.foreground
+                    and client_session_id
+                    and client_registry is not None
+                ):
+                    client_registry.clear_foreground_job(
+                        client_session_id,
+                        expected_job_id=job.id,
                     )
 
                 result["job_id"] = job.id
@@ -693,21 +760,34 @@ class PeekaAgent:
                     "message": str(e),
                 }
                 self._add_recent_error(error_entry)
-                job_registry.set_status(
-                    job.id,
-                    "failed",
-                    last_error={
-                        "code": "COMMAND_EXECUTION_ERROR",
-                        "message": str(e),
-                    },
-                )
                 result = {
                     "status": "error",
                     "error": str(e),
                     "traceback": traceback.format_exc(),
                 }
-                result["job_id"] = job.id
+                if job is not None:
+                    job_registry.set_status(
+                        job.id,
+                        "failed",
+                        last_error={
+                            "code": "COMMAND_EXECUTION_ERROR",
+                            "message": str(e),
+                        },
+                    )
+                    if (
+                        job.foreground
+                        and client_session_id
+                        and client_registry is not None
+                    ):
+                        client_registry.clear_foreground_job(
+                            client_session_id,
+                            expected_job_id=job.id,
+                        )
+                    result["job_id"] = job.id
                 return result
+            finally:
+                if mutation_lock_acquired:
+                    self._mutation_lock.release()
         else:
             return {"status": "error", "error": f"Unknown command type: {cmd_type}"}
 

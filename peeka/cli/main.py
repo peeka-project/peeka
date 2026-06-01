@@ -108,6 +108,62 @@ def _socket_path_to_target_id(socket_path: str) -> str:
     return f"target_{session_id[:8]}"
 
 
+def _parse_duration(duration_str: str) -> int:
+    """Parse duration string into seconds.
+    
+    Supports:
+        - Bare integers (interpreted as seconds)
+        - Ns (N seconds)
+        - Nm (N minutes)
+        - Nh (N hours)
+    
+    Args:
+        duration_str: Duration string to parse.
+    
+    Returns:
+        Duration in seconds.
+    
+    Raises:
+        argparse.ArgumentTypeError: If duration_str is invalid.
+    """
+    if not duration_str:
+        raise argparse.ArgumentTypeError("Duration cannot be empty")
+    
+    duration_str = duration_str.strip()
+    
+    # Try bare integer
+    try:
+        seconds = int(duration_str)
+        if seconds < 0:
+            raise argparse.ArgumentTypeError("Duration must be non-negative")
+        return seconds
+    except ValueError:
+        pass
+    
+    # Try unit-suffixed form
+    if len(duration_str) < 2:
+        raise argparse.ArgumentTypeError(f"Invalid duration format: {duration_str}")
+    
+    value_str = duration_str[:-1]
+    unit = duration_str[-1].lower()
+    
+    try:
+        value = int(value_str)
+        if value < 0:
+            raise argparse.ArgumentTypeError("Duration must be non-negative")
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"Invalid duration value: {value_str}")
+    
+    if unit == "s":
+        return value
+    elif unit == "m":
+        return value * 60
+    elif unit == "h":
+        return value * 3600
+    else:
+        raise argparse.ArgumentTypeError(f"Invalid duration unit: {unit} (use s, m, or h)")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="peeka-cli",
@@ -817,6 +873,137 @@ Examples:
         help="Output format (default: table)",
     )
 
+    job_parser = subparsers.add_parser(
+        "job", help="Manage command jobs"
+    )
+    job_subparsers = job_parser.add_subparsers(
+        dest="job_action", help="Job subcommands"
+    )
+
+    job_list_parser = job_subparsers.add_parser(
+        "list", help="List command jobs"
+    )
+    job_list_parser.add_argument(
+        "--target",
+        type=str,
+        default=None,
+        help="Filter by target ID",
+    )
+    job_list_parser.add_argument(
+        "--client",
+        type=str,
+        default=None,
+        help="Filter by client session ID",
+    )
+    job_list_parser.add_argument(
+        "--status",
+        type=str,
+        default=None,
+        help="Filter by job status",
+    )
+    job_list_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["json", "table"],
+        default="table",
+        help="Output format (default: table)",
+    )
+
+    job_status_parser = job_subparsers.add_parser(
+        "status", help="Get status of a specific job"
+    )
+    job_status_parser.add_argument(
+        "--job",
+        type=str,
+        required=True,
+        help="Job ID",
+    )
+    job_status_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["json", "table"],
+        default="table",
+        help="Output format (default: table)",
+    )
+
+    job_inspect_parser = job_subparsers.add_parser(
+        "inspect", help="Inspect a specific job with full details"
+    )
+    job_inspect_parser.add_argument(
+        "--job",
+        type=str,
+        required=True,
+        help="Job ID",
+    )
+    job_inspect_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["json", "table"],
+        default="table",
+        help="Output format (default: table)",
+    )
+
+    job_interrupt_parser = job_subparsers.add_parser(
+        "interrupt", help="Interrupt a running job"
+    )
+    job_interrupt_parser.add_argument(
+        "--job",
+        type=str,
+        required=True,
+        help="Job ID",
+    )
+    job_interrupt_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["json", "table"],
+        default="table",
+        help="Output format (default: table)",
+    )
+
+    job_cleanup_parser = job_subparsers.add_parser(
+        "cleanup", help="Clean up completed jobs"
+    )
+    job_cleanup_parser.add_argument(
+        "--target",
+        type=str,
+        default=None,
+        help="Clean up jobs for a specific target",
+    )
+    job_cleanup_parser.add_argument(
+        "--completed",
+        action="store_true",
+        help="Only clean up completed jobs",
+    )
+    job_cleanup_parser.add_argument(
+        "--older-than",
+        type=_parse_duration,
+        default=600,
+        help="Clean up jobs older than duration (default: 10m)",
+    )
+    job_cleanup_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["json", "table"],
+        default="table",
+        help="Output format (default: table)",
+    )
+
+    job_pull_parser = job_subparsers.add_parser(
+        "pull", help="[STUB] Pull job results (Phase 5)"
+    )
+    job_pull_parser.add_argument(
+        "--job",
+        type=str,
+        required=True,
+        help="Job ID",
+    )
+    job_pull_parser.add_argument(
+        "--consumer",
+        type=str,
+        required=True,
+        help="Consumer name",
+    )
+
     args = parser.parse_args()
 
     if not args.command:
@@ -862,6 +1049,8 @@ Examples:
             return cmd_session(args)
         elif args.command == "client":
             return cmd_client(args)
+        elif args.command == "job":
+            return cmd_job(args)
         else:
             OutputFormatter.error("peeka", error=f"Unknown command: {args.command}")
             return 1
@@ -2174,6 +2363,308 @@ def cmd_run(args) -> int:
 
     finally:
         _cleanup_run_files()
+
+
+def cmd_job(args) -> int:
+    if not args.job_action:
+        OutputFormatter.error("job", error="Missing job subcommand")
+        return 1
+
+    try:
+        if args.job_action == "list":
+            return cmd_job_list(args)
+        elif args.job_action == "status":
+            return cmd_job_status(args)
+        elif args.job_action == "inspect":
+            return cmd_job_inspect(args)
+        elif args.job_action == "interrupt":
+            return cmd_job_interrupt(args)
+        elif args.job_action == "cleanup":
+            return cmd_job_cleanup(args)
+        elif args.job_action == "pull":
+            return cmd_job_pull(args)
+        else:
+            OutputFormatter.error("job", error=f"Unknown job action: {args.job_action}")
+            return 1
+    except Exception as e:
+        OutputFormatter.error("job", error=str(e))
+        return 1
+
+
+def cmd_job_list(args) -> int:
+    try:
+        socket_path, _ = _check_agent_attached()
+    except ValueError as e:
+        OutputFormatter.error("job.list", error=str(e), error_code="AGENT_UNREACHABLE")
+        return 1
+
+    streaming_client = StreamingAgentClient(socket_path)
+    connect_result = streaming_client.connect()
+
+    if connect_result.get("status") != "success":
+        OutputFormatter.error(
+            "job.list",
+            error=connect_result.get("error", "Connection failed"),
+            error_code="TRANSPORT_ERROR"
+        )
+        return 1
+
+    command = {
+        "type": "job",
+        "action": "list",
+    }
+    if args.target:
+        command["target_id"] = args.target
+    if args.client:
+        command["client_session_id"] = args.client
+    if args.status:
+        command["status"] = args.status
+
+    response = streaming_client.send_command(command)
+    streaming_client.disconnect()
+
+    if response.get("status") == "success":
+        data = response.get("data", {})
+        jobs = data.get("jobs", [])
+        
+        if args.format == "json":
+            for job in jobs:
+                print(json.dumps(job))
+        else:
+            if not jobs:
+                print("No jobs found.", file=sys.stderr)
+            else:
+                print(f"{'JOB_ID':<15} {'TARGET':<20} {'CLIENT':<20} {'TYPE/ACTION':<25} {'STATUS':<12} {'CATEGORY':<10} {'UPDATED':<20}")
+                print("-" * 142)
+                for job in jobs:
+                    job_id = job.get("id", "-")
+                    target_id = job.get("target_id", "-")
+                    client_id = job.get("client_session_id", "-")
+                    type_action = f"{job.get('command_type', '-')}/{job.get('action', '-')}"
+                    status = job.get("status", "-")
+                    category = job.get("category", "-")
+                    updated_at = job.get("updated_at", 0)
+                    import datetime
+                    updated_str = datetime.datetime.fromtimestamp(updated_at).strftime("%Y-%m-%d %H:%M:%S") if updated_at else "-"
+                    print(
+                        f"{job_id:<15} {target_id:<20} {client_id:<20} {type_action:<25} {status:<12} {category:<10} {updated_str:<20}"
+                    )
+        return 0
+    else:
+        error_code = response.get("error_code", "TRANSPORT_ERROR")
+        message = response.get("message", "Job list failed")
+        if args.format == "json":
+            OutputFormatter.error("job.list", error=message, error_code=error_code)
+        else:
+            print(f"{error_code}: {message}", file=sys.stderr)
+        return 1
+
+
+def cmd_job_status(args) -> int:
+    try:
+        socket_path, _ = _check_agent_attached()
+    except ValueError as e:
+        OutputFormatter.error("job.status", error=str(e), error_code="AGENT_UNREACHABLE")
+        return 1
+
+    streaming_client = StreamingAgentClient(socket_path)
+    connect_result = streaming_client.connect()
+
+    if connect_result.get("status") != "success":
+        OutputFormatter.error(
+            "job.status",
+            error=connect_result.get("error", "Connection failed"),
+            error_code="TRANSPORT_ERROR"
+        )
+        return 1
+
+    command = {
+        "type": "job",
+        "action": "status",
+        "job_id": args.job,
+    }
+
+    response = streaming_client.send_command(command)
+    streaming_client.disconnect()
+
+    if response.get("status") == "success":
+        data = response.get("data", {})
+        job = data.get("job", {})
+        
+        if args.format == "json":
+            OutputFormatter.success("job.status", data=data)
+        else:
+            for key, value in job.items():
+                print(f"{key:<20} {value}")
+        return 0
+    else:
+        error_code = response.get("error_code", "TRANSPORT_ERROR")
+        message = response.get("message", "Job status query failed")
+        if args.format == "json":
+            OutputFormatter.error("job.status", error=message, error_code=error_code)
+        else:
+            print(f"{error_code}: {message}", file=sys.stderr)
+        return 2 if error_code == "JOB_NOT_FOUND" else 1
+
+
+def cmd_job_inspect(args) -> int:
+    try:
+        socket_path, _ = _check_agent_attached()
+    except ValueError as e:
+        OutputFormatter.error("job.inspect", error=str(e), error_code="AGENT_UNREACHABLE")
+        return 1
+
+    streaming_client = StreamingAgentClient(socket_path)
+    connect_result = streaming_client.connect()
+
+    if connect_result.get("status") != "success":
+        OutputFormatter.error(
+            "job.inspect",
+            error=connect_result.get("error", "Connection failed"),
+            error_code="TRANSPORT_ERROR"
+        )
+        return 1
+
+    command = {
+        "type": "job",
+        "action": "inspect",
+        "job_id": args.job,
+    }
+
+    response = streaming_client.send_command(command)
+    streaming_client.disconnect()
+
+    if response.get("status") == "success":
+        data = response.get("data", {})
+        job = data.get("job", {})
+        
+        if args.format == "json":
+            OutputFormatter.success("job.inspect", data=data)
+        else:
+            for key, value in job.items():
+                if isinstance(value, dict):
+                    print(f"{key:<20}")
+                    for k, v in value.items():
+                        print(f"  {k:<18} {v}")
+                else:
+                    print(f"{key:<20} {value}")
+        return 0
+    else:
+        error_code = response.get("error_code", "TRANSPORT_ERROR")
+        message = response.get("message", "Job inspect query failed")
+        if args.format == "json":
+            OutputFormatter.error("job.inspect", error=message, error_code=error_code)
+        else:
+            print(f"{error_code}: {message}", file=sys.stderr)
+        return 2 if error_code == "JOB_NOT_FOUND" else 1
+
+
+def cmd_job_interrupt(args) -> int:
+    try:
+        socket_path, _ = _check_agent_attached()
+    except ValueError as e:
+        OutputFormatter.error("job.interrupt", error=str(e), error_code="AGENT_UNREACHABLE")
+        return 1
+
+    streaming_client = StreamingAgentClient(socket_path)
+    connect_result = streaming_client.connect()
+
+    if connect_result.get("status") != "success":
+        OutputFormatter.error(
+            "job.interrupt",
+            error=connect_result.get("error", "Connection failed"),
+            error_code="TRANSPORT_ERROR"
+        )
+        return 1
+
+    command = {
+        "type": "job",
+        "action": "interrupt",
+        "job_id": args.job,
+    }
+
+    response = streaming_client.send_command(command)
+    streaming_client.disconnect()
+
+    if response.get("status") == "success":
+        data = response.get("data", {})
+        
+        if args.format == "json":
+            OutputFormatter.success("job.interrupt", data=data)
+        else:
+            job_id = data.get("job_id", args.job)
+            new_status = data.get("status", "interrupted")
+            print(f"Job {job_id} status: {new_status}", file=sys.stderr)
+        return 0
+    else:
+        error_code = response.get("error_code", "TRANSPORT_ERROR")
+        message = response.get("message", "Job interrupt failed")
+        if args.format == "json":
+            OutputFormatter.error("job.interrupt", error=message, error_code=error_code)
+        else:
+            print(f"{error_code}: {message}", file=sys.stderr)
+        return 2 if error_code in ("UNSUPPORTED_CAPABILITY", "JOB_NOT_FOUND") else 1
+
+
+def cmd_job_cleanup(args) -> int:
+    try:
+        socket_path, _ = _check_agent_attached()
+    except ValueError as e:
+        OutputFormatter.error("job.cleanup", error=str(e), error_code="AGENT_UNREACHABLE")
+        return 1
+
+    streaming_client = StreamingAgentClient(socket_path)
+    connect_result = streaming_client.connect()
+
+    if connect_result.get("status") != "success":
+        OutputFormatter.error(
+            "job.cleanup",
+            error=connect_result.get("error", "Connection failed"),
+            error_code="TRANSPORT_ERROR"
+        )
+        return 1
+
+    command = {
+        "type": "job",
+        "action": "cleanup",
+        "completed_only": args.completed,
+        "older_than_seconds": args.older_than,
+    }
+    if args.target:
+        command["target_id"] = args.target
+
+    response = streaming_client.send_command(command)
+    streaming_client.disconnect()
+
+    if response.get("status") == "success":
+        data = response.get("data", {})
+        removed = data.get("removed", [])
+        
+        if args.format == "json":
+            OutputFormatter.success("job.cleanup", data=data)
+        else:
+            print(f"Removed {len(removed)} job(s)", file=sys.stderr)
+            for job_id in removed:
+                print(f"  {job_id}", file=sys.stderr)
+        return 0
+    else:
+        error_code = response.get("error_code", "TRANSPORT_ERROR")
+        message = response.get("message", "Job cleanup failed")
+        if args.format == "json":
+            OutputFormatter.error("job.cleanup", error=message, error_code=error_code)
+        else:
+            print(f"{error_code}: {message}", file=sys.stderr)
+        return 1
+
+
+def cmd_job_pull(args) -> int:
+    error_payload = {
+        "status": "error",
+        "error_code": "UNSUPPORTED_CAPABILITY",
+        "message": "job pull is not yet implemented (see Phase 5 ResultConsumer boulder)"
+    }
+    print(json.dumps(error_payload))
+    return 2
 
 
 if __name__ == "__main__":
