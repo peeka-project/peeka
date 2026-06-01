@@ -261,5 +261,6 @@ class TestProbeInstrumentation:
                 "code": "COMMAND_EXECUTION_ERROR",
                 "message": "boom",
             }
+            assert probes[0].summary["last_error"] == "boom"
         finally:
             command.execute({"action": "stop"})

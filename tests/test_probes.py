@@ -183,6 +183,7 @@ class TestProbeRegistry:
             config={"limit": 1},
             status="failed",
             created_at=10.0,
+            updated_at=12.0,
             started_at=11.0,
             stopped_at=12.0,
             last_event_at=12.0,
@@ -196,6 +197,9 @@ class TestProbeRegistry:
 
         assert serialized["id"] == "prb_deadbeef"
         assert serialized["probe_id"] == "prb_deadbeef"
+        assert probe.probe_id == "prb_deadbeef"
+        assert serialized["updated_at"] == 12.0
+        assert serialized["last_error"] == {"code": "BOOM", "message": "bad"}
         assert serialized["next_valid_actions"] == ["inspect", "cleanup"]
         assert serialized["schema_version"] == PROBE_SCHEMA_VERSION
 
@@ -217,6 +221,20 @@ class TestProbeRegistry:
 
         assert event is not None
         assert probe.updated_at == 120.0
+
+    def test_summary_includes_last_error_on_failure(self) -> None:
+        registry = ProbeRegistry()
+        probe = _create_probe(registry)
+
+        assert registry.set_status(probe.id, "active") is True
+        assert registry.set_status(
+            probe.id,
+            "failed",
+            error="kaput",
+        ) is True
+
+        assert probe.last_error == {"code": "", "message": "kaput"}
+        assert probe.summary["last_error"] == "kaput"
 
     def test_thread_safe(self) -> None:
         registry = ProbeRegistry()
@@ -309,9 +327,11 @@ class TestProbeContext:
         probe = registry.get(probe_id)
         assert probe is not None
         assert probe.status == "failed"
-        assert probe.last_error is not None
-        assert probe.last_error["code"] == "COMMAND_EXECUTION_ERROR"
-        assert probe.last_error["message"] == "test error message"
+        assert probe.last_error == {
+            "code": "COMMAND_EXECUTION_ERROR",
+            "message": "test error message",
+        }
+        assert probe.summary["last_error"] == "test error message"
 
     def test_context_exception_does_not_suppress(self) -> None:
         registry = ProbeRegistry()

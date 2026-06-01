@@ -99,10 +99,40 @@ class TestAgentProbeEndpoints:
 
         assert result["status"] == "success"
         assert result["data"]["probe"]["id"] == probe.id
+        assert result["data"]["probe"]["probe_id"] == probe.id
         assert result["data"]["probe"]["type"] == "watch"
         assert result["data"]["probe"]["pattern"] == "module.func"
         assert result["data"]["probe"]["config"] == {"max_events": 100}
+        assert "updated_at" in result["data"]["probe"]
         assert "next_valid_actions" in result["data"]["probe"]
+
+    def test_probe_status_exposes_last_error_string_when_failed(
+        self, reset_probe_registry: ProbeRegistry
+    ) -> None:
+        agent = _new_agent("test-probe-status-failed")
+        target_id = f"target_{agent.session_id[:8]}"
+
+        probe = reset_probe_registry.create(
+            target_id=target_id,
+            client_session_id="client_a",
+            job_id="job_1",
+            type="watch",
+            pattern="module.func",
+            config={},
+        )
+        reset_probe_registry.set_status(probe.id, "active")
+        reset_probe_registry.set_status(probe.id, "failed", error="probe boom")
+
+        result = agent._execute_command(
+            {"type": "probe", "action": "status", "probe_id": probe.id}
+        )
+
+        assert result["status"] == "success"
+        assert result["data"]["probe"]["last_error"] == {
+            "code": "",
+            "message": "probe boom",
+        }
+        assert result["data"]["probe"]["summary"]["last_error"] == "probe boom"
 
     def test_probe_status_unknown_returns_PROBE_NOT_FOUND(self) -> None:
         agent = _new_agent("test-probe-status-unknown")
@@ -140,6 +170,7 @@ class TestAgentProbeEndpoints:
 
         assert result["status"] == "success"
         assert result["data"]["probe"]["id"] == probe.id
+        assert result["data"]["probe"]["probe_id"] == probe.id
         assert len(result["data"]["events"]) == 2
         assert result["data"]["events"][0]["sequence"] == 0
         assert result["data"]["events"][1]["sequence"] == 1
@@ -362,7 +393,7 @@ class TestAgentProbeEndpoints:
             failed_probe.id,
             "failed",
             stopped_at=time.time() - 700,
-            last_error={"code": "BOOM", "message": "bad"},
+            error="bad",
         )
 
         result = agent._execute_command(
