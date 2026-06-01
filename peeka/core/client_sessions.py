@@ -130,6 +130,50 @@ class ClientRegistry:
                 return list(clients)
             return [client for client in clients if client.target_id == target_id]
 
+    def set_foreground_job(self, client_session_id: str, job_id: str) -> bool:
+        """Set the current foreground job for a client session.
+
+        Args:
+            client_session_id: Public client session identifier.
+            job_id: Public job identifier to assign as foreground.
+
+        Returns:
+            True if the client exists and was updated, otherwise False.
+        """
+        with self._lock:
+            client = self._clients.get(client_session_id)
+            if client is None:
+                return False
+            client.foreground_job_id = job_id
+            client.last_access_at = time.time()
+            return True
+
+    def clear_foreground_job(
+        self, client_session_id: str, expected_job_id: Optional[str] = None
+    ) -> bool:
+        """Clear the current foreground job for a client session.
+
+        Args:
+            client_session_id: Public client session identifier.
+            expected_job_id: Optional guard that must match the current
+                foreground job identifier before clearing.
+
+        Returns:
+            True if the client exists and was cleared, otherwise False.
+        """
+        with self._lock:
+            client = self._clients.get(client_session_id)
+            if client is None:
+                return False
+            if (
+                expected_job_id is not None
+                and client.foreground_job_id != expected_job_id
+            ):
+                return False
+            client.foreground_job_id = None
+            client.last_access_at = time.time()
+            return True
+
     def close(self, client_session_id: str) -> bool:
         """Close a client session if it exists.
 
