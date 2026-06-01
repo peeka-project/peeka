@@ -16,6 +16,7 @@ import time
 import uuid
 from dataclasses import asdict
 from dataclasses import dataclass
+from dataclasses import field
 from typing import Any
 from typing import Dict
 from typing import List
@@ -42,6 +43,7 @@ class ClientSession:
         foreground_job_id: Optional foreground job currently owned by the client.
         created_at: Client creation timestamp in epoch seconds.
         last_access_at: Last client access timestamp in epoch seconds.
+        result_consumers: Result consumer identifiers associated with this client.
         auth: Optional authentication metadata reserved for future use.
     """
 
@@ -53,6 +55,7 @@ class ClientSession:
     foreground_job_id: Optional[str]
     created_at: float
     last_access_at: float
+    result_consumers: List[str] = field(default_factory=list)
     auth: Optional[Dict[str, Any]] = None
 
 
@@ -89,6 +92,7 @@ class ClientRegistry:
             foreground_job_id=None,
             created_at=now,
             last_access_at=now,
+            result_consumers=[],
             auth=None,
         )
         with self._lock:
@@ -142,17 +146,19 @@ class ClientRegistry:
             return True
 
     def cleanup_idle(
-        self, now: float, idle_threshold_seconds: float = 900.0
+        self, now: Optional[float] = None, idle_threshold_seconds: float = 900.0
     ) -> List[str]:
         """Close idle client sessions that have no foreground job.
 
         Args:
-            now: Current epoch timestamp in seconds.
+            now: Current epoch timestamp in seconds. Defaults to time.time().
             idle_threshold_seconds: Maximum idle age before cleanup.
 
         Returns:
             List of closed client session identifiers.
         """
+        if now is None:
+            now = time.time()
         closed_ids = []
         with self._lock:
             for client_session_id, client in list(self._clients.items()):
