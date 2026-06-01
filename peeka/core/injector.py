@@ -18,7 +18,7 @@ import threading
 import time
 import uuid
 from functools import wraps
-from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Callable, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 try:
     import resource
@@ -401,7 +401,7 @@ class DecoratorInjector:
             observation["probe_id"] = event.probe_id
         return True
 
-    def _resolve_target(self, pattern: str) -> Optional[tuple[Any, Any, Any]]:
+    def _resolve_target(self, pattern: str) -> Optional[Tuple[Any, Any, Any]]:
         """
         Resolve pattern to (function, parent_object, attr_name).
 
@@ -1294,7 +1294,7 @@ class DecoratorInjector:
     def _trace_with_wrapper_only(
         self,
         func: Callable[..., Any],
-        args: tuple[Any, ...],
+        args: Tuple[Any, ...],
         kwargs: Dict[str, Any],
     ) -> List[Dict[str, Any]]:
         """
@@ -1348,7 +1348,7 @@ class DecoratorInjector:
     def _trace_with_monitoring(
         self,
         func: Callable[..., Any],
-        args: tuple[Any, ...],
+        args: Tuple[Any, ...],
         kwargs: Dict[str, Any],
         max_depth: int,
         skip_builtin: bool,
@@ -1533,7 +1533,7 @@ class DecoratorInjector:
     def _trace_with_settrace(
         self,
         func: Callable[..., Any],
-        args: tuple[Any, ...],
+        args: Tuple[Any, ...],
         kwargs: Dict[str, Any],
         max_depth: int,
         skip_builtin: bool,
