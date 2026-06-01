@@ -1114,9 +1114,9 @@ Examples:
         help="Clean up probes for a specific target",
     )
     probe_cleanup_parser.add_argument(
-        "--completed",
+        "--all",
         action="store_true",
-        help="Only clean up completed probes",
+        help="Also clean up created/paused probes (never active)",
     )
     probe_cleanup_parser.add_argument(
         "--older-than",
@@ -3075,14 +3075,15 @@ def cmd_probe_cleanup(args) -> int:
 
     if response.get("status") == "success":
         data = response.get("data", {})
-        removed = data.get("removed", [])
+        removed_ids = data.get("removed", [])
         
         if args.format == "json":
             OutputFormatter.success("probe.cleanup", data=data)
         else:
-            print(f"Removed {len(removed)} probe(s)", file=sys.stderr)
-            for probe_id in removed:
-                print(f"  {probe_id}", file=sys.stderr)
+            print(f"Removed {len(removed_ids)} probe(s)", file=sys.stderr)
+            if removed_ids:
+                for probe_id in removed_ids:
+                    print(f"  {probe_id}", file=sys.stderr)
         return 0
     else:
         error_code = response.get("error_code", "TRANSPORT_ERROR")
