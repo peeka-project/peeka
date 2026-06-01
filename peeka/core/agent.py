@@ -598,7 +598,7 @@ class PeekaAgent:
             
             return {
                 "status": "success",
-                "probes": [probe.to_dict() for probe in probes],
+                "data": {"probes": [probe.to_dict() for probe in probes]},
             }
         except Exception as e:
             result = _probe_error("COMMAND_EXECUTION_ERROR", str(e))
@@ -617,7 +617,7 @@ class PeekaAgent:
             
             return {
                 "status": "success",
-                "probe": probe.to_dict(),
+                "data": {"probe": probe.to_dict()},
             }
         except Exception as e:
             result = _probe_error("COMMAND_EXECUTION_ERROR", str(e))
@@ -642,18 +642,20 @@ class PeekaAgent:
             
             return {
                 "status": "success",
-                "probe": probe.to_dict(),
-                "recent_events": [
-                    {
-                        "event_id": event.event_id,
-                        "probe_id": event.probe_id,
-                        "target_id": event.target_id,
-                        "sequence": event.sequence,
-                        "timestamp": event.timestamp,
-                        "payload": event.payload,
-                    }
-                    for event in recent_events
-                ],
+                "data": {
+                    "probe": probe.to_dict(),
+                    "recent_events": [
+                        {
+                            "event_id": event.event_id,
+                            "probe_id": event.probe_id,
+                            "target_id": event.target_id,
+                            "sequence": event.sequence,
+                            "timestamp": event.timestamp,
+                            "payload": event.payload,
+                        }
+                        for event in recent_events
+                    ],
+                },
             }
         except Exception as e:
             result = _probe_error("COMMAND_EXECUTION_ERROR", str(e))
@@ -675,8 +677,10 @@ class PeekaAgent:
             if probe.status in PROBE_TERMINAL_STATUSES:
                 return {
                     "status": "success",
-                    "probe_id": probe_id,
-                    "summary": f"Probe already in terminal state {probe.status}",
+                    "data": {
+                        "probe_id": probe_id,
+                        "summary": f"Probe already in terminal state {probe.status}",
+                    },
                 }
             
             success = self.probe_registry.set_status(probe_id, "stopped")
@@ -688,7 +692,7 @@ class PeekaAgent:
             
             return {
                 "status": "success",
-                "probe_id": probe_id,
+                "data": {"probe_id": probe_id},
             }
         except Exception as e:
             result = _probe_error("COMMAND_EXECUTION_ERROR", str(e))
@@ -713,7 +717,7 @@ class PeekaAgent:
             
             return {
                 "status": "success",
-                "removed": removed,
+                "data": {"removed": removed},
             }
         except Exception as e:
             result = _probe_error("COMMAND_EXECUTION_ERROR", str(e))
