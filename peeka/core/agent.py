@@ -149,6 +149,7 @@ class PeekaAgent:
         self.server: Optional[socket.socket] = None
         self.command_handlers: Dict[str, Any] = {}
         self._client_connections: List[socket.socket] = []
+        self._client_write_locks: Dict[socket.socket, Any] = {}
         self._connections_lock = _rpl.allocate_lock()
         self._mutation_lock: threading.RLock = threading.RLock()
 
@@ -906,10 +907,46 @@ class PeekaAgent:
                     msg = f"[peeka Agent] Accept error: {e}"
                     self._emit_log("ERROR", msg, traceback.format_exc())
 
-    def _handle_client(self, conn: socket.socket, client_id: int) -> None:
+    def _register_client_connection(self, conn: socket.socket) -> int:
+        """Track a live client connection and initialize its write lock."""
         with self._connections_lock:
             self._client_connections.append(conn)
-            connection_total = len(self._client_connections)
+            self._client_write_locks[conn] = _rpl.allocate_lock()
+            return len(self._client_connections)
+
+    def _unregister_client_connection(self, conn: socket.socket) -> int:
+        """Forget a client connection and its write lock."""
+        with self._connections_lock:
+            if conn in self._client_connections:
+                self._client_connections.remove(conn)
+            self._client_write_locks.pop(conn, None)
+            return len(self._client_connections)
+
+    def _snapshot_client_connections(self) -> List[socket.socket]:
+        """Return a snapshot of currently tracked client sockets."""
+        with self._connections_lock:
+            return list(self._client_connections)
+
+    def _send_frame_to_connection(self, conn: socket.socket, frame: bytes) -> bool:
+        """Send one framed message to a tracked connection.
+
+        Returns:
+            True when the frame is written successfully, else False.
+        """
+        with self._connections_lock:
+            write_lock = self._client_write_locks.get(conn)
+        if write_lock is None:
+            return False
+
+        try:
+            with write_lock:
+                conn.sendall(frame)
+            return True
+        except Exception:
+            return False
+
+    def _handle_client(self, conn: socket.socket, client_id: int) -> None:
+        connection_total = self._register_client_connection(conn)
 
         client_info: Dict[str, Any] = {}
         identified = False
@@ -979,17 +1016,14 @@ class PeekaAgent:
 
                 response = json.dumps(result).encode("utf-8")
                 response_frame = len(response).to_bytes(4, "big") + response
-                with self._connections_lock:
-                    conn.sendall(response_frame)
+                if not self._send_frame_to_connection(conn, response_frame):
+                    break
 
         except Exception as e:
             msg = f"[peeka Agent] Client error: {e}"
             self._emit_log("ERROR", msg, traceback.format_exc())
         finally:
-            with self._connections_lock:
-                if conn in self._client_connections:
-                    self._client_connections.remove(conn)
-                connection_total = len(self._client_connections)
+            connection_total = self._unregister_client_connection(conn)
             conn.close()
             self._emit_log(
                 "INFO",
@@ -1251,16 +1285,13 @@ class PeekaAgent:
         obs_json = json.dumps(observation).encode("utf-8")
         message = b"OBS:" + len(obs_json).to_bytes(4, "big") + obs_json
 
-        with self._connections_lock:
-            dead_connections = []
-            for conn in self._client_connections:
-                try:
-                    conn.sendall(message)
-                except Exception:
-                    dead_connections.append(conn)
+        dead_connections = []
+        for conn in self._snapshot_client_connections():
+            if not self._send_frame_to_connection(conn, message):
+                dead_connections.append(conn)
 
-            for conn in dead_connections:
-                self._client_connections.remove(conn)
+        for conn in dead_connections:
+            self._unregister_client_connection(conn)
 
     def _send_log(self, level: str, message: str) -> None:
         """Send a log message from Agent to all connected host clients."""
@@ -1273,16 +1304,13 @@ class PeekaAgent:
         obs_json = json.dumps(log_msg).encode("utf-8")
         frame = b"LOG:" + len(obs_json).to_bytes(4, "big") + obs_json
 
-        with self._connections_lock:
-            dead_connections = []
-            for conn in self._client_connections:
-                try:
-                    conn.sendall(frame)
-                except Exception:
-                    dead_connections.append(conn)
+        dead_connections = []
+        for conn in self._snapshot_client_connections():
+            if not self._send_frame_to_connection(conn, frame):
+                dead_connections.append(conn)
 
-            for conn in dead_connections:
-                self._client_connections.remove(conn)
+        for conn in dead_connections:
+            self._unregister_client_connection(conn)
 
     def _notify_ready(self) -> None:
         """Notify the attacher that the agent is ready via TCP."""

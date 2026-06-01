@@ -239,6 +239,13 @@
 - Likely cause: ProbeContext in T2 creates registry entry, but watch command in T3 may not be using ProbeContext properly
 - Alternative cause: ProbeRegistry cleanup happening too aggressively
 
+## R2 contract — 2026-06-02T06:58:16+08:00
+
+- `ProbeRun` keeps backward-compatible `id` while also exposing a `probe_id` property alias and serializing both `id` + `probe_id` plus `updated_at`.
+- Probe cleanup wire contract now mirrors job cleanup: agent returns `data.removed_ids`, and CLI should count/render that list instead of assuming `removed`.
+- Probe cleanup semantics are `completed_only=True` by default (terminal `stopped|failed` only); `--all` flips to `completed_only=False`, which may additionally remove `created` and `paused` probes but must never remove `active` probes.
+- Probe failure state should store a simple string `last_error`; summary serialization should expose `last_error` whenever the probe failed or has an error message.
+
 **Next steps for resolution**:
 1. Verify watch command creates ProbeContext in `_start_watch_*` (T3 integration point)
 2. Check if probe.stop is being called prematurely by watch wrapper exit
@@ -246,3 +253,20 @@
 4. Manual test: start watch, immediately check probe list (before any cleanup could run)
 
 **Test can be validated once probe/watch integration is fixed** — no test code changes needed.
+
+## [2026-06-02] R2 Remediation Pass A
+
+- D-A: replaced the last `Optional[tuple[...]]` annotation in `DecoratorInjector._resolve_target()` with `Optional[Tuple[...]]` to finish Python 3.8-safe typing cleanup without touching injector payload enrichment.
+- F1-D1: aligned `probe.cleanup` to the existing `job.cleanup` contract by returning a list of removed probe ids from `ProbeRegistry.cleanup()` and keeping the agent `data.removed` payload list-shaped so CLI `len()`/iteration stays valid.
+- F1-D2: renamed the agent inspect payload key from `recent_events` to `events` because the CLI and plan vocabulary were already stable and the agent was the only contract deviator.
+- F1-D3: wired cleanup filters end-to-end by adding `target_id` filtering in `ProbeRegistry.cleanup()` and mapping CLI `completed_only=True` to `status_filter="stopped"` in the agent, preserving the flat command-payload convention.
+- F1-D4: added additive ProbeRun schema fields instead of breaking existing ones: kept `id`, added `probe_id` alias in `to_dict()`, introduced `updated_at`, and advanced it on lifecycle transitions plus event recording to match the vision spec.
+- F1-D5: made failure summaries carry `last_error` by propagating error text through `set_status(..., error=...)`, synchronizing `summary["last_error"]` from stored `last_error`, and covering both context-managed failures and instrumentation-thread failures.
+
+## [2026-06-02] R2 Remediation Pass B
+
+- Lifecycle container tests were more stable after replacing probe-list first-hit selection with an active-probe retry path; stale stopped probe rows can linger across rapid cycles.
+- Background `watch` CLI processes do not reliably exit on `probe stop`; starting them under `setsid` makes test-side cleanup deterministic via process-group termination.
+- GDB-backed container variants report misleading Python-thread totals after streaming starts/stops; `/proc/<pid>/task` is a more stable backend-agnostic signal for leak assertions than the `thread` CLI snapshot.
+- The cross-probe transport issue came from agent-wide send serialization: `_send_observation()` held the global connection lock while writing to every peer, so one stalled stream could delay unrelated control-plane responses until the client timed out and closed.
+- Minimal remediation that worked: snapshot the connection list under the registry lock, then serialize writes per-connection with dedicated write locks so control-plane replies are not blocked by a slow streaming peer.
