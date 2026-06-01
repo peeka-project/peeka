@@ -68,3 +68,81 @@
 - `peeka/core/probes.py` mirrors `peeka/core/jobs.py`: module schema constant, dataclasses, lock-guarded registry, and module singleton.
 - Recent event ring buffers stay outside `ProbeRun` in `ProbeRegistry._recent_events: Dict[str, deque(maxlen=100)]` so `ProbeRun` remains dataclass-serializable for `to_dict()` and future wire use.
 - Per-probe event sequencing also stays registry-side (`_event_sequences`) so `record_event()` can mint stable `evt_<probe_id_last6>_<seq>` ids without mutating payload structure.
+
+## Phase 4 T2 — ProbeContext helper
+
+### Context manager design (cleaner than procedural)
+- `__enter__` creates probe + transitions to active in one atomic step
+- `__exit__` idempotent: checks `status not in {stopped, failed}` before calling `set_status("stopped")` to avoid illegal transition on clean exit after external stop
+- Exception path calls `mark_failed("COMMAND_EXECUTION_ERROR", str(exc_val))` then returns None — does NOT suppress exception (critical for command error handling)
+
+### Cooperative-stop signaling (polling, not callback)
+- `should_stop()` refreshes probe from registry: `registry.get(probe_id).status in {stopped, failed}`
+- Why refresh? External actor (T4 `probe.stop` endpoint) will call `registry.set_status(probe_id, "stopped")`; context needs to see that mutation
+- Alternative considered: separate `_stop_flags: Dict[str, threading.Event]` — rejected because registry state machine already tracks stopped status; no need for duplicate flag map
+- Streaming loops in T3 will check `if ctx.should_stop(): break` every iteration (acceptable overhead: one dict lookup under lock)
+
+### Type safety quirks (basedpyright strict mode)
+- `probe_id` property returns `Optional[str]` (None before `__enter__` called)
+- Tests accessing `ctx.probe_id` outside `with` block must use `probe_id: Optional[str] = None` and assert after try/except
+- Assertion INSIDE `with` block insufficient for type checker if variable escapes scope (possibly-unbound error)
+- Solution: declare `probe_id: Optional[str] = None` at function scope, assign inside `with`, assert after
+
+### Thread safety inheritance
+- ProbeContext delegates all mutations to ProbeRegistry which already has `threading.Lock`
+- No additional locks needed in context — thin wrapper pattern
+- `record_event()` docstring clarifies "thread-safe: registry uses internal locking" to justify no local lock
+
+### Test coverage matrix (6 tests)
+1. `test_context_normal_exit` — happy path: enter → record 3 events → exit → status=stopped, event_count=3
+2. `test_context_exception_marks_failed` — exception path: raise ValueError → status=failed, last_error populated
+3. `test_context_exception_does_not_suppress` — pytest.raises confirms exception propagates (does not return True from __exit__)
+4. `test_record_event_returns_event` — monotonic sequence (0, 1, 2) + correct probe_id in returned ObservationEvent
+5. `test_should_stop_when_externally_stopped` — external `registry.set_status(probe_id, "stopped")` → should_stop() returns True
+6. `test_double_enter_creates_new_probe` — two separate ProbeContext instances → two distinct probes with different IDs
+
+### Docstring density justified
+- Class docstring includes example usage snippet (probe-category commands will mirror this in T3)
+- `__exit__` docstring critical: documents "returns None to propagate exceptions" (non-obvious contract)
+- `should_stop()` explains cooperative-stop polling pattern (will be common in T3 streaming loops)
+- All public methods documented per AGENTS.md Google-style requirement
+
+## Phase 4 T4 — Agent probe endpoints
+
+### Handler implementation patterns
+- Probe handlers mirror job handler structure: `_handle_probe_*` methods
+- Handlers accept `params: Dict[str, Any]` (full command dict)
+- Error helper `_probe_error(code, msg)` returns canonical envelope matching `_job_error`
+- Probe dispatch branch added AFTER job.* branch, BEFORE BaseCommand fallback
+- NO automatic cleanup in probe dispatcher (unlike jobs) - cleanup is explicit via probe.cleanup endpoint
+
+### Import and monkeypatch challenges
+- Module-level `from X import Y` creates binding at import time
+- Monkeypatch must happen BEFORE module imports the name
+- Solution: import INSIDE each handler function: `from peeka.core.probes import probe_registry`
+- Test fixture patches `probes_module.probe_registry` so local imports see patched value
+- Alternative considered: access via `sys.modules['peeka.core.probes'].probe_registry` - rejected as too verbose
+
+### Wire protocol naming collision
+- Command dict has `type` key for protocol-level command type ("probe")
+- Probe list endpoint also accepts `type` filter for probe type (watch/trace/etc)
+- Collision causes `params.get("type")` to return "probe" instead of probe type filter
+- Solution: rename filter parameter to `probe_type` in both handler and wire protocol
+- Job endpoints avoid this because job.list doesn't have a `type` filter
+
+### Test patterns discovered
+- Real `ProbeRegistry` + real dispatch path (no unittest.mock, use monkeypatch)
+- Fixture must patch module BEFORE handlers import
+- Tests that create probes directly use `reset_probe_registry` fixture return value
+- Each test is isolated - fixture creates new registry per test
+
+### Cooperative stop semantics
+- `probe.stop` sets status to "stopped" immediately
+- Actual loop exit happens in next iteration (T3's `should_stop()` polling)
+- Idempotent: stop on already-terminal probe returns success with note in summary
+- Stop within 3s guaranteed by spec (cooperative, not preemptive)
+
+### Pause endpoint stub
+- State machine accepts pause transition
+- Handler returns `UNSUPPORTED_CAPABILITY` error envelope
+- Allows future implementation without breaking existing consumers

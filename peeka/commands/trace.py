@@ -3,9 +3,11 @@ Trace Command - Trace function call paths and execution time
 Similar to Arthas 'trace' command
 """
 
+import sys
 from typing import Any, ClassVar, Dict, TYPE_CHECKING
 
 from peeka.commands.base import BaseCommand
+from peeka.core.probes import ProbeContext
 from peeka.core.runtime.compat import get_policy, policy_meta
 from peeka.core.runtime.gevent_probe import probe
 
@@ -42,6 +44,9 @@ class TraceCommand(BaseCommand):
         super().__init__()
         self.agent = agent
 
+    def _supports_probe_instrumentation(self) -> bool:
+        return hasattr(self.agent, "probe_registry") and hasattr(self.agent, "track_probe_context")
+
     def execute(self, params: Dict[str, Any]) -> Dict[str, Any]:
         try:
             action = params.get("action", "start")
@@ -72,26 +77,49 @@ class TraceCommand(BaseCommand):
             "min_duration": params.get("min_duration", 0),
             "command": "trace",  # mark this as trace command
         }
+        response_config = dict(trace_config)
         gevent_state = probe()
         policy = get_policy("trace", gevent_state)
         meta = policy_meta(gevent_state, policy)
+
+        probe_context = None
+        if self._supports_probe_instrumentation():
+            probe_context = ProbeContext(
+                self.agent.probe_registry,
+                target_id=self.agent._target_id_for_jobs(),
+                client_session_id=params.get("client_session_id"),
+                job_id=params.get("job_id"),
+                type="trace",
+                pattern=pattern,
+                config=trace_config,
+            )
+            _ = probe_context.__enter__()
+            trace_config["_probe_context"] = probe_context
 
         try:
             watch_id = self.agent.injector.inject_trace(
                 pattern, trace_config, force_backend=policy.backend
             )
-            self.agent.observer.register_watch(watch_id, pattern, trace_config)
+            if probe_context is not None:
+                self.agent.track_probe_context(watch_id, probe_context, "trace")
+            self.agent.observer.register_watch(watch_id, pattern, response_config)
 
             return {
                 "status": "success",
                 "watch_id": watch_id,
                 "pattern": pattern,
-                "config": trace_config,
+                "config": response_config,
                 "meta": meta,
             }
 
         except ValueError as e:
+            if probe_context is not None:
+                probe_context.__exit__(*sys.exc_info())
             return {"status": "error", "error": str(e)}
+        except Exception:
+            if probe_context is not None:
+                probe_context.__exit__(*sys.exc_info())
+            raise
 
     def _stop_trace(self, params: Dict[str, Any]) -> Dict[str, Any]:
         watch_id = params.get("watch_id")
@@ -100,6 +128,8 @@ class TraceCommand(BaseCommand):
             try:
                 result = self.agent.injector.uninject(watch_id)
                 stats = self.agent.observer.unregister_watch(watch_id)
+                if self._supports_probe_instrumentation():
+                    self.agent.stop_probe_context(watch_id)
                 return {
                     "status": "success",
                     "watch_id": watch_id,
@@ -111,6 +141,8 @@ class TraceCommand(BaseCommand):
         else:
             count = self.agent.injector.uninject_all()
             self.agent.observer.clear_all()
+            if self._supports_probe_instrumentation():
+                self.agent.stop_probe_contexts_by_type(["watch", "trace", "stack"])
             return {"status": "success", "stopped_count": count}
 
     def _get_status(self, params: Dict[str, Any]) -> Dict[str, Any]:

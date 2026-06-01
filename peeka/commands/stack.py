@@ -3,9 +3,11 @@ Stack Command - Print call stack when function is invoked
 Similar to Arthas 'stack' command
 """
 
+import sys
 from typing import Any, ClassVar, Dict, TYPE_CHECKING
 
 from peeka.commands.base import BaseCommand
+from peeka.core.probes import ProbeContext
 
 if TYPE_CHECKING:
     from peeka.core.agent import PeekaAgent
@@ -35,6 +37,9 @@ class StackCommand(BaseCommand):
     def __init__(self, agent: "PeekaAgent"):
         super().__init__()
         self.agent = agent
+
+    def _supports_probe_instrumentation(self) -> bool:
+        return hasattr(self.agent, "probe_registry") and hasattr(self.agent, "track_probe_context")
 
     def execute(self, params: Dict[str, Any]) -> Dict[str, Any]:
         try:
@@ -72,20 +77,43 @@ class StackCommand(BaseCommand):
             "finish": False,
             "stack_depth": stack_depth,
         }
+        response_config = dict(watch_config)
+
+        probe_context = None
+        if self._supports_probe_instrumentation():
+            probe_context = ProbeContext(
+                self.agent.probe_registry,
+                target_id=self.agent._target_id_for_jobs(),
+                client_session_id=params.get("client_session_id"),
+                job_id=params.get("job_id"),
+                type="stack",
+                pattern=pattern,
+                config=watch_config,
+            )
+            _ = probe_context.__enter__()
+            watch_config["_probe_context"] = probe_context
 
         try:
             watch_id = self.agent.injector.inject(pattern, watch_config)
-            self.agent.observer.register_watch(watch_id, pattern, watch_config)
+            if probe_context is not None:
+                self.agent.track_probe_context(watch_id, probe_context, "stack")
+            self.agent.observer.register_watch(watch_id, pattern, response_config)
 
             return {
                 "status": "success",
                 "watch_id": watch_id,
                 "pattern": pattern,
-                "config": watch_config,
+                "config": response_config,
             }
 
         except ValueError as e:
+            if probe_context is not None:
+                probe_context.__exit__(*sys.exc_info())
             return {"status": "error", "error": str(e)}
+        except Exception:
+            if probe_context is not None:
+                probe_context.__exit__(*sys.exc_info())
+            raise
 
     def _stop_stack(self, params: Dict[str, Any]) -> Dict[str, Any]:
         watch_id = params.get("watch_id")
@@ -94,6 +122,8 @@ class StackCommand(BaseCommand):
             try:
                 result = self.agent.injector.uninject(watch_id)
                 stats = self.agent.observer.unregister_watch(watch_id)
+                if self._supports_probe_instrumentation():
+                    self.agent.stop_probe_context(watch_id)
                 return {
                     "status": "success",
                     "watch_id": watch_id,
@@ -105,6 +135,8 @@ class StackCommand(BaseCommand):
         else:
             count = self.agent.injector.uninject_all()
             self.agent.observer.clear_all()
+            if self._supports_probe_instrumentation():
+                self.agent.stop_probe_contexts_by_type(["watch", "trace", "stack"])
             return {"status": "success", "stopped_count": count}
 
     def _get_status(self, params: Dict[str, Any]) -> Dict[str, Any]:

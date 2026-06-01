@@ -9,6 +9,7 @@ import uuid
 from typing import Any, Callable, ClassVar, Dict, Optional, Set, TYPE_CHECKING
 
 from peeka.commands.base import BaseCommand
+from peeka.core.probes import ProbeContext
 from peeka.core.runtime import primitives as _rpl
 from peeka.core.runtime.compat import (
     BACKEND_FRAME_WALK,
@@ -71,6 +72,8 @@ class TopCommand(BaseCommand):
         self._meta: Dict[str, Any] = policy_meta(
             GeventState.NONE, get_policy("top", GeventState.NONE)
         )
+        self._client_session_id: Optional[str] = None
+        self._job_id: Optional[str] = None
         self._greenlet_switch_counts: Dict[int, int] = {}
         self._greenlet_throw_count: int = 0
 
@@ -103,6 +106,9 @@ class TopCommand(BaseCommand):
 
         except Exception as e:
             return {"status": "error", "error": str(e)}
+
+    def _supports_probe_instrumentation(self) -> bool:
+        return self.agent is not None and hasattr(self.agent, "probe_registry")
 
     def _start(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -145,6 +151,8 @@ class TopCommand(BaseCommand):
             self._interval = params.get("interval", 0.01)
             self._stream = params.get("stream", False)
             self._filter_peeka = params.get("filter_peeka", True)
+            self._client_session_id = params.get("client_session_id")
+            self._job_id = params.get("job_id")
 
             # Reset state
             self._stats.clear()
@@ -169,8 +177,11 @@ class TopCommand(BaseCommand):
 
             # Start observation thread if streaming
             if self._stream and self.agent:
+                observation_target = self._send_periodic_observations_with_probe
+                if not self._supports_probe_instrumentation():
+                    observation_target = self._send_periodic_observations_legacy
                 self._observation_thread = _NativeThreadHandle(
-                    target=self._send_periodic_observations,
+                    target=observation_target,
                     name=f"peeka-top-obs-{self._top_id}",
                 )
 
@@ -216,6 +227,8 @@ class TopCommand(BaseCommand):
             self._sampling_thread = None
             self._observation_thread = None
             self._top_id = None
+            self._client_session_id = None
+            self._job_id = None
 
         return {
             "status": "success",
@@ -375,9 +388,54 @@ class TopCommand(BaseCommand):
         finally:
             settrace(prev_tracer)
 
-    def _send_periodic_observations(self) -> None:
-        """Background thread that sends periodic observation updates."""
-        # Send every 1 second
+    def _send_periodic_observations_with_probe(self) -> None:
+        """Background thread that sends periodic top snapshots via ProbeContext."""
+        if self.agent is None or self._top_id is None:
+            return
+
+        probe_config = {
+            "interval": self._interval,
+            "stream": self._stream,
+            "filter_peeka": self._filter_peeka,
+        }
+
+        with ProbeContext(
+            self.agent.probe_registry,
+            target_id=self.agent._target_id_for_jobs(),
+            client_session_id=self._client_session_id,
+            job_id=self._job_id,
+            type="top",
+            pattern=None,
+            config=probe_config,
+        ) as probe:
+            self.agent.track_probe_context(self._top_id, probe, "top")
+            try:
+                self._send_periodic_observations(probe)
+            finally:
+                self.agent.untrack_probe_context(self._top_id)
+
+    def _send_periodic_observations(self, probe: ProbeContext) -> None:
+        """Background loop that sends periodic observation updates."""
+        observation_interval = 1.0
+
+        while not self._stop_event.is_set():
+            if probe.should_stop():
+                break
+
+            snapshot = self._build_snapshot()
+            event = probe.record_event(snapshot)
+            if event is not None:
+                snapshot["event_id"] = event.event_id
+                snapshot["probe_id"] = event.probe_id
+
+            if self.agent:
+                self.agent._send_observation(snapshot)
+
+            if self._stop_event.wait(timeout=observation_interval):
+                break
+
+    def _send_periodic_observations_legacy(self) -> None:
+        """Legacy best-effort streaming path for agents without ProbeRegistry."""
         observation_interval = 1.0
 
         while not self._stop_event.is_set():
@@ -386,10 +444,8 @@ class TopCommand(BaseCommand):
                 if self.agent:
                     self.agent._send_observation(snapshot)
             except Exception:
-                # Best-effort - ignore errors
                 pass
 
-            # Wait using Event for responsive shutdown
             if self._stop_event.wait(timeout=observation_interval):
                 break
 

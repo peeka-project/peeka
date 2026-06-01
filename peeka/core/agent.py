@@ -17,7 +17,10 @@ from peeka.core.injector import DecoratorInjector
 from peeka.core.jobs import JobCategory
 from peeka.core.jobs import TERMINAL_STATUSES
 from peeka.core.jobs import job_registry
+from peeka.core import probes as probes_module
 from peeka.core.observer import ObservationManager
+from peeka.core.probes import ProbeContext
+from peeka.core.probes import ProbeRegistry
 from peeka.core.runtime import primitives as _rpl
 
 # Lazy import to avoid circular dependency issues
@@ -49,6 +52,16 @@ def _client_error(error_code: str, message: str) -> Dict[str, Any]:
 
 def _job_error(error_code: str, message: str) -> Dict[str, Any]:
     """Return a standard error envelope for job namespace handlers."""
+    return {
+        "status": "error",
+        "error_code": error_code,
+        "message": message,
+        "error": f"{error_code}: {message}",
+    }
+
+
+def _probe_error(error_code: str, message: str) -> Dict[str, Any]:
+    """Return a standard error envelope for probe namespace handlers."""
     return {
         "status": "error",
         "error_code": error_code,
@@ -142,6 +155,10 @@ class PeekaAgent:
         self._client_counter = 0
         self.observer = ObservationManager()
         self.injector = DecoratorInjector(self)
+        self.probe_registry: ProbeRegistry = probes_module.probe_registry
+        self._probe_contexts: Dict[str, ProbeContext] = {}
+        self._probe_context_types: Dict[str, str] = {}
+        self._probe_context_lock = _rpl.allocate_lock()
 
         self._notify_port = notify_port
         
@@ -258,6 +275,59 @@ class PeekaAgent:
     def _target_id_for_jobs(self) -> str:
         """Return the stable target identifier used by job records."""
         return f"target_{self.session_id[:8]}"
+
+    def track_probe_context(
+        self,
+        stream_key: str,
+        probe_context: ProbeContext,
+        probe_type: str,
+    ) -> None:
+        """Track an active probe context by stream identifier."""
+        with self._probe_context_lock:
+            self._probe_contexts[stream_key] = probe_context
+            self._probe_context_types[stream_key] = probe_type
+
+    def get_probe_context(self, stream_key: str) -> Optional[ProbeContext]:
+        """Return an active probe context for a stream key."""
+        with self._probe_context_lock:
+            return self._probe_contexts.get(stream_key)
+
+    def stop_probe_context(
+        self,
+        stream_key: str,
+        exc_info: Optional[Tuple[Any, Any, Any]] = None,
+    ) -> None:
+        """Stop and forget an active probe context."""
+        with self._probe_context_lock:
+            probe_context = self._probe_contexts.pop(stream_key, None)
+            self._probe_context_types.pop(stream_key, None)
+
+        if probe_context is None:
+            return
+
+        if exc_info is None:
+            probe_context.__exit__(None, None, None)
+            return
+
+        probe_context.__exit__(exc_info[0], exc_info[1], exc_info[2])
+
+    def untrack_probe_context(self, stream_key: str) -> None:
+        """Forget an active probe context without closing it."""
+        with self._probe_context_lock:
+            self._probe_contexts.pop(stream_key, None)
+            self._probe_context_types.pop(stream_key, None)
+
+    def stop_probe_contexts_by_type(self, probe_types: List[str]) -> None:
+        """Stop all tracked probe contexts whose type matches *probe_types*."""
+        with self._probe_context_lock:
+            stream_keys = [
+                stream_key
+                for stream_key, probe_type in self._probe_context_types.items()
+                if probe_type in probe_types
+            ]
+
+        for stream_key in stream_keys:
+            self.stop_probe_context(stream_key)
 
     def _handle_client_create(self, command: Dict[str, Any]) -> Dict[str, Any]:
         """Handle client.create command - create and register a client session."""
@@ -511,6 +581,142 @@ class PeekaAgent:
             }
         except Exception as e:
             result = _job_error("COMMAND_EXECUTION_ERROR", str(e))
+            result["traceback"] = traceback.format_exc()
+            return result
+
+    def _handle_probe_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            target_id = params.get("target_id")
+            status = params.get("status")
+            probe_type = params.get("probe_type")
+
+            probes = self.probe_registry.list(
+                target_id=target_id,
+                status=status,
+                type=probe_type,
+            )
+            
+            return {
+                "status": "success",
+                "probes": [probe.to_dict() for probe in probes],
+            }
+        except Exception as e:
+            result = _probe_error("COMMAND_EXECUTION_ERROR", str(e))
+            result["traceback"] = traceback.format_exc()
+            return result
+
+    def _handle_probe_status(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            probe_id = params.get("probe_id", "")
+            if not probe_id:
+                return _probe_error("PROBE_NOT_FOUND", "probe_id is required")
+
+            probe = self.probe_registry.get(probe_id)
+            if probe is None:
+                return _probe_error("PROBE_NOT_FOUND", f"Probe {probe_id!r} not found")
+            
+            return {
+                "status": "success",
+                "probe": probe.to_dict(),
+            }
+        except Exception as e:
+            result = _probe_error("COMMAND_EXECUTION_ERROR", str(e))
+            result["traceback"] = traceback.format_exc()
+            return result
+
+    def _handle_probe_inspect(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            probe_id = params.get("probe_id", "")
+            if not probe_id:
+                return _probe_error("PROBE_NOT_FOUND", "probe_id is required")
+
+            probe = self.probe_registry.get(probe_id)
+            if probe is None:
+                return _probe_error("PROBE_NOT_FOUND", f"Probe {probe_id!r} not found")
+            
+            events_limit = int(params.get("events_limit", 100))
+            if events_limit > 100:
+                events_limit = 100
+            
+            recent_events = self.probe_registry.get_recent_events(probe_id, limit=events_limit)
+            
+            return {
+                "status": "success",
+                "probe": probe.to_dict(),
+                "recent_events": [
+                    {
+                        "event_id": event.event_id,
+                        "probe_id": event.probe_id,
+                        "target_id": event.target_id,
+                        "sequence": event.sequence,
+                        "timestamp": event.timestamp,
+                        "payload": event.payload,
+                    }
+                    for event in recent_events
+                ],
+            }
+        except Exception as e:
+            result = _probe_error("COMMAND_EXECUTION_ERROR", str(e))
+            result["traceback"] = traceback.format_exc()
+            return result
+
+    def _handle_probe_stop(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            from peeka.core.probes import TERMINAL_STATUSES as PROBE_TERMINAL_STATUSES
+
+            probe_id = params.get("probe_id", "")
+            if not probe_id:
+                return _probe_error("PROBE_NOT_FOUND", "probe_id is required")
+
+            probe = self.probe_registry.get(probe_id)
+            if probe is None:
+                return _probe_error("PROBE_NOT_FOUND", f"Probe {probe_id!r} not found")
+            
+            if probe.status in PROBE_TERMINAL_STATUSES:
+                return {
+                    "status": "success",
+                    "probe_id": probe_id,
+                    "summary": f"Probe already in terminal state {probe.status}",
+                }
+            
+            success = self.probe_registry.set_status(probe_id, "stopped")
+            if not success:
+                return _probe_error(
+                    "COMMAND_EXECUTION_ERROR",
+                    f"Failed to transition probe from {probe.status} to stopped",
+                )
+            
+            return {
+                "status": "success",
+                "probe_id": probe_id,
+            }
+        except Exception as e:
+            result = _probe_error("COMMAND_EXECUTION_ERROR", str(e))
+            result["traceback"] = traceback.format_exc()
+            return result
+
+    def _handle_probe_pause(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        return _probe_error(
+            "UNSUPPORTED_CAPABILITY",
+            "pause is not yet implemented",
+        )
+
+    def _handle_probe_cleanup(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            older_than_seconds = float(params.get("older_than_seconds", 600))
+            status_filter = params.get("status_filter")
+
+            removed = self.probe_registry.cleanup(
+                older_than_seconds=older_than_seconds,
+                status_filter=status_filter,
+            )
+            
+            return {
+                "status": "success",
+                "removed": removed,
+            }
+        except Exception as e:
+            result = _probe_error("COMMAND_EXECUTION_ERROR", str(e))
             result["traceback"] = traceback.format_exc()
             return result
 
@@ -834,6 +1040,26 @@ class PeekaAgent:
                     f"Unknown job action: {action}",
                 )
 
+        if cmd_type == "probe":
+            action = command.get("action", "")
+            if action == "list":
+                return self._handle_probe_list(command)
+            elif action == "status":
+                return self._handle_probe_status(command)
+            elif action == "inspect":
+                return self._handle_probe_inspect(command)
+            elif action == "stop":
+                return self._handle_probe_stop(command)
+            elif action == "pause":
+                return self._handle_probe_pause(command)
+            elif action == "cleanup":
+                return self._handle_probe_cleanup(command)
+            else:
+                return _probe_error(
+                    "UNSUPPORTED_CAPABILITY",
+                    f"Unknown probe action: {action}",
+                )
+
         handler = self._get_handler(cmd_type)
         if handler:
             job_registry.cleanup(retention_seconds=600)
@@ -915,6 +1141,7 @@ class PeekaAgent:
                     client_registry.set_foreground_job(client_session_id, job.id)
                 job_registry.set_status(job.id, "running")
 
+                command["job_id"] = job.id
                 result = handler.execute(command)
 
                 if isinstance(result, dict) and result.get("status") == "error":

@@ -31,6 +31,7 @@ from peeka.core.runtime.compat import (
     BACKEND_SYS_MONITORING,
     BACKEND_WRAPPER_ONLY,
 )
+from peeka.core.probes import ProbeContext
 from peeka.core.safeeval.simpleeval import SimpleEval, BASIC_ALLOWED_ATTRS
 
 logger = logging.getLogger(__name__)
@@ -107,6 +108,9 @@ class DecoratorInjector:
 
         # Create wrapper
         wrapper = self._create_wrapper(target_func, watch_id, watch_config)
+        stored_config = {
+            key: value for key, value in watch_config.items() if key != "_probe_context"
+        }
 
         with self._lock:
             # Store original function info for restoration
@@ -116,7 +120,7 @@ class DecoratorInjector:
                 "wrapper": wrapper,
                 "parent": parent_obj,
                 "attr_name": attr_name,
-                "config": watch_config,
+                "config": stored_config,
                 "count": 0,
                 "times_limit": watch_config.get("times", -1),
                 "is_coroutine_function": is_coroutine_function,
@@ -173,6 +177,9 @@ class DecoratorInjector:
 
         # Create trace wrapper
         wrapper = self._create_trace_wrapper(target_func, watch_id, trace_config)
+        stored_config = {
+            key: value for key, value in trace_config.items() if key != "_probe_context"
+        }
 
         with self._lock:
             # Store original function info for restoration
@@ -182,7 +189,7 @@ class DecoratorInjector:
                 "wrapper": wrapper,
                 "parent": parent_obj,
                 "attr_name": attr_name,
-                "config": trace_config,
+                "config": stored_config,
                 "count": 0,
                 "times_limit": trace_config.get("times", -1),
             }
@@ -274,7 +281,7 @@ class DecoratorInjector:
                 }
             return None
 
-    def list_watches(self) -> list:
+    def list_watches(self) -> List[Dict[str, Any]]:
         """
         List all active watches.
 
@@ -375,7 +382,26 @@ class DecoratorInjector:
         """Generate unique watch ID."""
         return f"watch_{uuid.uuid4().hex[:8]}"
 
-    def _resolve_target(self, pattern: str) -> Optional[tuple]:
+    def _record_probe_event(
+        self,
+        config: Dict[str, Any],
+        observation: Dict[str, Any],
+    ) -> bool:
+        """Record a probe event and enrich the outgoing observation payload."""
+        probe_context = config.get("_probe_context")
+        if not isinstance(probe_context, ProbeContext):
+            return True
+
+        if probe_context.should_stop():
+            return False
+
+        event = probe_context.record_event(observation)
+        if event is not None:
+            observation["event_id"] = event.event_id
+            observation["probe_id"] = event.probe_id
+        return True
+
+    def _resolve_target(self, pattern: str) -> Optional[tuple[Any, Any, Any]]:
         """
         Resolve pattern to (function, parent_object, attr_name).
 
@@ -457,8 +483,8 @@ class DecoratorInjector:
         return None
 
     def _create_wrapper(
-        self, func: Callable, watch_id: str, config: Dict[str, Any]
-    ) -> Callable:
+        self, func: Callable[..., Any], watch_id: str, config: Dict[str, Any]
+    ) -> Callable[..., Any]:
         """
         Create a wrapper function that captures call information.
 
@@ -610,6 +636,9 @@ class DecoratorInjector:
                         for frame in stack_frames
                     ]
                     observation["data"] = {"stack_trace": observation["stack"]}
+
+                if not injector._record_probe_event(config, observation):
+                    return
 
                 try:
                     injector.agent._send_observation(observation)
@@ -1235,6 +1264,14 @@ class DecoratorInjector:
                 "thread_id": threading.get_ident(),
                 "thread_name": threading.current_thread().name,
             }
+
+            if not injector._record_probe_event(config, observation):
+                if call_tree:
+                    if "_exception" in call_tree[0]:
+                        raise call_tree[0]["_exception"]
+                    if "_result" in call_tree[0]:
+                        return call_tree[0]["_result"]
+                return None
 
             try:
                 injector.agent._send_observation(observation)
