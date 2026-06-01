@@ -14,7 +14,9 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 import peeka
+from peeka.cli._client_helper import ephemeral_client
 from peeka.core.attach import ProcessAttacher
+from peeka.core.client import AgentClient
 from peeka.core.client import StreamingAgentClient
 from peeka.core.output import OutputFormatter
 from peeka.core.output import configure_logging
@@ -101,6 +103,12 @@ def _check_agent_attached() -> Tuple[str, int]:
     return (socket_path, attached_pid)
 
 
+def _socket_path_to_target_id(socket_path: str) -> str:
+    """Derive target_id from socket path."""
+    session_id = Path(socket_path).stem.replace("peeka_", "")
+    return f"target_{session_id[:8]}"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="peeka-cli",
@@ -164,6 +172,11 @@ Examples:
         type=str,
         help='Condition expression (e.g., "params[0] > 100")',
     )
+    watch_parser.add_argument(
+        "--client",
+        type=str,
+        help="Existing client session ID (optional; auto-creates ephemeral if not provided)",
+    )
 
     trace_parser = subparsers.add_parser(
         "trace", help="Trace function call tree and timing (must attach first)"
@@ -204,6 +217,11 @@ Examples:
         type=float,
         default=0,
         help="Minimum duration in ms to record (default: 0)",
+    )
+    trace_parser.add_argument(
+        "--client",
+        type=str,
+        help="Existing client session ID (optional; auto-creates ephemeral if not provided)",
     )
 
     stack_parser = subparsers.add_parser(
@@ -712,6 +730,94 @@ Examples:
         help="Output format (default: table)",
     )
 
+    client_parser = subparsers.add_parser(
+        "client", help="Manage client sessions for target agents"
+    )
+    client_subparsers = client_parser.add_subparsers(
+        dest="client_action", help="Client subcommands"
+    )
+
+    client_create_parser = client_subparsers.add_parser(
+        "create", help="Create a client session"
+    )
+    client_create_parser.add_argument(
+        "--target",
+        type=str,
+        required=True,
+        help="Target ID for the client session",
+    )
+    client_create_parser.add_argument(
+        "--source",
+        type=str,
+        required=True,
+        choices=["cli", "tui", "mcp", "api", "internal"],
+        help="Source of the client request",
+    )
+    client_create_parser.add_argument(
+        "--user",
+        type=str,
+        default=None,
+        help="Optional user ID associated with the client",
+    )
+    client_create_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["json", "table"],
+        default="table",
+        help="Output format (default: table)",
+    )
+
+    client_list_parser = client_subparsers.add_parser(
+        "list", help="List all client sessions"
+    )
+    client_list_parser.add_argument(
+        "--target",
+        type=str,
+        default=None,
+        help="Optional target ID filter",
+    )
+    client_list_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["json", "table"],
+        default="table",
+        help="Output format (default: table)",
+    )
+
+    client_status_parser = client_subparsers.add_parser(
+        "status", help="Get status of a specific client session"
+    )
+    client_status_parser.add_argument(
+        "--client",
+        type=str,
+        required=True,
+        help="Client session ID",
+    )
+    client_status_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["json", "table"],
+        default="table",
+        help="Output format (default: table)",
+    )
+
+    client_close_parser = client_subparsers.add_parser(
+        "close", help="Close a client session"
+    )
+    client_close_parser.add_argument(
+        "--client",
+        type=str,
+        required=True,
+        help="Client session ID",
+    )
+    client_close_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["json", "table"],
+        default="table",
+        help="Output format (default: table)",
+    )
+
     args = parser.parse_args()
 
     if not args.command:
@@ -755,6 +861,8 @@ Examples:
             return cmd_target(args)
         elif args.command == "session":
             return cmd_session(args)
+        elif args.command == "client":
+            return cmd_client(args)
         else:
             OutputFormatter.error("peeka", error=f"Unknown command: {args.command}")
             return 1
@@ -846,9 +954,11 @@ def cmd_watch(args) -> int:
     streaming_client: Optional[StreamingAgentClient] = None
     watch_id: Optional[str] = None
     pattern: Optional[str] = None
+    agent_client: Optional[AgentClient] = None
+    ephemeral_client_id: Optional[str] = None
 
     def cleanup_watch(signum=None, frame=None):
-        nonlocal streaming_client, watch_id, pattern
+        nonlocal streaming_client, watch_id, pattern, agent_client, ephemeral_client_id
         if streaming_client and watch_id:
             try:
                 streaming_client.send_command(
@@ -860,6 +970,17 @@ def cmd_watch(args) -> int:
             except Exception:
                 pass
             streaming_client.disconnect()
+        if ephemeral_client_id is not None and agent_client is not None:
+            try:
+                agent_client.send_command(
+                    {
+                        "type": "client",
+                        "action": "close",
+                        "client_session_id": ephemeral_client_id,
+                    }
+                )
+            except Exception:
+                pass
         if signum is not None:
             sys.exit(130)
 
@@ -877,57 +998,116 @@ def cmd_watch(args) -> int:
 
     pattern = args.pattern
 
-    command = {
-        "type": "watch",
-        "action": "start",
-        "pattern": pattern,
-        "depth": args.depth,
-        "times": args.times,
-        "before": args.before,
-        "exception": args.exception,
-        "success": args.success,
-        "finish": args.finish,
-        "condition_express": args.condition_express,
-    }
+    if not hasattr(args, "client") or args.client is None:
+        target_id = _socket_path_to_target_id(socket_path)
+        agent_client = AgentClient(socket_path)
+        try:
+            with ephemeral_client(target_id, agent_client) as cid:
+                ephemeral_client_id = cid
 
-    response = streaming_client.send_command(command)
+                command = {
+                    "type": "watch",
+                    "action": "start",
+                    "pattern": pattern,
+                    "depth": args.depth,
+                    "times": args.times,
+                    "before": args.before,
+                    "exception": args.exception,
+                    "success": args.success,
+                    "finish": args.finish,
+                    "condition_express": args.condition_express,
+                }
 
-    if response.get("status") != "success":
-        OutputFormatter.error(
-            "watch", error=response.get("error", "Watch start failed")
-        )
-        streaming_client.disconnect()
-        return 1
+                response = streaming_client.send_command(command)
 
-    watch_id = response.get("watch_id")
+                if response.get("status") != "success":
+                    OutputFormatter.error(
+                        "watch", error=response.get("error", "Watch start failed")
+                    )
+                    streaming_client.disconnect()
+                    return 1
 
-    start_data = {"watch_id": watch_id, "pattern": pattern}
-    target_info = response.get("target")
-    if target_info:
-        start_data["target"] = target_info
-    OutputFormatter.event("watch_started", data=start_data)
-    sys.stdout.flush()
+                watch_id = response.get("watch_id")
 
-    observation_count = 0
+                start_data = {"watch_id": watch_id, "pattern": pattern}
+                target_info = response.get("target")
+                if target_info:
+                    start_data["target"] = target_info
+                OutputFormatter.event("watch_started", data=start_data)
+                sys.stdout.flush()
 
-    try:
-        for observation in streaming_client.stream_observations():
-            # Observations already have type field added by agent._send_observation
-            print(json.dumps(observation))
-            sys.stdout.flush()
+                observation_count = 0
 
-            if args.times > 0:
-                observation_count += 1
-                if observation_count >= args.times:
-                    break
+                try:
+                    for observation in streaming_client.stream_observations():
+                        print(json.dumps(observation))
+                        sys.stdout.flush()
 
-    finally:
-        cleanup_watch()
+                        if args.times > 0:
+                            observation_count += 1
+                            if observation_count >= args.times:
+                                break
 
-    return 0
+                finally:
+                    cleanup_watch()
+
+                return 0
+        except Exception as e:
+            OutputFormatter.error("watch", error=str(e))
+            cleanup_watch()
+            return 1
+    else:
+        command = {
+            "type": "watch",
+            "action": "start",
+            "pattern": pattern,
+            "depth": args.depth,
+            "times": args.times,
+            "before": args.before,
+            "exception": args.exception,
+            "success": args.success,
+            "finish": args.finish,
+            "condition_express": args.condition_express,
+        }
+
+        response = streaming_client.send_command(command)
+
+        if response.get("status") != "success":
+            OutputFormatter.error(
+                "watch", error=response.get("error", "Watch start failed")
+            )
+            streaming_client.disconnect()
+            return 1
+
+        watch_id = response.get("watch_id")
+
+        start_data = {"watch_id": watch_id, "pattern": pattern}
+        target_info = response.get("target")
+        if target_info:
+            start_data["target"] = target_info
+        OutputFormatter.event("watch_started", data=start_data)
+        sys.stdout.flush()
+
+        observation_count = 0
+
+        try:
+            for observation in streaming_client.stream_observations():
+                print(json.dumps(observation))
+                sys.stdout.flush()
+
+                if args.times > 0:
+                    observation_count += 1
+                    if observation_count >= args.times:
+                        break
+
+        finally:
+            cleanup_watch()
+
+        return 0
 
 
 def cmd_trace(args) -> int:
+    # TODO(client-session): wrap with ephemeral_client per boulder client-session.md T4
     try:
         socket_path, attached_pid = _check_agent_attached()
     except ValueError as e:
@@ -937,9 +1117,11 @@ def cmd_trace(args) -> int:
     streaming_client: Optional[StreamingAgentClient] = None
     trace_id: Optional[str] = None
     pattern: Optional[str] = None
+    agent_client: Optional[AgentClient] = None
+    ephemeral_client_id: Optional[str] = None
 
     def cleanup_trace(signum=None, frame=None):
-        nonlocal streaming_client, trace_id, pattern
+        nonlocal streaming_client, trace_id, pattern, agent_client, ephemeral_client_id
         if streaming_client and trace_id:
             try:
                 streaming_client.send_command(
@@ -951,6 +1133,17 @@ def cmd_trace(args) -> int:
             except Exception:
                 pass
             streaming_client.disconnect()
+        if ephemeral_client_id is not None and agent_client is not None:
+            try:
+                agent_client.send_command(
+                    {
+                        "type": "client",
+                        "action": "close",
+                        "client_session_id": ephemeral_client_id,
+                    }
+                )
+            except Exception:
+                pass
         if signum is not None:
             sys.exit(130)
 
@@ -968,50 +1161,104 @@ def cmd_trace(args) -> int:
 
     pattern = args.pattern
 
-    command = {
-        "type": "trace",
-        "action": "start",
-        "pattern": pattern,
-        "depth": args.depth,
-        "times": args.times,
-        "condition_express": args.condition_express,
-        "skip_builtin": args.skip_builtin,
-        "min_duration": args.min_duration,
-    }
+    if not hasattr(args, "client") or args.client is None:
+        target_id = _socket_path_to_target_id(socket_path)
+        agent_client = AgentClient(socket_path)
+        try:
+            with ephemeral_client(target_id, agent_client) as cid:
+                ephemeral_client_id = cid
 
-    response = streaming_client.send_command(command)
+                command = {
+                    "type": "trace",
+                    "action": "start",
+                    "pattern": pattern,
+                    "depth": args.depth,
+                    "times": args.times,
+                    "condition_express": args.condition_express,
+                    "skip_builtin": args.skip_builtin,
+                    "min_duration": args.min_duration,
+                }
 
-    if response.get("status") != "success":
-        OutputFormatter.error(
-            "trace", error=response.get("error", "Trace start failed")
+                response = streaming_client.send_command(command)
+
+                if response.get("status") != "success":
+                    OutputFormatter.error(
+                        "trace", error=response.get("error", "Trace start failed")
+                    )
+                    streaming_client.disconnect()
+                    return 1
+
+                trace_id = response.get("watch_id")
+
+                OutputFormatter.event(
+                    "trace_started",
+                    data={"trace_id": trace_id, "pattern": pattern},
+                    meta=response.get("meta"),
+                )
+                sys.stdout.flush()
+
+                try:
+                    for observation in streaming_client.stream_observations():
+                        print(json.dumps(observation))
+                        sys.stdout.flush()
+
+                        if args.times > 0:
+                            count = observation.get("count", 0)
+                            if count >= args.times:
+                                break
+
+                finally:
+                    cleanup_trace()
+
+                return 0
+        except Exception as e:
+            OutputFormatter.error("trace", error=str(e))
+            cleanup_trace()
+            return 1
+    else:
+        command = {
+            "type": "trace",
+            "action": "start",
+            "pattern": pattern,
+            "depth": args.depth,
+            "times": args.times,
+            "condition_express": args.condition_express,
+            "skip_builtin": args.skip_builtin,
+            "min_duration": args.min_duration,
+        }
+
+        response = streaming_client.send_command(command)
+
+        if response.get("status") != "success":
+            OutputFormatter.error(
+                "trace", error=response.get("error", "Trace start failed")
+            )
+            streaming_client.disconnect()
+            return 1
+
+        trace_id = response.get("watch_id")
+
+        OutputFormatter.event(
+            "trace_started",
+            data={"trace_id": trace_id, "pattern": pattern},
+            meta=response.get("meta"),
         )
-        streaming_client.disconnect()
-        return 1
+        sys.stdout.flush()
 
-    trace_id = response.get("watch_id")
+        try:
+            for observation in streaming_client.stream_observations():
+                print(json.dumps(observation))
+                sys.stdout.flush()
 
-    OutputFormatter.event(
-        "trace_started",
-        data={"trace_id": trace_id, "pattern": pattern},
-        meta=response.get("meta"),
-    )
-    sys.stdout.flush()
+                if args.times > 0:
+                    count = observation.get("count", 0)
+                    if count >= args.times:
+                        break
 
-    try:
-        for observation in streaming_client.stream_observations():
-            # Observations already have type field added by agent._send_observation
-            print(json.dumps(observation))
-            sys.stdout.flush()
+        finally:
+            cleanup_trace()
 
-            if args.times > 0:
-                count = observation.get("count", 0)
-                if count >= args.times:
-                    break
-
-    finally:
-        cleanup_trace()
-
-    return 0
+        return 0
 
 
 def cmd_stack(args) -> int:
@@ -2176,3 +2423,229 @@ def cmd_session_status(args) -> int:
 def cmd_session_detach(args) -> int:
     print("[deprecated] 'peeka-cli session <X>' is deprecated; use 'peeka-cli target <X>'", file=sys.stderr)
     return cmd_target_detach(args)
+
+
+def cmd_client(args) -> int:
+    if not args.client_action:
+        OutputFormatter.error("client", error="Missing client subcommand")
+        return 1
+
+    try:
+        if args.client_action == "create":
+            return cmd_client_create(args)
+        elif args.client_action == "list":
+            return cmd_client_list(args)
+        elif args.client_action == "status":
+            return cmd_client_status(args)
+        elif args.client_action == "close":
+            return cmd_client_close(args)
+        else:
+            OutputFormatter.error("client", error=f"Unknown client action: {args.client_action}")
+            return 1
+    except Exception as e:
+        OutputFormatter.error("client", error=str(e))
+        return 1
+
+
+def cmd_client_create(args) -> int:
+    try:
+        socket_path, _ = _check_agent_attached()
+    except ValueError as e:
+        OutputFormatter.error("client.create", error=str(e), error_code="AGENT_UNREACHABLE")
+        return 1
+
+    streaming_client = StreamingAgentClient(socket_path)
+    connect_result = streaming_client.connect()
+
+    if connect_result.get("status") != "success":
+        OutputFormatter.error(
+            "client.create", 
+            error=connect_result.get("error", "Connection failed"),
+            error_code="TRANSPORT_ERROR"
+        )
+        return 1
+
+    command = {
+        "type": "client",
+        "action": "create",
+        "target_id": args.target,
+        "source": args.source,
+        "user_id": args.user,
+    }
+
+    response = streaming_client.send_command(command)
+    streaming_client.disconnect()
+
+    if response.get("ok"):
+        data = response.get("data", {})
+        if args.format == "json":
+            OutputFormatter.success("client.create", data=data)
+        else:
+            print(f"Client session created: {data.get('client_session_id')}", file=sys.stderr)
+            print(f"Target: {data.get('target_id')}", file=sys.stderr)
+            print(f"Source: {data.get('source')}", file=sys.stderr)
+        return 0
+    else:
+        error_code = response.get("error_code", "TRANSPORT_ERROR")
+        message = response.get("message", "Client create failed")
+        if args.format == "json":
+            OutputFormatter.error("client.create", error=message, error_code=error_code)
+        else:
+            print(f"{error_code}: {message}", file=sys.stderr)
+        return 2 if error_code == "UNSUPPORTED_CAPABILITY" else 1
+
+
+def cmd_client_list(args) -> int:
+    try:
+        socket_path, _ = _check_agent_attached()
+    except ValueError as e:
+        OutputFormatter.error("client.list", error=str(e), error_code="AGENT_UNREACHABLE")
+        return 1
+
+    streaming_client = StreamingAgentClient(socket_path)
+    connect_result = streaming_client.connect()
+
+    if connect_result.get("status") != "success":
+        OutputFormatter.error(
+            "client.list", 
+            error=connect_result.get("error", "Connection failed"),
+            error_code="TRANSPORT_ERROR"
+        )
+        return 1
+
+    command = {
+        "type": "client",
+        "action": "list",
+        "target_id": args.target,
+    }
+
+    response = streaming_client.send_command(command)
+    streaming_client.disconnect()
+
+    if response.get("ok"):
+        data = response.get("data", {})
+        clients = data.get("clients", [])
+        
+        if args.format == "json":
+            for client in clients:
+                OutputFormatter.event("client.discovered", data=client)
+        else:
+            if not clients:
+                print("No client sessions found.", file=sys.stderr)
+            else:
+                print(f"{'Client ID':<20} {'Target ID':<20} {'Source':<10} {'Status':<15} {'User':<20}")
+                print("-" * 85)
+                for client in clients:
+                    user_id = client.get("user_id") or "-"
+                    print(
+                        f"{client.get('client_session_id'):<20} "
+                        f"{client.get('target_id'):<20} "
+                        f"{client.get('source'):<10} "
+                        f"{client.get('input_status'):<15} "
+                        f"{user_id:<20}"
+                    )
+        return 0
+    else:
+        error_code = response.get("error_code", "TRANSPORT_ERROR")
+        message = response.get("message", "Client list failed")
+        if args.format == "json":
+            OutputFormatter.error("client.list", error=message, error_code=error_code)
+        else:
+            print(f"{error_code}: {message}", file=sys.stderr)
+        return 1
+
+
+def cmd_client_status(args) -> int:
+    try:
+        socket_path, _ = _check_agent_attached()
+    except ValueError as e:
+        OutputFormatter.error("client.status", error=str(e), error_code="AGENT_UNREACHABLE")
+        return 1
+
+    streaming_client = StreamingAgentClient(socket_path)
+    connect_result = streaming_client.connect()
+
+    if connect_result.get("status") != "success":
+        OutputFormatter.error(
+            "client.status", 
+            error=connect_result.get("error", "Connection failed"),
+            error_code="TRANSPORT_ERROR"
+        )
+        return 1
+
+    command = {
+        "type": "client",
+        "action": "status",
+        "client_session_id": args.client,
+    }
+
+    response = streaming_client.send_command(command)
+    streaming_client.disconnect()
+
+    if response.get("ok"):
+        data = response.get("data", {})
+        if args.format == "json":
+            OutputFormatter.success("client.status", data=data)
+        else:
+            print(f"Client Session ID: {data.get('client_session_id')}")
+            print(f"Target ID: {data.get('target_id')}")
+            print(f"Source: {data.get('source')}")
+            print(f"Input Status: {data.get('input_status')}")
+            print(f"User ID: {data.get('user_id') or '-'}")
+            print(f"Foreground Job ID: {data.get('foreground_job_id') or '-'}")
+            print(f"Created At: {data.get('created_at')}")
+            print(f"Last Access At: {data.get('last_access_at')}")
+        return 0
+    else:
+        error_code = response.get("error_code", "TRANSPORT_ERROR")
+        message = response.get("message", "Client status query failed")
+        if args.format == "json":
+            OutputFormatter.error("client.status", error=message, error_code=error_code)
+        else:
+            print(f"{error_code}: {message}", file=sys.stderr)
+        return 2 if error_code == "CLIENT_NOT_FOUND" else 1
+
+
+def cmd_client_close(args) -> int:
+    try:
+        socket_path, _ = _check_agent_attached()
+    except ValueError as e:
+        OutputFormatter.error("client.close", error=str(e), error_code="AGENT_UNREACHABLE")
+        return 1
+
+    streaming_client = StreamingAgentClient(socket_path)
+    connect_result = streaming_client.connect()
+
+    if connect_result.get("status") != "success":
+        OutputFormatter.error(
+            "client.close", 
+            error=connect_result.get("error", "Connection failed"),
+            error_code="TRANSPORT_ERROR"
+        )
+        return 1
+
+    command = {
+        "type": "client",
+        "action": "close",
+        "client_session_id": args.client,
+    }
+
+    response = streaming_client.send_command(command)
+    streaming_client.disconnect()
+
+    if response.get("ok"):
+        data = response.get("data", {})
+        if args.format == "json":
+            OutputFormatter.success("client.close", data=data)
+        else:
+            print(f"Client session closed: {args.client}", file=sys.stderr)
+        return 0
+    else:
+        error_code = response.get("error_code", "TRANSPORT_ERROR")
+        message = response.get("message", "Client close failed")
+        if args.format == "json":
+            OutputFormatter.error("client.close", error=message, error_code=error_code)
+        else:
+            print(f"{error_code}: {message}", file=sys.stderr)
+        return 2 if error_code == "CLIENT_NOT_FOUND" else 1
+
