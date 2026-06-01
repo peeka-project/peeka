@@ -309,15 +309,16 @@ class ProbeRegistry:
     def cleanup(
         self,
         older_than_seconds: float = 600,
-        status_filter: Optional[ProbeStatus] = None,
         target_id: Optional[str] = None,
+        completed_only: bool = True,
     ) -> List[str]:
-        """Remove terminal probes older than the retention window.
+        """Remove eligible probes older than the retention window.
 
         Args:
-            older_than_seconds: Maximum retained age in seconds for terminal probes.
-            status_filter: Optional terminal status filter to restrict cleanup.
+            older_than_seconds: Maximum retained age in seconds for eligible probes.
             target_id: Optional target identifier filter.
+            completed_only: When True only remove terminal probes. When False
+                also remove created/paused probes, but never active probes.
 
         Returns:
             List of removed probe identifiers.
@@ -326,11 +327,11 @@ class ProbeRegistry:
         removed_ids: List[str] = []
         with self._lock:
             for probe_id, probe in list(self._probes.items()):
-                if probe.status not in TERMINAL_STATUSES:
+                if probe.status == "active":
+                    continue
+                if completed_only and probe.status not in TERMINAL_STATUSES:
                     continue
                 if target_id is not None and probe.target_id != target_id:
-                    continue
-                if status_filter is not None and probe.status != status_filter:
                     continue
                 terminal_at = probe.stopped_at if probe.stopped_at is not None else probe.updated_at
                 if (now - terminal_at) <= older_than_seconds:
