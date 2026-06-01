@@ -2,7 +2,7 @@
 Detach Command - Detach from the target process
 """
 
-from typing import Any, Dict, TYPE_CHECKING
+from typing import Any, ClassVar, Dict, TYPE_CHECKING
 
 from peeka.commands.base import BaseCommand
 
@@ -23,6 +23,9 @@ class DetachCommand(BaseCommand):
     - Closes the agent socket
     - Cleans up temporary files
     """
+
+    category: ClassVar[str] = "mutation"
+    allows_concurrent: ClassVar[bool] = False
 
     def __init__(self, agent: "PeekaAgent"):
         super().__init__()

@@ -8,7 +8,7 @@ available classes and methods at runtime, similar to Arthas 'sc' command.
 import sys
 import inspect
 import fnmatch
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, ClassVar, Dict, List, Optional, TYPE_CHECKING
 
 from peeka.commands.base import BaseCommand
 
@@ -33,6 +33,9 @@ class SearchClassCommand(BaseCommand):
         sc "collections.OrderedDict"
         sc "*Command" -d
     """
+
+    category: ClassVar[str] = "snapshot"
+    allows_concurrent: ClassVar[bool] = True
 
     def __init__(self, agent: Optional["PeekaAgent"] = None):
         super().__init__()
@@ -164,6 +167,9 @@ class SearchMethodCommand(BaseCommand):
         sm "collections.OrderedDict.keys"
         sm "*.OrderedDict.update" -d
     """
+
+    category: ClassVar[str] = "snapshot"
+    allows_concurrent: ClassVar[bool] = True
 
     def __init__(self, agent: Optional["PeekaAgent"] = None):
         super().__init__()

@@ -3,7 +3,7 @@ Trace Command - Trace function call paths and execution time
 Similar to Arthas 'trace' command
 """
 
-from typing import Any, Dict, TYPE_CHECKING
+from typing import Any, ClassVar, Dict, TYPE_CHECKING
 
 from peeka.commands.base import BaseCommand
 from peeka.core.runtime.compat import get_policy, policy_meta
@@ -34,6 +34,9 @@ class TraceCommand(BaseCommand):
         trace mymodule.func --skip-builtin=false
         trace mymodule.func --min-duration 10
     """
+
+    category: ClassVar[str] = "probe"
+    allows_concurrent: ClassVar[bool] = False
 
     def __init__(self, agent: "PeekaAgent"):
         super().__init__()

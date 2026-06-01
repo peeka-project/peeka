@@ -10,7 +10,7 @@ Provides:
 
 import sys
 import threading
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, ClassVar, Dict, List, Optional, TYPE_CHECKING
 
 from peeka.commands.base import BaseCommand
 
@@ -34,6 +34,9 @@ class ThreadCommand(BaseCommand):
         --state: Filter by derived state (RUNNABLE, WAITING, TIMED_WAITING)
         --sort-by: Sort field ('name', 'tid', 'state', default: 'tid')
     """
+
+    category: ClassVar[str] = "snapshot"
+    allows_concurrent: ClassVar[bool] = True
 
     # Frame patterns that indicate a thread is waiting/sleeping
     _WAITING_PATTERNS = frozenset(

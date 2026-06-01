@@ -7,7 +7,7 @@ response time statistics) for injected functions with periodic output.
 
 import threading
 import uuid
-from typing import Any, Dict, TYPE_CHECKING
+from typing import Any, ClassVar, Dict, TYPE_CHECKING
 
 from peeka.commands.base import BaseCommand
 from peeka.core.monitor import MonitorManager
@@ -45,6 +45,9 @@ class MonitorCommand(BaseCommand):
         monitor stop <watch_id>
         monitor status
     """
+
+    category: ClassVar[str] = "probe"
+    allows_concurrent: ClassVar[bool] = False
 
     def __init__(self, agent: "PeekaAgent"):
         super().__init__()

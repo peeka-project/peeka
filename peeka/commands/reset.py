@@ -3,7 +3,7 @@ Reset Command - Restore enhanced methods to original state
 Similar to Arthas 'reset' command
 """
 
-from typing import Any, Dict, TYPE_CHECKING
+from typing import Any, ClassVar, Dict, TYPE_CHECKING
 
 from peeka.commands.base import BaseCommand
 
@@ -30,6 +30,9 @@ class ResetCommand(BaseCommand):
         reset myapp.service.UserService.query  # Reset specific method
         reset --list                    # List enhancements
     """
+
+    category: ClassVar[str] = "mutation"
+    allows_concurrent: ClassVar[bool] = False
 
     def __init__(self, agent: "PeekaAgent"):
         super().__init__()

@@ -14,7 +14,7 @@ import sys
 import time
 import tracemalloc
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Set, Tuple, TYPE_CHECKING
+from typing import Any, ClassVar, Dict, List, Optional, Set, Tuple, TYPE_CHECKING
 
 from peeka.commands.base import BaseCommand
 
@@ -24,6 +24,9 @@ if TYPE_CHECKING:
 
 class MemoryCommand(BaseCommand):
     """Memory diagnostics command - track allocations and analyze memory usage."""
+
+    category: ClassVar[str] = "snapshot"
+    allows_concurrent: ClassVar[bool] = True
 
     def __init__(self, agent: "PeekaAgent"):
         super().__init__()
