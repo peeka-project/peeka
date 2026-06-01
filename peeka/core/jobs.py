@@ -233,6 +233,21 @@ class JobRegistry:
 
             return True
 
+    def remove(self, job_id: str) -> bool:
+        """Remove a job from the registry.
+
+        Args:
+            job_id: Public job identifier.
+
+        Returns:
+            True if the job was removed, False if not found.
+        """
+        with self._lock:
+            if job_id not in self._jobs:
+                return False
+            del self._jobs[job_id]
+            return True
+
     def cleanup(
         self, now: Optional[float] = None, retention_seconds: float = 600.0
     ) -> List[str]:
