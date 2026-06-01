@@ -4,12 +4,14 @@ import re
 import threading
 from typing import Dict
 from typing import List
+from typing import Optional
 
 import pytest
 
 from peeka.core import probes
 from peeka.core.probes import PROBE_SCHEMA_VERSION
 from peeka.core.probes import ObservationEvent
+from peeka.core.probes import ProbeContext
 from peeka.core.probes import ProbeRegistry
 from peeka.core.probes import ProbeRun
 from peeka.core.probes import ProbeStatus
@@ -207,3 +209,153 @@ class TestProbeRegistry:
             recent_events = registry.get_recent_events(probe_id)
             assert len(recent_events) == 100
             assert [event.sequence for event in recent_events] == list(range(100))
+
+
+class TestProbeContext:
+    def test_context_normal_exit(self) -> None:
+        registry = ProbeRegistry()
+        
+        with ProbeContext(
+            registry,
+            target_id="target_alpha",
+            client_session_id="client_bravo",
+            job_id="job_cafe1234",
+            type="watch",
+            pattern="pkg.fn",
+            config={"limit": 5},
+        ) as ctx:
+            assert ctx.probe_id is not None
+            assert ctx.probe is not None
+            assert ctx.probe.status == "active"
+            
+            ctx.record_event({"index": 0})
+            ctx.record_event({"index": 1})
+            ctx.record_event({"index": 2})
+        
+        probe = registry.get(ctx.probe_id)
+        assert probe is not None
+        assert probe.status == "stopped"
+        assert probe.event_count == 3
+        assert probe.stopped_at is not None
+
+    def test_context_exception_marks_failed(self) -> None:
+        registry = ProbeRegistry()
+        probe_id: Optional[str] = None
+        
+        try:
+            with ProbeContext(
+                registry,
+                target_id="target_alpha",
+                client_session_id="client_bravo",
+                job_id="job_cafe1234",
+                type="watch",
+                pattern="pkg.fn",
+            ) as ctx:
+                probe_id = ctx.probe_id
+                raise ValueError("test error message")
+        except ValueError:
+            pass
+        
+        assert probe_id is not None
+        probe = registry.get(probe_id)
+        assert probe is not None
+        assert probe.status == "failed"
+        assert probe.last_error is not None
+        assert probe.last_error["code"] == "COMMAND_EXECUTION_ERROR"
+        assert probe.last_error["message"] == "test error message"
+
+    def test_context_exception_does_not_suppress(self) -> None:
+        registry = ProbeRegistry()
+        
+        with pytest.raises(RuntimeError, match="boom"):
+            with ProbeContext(
+                registry,
+                target_id="target_alpha",
+                client_session_id="client_bravo",
+                job_id="job_cafe1234",
+                type="watch",
+                pattern="pkg.fn",
+            ):
+                raise RuntimeError("boom")
+
+    def test_record_event_returns_event(self) -> None:
+        registry = ProbeRegistry()
+        
+        with ProbeContext(
+            registry,
+            target_id="target_alpha",
+            client_session_id="client_bravo",
+            job_id="job_cafe1234",
+            type="watch",
+            pattern="pkg.fn",
+        ) as ctx:
+            event1 = ctx.record_event({"kind": "sample_1"})
+            event2 = ctx.record_event({"kind": "sample_2"})
+            event3 = ctx.record_event({"kind": "sample_3"})
+        
+        assert event1 is not None
+        assert event1.probe_id == ctx.probe_id
+        assert event1.sequence == 0
+        assert event1.payload == {"kind": "sample_1"}
+        
+        assert event2 is not None
+        assert event2.sequence == 1
+        
+        assert event3 is not None
+        assert event3.sequence == 2
+
+    def test_should_stop_when_externally_stopped(self) -> None:
+        registry = ProbeRegistry()
+        
+        with ProbeContext(
+            registry,
+            target_id="target_alpha",
+            client_session_id="client_bravo",
+            job_id="job_cafe1234",
+            type="watch",
+            pattern="pkg.fn",
+        ) as ctx:
+            assert ctx.probe_id is not None
+            assert ctx.should_stop() is False
+            
+            registry.set_status(ctx.probe_id, "stopped")
+            
+            assert ctx.should_stop() is True
+
+    def test_double_enter_creates_new_probe(self) -> None:
+        registry = ProbeRegistry()
+        
+        with ProbeContext(
+            registry,
+            target_id="target_alpha",
+            client_session_id="client_bravo",
+            job_id="job_1",
+            type="watch",
+            pattern="pkg.fn",
+        ) as ctx1:
+            probe_id_1 = ctx1.probe_id
+            assert probe_id_1 is not None
+        
+        with ProbeContext(
+            registry,
+            target_id="target_alpha",
+            client_session_id="client_bravo",
+            job_id="job_2",
+            type="trace",
+            pattern="pkg.other",
+        ) as ctx2:
+            probe_id_2 = ctx2.probe_id
+            assert probe_id_2 is not None
+        
+        assert probe_id_1 != probe_id_2
+        
+        probe1 = registry.get(probe_id_1)
+        probe2 = registry.get(probe_id_2)
+        
+        assert probe1 is not None
+        assert probe1.type == "watch"
+        assert probe1.job_id == "job_1"
+        
+        assert probe2 is not None
+        assert probe2.type == "trace"
+        assert probe2.job_id == "job_2"
