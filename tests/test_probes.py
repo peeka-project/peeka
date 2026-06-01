@@ -123,9 +123,9 @@ class TestProbeRegistry:
 
         monkeypatch.setattr(probes.time, "time", lambda: 1000.0)
 
-        removed_count = registry.cleanup(older_than_seconds=600)
+        removed_ids = registry.cleanup(older_than_seconds=600)
 
-        assert removed_count == 1
+        assert removed_ids == [probe.id]
         assert registry.get(probe.id) is None
 
     def test_cleanup_preserves_active(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -136,9 +136,9 @@ class TestProbeRegistry:
 
         monkeypatch.setattr(probes.time, "time", lambda: 1000.0)
 
-        removed_count = registry.cleanup(older_than_seconds=1)
+        removed_ids = registry.cleanup(older_than_seconds=1)
 
-        assert removed_count == 0
+        assert removed_ids == []
         assert registry.get(probe.id) is probe
 
     def test_next_valid_actions(self) -> None:

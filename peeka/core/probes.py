@@ -288,7 +288,7 @@ class ProbeRegistry:
 
     def cleanup(
         self, older_than_seconds: float = 600, status_filter: Optional[ProbeStatus] = None
-    ) -> int:
+    ) -> List[str]:
         """Remove terminal probes older than the retention window.
 
         Args:
@@ -296,10 +296,10 @@ class ProbeRegistry:
             status_filter: Optional terminal status filter to restrict cleanup.
 
         Returns:
-            Number of removed probes.
+            List of removed probe identifiers.
         """
         now = time.time()
-        removed_count = 0
+        removed_ids: List[str] = []
         with self._lock:
             for probe_id, probe in list(self._probes.items()):
                 if probe.status not in TERMINAL_STATUSES:
@@ -310,8 +310,8 @@ class ProbeRegistry:
                 if (now - terminal_at) <= older_than_seconds:
                     continue
                 self._remove_locked(probe_id)
-                removed_count += 1
-        return removed_count
+                removed_ids.append(probe_id)
+        return removed_ids
 
     def remove(self, probe_id: str) -> bool:
         """Remove a probe from the registry."""
