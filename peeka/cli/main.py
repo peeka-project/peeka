@@ -1262,6 +1262,7 @@ def cmd_trace(args) -> int:
 
 
 def cmd_stack(args) -> int:
+    # TODO(client-session): wrap with ephemeral_client per boulder client-session.md T4
     try:
         socket_path, attached_pid = _check_agent_attached()
     except ValueError as e:
@@ -1344,6 +1345,7 @@ def cmd_stack(args) -> int:
 
 
 def cmd_logger(args) -> int:
+    # TODO(client-session): wrap with ephemeral_client per boulder client-session.md T4
     try:
         socket_path, attached_pid = _check_agent_attached()
     except ValueError as e:
@@ -1382,6 +1384,7 @@ def cmd_logger(args) -> int:
 
 
 def cmd_memory(args) -> int:
+    # TODO(client-session): wrap with ephemeral_client per boulder client-session.md T4
     try:
         socket_path, attached_pid = _check_agent_attached()
     except ValueError as e:
@@ -1424,6 +1427,7 @@ def cmd_memory(args) -> int:
 
 
 def cmd_thread(args) -> int:
+    # TODO(client-session): wrap with ephemeral_client per boulder client-session.md T4
     try:
         socket_path, attached_pid = _check_agent_attached()
     except ValueError as e:
@@ -1503,6 +1507,7 @@ def cmd_patch_status(args) -> int:
 
 
 def cmd_vmtool(args) -> int:
+    # TODO(client-session): wrap with ephemeral_client per boulder client-session.md T4
     try:
         socket_path, attached_pid = _check_agent_attached()
     except ValueError as e:
@@ -1582,6 +1587,7 @@ def cmd_reset(args) -> int:
 
 
 def cmd_monitor(args) -> int:
+    # TODO(client-session): wrap with ephemeral_client per boulder client-session.md T4
     try:
         socket_path, attached_pid = _check_agent_attached()
     except ValueError as e:
@@ -1664,6 +1670,7 @@ def cmd_monitor(args) -> int:
 
 
 def cmd_top(args) -> int:
+    # TODO(client-session): wrap with ephemeral_client per boulder client-session.md T4
     try:
         socket_path, attached_pid = _check_agent_attached()
     except ValueError as e:
