@@ -250,6 +250,113 @@ print(json.dumps(result))
         result = json.loads(json_lines[0])
         return result
 
+    def test_two_alive_distinct_pids(self, gdb_container):
+        """Verify 2 alive targets from distinct PIDs (separate Peeka sessions).
+
+        Strategy:
+        1. Start 2 target processes
+        2. Attach to both concurrently (background processes)
+        3. Discover: should see 2 alive targets
+        4. Inspect both targets
+        5. Cleanup
+        """
+        container = gdb_container
+
+        # Step 1: Start two distinct target processes
+        target1_pid = self._start_target(container, suffix="1")
+        target2_pid = self._start_target(container, suffix="2")
+
+        # Step 2: Attach to both concurrently
+        self._attach_target_background(container, target1_pid, log_suffix="1")
+        self._attach_target_background(container, target2_pid, log_suffix="2")
+
+        # Give attach operations time to complete
+        exec_in_container(container, "sleep 2", timeout=5)
+
+        # Step 3: Discover - should see 2 alive targets
+        targets = self._list_targets(container)
+        assert len(targets) == 2, f"Expected 2 targets, got {len(targets)}"
+
+        alive_targets = [t for t in targets if t.get("state") == "alive"]
+        assert len(alive_targets) == 2, (
+            f"Expected 2 alive targets, got {len(alive_targets)}"
+        )
+
+        # Step 4: Verify both target IDs correspond to our PIDs
+        target1_id = self._find_target_id_by_pid(targets, target1_pid)
+        target2_id = self._find_target_id_by_pid(targets, target2_pid)
+        assert target1_id is not None, f"Could not find target_id for PID {target1_pid}"
+        assert target2_id is not None, f"Could not find target_id for PID {target2_pid}"
+
+        # Step 5: Inspect both targets using get_target API
+        target1_detail = self._get_target(container, target1_id)
+        assert target1_detail is not None, f"Could not inspect target {target1_id}"
+        assert target1_detail.get("state") == "alive"
+        assert target1_detail.get("pid") == int(target1_pid)
+
+        target2_detail = self._get_target(container, target2_id)
+        assert target2_detail is not None, f"Could not inspect target {target2_id}"
+        assert target2_detail.get("state") == "alive"
+        assert target2_detail.get("pid") == int(target2_pid)
+
+        # Step 6: Cleanup
+        self._kill_target(container, target1_pid)
+        self._kill_target(container, target2_pid)
+        self._cleanup_stale_targets(container)
+
+    def _attach_target_background(
+        self, container, pid: str, log_suffix: str = ""
+    ) -> None:
+        """Attach peeka to a target process in background.
+
+        Args:
+            container: Docker container instance
+            pid: Target PID as string
+            log_suffix: Suffix for attach log file
+        """
+        log_file = f"/tmp/attach{log_suffix}.log"
+        shell_cmd = f"nohup python -m peeka.cli.main attach {pid} >{log_file} 2>&1 &"
+
+        exit_code, output = exec_in_container(container, shell_cmd, timeout=5)
+        assert exit_code == 0, f"Failed to start background attach to PID {pid}: {output}"
+
+    def _get_target(self, container, target_id: str) -> Optional[Dict[str, Any]]:
+        """Get target details using get_target API.
+
+        Args:
+            container: Docker container instance
+            target_id: Target ID to inspect
+
+        Returns:
+            Target dictionary or None if not found
+        """
+        python_code = f"""
+import json
+from peeka.core.targets import get_target
+
+target = get_target({repr(target_id)})
+if target:
+    print(json.dumps(target.to_dict()))
+"""
+        exit_code, output = exec_in_container(
+            container,
+            f"cd /app && python3 -c {shlex.quote(python_code)}",
+            timeout=10,
+        )
+
+        if exit_code != 0 or not output.strip():
+            return None
+
+        lines = [line for line in output.strip().split("\n") if line.strip()]
+        for line in lines:
+            if line.startswith("{"):
+                try:
+                    return json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+        return None
+
     def _find_target_id_by_pid(
         self, targets: List[Dict[str, Any]], pid: str
     ) -> Optional[str]:
