@@ -70,7 +70,7 @@ class ProbeRun:
         stopped_at: Optional terminal timestamp.
         last_event_at: Optional timestamp of the most recent observation event.
         event_count: Total number of observation events recorded.
-        last_error: Optional error shaped like {"code": str, "message": str}.
+        last_error: Optional terminal error details.
         summary: Optional probe summary payload.
         schema_version: Wire schema version for serialized records.
     """
@@ -100,6 +100,11 @@ class ProbeRun:
         result["next_valid_actions"] = next_valid_actions(self.status)
         result["schema_version"] = self.schema_version
         return result
+
+    @property
+    def probe_id(self) -> str:
+        """Return the public probe identifier alias."""
+        return self.id
 
 
 @dataclass
@@ -202,7 +207,13 @@ class ProbeRegistry:
                 probes = [probe for probe in probes if probe.type == type]
             return list(probes)
 
-    def set_status(self, probe_id: str, new_status: ProbeStatus, **fields: Any) -> bool:
+    def set_status(
+        self,
+        probe_id: str,
+        new_status: ProbeStatus,
+        error: Optional[str] = None,
+        **fields: Any,
+    ) -> bool:
         """Transition a probe to a new status if the move is legal.
 
         Args:
@@ -229,6 +240,9 @@ class ProbeRegistry:
             if new_status in TERMINAL_STATUSES:
                 probe.stopped_at = now
 
+            if error is not None and "last_error" not in fields:
+                fields["last_error"] = {"code": "", "message": error}
+
             self._apply_mutation_fields(probe, fields, now)
             return True
 
@@ -245,6 +259,7 @@ class ProbeRegistry:
             if probe is None:
                 return False
             timestamp = time.time() if last_event_at is None else last_event_at
+            probe.updated_at = timestamp
             self._update_summary_locked(
                 probe,
                 event_count_delta=event_count_delta,
@@ -317,7 +332,7 @@ class ProbeRegistry:
                     continue
                 if status_filter is not None and probe.status != status_filter:
                     continue
-                terminal_at = probe.stopped_at if probe.stopped_at is not None else probe.created_at
+                terminal_at = probe.stopped_at if probe.stopped_at is not None else probe.updated_at
                 if (now - terminal_at) <= older_than_seconds:
                     continue
                 self._remove_locked(probe_id)
@@ -333,7 +348,10 @@ class ProbeRegistry:
             return True
 
     def _apply_mutation_fields(
-        self, probe: ProbeRun, fields: Dict[str, Any], default_timestamp: float
+        self,
+        probe: ProbeRun,
+        fields: Dict[str, Any],
+        default_timestamp: float,
     ) -> None:
         if "started_at" in fields:
             probe.started_at = fields["started_at"]
@@ -371,6 +389,10 @@ class ProbeRegistry:
             default_timestamp if probe.last_event_at is None else probe.last_event_at
         )
         summary["status"] = probe.status
+        if probe.last_error is not None:
+            summary["last_error"] = probe.last_error.get("message") or probe.last_error.get("code")
+        else:
+            summary.pop("last_error", None)
         probe.summary = summary
 
     def _remove_locked(self, probe_id: str) -> None:
@@ -499,6 +521,7 @@ class ProbeContext:
         self._registry.set_status(
             self._probe.id,
             "failed",
+            error=message,
             last_error={"code": error_code, "message": message},
         )
 
