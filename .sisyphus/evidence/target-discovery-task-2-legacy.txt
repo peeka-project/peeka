@@ -1,0 +1,15 @@
+Command: {"command": "ping"}
+Response:
+{
+  "status": "success",
+  "schema_version": "1",
+  "target_id": "target_evidence",
+  "pid": 12345,
+  "python_version": "3.14.5",
+  "peeka_version": "0.1.15",
+  "capabilities": {},
+  "runtime": {},
+  "state": "alive",
+  "agent_mode": "injected",
+  "injection_mode": "pep768"
+}

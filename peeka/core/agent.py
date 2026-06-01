@@ -45,6 +45,8 @@ class PeekaAgent:
         ("sc", ""),
         ("sm", ""),
         ("stack", "status"),
+        ("target", "hello"),
+        ("target", "status"),
         ("thread", "detail"),
         ("thread", "list"),
         ("top", "snapshot"),
@@ -82,6 +84,8 @@ class PeekaAgent:
         attached_pid: Optional[int] = None,
         notify_port: int = 0,
         suppress_startup_messages: bool = False,
+        agent_mode: Optional[str] = None,
+        injection_mode: Optional[str] = None,
     ):
         self.session_id = session_id
         self.attached_pid = attached_pid
@@ -98,6 +102,19 @@ class PeekaAgent:
         self.injector = DecoratorInjector(self)
 
         self._notify_port = notify_port
+        
+        # Target identification fields (transitional: default from runtime)
+        self.agent_mode = agent_mode or "injected"
+        if injection_mode:
+            self.injection_mode = injection_mode
+        else:
+            # Default from Python version: PEP 768 for 3.14+ else GDB fallback
+            self.injection_mode = "pep768" if sys.version_info >= (3, 14) else "gdb_dlopen"
+        
+        # Error ring buffer for target.status (last 5 errors)
+        self._recent_errors: list = []
+        self._error_ring_lock = _rpl.allocate_lock()
+        self._last_seen_at = _time.time()
 
     # ------------------------------------------------------------------ #
     #  Lazy command handler loading                                      #
@@ -136,6 +153,65 @@ class PeekaAgent:
         """Send diagnostics through side channels only."""
         self._send_log(level, message)
         _write_session_log(self.session_id, level, message, details)
+
+    def _add_recent_error(self, error_entry: Dict[str, Any]) -> None:
+        """Add an error entry to the ring buffer (max 5)."""
+        with self._error_ring_lock:
+            self._recent_errors.append(error_entry)
+            if len(self._recent_errors) > 5:
+                self._recent_errors.pop(0)
+    
+    def _handle_target_hello(self) -> Dict[str, Any]:
+        """Handle target.hello command - returns basic target information."""
+        try:
+            import peeka
+            from peeka.core.targets import TARGET_SCHEMA_VERSION
+            
+            target_id = f"target_{self.session_id[:8]}"
+            python_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+            
+            return {
+                "status": "success",
+                "schema_version": TARGET_SCHEMA_VERSION,
+                "target_id": target_id,
+                "pid": self.attached_pid or 0,
+                "python_version": python_version,
+                "peeka_version": peeka.__version__,
+                "capabilities": {},
+                "runtime": {},
+                "state": "alive",
+                "agent_mode": self.agent_mode,
+                "injection_mode": self.injection_mode,
+            }
+        except Exception as e:
+            return {
+                "status": "error",
+                "error": str(e),
+                "traceback": traceback.format_exc(),
+            }
+    
+    def _handle_target_status(self) -> Dict[str, Any]:
+        """Handle target.status command - returns hello payload + last_seen_at + recent_errors."""
+        try:
+            self._last_seen_at = _time.time()
+            
+            hello_payload = self._handle_target_hello()
+            if hello_payload.get("status") != "success":
+                return hello_payload
+            
+            with self._error_ring_lock:
+                recent_errors = list(self._recent_errors)
+            
+            hello_payload["last_seen_at"] = self._last_seen_at
+            hello_payload["recent_errors"] = recent_errors
+            
+            return hello_payload
+        except Exception as e:
+            return {
+                "status": "error",
+                "error": str(e),
+                "traceback": traceback.format_exc(),
+            }
 
     def _register_handlers(self) -> None:
         """Eagerly import and register ALL command handlers.
@@ -401,14 +477,34 @@ class PeekaAgent:
                 f"[peeka Agent] {client_label} disconnected ({connection_total} total)",
             )
 
-    def _execute_command(self, command: dict) -> dict:
+    def _execute_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
         cmd_type = command.get("type", "")
+
+        # Handle legacy {"command":"ping"} as alias to target.hello
+        if "command" in command and command.get("command") == "ping":
+            return self._handle_target_hello()
+
+        # Handle new target namespace
+        if cmd_type == "target":
+            action = command.get("action", "")
+            if action == "hello":
+                return self._handle_target_hello()
+            elif action == "status":
+                return self._handle_target_status()
+            else:
+                return {"status": "error", "error": f"Unknown target action: {action}"}
 
         handler = self._get_handler(cmd_type)
         if handler:
             try:
                 return handler.execute(command)
             except Exception as e:
+                error_entry = {
+                    "timestamp": _time.time(),
+                    "code": "COMMAND_EXECUTION_ERROR",
+                    "message": str(e),
+                }
+                self._add_recent_error(error_entry)
                 return {
                     "status": "error",
                     "error": str(e),
