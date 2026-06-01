@@ -327,3 +327,54 @@ class TestAgentProbeEndpoints:
         assert reset_probe_registry.get(probe_active.id) is not None
         assert reset_probe_registry.get(probe_old_stopped.id) is None
         assert reset_probe_registry.get(probe_recent_stopped.id) is not None
+
+    def test_probe_cleanup_completed_only_maps_to_stopped(
+        self, reset_probe_registry: ProbeRegistry
+    ) -> None:
+        import time
+
+        agent = _new_agent("test-probe-cleanup-completed")
+        target_id = f"target_{agent.session_id[:8]}"
+
+        stopped_probe = reset_probe_registry.create(
+            target_id=target_id,
+            client_session_id="client_a",
+            job_id="job_1",
+            type="watch",
+            pattern="module.func",
+            config={},
+        )
+        reset_probe_registry.set_status(stopped_probe.id, "active")
+        reset_probe_registry.set_status(
+            stopped_probe.id, "stopped", stopped_at=time.time() - 700
+        )
+
+        failed_probe = reset_probe_registry.create(
+            target_id=target_id,
+            client_session_id="client_b",
+            job_id="job_2",
+            type="trace",
+            pattern="module.other",
+            config={},
+        )
+        reset_probe_registry.set_status(failed_probe.id, "active")
+        reset_probe_registry.set_status(
+            failed_probe.id,
+            "failed",
+            stopped_at=time.time() - 700,
+            last_error={"code": "BOOM", "message": "bad"},
+        )
+
+        result = agent._execute_command(
+            {
+                "type": "probe",
+                "action": "cleanup",
+                "older_than_seconds": 600,
+                "completed_only": True,
+            }
+        )
+
+        assert result["status"] == "success"
+        assert result["data"]["removed"] == [stopped_probe.id]
+        assert reset_probe_registry.get(stopped_probe.id) is None
+        assert reset_probe_registry.get(failed_probe.id) is not None

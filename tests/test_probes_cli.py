@@ -283,6 +283,7 @@ class TestProbeCLICleanup:
                 assert command["type"] == "probe"
                 assert command["action"] == "cleanup"
                 assert command["older_than_seconds"] == 600
+                assert command["target_id"] == "target_alpha"
                 assert command["completed_only"] is True
                 return {
                     "status": "success",
@@ -302,7 +303,7 @@ class TestProbeCLICleanup:
         args = argparse.Namespace(
             command="probe",
             probe_action="cleanup",
-            target=None,
+            target="target_alpha",
             completed=True,
             older_than=600,
             format="table",
@@ -314,6 +315,46 @@ class TestProbeCLICleanup:
         assert exit_code == 0
         output = captured.err + captured.out
         assert "Removed 2 probe(s)" in output
+
+    def test_probe_cleanup_default_sends_completed_only_false(self, monkeypatch, capsys):
+        cli_main_module = sys.modules["peeka.cli.main"]
+
+        class MockStreamingAgentClient:
+            def __init__(self, socket_path):
+                self.socket_path = socket_path
+
+            def connect(self) -> Dict[str, Any]:
+                return {"status": "success"}
+
+            def send_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
+                assert command["completed_only"] is False
+                return {
+                    "status": "success",
+                    "data": {"removed": []},
+                }
+
+            def disconnect(self):
+                pass
+
+        monkeypatch.setattr(
+            cli_main_module, "StreamingAgentClient", MockStreamingAgentClient
+        )
+        monkeypatch.setattr(
+            cli_main_module, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
+        )
+
+        args = argparse.Namespace(
+            command="probe",
+            probe_action="cleanup",
+            target=None,
+            completed=False,
+            older_than=600,
+            format="json",
+        )
+
+        exit_code = cli_main_module.cmd_probe(args)
+
+        assert exit_code == 0
 
 
 class TestProbeFormatFlag:

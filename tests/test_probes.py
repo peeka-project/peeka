@@ -141,6 +141,31 @@ class TestProbeRegistry:
         assert removed_ids == []
         assert registry.get(probe.id) is probe
 
+    def test_cleanup_filters_by_target_id(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        registry = ProbeRegistry()
+        target_probe = _create_probe(registry)
+        other_probe = registry.create(
+            target_id="target_other",
+            client_session_id="client_delta",
+            job_id="job_bead1234",
+            type="trace",
+            pattern="pkg.other",
+            config={},
+        )
+
+        target_probe.status = "stopped"
+        target_probe.stopped_at = 100.0
+        other_probe.status = "stopped"
+        other_probe.stopped_at = 100.0
+
+        monkeypatch.setattr(probes.time, "time", lambda: 1000.0)
+
+        removed_ids = registry.cleanup(older_than_seconds=600, target_id="target_alpha")
+
+        assert removed_ids == [target_probe.id]
+        assert registry.get(target_probe.id) is None
+        assert registry.get(other_probe.id) is other_probe
+
     def test_next_valid_actions(self) -> None:
         for status, expected_actions in EXPECTED_ACTIONS.items():
             assert next_valid_actions(status) == expected_actions

@@ -709,10 +709,16 @@ class PeekaAgent:
         try:
             older_than_seconds = float(params.get("older_than_seconds", 600))
             status_filter = params.get("status_filter")
+            completed_only = bool(params.get("completed_only", False))
+            target_id = params.get("target_id")
+
+            if status_filter is None and completed_only:
+                status_filter = "stopped"
 
             removed_ids = self.probe_registry.cleanup(
                 older_than_seconds=older_than_seconds,
                 status_filter=status_filter,
+                target_id=target_id,
             )
             
             return {
