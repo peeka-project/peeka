@@ -1010,6 +1010,128 @@ Examples:
         help="Output format (default: table)",
     )
 
+    probe_parser = subparsers.add_parser(
+        "probe", help="Manage probe runs"
+    )
+    probe_subparsers = probe_parser.add_subparsers(
+        dest="probe_action", help="Probe subcommands"
+    )
+
+    probe_list_parser = probe_subparsers.add_parser(
+        "list", help="List probe runs"
+    )
+    probe_list_parser.add_argument(
+        "--target",
+        type=str,
+        default=None,
+        help="Filter by target ID",
+    )
+    probe_list_parser.add_argument(
+        "--type",
+        dest="probe_type",
+        type=str,
+        default=None,
+        help="Filter by probe type (watch, trace, etc.)",
+    )
+    probe_list_parser.add_argument(
+        "--status",
+        type=str,
+        default=None,
+        help="Filter by probe status",
+    )
+    probe_list_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["json", "table"],
+        default="table",
+        help="Output format (default: table)",
+    )
+
+    probe_status_parser = probe_subparsers.add_parser(
+        "status", help="Get status of a specific probe"
+    )
+    probe_status_parser.add_argument(
+        "--probe",
+        type=str,
+        required=True,
+        help="Probe ID",
+    )
+    probe_status_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["json", "table"],
+        default="table",
+        help="Output format (default: table)",
+    )
+
+    probe_inspect_parser = probe_subparsers.add_parser(
+        "inspect", help="Inspect a specific probe with events"
+    )
+    probe_inspect_parser.add_argument(
+        "--probe",
+        type=str,
+        required=True,
+        help="Probe ID",
+    )
+    probe_inspect_parser.add_argument(
+        "--events",
+        type=int,
+        default=100,
+        help="Number of recent events to return (default: 100)",
+    )
+    probe_inspect_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["json", "table"],
+        default="table",
+        help="Output format (default: table)",
+    )
+
+    probe_stop_parser = probe_subparsers.add_parser(
+        "stop", help="Stop a running probe"
+    )
+    probe_stop_parser.add_argument(
+        "--probe",
+        type=str,
+        required=True,
+        help="Probe ID",
+    )
+    probe_stop_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["json", "table"],
+        default="table",
+        help="Output format (default: table)",
+    )
+
+    probe_cleanup_parser = probe_subparsers.add_parser(
+        "cleanup", help="Clean up old probes"
+    )
+    probe_cleanup_parser.add_argument(
+        "--target",
+        type=str,
+        default=None,
+        help="Clean up probes for a specific target",
+    )
+    probe_cleanup_parser.add_argument(
+        "--completed",
+        action="store_true",
+        help="Only clean up completed probes",
+    )
+    probe_cleanup_parser.add_argument(
+        "--older-than",
+        type=_parse_duration,
+        default=600,
+        help="Clean up probes older than duration (default: 10m)",
+    )
+    probe_cleanup_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["json", "table"],
+        default="table",
+        help="Output format (default: table)",
+    )
+
     args = parser.parse_args()
 
     if not args.command:
@@ -1057,6 +1179,8 @@ Examples:
             return cmd_client(args)
         elif args.command == "job":
             return cmd_job(args)
+        elif args.command == "probe":
+            return cmd_probe(args)
         else:
             OutputFormatter.error("peeka", error=f"Unknown command: {args.command}")
             return 1
@@ -2671,6 +2795,303 @@ def cmd_job_pull(args) -> int:
     }
     print(json.dumps(error_payload))
     return 2
+
+
+def cmd_probe(args) -> int:
+    if not args.probe_action:
+        OutputFormatter.error("probe", error="Missing probe subcommand")
+        return 1
+
+    try:
+        if args.probe_action == "list":
+            return cmd_probe_list(args)
+        elif args.probe_action == "status":
+            return cmd_probe_status(args)
+        elif args.probe_action == "inspect":
+            return cmd_probe_inspect(args)
+        elif args.probe_action == "stop":
+            return cmd_probe_stop(args)
+        elif args.probe_action == "cleanup":
+            return cmd_probe_cleanup(args)
+        else:
+            OutputFormatter.error("probe", error=f"Unknown probe action: {args.probe_action}")
+            return 1
+    except Exception as e:
+        OutputFormatter.error("probe", error=str(e))
+        return 1
+
+
+def cmd_probe_list(args) -> int:
+    try:
+        socket_path, _ = _check_agent_attached()
+    except ValueError as e:
+        OutputFormatter.error("probe.list", error=str(e), error_code="AGENT_UNREACHABLE")
+        return 1
+
+    streaming_client = StreamingAgentClient(socket_path)
+    connect_result = streaming_client.connect()
+
+    if connect_result.get("status") != "success":
+        OutputFormatter.error(
+            "probe.list",
+            error=connect_result.get("error", "Connection failed"),
+            error_code="TRANSPORT_ERROR"
+        )
+        return 1
+
+    command = {
+        "type": "probe",
+        "action": "list",
+    }
+    if args.target:
+        command["target_id"] = args.target
+    if args.probe_type:
+        command["probe_type"] = args.probe_type
+    if args.status:
+        command["status"] = args.status
+
+    response = streaming_client.send_command(command)
+    streaming_client.disconnect()
+
+    if response.get("status") == "success":
+        data = response.get("data", {})
+        probes = data.get("probes", [])
+        
+        if args.format == "json":
+            for probe in probes:
+                print(json.dumps(probe))
+        else:
+            if not probes:
+                print("No probes found.", file=sys.stderr)
+            else:
+                print(f"{'PROBE_ID':<15} {'TYPE':<15} {'STATUS':<12} {'JOB_ID':<15} {'CREATED':<20} {'EVENTS':<8}")
+                print("-" * 90)
+                for probe in probes:
+                    probe_id = probe.get("id", "-")
+                    probe_type = probe.get("type", "-")
+                    status = probe.get("status", "-")
+                    job_id = probe.get("job_id", "-")
+                    created_at = probe.get("created_at", 0)
+                    event_count = probe.get("event_count", 0)
+                    import datetime
+                    created_str = datetime.datetime.fromtimestamp(created_at).strftime("%Y-%m-%d %H:%M:%S") if created_at else "-"
+                    print(
+                        f"{probe_id:<15} {probe_type:<15} {status:<12} {job_id:<15} {created_str:<20} {event_count:<8}"
+                    )
+        return 0
+    else:
+        error_code = response.get("error_code", "TRANSPORT_ERROR")
+        message = response.get("message", "Probe list failed")
+        if args.format == "json":
+            OutputFormatter.error("probe.list", error=message, error_code=error_code)
+        else:
+            print(f"{error_code}: {message}", file=sys.stderr)
+        return 1
+
+
+def cmd_probe_status(args) -> int:
+    try:
+        socket_path, _ = _check_agent_attached()
+    except ValueError as e:
+        OutputFormatter.error("probe.status", error=str(e), error_code="AGENT_UNREACHABLE")
+        return 1
+
+    streaming_client = StreamingAgentClient(socket_path)
+    connect_result = streaming_client.connect()
+
+    if connect_result.get("status") != "success":
+        OutputFormatter.error(
+            "probe.status",
+            error=connect_result.get("error", "Connection failed"),
+            error_code="TRANSPORT_ERROR"
+        )
+        return 1
+
+    command = {
+        "type": "probe",
+        "action": "status",
+        "probe_id": args.probe,
+    }
+
+    response = streaming_client.send_command(command)
+    streaming_client.disconnect()
+
+    if response.get("status") == "success":
+        data = response.get("data", {})
+        probe = data.get("probe", {})
+        
+        if args.format == "json":
+            OutputFormatter.success("probe.status", data=data)
+        else:
+            for key, value in probe.items():
+                print(f"{key:<20} {value}")
+        return 0
+    else:
+        error_code = response.get("error_code", "TRANSPORT_ERROR")
+        message = response.get("message", "Probe status query failed")
+        if args.format == "json":
+            OutputFormatter.error("probe.status", error=message, error_code=error_code)
+        else:
+            print(f"{error_code}: {message}", file=sys.stderr)
+        return 2 if error_code == "PROBE_NOT_FOUND" else 1
+
+
+def cmd_probe_inspect(args) -> int:
+    try:
+        socket_path, _ = _check_agent_attached()
+    except ValueError as e:
+        OutputFormatter.error("probe.inspect", error=str(e), error_code="AGENT_UNREACHABLE")
+        return 1
+
+    streaming_client = StreamingAgentClient(socket_path)
+    connect_result = streaming_client.connect()
+
+    if connect_result.get("status") != "success":
+        OutputFormatter.error(
+            "probe.inspect",
+            error=connect_result.get("error", "Connection failed"),
+            error_code="TRANSPORT_ERROR"
+        )
+        return 1
+
+    command = {
+        "type": "probe",
+        "action": "inspect",
+        "probe_id": args.probe,
+        "events_limit": args.events,
+    }
+
+    response = streaming_client.send_command(command)
+    streaming_client.disconnect()
+
+    if response.get("status") == "success":
+        data = response.get("data", {})
+        probe = data.get("probe", {})
+        events = data.get("events", [])
+        
+        if args.format == "json":
+            OutputFormatter.success("probe.inspect", data={"probe": probe})
+            for event in events:
+                print(json.dumps(event))
+        else:
+            print("=== Probe Details ===")
+            for key, value in probe.items():
+                print(f"{key:<20} {value}")
+            print("\n=== Recent Events ===")
+            for event in events:
+                event_id = event.get("event_id", "-")
+                timestamp = event.get("timestamp", 0)
+                payload = event.get("payload", {})
+                import datetime
+                ts_str = datetime.datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] if timestamp else "-"
+                print(f"{event_id:<20} {ts_str:<25} {json.dumps(payload)}")
+        return 0
+    else:
+        error_code = response.get("error_code", "TRANSPORT_ERROR")
+        message = response.get("message", "Probe inspect query failed")
+        if args.format == "json":
+            OutputFormatter.error("probe.inspect", error=message, error_code=error_code)
+        else:
+            print(f"{error_code}: {message}", file=sys.stderr)
+        return 2 if error_code == "PROBE_NOT_FOUND" else 1
+
+
+def cmd_probe_stop(args) -> int:
+    try:
+        socket_path, _ = _check_agent_attached()
+    except ValueError as e:
+        OutputFormatter.error("probe.stop", error=str(e), error_code="AGENT_UNREACHABLE")
+        return 1
+
+    streaming_client = StreamingAgentClient(socket_path)
+    connect_result = streaming_client.connect()
+
+    if connect_result.get("status") != "success":
+        OutputFormatter.error(
+            "probe.stop",
+            error=connect_result.get("error", "Connection failed"),
+            error_code="TRANSPORT_ERROR"
+        )
+        return 1
+
+    command = {
+        "type": "probe",
+        "action": "stop",
+        "probe_id": args.probe,
+    }
+
+    response = streaming_client.send_command(command)
+    streaming_client.disconnect()
+
+    if response.get("status") == "success":
+        data = response.get("data", {})
+        
+        if args.format == "json":
+            OutputFormatter.success("probe.stop", data=data)
+        else:
+            probe_id = data.get("probe_id", args.probe)
+            new_status = data.get("status", "stopped")
+            print(f"Probe {probe_id} status: {new_status}", file=sys.stderr)
+        return 0
+    else:
+        error_code = response.get("error_code", "TRANSPORT_ERROR")
+        message = response.get("message", "Probe stop failed")
+        if args.format == "json":
+            OutputFormatter.error("probe.stop", error=message, error_code=error_code)
+        else:
+            print(f"{error_code}: {message}", file=sys.stderr)
+        return 2 if error_code == "PROBE_NOT_FOUND" else 1
+
+
+def cmd_probe_cleanup(args) -> int:
+    try:
+        socket_path, _ = _check_agent_attached()
+    except ValueError as e:
+        OutputFormatter.error("probe.cleanup", error=str(e), error_code="AGENT_UNREACHABLE")
+        return 1
+
+    streaming_client = StreamingAgentClient(socket_path)
+    connect_result = streaming_client.connect()
+
+    if connect_result.get("status") != "success":
+        OutputFormatter.error(
+            "probe.cleanup",
+            error=connect_result.get("error", "Connection failed"),
+            error_code="TRANSPORT_ERROR"
+        )
+        return 1
+
+    command = {
+        "type": "probe",
+        "action": "cleanup",
+        "completed_only": args.completed,
+        "older_than_seconds": args.older_than,
+    }
+    if args.target:
+        command["target_id"] = args.target
+
+    response = streaming_client.send_command(command)
+    streaming_client.disconnect()
+
+    if response.get("status") == "success":
+        data = response.get("data", {})
+        removed = data.get("removed", [])
+        
+        if args.format == "json":
+            OutputFormatter.success("probe.cleanup", data=data)
+        else:
+            print(f"Removed {len(removed)} probe(s)", file=sys.stderr)
+            for probe_id in removed:
+                print(f"  {probe_id}", file=sys.stderr)
+        return 0
+    else:
+        error_code = response.get("error_code", "TRANSPORT_ERROR")
+        message = response.get("message", "Probe cleanup failed")
+        if args.format == "json":
+            OutputFormatter.error("probe.cleanup", error=message, error_code=error_code)
+        else:
+            print(f"{error_code}: {message}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

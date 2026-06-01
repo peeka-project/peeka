@@ -159,3 +159,35 @@
 - State machine accepts pause transition
 - Handler returns `UNSUPPORTED_CAPABILITY` error envelope
 - Allows future implementation without breaking existing consumers
+
+## Phase 4 T5 — CLI probe subcommands
+
+### Structure mirrors job CLI exactly
+- `cmd_probe` dispatcher with 5 handlers: `list`, `status`, `inspect`, `stop`, `cleanup`
+- All have `--format {json,table}` default table
+- `inspect` uses `--events N` (default 100)
+- `cleanup` reuses `_parse_duration` helper for `--older-than`
+- Wire param naming: `probe_type` (not `type`) to avoid collision with protocol-level `type` key
+
+### inspect JSONL format quirks
+- Table mode: probe header + event table
+- JSON mode: OutputFormatter.success envelope + raw event JSONL (no OutputFormatter wrapper on events)
+- This matches spec: "inspect outputs recent events as JSONL when --format json"
+
+### Test patterns
+- 9 tests total: 1 per handler + format/error/help tests
+- Use monkeypatch (NEVER unittest.mock)
+- Mock returns canned envelopes matching T4 agent wire format
+- OutputFormatter emits `{"type": "success|error", ...}`, not raw `{"status": "success"}`
+- Error output goes to stdout (not stderr) via OutputFormatter
+
+### Table formatting choices
+- List: PROBE_ID / TYPE / STATUS / JOB_ID / CREATED / EVENTS (6 columns, 90 char wide)
+- Status: key-value pairs (mirrors job status)
+- Inspect table: probe details + event table with event_id / timestamp / payload
+- Used datetime.fromtimestamp for human timestamps (mirrors job CLI)
+
+### Validation results
+- 801 tests pass (+9 from T5)
+- Ruff clean
+- Help output shows all 5 subcommands with correct flags
