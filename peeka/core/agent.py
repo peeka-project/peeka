@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, cast
 
 from peeka.core.injector import DecoratorInjector
+from peeka.core.jobs import JobCategory
+from peeka.core.jobs import job_registry
 from peeka.core.observer import ObservationManager
 from peeka.core.runtime import primitives as _rpl
 
@@ -239,6 +241,10 @@ class PeekaAgent:
                 "error": str(e),
                 "traceback": traceback.format_exc(),
             }
+
+    def _target_id_for_jobs(self) -> str:
+        """Return the stable target identifier used by job records."""
+        return f"target_{self.session_id[:8]}"
 
     def _handle_client_create(self, command: Dict[str, Any]) -> Dict[str, Any]:
         """Handle client.create command - create and register a client session."""
@@ -635,8 +641,51 @@ class PeekaAgent:
 
         handler = self._get_handler(cmd_type)
         if handler:
+            job_registry.cleanup(retention_seconds=600)
+
+            client_session_id = str(command.get("client_session_id", ""))
+            action = str(command.get("action", ""))
+            foreground = not bool(command.get("background", False))
+            params = {
+                key: value
+                for key, value in command.items()
+                if key not in {"type", "action", "client_session_id", "background"}
+            }
+            category = getattr(type(handler), "category", "snapshot")
+            if category not in {"snapshot", "probe", "mutation"}:
+                category = "snapshot"
+            job_category = cast(JobCategory, category)
+
+            job = job_registry.create(
+                target_id=self._target_id_for_jobs(),
+                client_session_id=client_session_id,
+                command_type=str(cmd_type),
+                action=action,
+                params=params,
+                category=job_category,
+                foreground=foreground,
+            )
+            job_registry.set_status(job.id, "running")
+
             try:
-                return handler.execute(command)
+                result = handler.execute(command)
+
+                result_summary = result.get("data") if "data" in result else result
+                if category == "probe" and result.get("status") == "success":
+                    job_registry.set_status(
+                        job.id,
+                        "streaming",
+                        result_summary=result_summary,
+                    )
+                else:
+                    job_registry.set_status(
+                        job.id,
+                        "completed",
+                        result_summary=result_summary,
+                    )
+
+                result["job_id"] = job.id
+                return result
             except Exception as e:
                 error_entry = {
                     "timestamp": _time.time(),
@@ -644,11 +693,21 @@ class PeekaAgent:
                     "message": str(e),
                 }
                 self._add_recent_error(error_entry)
-                return {
+                job_registry.set_status(
+                    job.id,
+                    "failed",
+                    last_error={
+                        "code": "COMMAND_EXECUTION_ERROR",
+                        "message": str(e),
+                    },
+                )
+                result = {
                     "status": "error",
                     "error": str(e),
                     "traceback": traceback.format_exc(),
                 }
+                result["job_id"] = job.id
+                return result
         else:
             return {"status": "error", "error": f"Unknown command type: {cmd_type}"}
 
