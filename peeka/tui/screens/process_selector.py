@@ -2,12 +2,11 @@
 Process Selector Screen - List and select Python processes to attach.
 """
 
-import os
-import subprocess
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from rich.markup import escape
+from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container
@@ -15,6 +14,7 @@ from textual.screen import Screen
 from textual.widgets import DataTable, Header, Footer, Input, RichLog, Static
 
 from peeka.core.attach import AttachProgressEvent
+from peeka.core.targets import discover_targets
 from peeka.tui.activity import (
     attach_activity_metadata,
     format_attach_activity,
@@ -43,9 +43,15 @@ class ProcessSelectorScreen(Screen):
         self._attach_activity_events: List[AttachProgressEvent] = []
 
     def compose(self) -> ComposeResult:
+        # Design Contract:
+        # 1. Six columns visible at >= 140 cols: Target ID, PID, State, Python, Peeka, Created
+        # 2. At < 140 cols: Target ID, State, Created remain; others omitted
+        # 3. Alive rows use 'green' text, stale use 'dim red', unknown use 'yellow'
+        # 4. Stale/unknown rows are unselectable (Enter/select does nothing) and skip focus interaction
+        # 5. Refresh key 'r' triggers reload; status bar shows "Refreshed N targets at HH:MM:SS"
         yield Header()
         selector = Container(
-            Input(placeholder="Filter by PID or command...", id="filter", classes="compact-control"),
+            Input(placeholder="Filter by Target ID, PID, or State...", id="filter", classes="compact-control"),
             DataTable(id="process-table"),
             id="process-selector",
             classes="panel",
@@ -83,96 +89,126 @@ class ProcessSelectorScreen(Screen):
             filter_input = self.query_one("#filter")
             selector.mount(warning, before=filter_input)
         table = self.query_one("#process-table", DataTable)
-        table.add_columns("PID", "User", "CPU%", "MEM%", "Command")
         table.cursor_type = "row"
+        self._setup_columns(table, self.app.size.width)
         self.refresh_processes()
 
+    def on_resize(self, event: events.Resize) -> None:
+        """Handle resize to adjust columns dynamically."""
+        table = self.query_one("#process-table", DataTable)
+        is_wide = event.size.width >= 140
+        current_cols = len(table.columns)
+        if (is_wide and current_cols < 6) or (not is_wide and current_cols > 3):
+            self._setup_columns(table, event.size.width)
+            self.refresh_processes()
+
+    def _setup_columns(self, table: DataTable, width: int) -> None:
+        """Setup columns based on available width."""
+        table.clear(columns=True)
+        if width >= 140:
+            table.add_columns("Target ID", "PID", "State", "Python", "Peeka", "Created")
+        else:
+            table.add_columns("Target ID", "State", "Created")
+
+    def _format_relative_time(self, ts: float) -> str:
+        """Format epoch seconds as relative time string."""
+        diff = max(0, int(time.time() - ts))
+        if diff < 60:
+            return f"{diff}s ago"
+        elif diff < 3600:
+            return f"{diff // 60}m ago"
+        elif diff < 86400:
+            return f"{diff // 3600}h ago"
+        return f"{diff // 86400}d ago"
+
     def refresh_processes(self) -> None:
-        """Refresh the list of Python processes."""
+        """Refresh the list of discovered targets."""
         table = self.query_one("#process-table", DataTable)
         table.clear()
+        
+        filter_input = self.query_one("#filter", Input)
+        filter_text = filter_input.value.lower()
+        targets = discover_targets()
+        
+        is_wide = len(table.columns) == 6
+        for target in targets:
+            pid_str = str(target.pid)
+            state_str = target.state
+            
+            # Filtering
+            if filter_text and filter_text not in target.target_id.lower() and filter_text not in pid_str and filter_text not in state_str.lower():
+                continue
 
-        for proc in self._get_python_processes():
-            pid, user, cpu, mem, cmd = proc
-            table.add_row(pid, user, cpu, mem, cmd, key=pid)
+            created_str = self._format_relative_time(target.created_at)
 
-    def _get_python_processes(self) -> List[Tuple[str, str, str, str, str]]:
-        """Get list of running Python processes."""
-        processes = []
-        try:
-            result = subprocess.run(
-                ["ps", "aux"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            for line in result.stdout.splitlines()[1:]:
-                parts = line.split(None, 10)
-                if len(parts) >= 11:
-                    user, pid, cpu, mem = parts[0], parts[1], parts[2], parts[3]
-                    cmd = parts[10]
-                    if (
-                        "python" in cmd.lower()
-                        and self._is_python_process(pid)
-                        and not self._is_peeka_process(pid, cmd)
-                    ):
-                        processes.append((pid, user, cpu, mem, cmd))
-        except Exception:
-            pass
-        return processes
+            # Row styling
+            style = ""
+            if target.state == "alive":
+                style = "green"
+            elif target.state in ("stale", "failed", "detached"):
+                style = "dim red"
+            else:
+                style = "yellow"
 
-    @staticmethod
-    def _is_python_process(pid: str) -> bool:
-        """Return True when the PID's real executable is a Python interpreter."""
-        exe_path = f"/proc/{pid}/exe"
-        try:
-            exe_name = os.path.basename(os.readlink(exe_path)).lower()
-            return exe_name.startswith("python")
-        except OSError:
-            # /proc/<pid>/exe is Linux-specific and may be unavailable on other
-            # platforms or for short-lived processes. Fall back to cmdline-only
-            # filtering in those cases.
-            return True
+            def _fmt(text: str) -> str:
+                return f"[{style}]{escape(text)}[/]" if style else escape(text)
 
-    @staticmethod
-    def _is_peeka_process(pid: str, cmd: str) -> bool:
-        """Return True for the current Peeka process or explicit Peeka commands."""
-        if pid == str(os.getpid()):
-            return True
-
-        normalized = cmd.lower()
-        peeka_markers = (
-            " -m peeka",
-            " peeka-cli",
-            " peeka-tui",
-            "/peeka-cli",
-            "/peeka-tui",
-        )
-        return any(marker in normalized for marker in peeka_markers)
+            if is_wide:
+                table.add_row(
+                    _fmt(target.target_id),
+                    _fmt(pid_str),
+                    _fmt(state_str),
+                    _fmt(target.python_version or "-"),
+                    _fmt(target.peeka_version or "-"),
+                    _fmt(created_str),
+                    key=target.target_id
+                )
+            else:
+                table.add_row(
+                    _fmt(target.target_id),
+                    _fmt(state_str),
+                    _fmt(created_str),
+                    key=target.target_id
+                )
 
     def on_input_changed(self, event: Input.Changed) -> None:
-        """Filter processes based on input."""
-        filter_text = event.value.lower()
-        table = self.query_one("#process-table", DataTable)
-        table.clear()
-
-        for proc in self._get_python_processes():
-            pid, user, cpu, mem, cmd = proc
-            if filter_text in pid or filter_text in cmd.lower():
-                table.add_row(pid, user, cpu, mem, cmd, key=pid)
+        """Filter targets based on input."""
+        self.refresh_processes()
 
     def action_refresh(self) -> None:
         """Refresh process list."""
-        self.refresh_processes()
+        self.app.call_from_thread(self.refresh_processes)
+        targets = discover_targets()
+        ts = time.strftime("%H:%M:%S", time.localtime())
+        self.notify(f"Refreshed {len(targets)} targets at {ts}", severity="information")
 
     def action_select(self) -> None:
         """Select the highlighted process."""
+        import re
+        
         table = self.query_one("#process-table", DataTable)
         if table.cursor_row is not None and len(table.rows) > 0:
             row_key = table.coordinate_to_cell_key((table.cursor_row, 0)).row_key
             row = table.get_row(row_key)
-            pid = int(row[0])
-            self._attach_to_process(pid)
+            is_wide = len(table.columns) == 6
+            state_idx = 2 if is_wide else 1
+            
+            state_str = str(row[state_idx])
+            if "alive" not in state_str:
+                return
+
+            if is_wide:
+                pid_str = re.sub(r"\[.*?\]", "", str(row[1]))
+                try:
+                    pid = int(pid_str)
+                    self._attach_to_process(pid)
+                except ValueError:
+                    pass
+            else:
+                target_id_str = re.sub(r"\[.*?\]", "", str(row[0]))
+                target = next((t for t in discover_targets() if t.target_id == target_id_str), None)
+                if target:
+                    self._attach_to_process(target.pid)
 
     def action_copy_attach_log(self) -> None:
         """Copy the current attach log to the terminal clipboard."""
@@ -474,9 +510,7 @@ class ProcessSelectorScreen(Screen):
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """Handle row selection with Enter key."""
-        row = self.query_one("#process-table", DataTable).get_row(event.row_key)
-        pid = int(row[0])
-        self._attach_to_process(pid)
+        self.action_select()
 
     def action_quit_app(self) -> None:
         """Context-aware Esc behavior: reset on error, no-op mid-attach, quit when idle.
