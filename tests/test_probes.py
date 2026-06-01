@@ -50,16 +50,19 @@ class TestProbeRegistry:
         assert probe.id.startswith("prb_")
         assert len(probe.id) == 12
         assert probe.created_at == 100.0
+        assert probe.updated_at == 100.0
         assert probe.started_at is None
         assert probe.stopped_at is None
 
         assert registry.set_status(probe.id, "active") is True
         assert probe.status == "active"
         assert probe.started_at == 110.0
+        assert probe.updated_at == 110.0
 
         assert registry.set_status(probe.id, "stopped") is True
         assert probe.status == "stopped"
         assert probe.stopped_at == 120.0
+        assert probe.updated_at == 120.0
 
     def test_illegal_transition_rejected(self) -> None:
         registry = ProbeRegistry()
@@ -191,8 +194,29 @@ class TestProbeRegistry:
 
         serialized = probe.to_dict()
 
+        assert serialized["id"] == "prb_deadbeef"
+        assert serialized["probe_id"] == "prb_deadbeef"
         assert serialized["next_valid_actions"] == ["inspect", "cleanup"]
         assert serialized["schema_version"] == PROBE_SCHEMA_VERSION
+
+    def test_updated_at_advances_on_status_change_and_event(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        registry = ProbeRegistry()
+        timestamps = iter([100.0, 110.0, 120.0])
+
+        monkeypatch.setattr(probes.time, "time", lambda: next(timestamps))
+
+        probe = _create_probe(registry)
+
+        assert probe.updated_at == 100.0
+        assert registry.set_status(probe.id, "active") is True
+        assert probe.updated_at == 110.0
+
+        event = registry.record_event(probe.id, {"kind": "sample"})
+
+        assert event is not None
+        assert probe.updated_at == 120.0
 
     def test_thread_safe(self) -> None:
         registry = ProbeRegistry()

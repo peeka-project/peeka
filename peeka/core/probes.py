@@ -84,6 +84,7 @@ class ProbeRun:
     config: Dict[str, Any] = field(default_factory=dict)
     status: ProbeStatus = "created"
     created_at: float = 0.0
+    updated_at: float = field(default_factory=time.time)
     started_at: Optional[float] = None
     stopped_at: Optional[float] = None
     last_event_at: Optional[float] = None
@@ -95,6 +96,7 @@ class ProbeRun:
     def to_dict(self) -> Dict[str, Any]:
         """Serialize the probe run into a JSON-safe dictionary."""
         result = asdict(self)
+        result["probe_id"] = self.id
         result["next_valid_actions"] = next_valid_actions(self.status)
         result["schema_version"] = self.schema_version
         return result
@@ -163,6 +165,7 @@ class ProbeRegistry:
             config=dict(config or {}),
             status="created",
             created_at=now,
+            updated_at=now,
             started_at=None,
             stopped_at=None,
             last_event_at=None,
@@ -219,6 +222,7 @@ class ProbeRegistry:
 
             now = time.time()
             probe.status = new_status
+            probe.updated_at = now
 
             if new_status == "active" and probe.started_at is None:
                 probe.started_at = now
@@ -269,6 +273,7 @@ class ProbeRegistry:
             )
             self._event_sequences[probe_id] = sequence + 1
             self._recent_events[probe_id].append(event)
+            probe.updated_at = timestamp
             self._update_summary_locked(
                 probe,
                 event_count_delta=1,
