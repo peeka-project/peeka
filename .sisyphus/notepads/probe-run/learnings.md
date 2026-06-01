@@ -107,6 +107,19 @@
 - `should_stop()` explains cooperative-stop polling pattern (will be common in T3 streaming loops)
 - All public methods documented per AGENTS.md Google-style requirement
 
+## Phase 4 T3 — probe-category command instrumentation
+
+### Per-command insertion points
+- `watch` / `stack`: create `ProbeContext` in `*_start_*`, stash it in command config as private `_probe_context`, and let injector wrapper tag each outgoing observation before `agent._send_observation(...)`.
+- `trace`: same pattern as watch, but `inject_trace()` keeps a sanitized config copy in injector state so command responses stay JSON-serializable.
+- `top`: wrap the observation thread path (not `start()` itself) with `ProbeContext`; tag each periodic snapshot before socket emission and poll `probe.should_stop()` once per loop.
+- `monitor`: wrap `_periodic_output_loop()` with `ProbeContext`; inject tags into the per-cycle stats payload and poll cooperative stop before each wait/send cycle.
+
+### Compatibility gotchas
+- Existing tests use lightweight mock agents that do **not** provide `probe_registry`; command instrumentation must feature-detect probe support and fall back to legacy behavior for those stubs.
+- Any response/observer payloads that expose command config must strip private `_probe_context`, otherwise agent socket responses fail JSON serialization.
+- `PeekaAgent` should bind `self.probe_registry` from `peeka.core.probes.probe_registry` at init time so tests that monkeypatch the module singleton keep working.
+
 ## Phase 4 T4 — Agent probe endpoints
 
 ### Handler implementation patterns
