@@ -337,6 +337,50 @@ class TestJobRegistry:
         assert len(set(ids)) == 2
         assert len(registry.list()) == 2
 
+    def test_set_status_marks_truncated_in_stored_summary(self) -> None:
+        registry = JobRegistry()
+        job = registry.create(
+            target_id="target_alpha",
+            client_session_id="client_a",
+            command_type="memory",
+            action="snapshot",
+        )
+        assert registry.set_status(job.id, "running") is True
+
+        large_summary = {"key_{0}".format(index): index for index in range(25)}
+
+        changed = registry.set_status(
+            job.id,
+            "completed",
+            result_summary=large_summary,
+        )
+
+        assert changed is True
+        assert job.result_summary["_truncated"] is True
+        assert len(job.result_summary) <= 21
+
+    def test_set_status_does_not_mark_truncated_when_under_limit(self) -> None:
+        registry = JobRegistry()
+        job = registry.create(
+            target_id="target_alpha",
+            client_session_id="client_a",
+            command_type="memory",
+            action="snapshot",
+        )
+        assert registry.set_status(job.id, "running") is True
+
+        small_summary = {"ok": 1, "items": [1, 2, 3]}
+
+        changed = registry.set_status(
+            job.id,
+            "completed",
+            result_summary=small_summary,
+        )
+
+        assert changed is True
+        assert "_truncated" not in job.result_summary
+        assert job.result_summary == small_summary
+
 
 class TestPruneResultSummary:
     def test_prune_result_summary_truncates_excess_keys(self) -> None:

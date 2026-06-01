@@ -223,7 +223,9 @@ class JobRegistry:
                 job.completed_at = now
 
             if result_summary is not None:
-                pruned_summary, _ = prune_result_summary(result_summary)
+                pruned_summary, truncated = prune_result_summary(result_summary)
+                if truncated and "_truncated" not in pruned_summary:
+                    pruned_summary["_truncated"] = True
                 job.result_summary = pruned_summary
             if last_error is not None:
                 job.last_error = {

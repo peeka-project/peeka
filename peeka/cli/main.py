@@ -1003,6 +1003,12 @@ Examples:
         required=True,
         help="Consumer name",
     )
+    job_pull_parser.add_argument(
+        "--format",
+        choices=["json", "table"],
+        default="table",
+        help="Output format (default: table)",
+    )
 
     args = parser.parse_args()
 
@@ -2661,7 +2667,7 @@ def cmd_job_pull(args) -> int:
     error_payload = {
         "status": "error",
         "error_code": "UNSUPPORTED_CAPABILITY",
-        "message": "job pull is not yet implemented (see Phase 5 ResultConsumer boulder)"
+        "message": "job pull is not yet implemented (see Phase 5 boulder result-consumer.md)"
     }
     print(json.dumps(error_payload))
     return 2

@@ -30,9 +30,8 @@ class BaseCommand(ABC):
                 Injects/uninstalls/modifies global state in target process.
                 Never concurrent (allows_concurrent=False) — serialized via mutation lock.
 
-    Note: Commands with BOTH injection (mutation) and streaming (probe) phases
-    (e.g., watch start) are classified as mutation here; T3 dispatcher will
-    transition job status to "streaming" after injection completes.
+    Note: WatchCommand is classified as probe (injection is a brief opening phase;
+    streaming dominates). Reset and Detach remain mutation.
 
     Concurrency Semantics:
     - allows_concurrent=True: Multiple clients may invoke simultaneously (snapshot only).

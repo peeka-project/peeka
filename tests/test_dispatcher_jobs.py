@@ -96,15 +96,57 @@ class TestDispatcherJobs:
         assert result["error"] == "boom"
         assert "traceback" in result
 
+    def test_handler_returned_error_marks_job_failed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        agent = PeekaAgent(session_id="test-dispatch-handler-error", attached_pid=12345)
+        handler = agent._get_handler("memory")
+        assert handler is not None
+
+        def return_error(_: Dict[str, Any]) -> Dict[str, Any]:
+            return {
+                "status": "error",
+                "error_code": "BAD_INPUT",
+                "message": "oops",
+            }
+
+        monkeypatch.setattr(handler, "execute", return_error)
+
+        result = agent._execute_command({"type": "memory", "action": "overview"})
+
+        assert result["status"] == "error"
+        assert result["error_code"] == "BAD_INPUT"
+        assert result["message"] == "oops"
+        assert "job_id" in result
+
+        job = agent_module.job_registry.get(result["job_id"])
+        assert job is not None
+        assert job.status == "failed"
+        assert job.last_error == {"code": "BAD_INPUT", "message": "oops"}
+
     def test_unknown_command_type_no_job_created(self) -> None:
         agent = PeekaAgent(session_id="test-dispatch-unknown", attached_pid=12345)
 
         before_count = len(agent_module.job_registry.list())
         result = agent._execute_command({"type": "nonsense"})
 
-        assert result == {"status": "error", "error": "Unknown command type: nonsense"}
+        assert result["status"] == "error"
+        assert result["error_code"] == "COMMAND_NOT_FOUND"
+        assert "Unknown command type: nonsense" in result["message"]
+        assert "COMMAND_NOT_FOUND" in result["error"]
         assert "job_id" not in result
         assert len(agent_module.job_registry.list()) == before_count
+
+    def test_unknown_command_type_returns_command_not_found_envelope(self) -> None:
+        agent = PeekaAgent(session_id="test-dispatch-cmd-not-found", attached_pid=12345)
+
+        result = agent._execute_command({"type": "nonsense"})
+
+        assert result["status"] == "error"
+        assert result["error_code"] == "COMMAND_NOT_FOUND"
+        assert "message" in result
+        assert "error" in result
+        assert "Unknown command type" in result["message"]
 
     def test_client_namespace_not_wrapped(self) -> None:
         agent = PeekaAgent(session_id="test-dispatch-client", attached_pid=12345)

@@ -302,7 +302,7 @@ class PeekaAgent:
             
             return _client_success({"clients": [client_to_dict(c) for c in clients]})
         except Exception as e:
-            result = _client_error("TRANSPORT_ERROR", str(e))
+            result = _client_error("COMMAND_EXECUTION_ERROR", str(e))
             result["traceback"] = traceback.format_exc()
             return result
 
@@ -326,7 +326,7 @@ class PeekaAgent:
             
             return _client_success(client_to_dict(client))
         except Exception as e:
-            result = _client_error("TRANSPORT_ERROR", str(e))
+            result = _client_error("COMMAND_EXECUTION_ERROR", str(e))
             result["traceback"] = traceback.format_exc()
             return result
 
@@ -348,7 +348,7 @@ class PeekaAgent:
             
             return _client_success({"closed": True, "client_session_id": client_session_id})
         except Exception as e:
-            result = _client_error("TRANSPORT_ERROR", str(e))
+            result = _client_error("COMMAND_EXECUTION_ERROR", str(e))
             result["traceback"] = traceback.format_exc()
             return result
 
@@ -372,7 +372,7 @@ class PeekaAgent:
                 "data": {"jobs": [job_to_dict(j) for j in jobs]},
             }
         except Exception as e:
-            result = _job_error("TRANSPORT_ERROR", str(e))
+            result = _job_error("COMMAND_EXECUTION_ERROR", str(e))
             result["traceback"] = traceback.format_exc()
             return result
 
@@ -401,7 +401,7 @@ class PeekaAgent:
                 },
             }
         except Exception as e:
-            result = _job_error("TRANSPORT_ERROR", str(e))
+            result = _job_error("COMMAND_EXECUTION_ERROR", str(e))
             result["traceback"] = traceback.format_exc()
             return result
 
@@ -423,7 +423,7 @@ class PeekaAgent:
                 "data": {"job": job_to_dict(job)},
             }
         except Exception as e:
-            result = _job_error("TRANSPORT_ERROR", str(e))
+            result = _job_error("COMMAND_EXECUTION_ERROR", str(e))
             result["traceback"] = traceback.format_exc()
             return result
 
@@ -473,7 +473,7 @@ class PeekaAgent:
                     f"Unknown job category: {job.category}",
                 )
         except Exception as e:
-            result = _job_error("TRANSPORT_ERROR", str(e))
+            result = _job_error("COMMAND_EXECUTION_ERROR", str(e))
             result["traceback"] = traceback.format_exc()
             return result
 
@@ -510,7 +510,7 @@ class PeekaAgent:
                 "data": {"removed": removed_ids},
             }
         except Exception as e:
-            result = _job_error("TRANSPORT_ERROR", str(e))
+            result = _job_error("COMMAND_EXECUTION_ERROR", str(e))
             result["traceback"] = traceback.format_exc()
             return result
 
@@ -917,6 +917,24 @@ class PeekaAgent:
 
                 result = handler.execute(command)
 
+                if isinstance(result, dict) and result.get("status") == "error":
+                    last_error = {
+                        "code": str(result.get("error_code", "COMMAND_ERROR")),
+                        "message": str(result.get("message") or result.get("error", "")),
+                    }
+                    job_registry.set_status(job.id, "failed", last_error=last_error)
+                    if (
+                        job.foreground
+                        and client_session_id
+                        and client_registry is not None
+                    ):
+                        client_registry.clear_foreground_job(
+                            client_session_id,
+                            expected_job_id=job.id,
+                        )
+                    result["job_id"] = job.id
+                    return result
+
                 result_summary = result.get("data") if "data" in result else result
                 final_status = "completed"
                 if category == "probe" and result.get("status") == "success":
@@ -981,7 +999,12 @@ class PeekaAgent:
                 if mutation_lock_acquired:
                     self._mutation_lock.release()
         else:
-            return {"status": "error", "error": f"Unknown command type: {cmd_type}"}
+            return {
+                "status": "error",
+                "error_code": "COMMAND_NOT_FOUND",
+                "message": f"Unknown command type: {cmd_type}",
+                "error": f"COMMAND_NOT_FOUND: Unknown command type: {cmd_type}",
+            }
 
     def _send_observation(self, observation: Dict[str, Any]) -> None:
         """Called by injector when a watched function is invoked."""
