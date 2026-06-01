@@ -11,6 +11,7 @@ from typing import Any, ClassVar, Dict, TYPE_CHECKING
 
 from peeka.commands.base import BaseCommand
 from peeka.core.monitor import MonitorManager
+from peeka.core.probes import ProbeContext
 from peeka.core.runtime import primitives as _rpl
 
 if TYPE_CHECKING:
@@ -72,6 +73,9 @@ class MonitorCommand(BaseCommand):
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
+    def _supports_probe_instrumentation(self) -> bool:
+        return hasattr(self.agent, "probe_registry") and hasattr(self.agent, "track_probe_context")
+
     def _start_monitor(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Start monitoring a function pattern."""
         self.validate_params(params, ["pattern"])
@@ -107,6 +111,8 @@ class MonitorCommand(BaseCommand):
                 "cycle": cycle,
                 "cycles": cycles,
                 "cycle_count": 0,
+                "client_session_id": params.get("client_session_id"),
+                "job_id": params.get("job_id"),
                 "stop_event": None,
                 "timer_thread": None,
             }
@@ -157,43 +163,102 @@ class MonitorCommand(BaseCommand):
         self, watch_id: str, cycle: int, cycles: int, stop_event: threading.Event
     ) -> None:
         """Periodically output statistics."""
+        if not self._supports_probe_instrumentation():
+            self._periodic_output_loop_legacy(watch_id, cycle, cycles, stop_event)
+            return
+
+        monitor_info = self._monitors.get(watch_id)
+        pattern = None
+        client_session_id = None
+        job_id = None
+        if monitor_info is not None:
+            pattern = monitor_info.get("pattern")
+            client_session_id = monitor_info.get("client_session_id")
+            job_id = monitor_info.get("job_id")
+
+        probe_config = {"cycle": cycle, "cycles": cycles}
+        cycle_count = 0
+
+        with ProbeContext(
+            self.agent.probe_registry,
+            target_id=self.agent._target_id_for_jobs(),
+            client_session_id=client_session_id,
+            job_id=job_id,
+            type="monitor",
+            pattern=pattern,
+            config=probe_config,
+        ) as probe:
+            self.agent.track_probe_context(watch_id, probe, "monitor")
+            try:
+                while True:
+                    if probe.should_stop():
+                        break
+
+                    if stop_event.wait(timeout=cycle):
+                        break
+
+                    stats = self.manager.get_stats(watch_id)
+                    if stats is not None:
+                        cycle_count += 1
+                        stats["count"] = stats.get("total", 0)
+                        stats["call_count"] = stats.get("total", 0)
+                        stats["cycle"] = cycle_count
+                        stats["watch_id"] = watch_id
+
+                        event = probe.record_event(stats)
+                        if event is not None:
+                            stats["event_id"] = event.event_id
+                            stats["probe_id"] = event.probe_id
+
+                        self.agent._send_observation(stats)
+
+                        with self._lock:
+                            if watch_id in self._monitors:
+                                self._monitors[watch_id]["cycle_count"] = cycle_count
+
+                    if cycles > 0 and cycle_count >= cycles:
+                        with self._lock:
+                            if watch_id in self._monitors:
+                                current_stop_event = self._monitors[watch_id]["stop_event"]
+                                if current_stop_event:
+                                    current_stop_event.set()
+                        break
+            finally:
+                self.agent.untrack_probe_context(watch_id)
+
+    def _periodic_output_loop_legacy(
+        self, watch_id: str, cycle: int, cycles: int, stop_event: threading.Event
+    ) -> None:
+        """Legacy best-effort monitor loop for agents without ProbeRegistry."""
         cycle_count = 0
 
         while True:
-            # Wait for cycle interval (interruptible)
             if stop_event.wait(timeout=cycle):
-                # Stop event was set, exit
                 break
 
-            # Get current statistics
             stats = self.manager.get_stats(watch_id)
             if stats is not None:
                 cycle_count += 1
-
-                # Add cycle information to stats
                 stats["count"] = stats.get("total", 0)
                 stats["call_count"] = stats.get("total", 0)
                 stats["cycle"] = cycle_count
                 stats["watch_id"] = watch_id
 
-                # Send observation
                 try:
                     self.agent._send_observation(stats)
                 except Exception:
                     pass
 
-                # Update monitor cycle count
                 with self._lock:
                     if watch_id in self._monitors:
                         self._monitors[watch_id]["cycle_count"] = cycle_count
 
-            # Check if we've reached cycle limit
             if cycles > 0 and cycle_count >= cycles:
                 with self._lock:
                     if watch_id in self._monitors:
-                        stop_event = self._monitors[watch_id]["stop_event"]
-                        if stop_event:
-                            stop_event.set()
+                        current_stop_event = self._monitors[watch_id]["stop_event"]
+                        if current_stop_event:
+                            current_stop_event.set()
                 break
 
     def _stop_monitor(self, params: Dict[str, Any]) -> Dict[str, Any]:
