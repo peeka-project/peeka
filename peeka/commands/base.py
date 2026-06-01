@@ -4,14 +4,43 @@ All diagnostic commands inherit from BaseCommand
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import Any, ClassVar, Dict, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from peeka.core.agent import PeekaAgent
 
 
 class BaseCommand(ABC):
-    """Base class for all diagnostic commands"""
+    """Base class for all diagnostic commands.
+
+    All concrete command subclasses must declare:
+    - category: Command concurrency category (snapshot | probe | mutation)
+    - allows_concurrent: Whether multiple clients may run this command simultaneously
+
+    Command Categories:
+    - snapshot: One-shot inspection commands (e.g., memory, thread, stack, search, inspect, top).
+                Returns a single result and exits. Minimal state mutation.
+                Can be concurrent if allows_concurrent=True.
+
+    - probe: Long-lived observation commands (e.g., watch, trace, monitor, logger).
+             Streams events over time. Injection persists until explicitly stopped.
+             Typically not concurrent (allows_concurrent=False).
+
+    - mutation: Commands that modify agent state (e.g., reset, detach).
+                Injects/uninstalls/modifies global state in target process.
+                Never concurrent (allows_concurrent=False) — serialized via mutation lock.
+
+    Note: Commands with BOTH injection (mutation) and streaming (probe) phases
+    (e.g., watch start) are classified as mutation here; T3 dispatcher will
+    transition job status to "streaming" after injection completes.
+
+    Concurrency Semantics:
+    - allows_concurrent=True: Multiple clients may invoke simultaneously (snapshot only).
+    - allows_concurrent=False: Enforced per-session foreground rule; mutation lock for mutation category.
+    """
+
+    category: ClassVar[str] = "snapshot"
+    allows_concurrent: ClassVar[bool] = False
 
     def __init__(self, agent: Optional["PeekaAgent"] = None):
         self.name = self.__class__.__name__

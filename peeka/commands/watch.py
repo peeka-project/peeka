@@ -3,7 +3,7 @@ Watch Command - Monitor function calls and return values
 Similar to Arthas 'watch' command
 """
 
-from typing import Any, Dict, TYPE_CHECKING
+from typing import Any, ClassVar, Dict, TYPE_CHECKING
 
 from peeka.commands.base import BaseCommand
 
@@ -35,6 +35,9 @@ class WatchCommand(BaseCommand):
         watch mymodule.func -e
         watch mymodule.func --condition "cost > 50"
     """
+
+    category: ClassVar[str] = "mutation"
+    allows_concurrent: ClassVar[bool] = False
 
     def __init__(self, agent: "PeekaAgent"):
         super().__init__()

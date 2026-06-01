@@ -6,13 +6,16 @@ auto-completion suggestions for module names, class names, and function names.
 """
 
 import sys
-from typing import Any, Dict, List
+from typing import Any, ClassVar, Dict, List
 
 from peeka.commands.base import BaseCommand
 
 
 class CompleteCommand(BaseCommand):
     """Provides completion suggestions by introspecting sys.modules."""
+
+    category: ClassVar[str] = "snapshot"
+    allows_concurrent: ClassVar[bool] = True
 
     def execute(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """

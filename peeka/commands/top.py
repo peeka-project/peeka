@@ -6,7 +6,7 @@ import logging
 import os
 import sys
 import uuid
-from typing import Any, Callable, Dict, Optional, Set, TYPE_CHECKING
+from typing import Any, Callable, ClassVar, Dict, Optional, Set, TYPE_CHECKING
 
 from peeka.commands.base import BaseCommand
 from peeka.core.runtime import primitives as _rpl
@@ -46,6 +46,9 @@ class _NativeThreadHandle:
 
 class TopCommand(BaseCommand):
     """Sampling profiler that collects CPU profiling statistics."""
+
+    category: ClassVar[str] = "snapshot"
+    allows_concurrent: ClassVar[bool] = False
 
     def __init__(self, agent: Optional["PeekaAgent"] = None):
         super().__init__(agent)

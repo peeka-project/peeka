@@ -3,7 +3,7 @@ Stack Command - Print call stack when function is invoked
 Similar to Arthas 'stack' command
 """
 
-from typing import Any, Dict, TYPE_CHECKING
+from typing import Any, ClassVar, Dict, TYPE_CHECKING
 
 from peeka.commands.base import BaseCommand
 
@@ -28,6 +28,9 @@ class StackCommand(BaseCommand):
         stack mymodule.my_function --depth 5
         stack mymodule.func -n 3 --condition "params[0] > 100"
     """
+
+    category: ClassVar[str] = "snapshot"
+    allows_concurrent: ClassVar[bool] = False
 
     def __init__(self, agent: "PeekaAgent"):
         super().__init__()

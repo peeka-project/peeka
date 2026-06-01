@@ -9,7 +9,7 @@ This module provides runtime VM introspection capabilities:
 
 import gc
 import sys
-from typing import Dict, Any, TYPE_CHECKING
+from typing import Dict, Any, ClassVar, TYPE_CHECKING
 
 from peeka.commands.base import BaseCommand
 from peeka.core.safeeval.simpleeval import SimpleEval, BASIC_ALLOWED_ATTRS
@@ -20,6 +20,9 @@ if TYPE_CHECKING:
 
 class VMToolCommand(BaseCommand):
     """VM introspection command - inspect objects and heap at runtime."""
+
+    category: ClassVar[str] = "snapshot"
+    allows_concurrent: ClassVar[bool] = True
 
     def __init__(self, agent: "PeekaAgent"):
         super().__init__()

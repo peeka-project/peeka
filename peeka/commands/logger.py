@@ -5,7 +5,7 @@ Similar to Arthas 'logger' command for diagnosis
 
 import fnmatch
 import logging
-from typing import Any, Dict, TYPE_CHECKING
+from typing import Any, ClassVar, Dict, TYPE_CHECKING
 
 from peeka.commands.base import BaseCommand
 
@@ -33,6 +33,9 @@ class LoggerCommand(BaseCommand):
         logger get -n test.module
         logger set -n test.module -l DEBUG
     """
+
+    category: ClassVar[str] = "probe"
+    allows_concurrent: ClassVar[bool] = False
 
     def __init__(self, agent: "PeekaAgent"):
         super().__init__()
