@@ -18,6 +18,10 @@ from peeka.core.attach import ProcessAttacher
 from peeka.core.client import StreamingAgentClient
 from peeka.core.output import OutputFormatter
 from peeka.core.output import configure_logging
+from peeka.core.targets import discover_targets
+from peeka.core.targets import get_target
+from peeka.core.targets import cleanup_stale_targets
+from peeka.core.targets import detach_target
 
 configure_logging()
 
@@ -539,6 +543,112 @@ Examples:
         help="Script arguments followed by -- then the observation command",
     )
 
+    target_parser = subparsers.add_parser(
+        "target", help="Manage Peeka target agents"
+    )
+    target_subparsers = target_parser.add_subparsers(
+        dest="target_action", help="Target subcommands"
+    )
+
+    target_list_parser = target_subparsers.add_parser(
+        "list", help="List all discovered target agents"
+    )
+    target_list_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["json", "table"],
+        default="table",
+        help="Output format (default: table)",
+    )
+
+    target_current_parser = target_subparsers.add_parser(
+        "current", help="Get the current target (exit 0 if exactly 1 alive, exit 1 if 0, exit 2 if >1)"
+    )
+    target_current_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["json", "table"],
+        default="table",
+        help="Output format (default: table)",
+    )
+
+    target_status_parser = target_subparsers.add_parser(
+        "status", help="Get status of a specific target"
+    )
+    target_status_parser.add_argument(
+        "--target",
+        type=str,
+        required=True,
+        help="Target ID",
+    )
+    target_status_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["json", "table"],
+        default="table",
+        help="Output format (default: table)",
+    )
+
+    target_inspect_parser = target_subparsers.add_parser(
+        "inspect", help="Inspect a specific target with full details"
+    )
+    target_inspect_parser.add_argument(
+        "--target",
+        type=str,
+        required=True,
+        help="Target ID",
+    )
+    target_inspect_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["json", "table"],
+        default="table",
+        help="Output format (default: table)",
+    )
+
+    target_cleanup_parser = target_subparsers.add_parser(
+        "cleanup", help="Clean up stale target marker files"
+    )
+    target_cleanup_parser.add_argument(
+        "--stale-only",
+        action="store_true",
+        help="Only clean up stale targets (default behavior)",
+    )
+    target_cleanup_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be cleaned without actually cleaning",
+    )
+    target_cleanup_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["json", "table"],
+        default="table",
+        help="Output format (default: table)",
+    )
+
+    target_detach_parser = target_subparsers.add_parser(
+        "detach", help="Detach from a specific target"
+    )
+    target_detach_parser.add_argument(
+        "--target",
+        type=str,
+        required=True,
+        help="Target ID",
+    )
+    target_detach_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force detach even if target is alive",
+    )
+    target_detach_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["json", "table"],
+        default="table",
+        help="Output format (default: table)",
+    )
+
     args = parser.parse_args()
 
     if not args.command:
@@ -578,6 +688,8 @@ Examples:
             return cmd_top(args)
         elif args.command == "run":
             return cmd_run(args)
+        elif args.command == "target":
+            return cmd_target(args)
         else:
             OutputFormatter.error("peeka", error=f"Unknown command: {args.command}")
             return 1
@@ -1774,3 +1886,203 @@ def cmd_run(args) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+def cmd_target(args) -> int:
+    if not args.target_action:
+        OutputFormatter.error("target", error="Missing target subcommand")
+        return 1
+
+    try:
+        if args.target_action == "list":
+            return cmd_target_list(args)
+        elif args.target_action == "current":
+            return cmd_target_current(args)
+        elif args.target_action == "status":
+            return cmd_target_status(args)
+        elif args.target_action == "inspect":
+            return cmd_target_inspect(args)
+        elif args.target_action == "cleanup":
+            return cmd_target_cleanup(args)
+        elif args.target_action == "detach":
+            return cmd_target_detach(args)
+        else:
+            OutputFormatter.error("target", error=f"Unknown target action: {args.target_action}")
+            return 1
+    except Exception as e:
+        OutputFormatter.error("target", error=str(e))
+        return 1
+
+
+def cmd_target_list(args) -> int:
+    targets = discover_targets()
+
+    if args.format == "json":
+        for target in targets:
+            print(json.dumps(target.to_dict()))
+            sys.stdout.flush()
+        return 0
+    else:
+        if not targets:
+            print("No targets found.", file=sys.stderr)
+            return 0
+
+        print(f"{'Target ID':<20} {'State':<10} {'PID':<10} {'Python':<15} {'Socket':<40}")
+        print("-" * 95)
+        for target in targets:
+            socket_short = Path(target.socket_path).name
+            print(
+                f"{target.target_id:<20} {target.state:<10} {target.pid:<10} {target.python_version:<15} {socket_short:<40}"
+            )
+        return 0
+
+
+def cmd_target_current(args) -> int:
+    targets = discover_targets()
+    alive_targets = [t for t in targets if t.state == "alive"]
+
+    if len(alive_targets) == 1:
+        target = alive_targets[0]
+        if args.format == "json":
+            print(json.dumps(target.to_dict()))
+            sys.stdout.flush()
+        else:
+            print(f"Current target: {target.target_id} (PID {target.pid})", file=sys.stderr)
+        return 0
+    elif len(alive_targets) == 0:
+        if args.format == "json":
+            error_obj = {"error_code": "TARGET_NOT_FOUND", "message": "No alive targets found"}
+            print(json.dumps(error_obj), file=sys.stderr)
+        else:
+            print("TARGET_NOT_FOUND: No alive targets found", file=sys.stderr)
+        return 1
+    else:
+        if args.format == "json":
+            error_obj = {
+                "error_code": "TARGET_AMBIGUOUS",
+                "message": f"Multiple alive targets found: {len(alive_targets)}",
+                "targets": [t.target_id for t in alive_targets],
+            }
+            print(json.dumps(error_obj), file=sys.stderr)
+        else:
+            print(
+                f"TARGET_AMBIGUOUS: Multiple alive targets found ({len(alive_targets)}): "
+                + ", ".join(t.target_id for t in alive_targets),
+                file=sys.stderr,
+            )
+        return 2
+
+
+def cmd_target_status(args) -> int:
+    target = get_target(args.target)
+    if target is None:
+        if args.format == "json":
+            error_obj = {"error_code": "TARGET_NOT_FOUND", "message": f"Target not found: {args.target}"}
+            print(json.dumps(error_obj), file=sys.stderr)
+        else:
+            print(f"TARGET_NOT_FOUND: {args.target}", file=sys.stderr)
+        return 1
+
+    if args.format == "json":
+        print(json.dumps(target.to_dict()))
+        sys.stdout.flush()
+        return 0
+    else:
+        print(f"Target ID: {target.target_id}")
+        print(f"State: {target.state}")
+        print(f"PID: {target.pid}")
+        print(f"Python Version: {target.python_version}")
+        print(f"Peeka Version: {target.peeka_version}")
+        print(f"Socket: {target.socket_path}")
+        print(f"Agent Mode: {target.agent_mode}")
+        print(f"Injection Mode: {target.injection_mode}")
+        return 0
+
+
+def cmd_target_inspect(args) -> int:
+    target = get_target(args.target)
+    if target is None:
+        if args.format == "json":
+            error_obj = {"error_code": "TARGET_NOT_FOUND", "message": f"Target not found: {args.target}"}
+            print(json.dumps(error_obj), file=sys.stderr)
+        else:
+            print(f"TARGET_NOT_FOUND: {args.target}", file=sys.stderr)
+        return 1
+
+    if args.format == "json":
+        print(json.dumps(target.to_dict()))
+        sys.stdout.flush()
+        return 0
+    else:
+        print(f"Target ID: {target.target_id}")
+        print(f"State: {target.state}")
+        print(f"PID: {target.pid}")
+        print(f"Python Version: {target.python_version}")
+        print(f"Peeka Version: {target.peeka_version}")
+        print(f"Socket: {target.socket_path}")
+        print(f"Agent Mode: {target.agent_mode}")
+        print(f"Injection Mode: {target.injection_mode}")
+        print(f"Created At: {target.created_at}")
+        print(f"Last Seen At: {target.last_seen_at}")
+        print(f"Runtime: {json.dumps(target.runtime, indent=2)}")
+        print(f"Capabilities: {json.dumps(target.capabilities, indent=2)}")
+        print(f"Next Valid Actions: {', '.join(target.next_valid_actions)}")
+        return 0
+
+
+def cmd_target_cleanup(args) -> int:
+    result = cleanup_stale_targets(dry_run=args.dry_run)
+
+    if args.format == "json":
+        print(json.dumps(result))
+        sys.stdout.flush()
+        return 0
+    else:
+        removed_count = len(result.get("removed", []))
+        skipped_count = len(result.get("skipped", []))
+        error_count = len(result.get("errors", []))
+
+        if args.dry_run:
+            print(f"Dry run: Would remove {removed_count} stale target(s)", file=sys.stderr)
+        else:
+            print(f"Removed {removed_count} stale target(s)", file=sys.stderr)
+
+        if skipped_count > 0:
+            print(f"Skipped {skipped_count} target(s)", file=sys.stderr)
+
+        if error_count > 0:
+            print(f"Errors: {error_count}", file=sys.stderr)
+            for error in result.get("errors", []):
+                print(f"  {error.get('target_id')}: {error.get('message')}", file=sys.stderr)
+
+        return 0
+
+
+def cmd_target_detach(args) -> int:
+    result = detach_target(args.target, force=args.force)
+
+    if not result.get("ok"):
+        error_code = result.get("error_code", "UNKNOWN_ERROR")
+        message = result.get("message", "Detach failed")
+
+        if args.format == "json":
+            error_obj = {"error_code": error_code, "message": message}
+            print(json.dumps(error_obj), file=sys.stderr)
+        else:
+            print(f"{error_code}: {message}", file=sys.stderr)
+
+        if error_code == "UNSUPPORTED_CAPABILITY" and not args.force:
+            return 2
+        return 1
+
+    if args.format == "json":
+        print(json.dumps(result))
+        sys.stdout.flush()
+        return 0
+    else:
+        print(f"Successfully detached from target {result.get('target_id')}", file=sys.stderr)
+        if result.get("errors"):
+            print("Warning: Some cleanup errors occurred:", file=sys.stderr)
+            for error in result.get("errors", []):
+                print(f"  {error.get('path')}: {error.get('message')}", file=sys.stderr)
+        return 0

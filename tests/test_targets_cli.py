@@ -1,0 +1,346 @@
+import argparse
+import json
+import subprocess
+import sys
+from typing import Any
+from typing import Dict
+
+import peeka.cli.main  # noqa: F401
+
+
+class TestTargetCLIList:
+    def test_target_list_json_jsonl(self, monkeypatch, capsys):
+        cli_main_module = sys.modules["peeka.cli.main"]
+
+        targets_data = [
+            {
+                "target_id": "target_12345678",
+                "legacy_session_id": "12345678-1234-1234-1234-123456789012",
+                "pid": 1234,
+                "socket_path": "/tmp/peeka_12345678-1234-1234-1234-123456789012.sock",
+                "state": "alive",
+                "agent_mode": "injected",
+                "injection_mode": "pep768",
+                "python_version": "3.14.0",
+                "peeka_version": "0.1.15",
+                "capabilities": {},
+                "runtime": {},
+                "created_at": 1234567890.0,
+                "last_seen_at": 1234567890.0,
+                "recent_errors": [],
+                "next_valid_actions": ["detach"],
+            },
+            {
+                "target_id": "target_87654321",
+                "legacy_session_id": "87654321-4321-4321-4321-210987654321",
+                "pid": 5678,
+                "socket_path": "/tmp/peeka_87654321-4321-4321-4321-210987654321.sock",
+                "state": "stale",
+                "agent_mode": "injected",
+                "injection_mode": "gdb_dlopen",
+                "python_version": "3.12.0",
+                "peeka_version": "0.1.15",
+                "capabilities": {},
+                "runtime": {},
+                "created_at": 1234567800.0,
+                "last_seen_at": 1234567800.0,
+                "recent_errors": [],
+                "next_valid_actions": ["cleanup", "detach"],
+            },
+        ]
+
+        def mock_to_dict(self):
+            result = {"schema_version": "1"}
+            for key in [
+                "target_id",
+                "legacy_session_id",
+                "pid",
+                "socket_path",
+                "state",
+                "agent_mode",
+                "injection_mode",
+                "python_version",
+                "peeka_version",
+                "capabilities",
+                "runtime",
+                "created_at",
+                "last_seen_at",
+                "recent_errors",
+                "next_valid_actions",
+            ]:
+                result[key] = getattr(self, key)
+            return result
+
+        class MockTarget:
+            def __init__(self, data: Dict[str, Any]):
+                for key, value in data.items():
+                    setattr(self, key, value)
+
+            to_dict = mock_to_dict
+
+        mock_targets = [MockTarget(data) for data in targets_data]
+
+        monkeypatch.setattr(
+            cli_main_module, "discover_targets", lambda: mock_targets
+        )
+
+        args = argparse.Namespace(
+            command="target", target_action="list", format="json"
+        )
+
+        exit_code = cli_main_module.cmd_target(args)
+        captured = capsys.readouterr()
+
+        assert exit_code == 0
+        lines = captured.out.strip().split("\n")
+        assert len(lines) == 2
+
+        for line in lines:
+            obj = json.loads(line)
+            assert "schema_version" in obj
+            assert "target_id" in obj
+            assert "state" in obj
+            assert obj["schema_version"] == "1"
+
+
+class TestTargetCLICurrent:
+    def test_current_zero_alive_exits_1(self, monkeypatch, capsys):
+
+        cli_main_module = sys.modules["peeka.cli.main"]
+
+        monkeypatch.setattr(cli_main_module, "discover_targets", lambda: [])
+
+        args = argparse.Namespace(
+            command="target", target_action="current", format="json"
+        )
+
+        exit_code = cli_main_module.cmd_target(args)
+        captured = capsys.readouterr()
+
+        assert exit_code == 1
+        assert "TARGET_NOT_FOUND" in captured.err
+
+    def test_current_one_alive_exits_0(self, monkeypatch, capsys):
+
+        cli_main_module = sys.modules["peeka.cli.main"]
+
+        target_data = {
+            "target_id": "target_12345678",
+            "legacy_session_id": "12345678-1234-1234-1234-123456789012",
+            "pid": 1234,
+            "socket_path": "/tmp/peeka_12345678-1234-1234-1234-123456789012.sock",
+            "state": "alive",
+            "agent_mode": "injected",
+            "injection_mode": "pep768",
+            "python_version": "3.14.0",
+            "peeka_version": "0.1.15",
+            "capabilities": {},
+            "runtime": {},
+            "created_at": 1234567890.0,
+            "last_seen_at": 1234567890.0,
+            "recent_errors": [],
+            "next_valid_actions": ["detach"],
+        }
+
+        def mock_to_dict(self):
+            result = {"schema_version": "1"}
+            for key in [
+                "target_id",
+                "legacy_session_id",
+                "pid",
+                "socket_path",
+                "state",
+                "agent_mode",
+                "injection_mode",
+                "python_version",
+                "peeka_version",
+                "capabilities",
+                "runtime",
+                "created_at",
+                "last_seen_at",
+                "recent_errors",
+                "next_valid_actions",
+            ]:
+                result[key] = getattr(self, key)
+            return result
+
+        class MockTarget:
+            def __init__(self, data: Dict[str, Any]):
+                for key, value in data.items():
+                    setattr(self, key, value)
+
+            to_dict = mock_to_dict
+
+        mock_target = MockTarget(target_data)
+
+        monkeypatch.setattr(cli_main_module, "discover_targets", lambda: [mock_target])
+
+        args = argparse.Namespace(
+            command="target", target_action="current", format="json"
+        )
+
+        exit_code = cli_main_module.cmd_target(args)
+        captured = capsys.readouterr()
+
+        assert exit_code == 0
+        obj = json.loads(captured.out.strip())
+        assert obj["target_id"] == "target_12345678"
+
+    def test_current_ambiguous_exits_2(self, monkeypatch, capsys):
+
+        cli_main_module = sys.modules["peeka.cli.main"]
+
+        targets_data = [
+            {
+                "target_id": "target_12345678",
+                "legacy_session_id": "12345678-1234-1234-1234-123456789012",
+                "pid": 1234,
+                "socket_path": "/tmp/peeka_12345678-1234-1234-1234-123456789012.sock",
+                "state": "alive",
+                "agent_mode": "injected",
+                "injection_mode": "pep768",
+                "python_version": "3.14.0",
+                "peeka_version": "0.1.15",
+                "capabilities": {},
+                "runtime": {},
+                "created_at": 1234567890.0,
+                "last_seen_at": 1234567890.0,
+                "recent_errors": [],
+                "next_valid_actions": ["detach"],
+            },
+            {
+                "target_id": "target_87654321",
+                "legacy_session_id": "87654321-4321-4321-4321-210987654321",
+                "pid": 5678,
+                "socket_path": "/tmp/peeka_87654321-4321-4321-4321-210987654321.sock",
+                "state": "alive",
+                "agent_mode": "injected",
+                "injection_mode": "gdb_dlopen",
+                "python_version": "3.12.0",
+                "peeka_version": "0.1.15",
+                "capabilities": {},
+                "runtime": {},
+                "created_at": 1234567800.0,
+                "last_seen_at": 1234567800.0,
+                "recent_errors": [],
+                "next_valid_actions": ["detach"],
+            },
+        ]
+
+        def mock_to_dict(self):
+            result = {"schema_version": "1"}
+            for key in [
+                "target_id",
+                "legacy_session_id",
+                "pid",
+                "socket_path",
+                "state",
+                "agent_mode",
+                "injection_mode",
+                "python_version",
+                "peeka_version",
+                "capabilities",
+                "runtime",
+                "created_at",
+                "last_seen_at",
+                "recent_errors",
+                "next_valid_actions",
+            ]:
+                result[key] = getattr(self, key)
+            return result
+
+        class MockTarget:
+            def __init__(self, data: Dict[str, Any]):
+                for key, value in data.items():
+                    setattr(self, key, value)
+
+            to_dict = mock_to_dict
+
+        mock_targets = [MockTarget(data) for data in targets_data]
+
+        monkeypatch.setattr(cli_main_module, "discover_targets", lambda: mock_targets)
+
+        args = argparse.Namespace(
+            command="target", target_action="current", format="json"
+        )
+
+        exit_code = cli_main_module.cmd_target(args)
+        captured = capsys.readouterr()
+
+        assert exit_code == 2
+        assert "TARGET_AMBIGUOUS" in captured.err
+
+
+class TestTargetCLIDetach:
+    def test_detach_alive_without_force_exits_2(self, monkeypatch, capsys):
+
+        cli_main_module = sys.modules["peeka.cli.main"]
+
+        def mock_detach_target(target_id: str, force: bool = False) -> Dict[str, Any]:
+            if not force:
+                return {
+                    "ok": False,
+                    "error_code": "UNSUPPORTED_CAPABILITY",
+                    "message": "force required for alive detach",
+                }
+            return {"ok": True, "target_id": target_id}
+
+        monkeypatch.setattr(cli_main_module, "detach_target", mock_detach_target)
+
+        args = argparse.Namespace(
+            command="target",
+            target_action="detach",
+            target="target_12345678",
+            force=False,
+            format="json",
+        )
+
+        exit_code = cli_main_module.cmd_target(args)
+        captured = capsys.readouterr()
+
+        assert exit_code == 2
+        assert "UNSUPPORTED_CAPABILITY" in captured.err
+
+
+class TestTargetCLICleanup:
+    def test_cleanup_dry_run_no_unlink(self, monkeypatch, capsys):
+
+        cli_main_module = sys.modules["peeka.cli.main"]
+
+        def mock_cleanup_stale_targets(dry_run: bool = False) -> Dict[str, Any]:
+            if dry_run:
+                return {"removed": ["target_12345678"], "skipped": [], "errors": []}
+            return {"removed": [], "skipped": [], "errors": []}
+
+        monkeypatch.setattr(cli_main_module, "cleanup_stale_targets", mock_cleanup_stale_targets)
+
+        args = argparse.Namespace(
+            command="target",
+            target_action="cleanup",
+            stale_only=True,
+            dry_run=True,
+            format="json",
+        )
+
+        exit_code = cli_main_module.cmd_target(args)
+        captured = capsys.readouterr()
+
+        assert exit_code == 0
+        obj = json.loads(captured.out.strip())
+        assert obj["removed"] == ["target_12345678"]
+
+
+class TestTargetCLIHelp:
+    def test_target_help_lists_6_subcommands(self):
+        result = subprocess.run(
+            [sys.executable, "-m", "peeka.cli.main", "target", "--help"],
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode == 0
+        help_text = result.stdout
+
+        subcommands = ["list", "current", "status", "inspect", "cleanup", "detach"]
+        for subcommand in subcommands:
+            assert subcommand in help_text

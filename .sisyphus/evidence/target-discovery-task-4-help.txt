@@ -1,0 +1,15 @@
+usage: peeka-cli target [-h] {list,current,status,inspect,cleanup,detach} ...
+
+positional arguments:
+  {list,current,status,inspect,cleanup,detach}
+                        Target subcommands
+    list                List all discovered target agents
+    current             Get the current target (exit 0 if exactly 1 alive,
+                        exit 1 if 0, exit 2 if >1)
+    status              Get status of a specific target
+    inspect             Inspect a specific target with full details
+    cleanup             Clean up stale target marker files
+    detach              Detach from a specific target
+
+options:
+  -h, --help            show this help message and exit
