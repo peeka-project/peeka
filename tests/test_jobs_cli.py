@@ -377,7 +377,7 @@ class TestJobCLICleanup:
 
 
 class TestJobCLIPull:
-    def test_job_pull_stub_returns_unsupported(self, monkeypatch, capsys):
+    def test_job_pull_stub_returns_unsupported(self, capsys):
         cli_main_module = sys.modules["peeka.cli.main"]
 
         args = argparse.Namespace(
@@ -385,16 +385,36 @@ class TestJobCLIPull:
             job_action="pull",
             job="job_abc123",
             consumer="consumer_xyz",
+            format="json",
         )
 
-        exit_code = cli_main_module.cmd_job(args)
+        exit_code = cli_main_module.cmd_job_pull(args)
         captured = capsys.readouterr()
 
         assert exit_code == 2
-        obj = json.loads(captured.out.strip())
-        assert obj["status"] == "error"
-        assert obj["error_code"] == "UNSUPPORTED_CAPABILITY"
-        assert "Phase 5" in obj["message"]
+        payload = json.loads(captured.out.strip())
+        assert payload["status"] == "error"
+        assert payload["error_code"] == "UNSUPPORTED_CAPABILITY"
+        assert "result-consumer.md" in payload["message"]
+
+    def test_job_pull_accepts_format_flag(self):
+        parser = argparse.ArgumentParser()
+        subparsers = parser.add_subparsers(dest="command")
+        job_parser = subparsers.add_parser("job")
+        job_subparsers = job_parser.add_subparsers(dest="job_action")
+        
+        job_pull_parser = job_subparsers.add_parser("pull")
+        job_pull_parser.add_argument("--job", type=str, required=True)
+        job_pull_parser.add_argument("--consumer", type=str, required=True)
+        job_pull_parser.add_argument("--format", choices=["json", "table"], default="table")
+
+        parsed = parser.parse_args([
+            "job", "pull", "--job", "j1", "--consumer", "c1", "--format", "json"
+        ])
+
+        assert parsed.job == "j1"
+        assert parsed.consumer == "c1"
+        assert parsed.format == "json"
 
 
 class TestJobCLIHelp:

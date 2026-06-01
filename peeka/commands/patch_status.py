@@ -11,7 +11,7 @@ REPORT-ONLY: This command observes runtime state without modification.
 import os
 import sys
 import threading
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import Any, ClassVar, Dict, Optional, TYPE_CHECKING
 
 from peeka.commands.base import BaseCommand
 from peeka.commands import patch_status_schema
@@ -36,6 +36,9 @@ class PatchStatusCommand(BaseCommand):
     - thread_model: Main thread, total threads, daemon counts
     - rpl_integrity: RPL integrity check results
     """
+
+    category: ClassVar[str] = "snapshot"
+    allows_concurrent: ClassVar[bool] = True
 
     def __init__(self, agent: Optional["PeekaAgent"] = None):
         super().__init__()

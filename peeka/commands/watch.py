@@ -36,7 +36,7 @@ class WatchCommand(BaseCommand):
         watch mymodule.func --condition "cost > 50"
     """
 
-    category: ClassVar[str] = "mutation"
+    category: ClassVar[str] = "probe"
     allows_concurrent: ClassVar[bool] = False
 
     def __init__(self, agent: "PeekaAgent"):
