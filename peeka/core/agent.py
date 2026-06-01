@@ -644,7 +644,7 @@ class PeekaAgent:
                 "status": "success",
                 "data": {
                     "probe": probe.to_dict(),
-                    "recent_events": [
+                    "events": [
                         {
                             "event_id": event.event_id,
                             "probe_id": event.probe_id,
