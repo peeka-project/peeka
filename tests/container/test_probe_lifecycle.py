@@ -87,10 +87,10 @@ class TestProbeLifecycle:
         print(f"Baseline thread count: {baseline_count}")
 
         # Step 3: Start watch probe in background
-        # Use simple_loop.py's add_numbers function as target
+        # Use simple_loop.py's Calculator.add function as target
         watch_cmd = (
             f"timeout 60 python -m peeka.cli.main watch "
-            f"'simple_loop.add_numbers' -n 10 > /tmp/watch_output.txt 2>&1 &"
+            f"'__main__.Calculator.add' -n 10 > /tmp/watch_output.txt 2>&1 &"
         )
         exit_code, _ = exec_in_container(container, watch_cmd, timeout=5)
         assert exit_code == 0, "Failed to start watch in background"
@@ -101,18 +101,31 @@ class TestProbeLifecycle:
         # Step 4: Get probe_id from probe list
         exit_code, probe_list_output = exec_in_container(
             container,
-            "python -m peeka.cli.main probe list",
+            "python -m peeka.cli.main probe list --format json",
             timeout=10,
         )
         assert exit_code == 0, f"Probe list failed:\n{probe_list_output}"
 
-        probe_list_data = _parse_cli_result(probe_list_output, "result")
-        assert probe_list_data["status"] == "success", (
-            f"Probe list failed: {probe_list_data}"
-        )
-        assert probe_list_data["total"] > 0, "No active probes found"
-
-        probe_id = probe_list_data["probes"][0]["id"]
+        # Probe list with --format json outputs one JSON object per probe (no envelope)
+        # If no probes, output is empty or just whitespace
+        probe_lines = [l.strip() for l in probe_list_output.strip().split("\n") if l.strip() and l.startswith("{")]
+        
+        if not probe_lines:
+            # No active probes - this is expected since watch may not have started yet
+            # Let's wait a bit longer and retry
+            time.sleep(2)
+            exit_code, probe_list_output = exec_in_container(
+                container,
+                "python -m peeka.cli.main probe list --format json",
+                timeout=10,
+            )
+            assert exit_code == 0, f"Probe list retry failed:\n{probe_list_output}"
+            probe_lines = [l.strip() for l in probe_list_output.strip().split("\n") if l.strip() and l.startswith("{")]
+        
+        assert probe_lines, f"No probes found after wait. Output:\n{probe_list_output}"
+        
+        probe_data = json.loads(probe_lines[0])
+        probe_id = probe_data["id"]
         print(f"Probe ID: {probe_id}")
 
         # Step 5: Verify thread count increased by 1 (with tolerance ±1)
@@ -138,13 +151,13 @@ class TestProbeLifecycle:
         # Step 6: Stop probe
         exit_code, stop_output = exec_in_container(
             container,
-            f"python -m peeka.cli.main probe stop --probe {probe_id}",
+            f"python -m peeka.cli.main probe stop --probe {probe_id} --format json",
             timeout=10,
         )
         assert exit_code == 0, f"Probe stop failed:\n{stop_output}"
 
-        stop_data = _parse_cli_result(stop_output, "result")
-        assert stop_data["status"] == "success", f"Probe stop error: {stop_data}"
+        stop_data = _parse_cli_result(stop_output, "success")
+        assert stop_data, f"Probe stop returned no data: {stop_output}"
 
         # Step 7: Wait up to 5s for thread count to return to baseline
         for attempt in range(10):  # 10 attempts @ 0.5s = 5s max
@@ -175,17 +188,15 @@ class TestProbeLifecycle:
         # Step 8: Verify probe status is stopped
         exit_code, status_output = exec_in_container(
             container,
-            f"python -m peeka.cli.main probe status --probe {probe_id}",
+            f"python -m peeka.cli.main probe status --probe {probe_id} --format json",
             timeout=10,
         )
         assert exit_code == 0, f"Probe status failed:\n{status_output}"
 
-        status_data = _parse_cli_result(status_output, "result")
-        assert status_data["status"] == "success", (
-            f"Probe status error: {status_data}"
-        )
-        assert status_data["probe"]["status"] == "stopped", (
-            f"Expected probe status=stopped, got {status_data['probe']['status']}"
+        status_data = _parse_cli_result(status_output, "success")
+        probe = status_data.get("probe", {})
+        assert probe["status"] == "stopped", (
+            f"Expected probe status=stopped, got {probe['status']}"
         )
 
     def test_five_cycles_no_drift(self, container_target):
@@ -223,7 +234,7 @@ class TestProbeLifecycle:
             # Start watch probe
             watch_cmd = (
                 f"timeout 30 python -m peeka.cli.main watch "
-                f"'simple_loop.add_numbers' -n 5 > /tmp/watch_cycle_{cycle}.txt 2>&1 &"
+                f"'__main__.Calculator.add' -n 5 > /tmp/watch_cycle_{cycle}.txt 2>&1 &"
             )
             exit_code, _ = exec_in_container(container, watch_cmd, timeout=5)
             assert exit_code == 0, f"Cycle {cycle}: Failed to start watch"
@@ -234,34 +245,47 @@ class TestProbeLifecycle:
             # Get probe_id
             exit_code, probe_list_output = exec_in_container(
                 container,
-                "python -m peeka.cli.main probe list",
+                "python -m peeka.cli.main probe list --format json",
                 timeout=10,
             )
             assert exit_code == 0, f"Cycle {cycle}: Probe list failed"
 
-            probe_list_data = _parse_cli_result(probe_list_output, "result")
-            assert probe_list_data["total"] > 0, f"Cycle {cycle}: No active probes"
+            # Probe list with --format json outputs one JSON object per probe
+            probe_lines = [l.strip() for l in probe_list_output.strip().split("\n") if l.strip() and l.startswith("{")]
+            
+            if not probe_lines:
+                time.sleep(1.5)
+                exit_code, probe_list_output = exec_in_container(
+                    container,
+                    "python -m peeka.cli.main probe list --format json",
+                    timeout=10,
+                )
+                probe_lines = [l.strip() for l in probe_list_output.strip().split("\n") if l.strip() and l.startswith("{")]
+            
+            assert probe_lines, f"Cycle {cycle}: No active probes. Output:\n{probe_list_output}"
 
-            probe_id = probe_list_data["probes"][0]["id"]
+            probe_data = json.loads(probe_lines[0])
+            probe_id = probe_data["id"]
             print(f"Cycle {cycle}: Probe ID {probe_id}")
 
             # Verify probe is active
             exit_code, status_output = exec_in_container(
                 container,
-                f"python -m peeka.cli.main probe status --probe {probe_id}",
+                f"python -m peeka.cli.main probe status --probe {probe_id} --format json",
                 timeout=10,
             )
             assert exit_code == 0, f"Cycle {cycle}: Probe status failed"
 
-            status_data = _parse_cli_result(status_output, "result")
-            assert status_data["probe"]["status"] == "active", (
-                f"Cycle {cycle}: Expected probe active, got {status_data['probe']['status']}"
+            status_data = _parse_cli_result(status_output, "success")
+            probe = status_data.get("probe", {})
+            assert probe["status"] == "active", (
+                f"Cycle {cycle}: Expected probe active, got {probe['status']}"
             )
 
             # Stop probe
             exit_code, stop_output = exec_in_container(
                 container,
-                f"python -m peeka.cli.main probe stop --probe {probe_id}",
+                f"python -m peeka.cli.main probe stop --probe {probe_id} --format json",
                 timeout=10,
             )
             assert exit_code == 0, f"Cycle {cycle}: Probe stop failed"
