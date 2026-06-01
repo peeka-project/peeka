@@ -223,3 +223,26 @@
 - Watch commands must run in background: `timeout N python -m peeka.cli.main watch "pattern" -n X > /tmp/log 2>&1 &`
 - Probe creation is async; must retry probe list with sleep if empty on first attempt
 - Use `exec_in_container(container, cmd, timeout=T)` helper from conftest
+
+### T6 Outcome Summary
+**Status**: Test file complete and committed (c0afc0c), BLOCKED on production integration issue
+
+**What works**:
+- Test structure correct: uses container fixtures, proper async/retry patterns
+- CLI parsing handles format variations (result/success envelopes)
+- Thread counting logic validated
+- Watch command successfully creates probes with probe_id tagging
+
+**Blocker**:
+- `probe list` returns empty even when watch is active and observations contain probe_id
+- Watch outputs `{"probe_id": "prb_8851d70f", ...}` but registry doesn't track it
+- Likely cause: ProbeContext in T2 creates registry entry, but watch command in T3 may not be using ProbeContext properly
+- Alternative cause: ProbeRegistry cleanup happening too aggressively
+
+**Next steps for resolution**:
+1. Verify watch command creates ProbeContext in `_start_watch_*` (T3 integration point)
+2. Check if probe.stop is being called prematurely by watch wrapper exit
+3. Add debug logging to ProbeRegistry.create/set_status/cleanup to trace lifecycle
+4. Manual test: start watch, immediately check probe list (before any cleanup could run)
+
+**Test can be validated once probe/watch integration is fixed** — no test code changes needed.

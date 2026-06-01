@@ -29,7 +29,7 @@ class TestAgentProbeEndpoints:
         result = agent._execute_command({"type": "probe", "action": "list"})
 
         assert result["status"] == "success"
-        assert result["probes"] == []
+        assert result["data"]["probes"] == []
 
     def test_probe_list_filters_by_target_status_type(
         self, reset_probe_registry: ProbeRegistry
@@ -62,21 +62,21 @@ class TestAgentProbeEndpoints:
             {"type": "probe", "action": "list", "target_id": target_id}
         )
         assert result["status"] == "success"
-        assert len(result["probes"]) == 2
+        assert len(result["data"]["probes"]) == 2
 
         result = agent._execute_command(
             {"type": "probe", "action": "list", "status": "active"}
         )
         assert result["status"] == "success"
-        assert len(result["probes"]) == 1
-        assert result["probes"][0]["id"] == probe1.id
+        assert len(result["data"]["probes"]) == 1
+        assert result["data"]["probes"][0]["id"] == probe1.id
 
         result = agent._execute_command(
             {"type": "probe", "action": "list", "probe_type": "trace"}
         )
         assert result["status"] == "success"
-        assert len(result["probes"]) == 1
-        assert result["probes"][0]["id"] == probe2.id
+        assert len(result["data"]["probes"]) == 1
+        assert result["data"]["probes"][0]["id"] == probe2.id
 
     def test_probe_status_returns_probe_dict(
         self, reset_probe_registry: ProbeRegistry
@@ -98,11 +98,11 @@ class TestAgentProbeEndpoints:
         )
 
         assert result["status"] == "success"
-        assert result["probe"]["id"] == probe.id
-        assert result["probe"]["type"] == "watch"
-        assert result["probe"]["pattern"] == "module.func"
-        assert result["probe"]["config"] == {"max_events": 100}
-        assert "next_valid_actions" in result["probe"]
+        assert result["data"]["probe"]["id"] == probe.id
+        assert result["data"]["probe"]["type"] == "watch"
+        assert result["data"]["probe"]["pattern"] == "module.func"
+        assert result["data"]["probe"]["config"] == {"max_events": 100}
+        assert "next_valid_actions" in result["data"]["probe"]
 
     def test_probe_status_unknown_returns_PROBE_NOT_FOUND(self) -> None:
         agent = _new_agent("test-probe-status-unknown")
@@ -139,12 +139,12 @@ class TestAgentProbeEndpoints:
         )
 
         assert result["status"] == "success"
-        assert result["probe"]["id"] == probe.id
-        assert len(result["recent_events"]) == 2
-        assert result["recent_events"][0]["sequence"] == 0
-        assert result["recent_events"][1]["sequence"] == 1
-        assert result["recent_events"][0]["payload"] == {"event": "call", "args": [1, 2]}
-        assert result["recent_events"][1]["payload"] == {"event": "return", "value": 3}
+        assert result["data"]["probe"]["id"] == probe.id
+        assert len(result["data"]["recent_events"]) == 2
+        assert result["data"]["recent_events"][0]["sequence"] == 0
+        assert result["data"]["recent_events"][1]["sequence"] == 1
+        assert result["data"]["recent_events"][0]["payload"] == {"event": "call", "args": [1, 2]}
+        assert result["data"]["recent_events"][1]["payload"] == {"event": "return", "value": 3}
 
     def test_probe_inspect_respects_events_limit(
         self, reset_probe_registry: ProbeRegistry
@@ -175,10 +175,10 @@ class TestAgentProbeEndpoints:
         )
 
         assert result["status"] == "success"
-        assert len(result["recent_events"]) == 3
-        assert result["recent_events"][0]["sequence"] == 7
-        assert result["recent_events"][1]["sequence"] == 8
-        assert result["recent_events"][2]["sequence"] == 9
+        assert len(result["data"]["recent_events"]) == 3
+        assert result["data"]["recent_events"][0]["sequence"] == 7
+        assert result["data"]["recent_events"][1]["sequence"] == 8
+        assert result["data"]["recent_events"][2]["sequence"] == 9
 
         result = agent._execute_command(
             {
@@ -190,7 +190,7 @@ class TestAgentProbeEndpoints:
         )
 
         assert result["status"] == "success"
-        assert len(result["recent_events"]) == 10
+        assert len(result["data"]["recent_events"]) == 10
 
     def test_probe_inspect_unknown_returns_PROBE_NOT_FOUND(self) -> None:
         agent = _new_agent("test-probe-inspect-unknown")
@@ -223,7 +223,7 @@ class TestAgentProbeEndpoints:
         )
 
         assert result["status"] == "success"
-        assert result["probe_id"] == probe.id
+        assert result["data"]["probe_id"] == probe.id
 
         refreshed = reset_probe_registry.get(probe.id)
         assert refreshed is not None
@@ -261,8 +261,8 @@ class TestAgentProbeEndpoints:
         )
 
         assert result["status"] == "success"
-        assert result["probe_id"] == probe.id
-        assert "already in terminal state" in result["summary"]
+        assert result["data"]["probe_id"] == probe.id
+        assert "already in terminal state" in result["data"]["summary"]
 
     def test_probe_pause_returns_UNSUPPORTED_CAPABILITY(self) -> None:
         agent = _new_agent("test-probe-pause-unsupported")
@@ -322,7 +322,7 @@ class TestAgentProbeEndpoints:
         )
 
         assert result["status"] == "success"
-        assert result["removed"] == 1
+        assert result["data"]["removed"] == 1
 
         assert reset_probe_registry.get(probe_active.id) is not None
         assert reset_probe_registry.get(probe_old_stopped.id) is None
