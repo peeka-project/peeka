@@ -84,9 +84,12 @@ class TestSessionAlias:
         assert len(lines) == 1
 
         parsed = json.loads(lines[0])
-        assert parsed["schema_version"] == "1"
-        assert parsed["target_id"] == "target_12345678"
-        assert parsed["state"] == "alive"
+        assert parsed["type"] == "event"
+        assert parsed["event"] == "target.discovered"
+        assert "data" in parsed
+        assert parsed["data"]["schema_version"] == "1"
+        assert parsed["data"]["target_id"] == "target_12345678"
+        assert parsed["data"]["state"] == "alive"
 
     def test_session_status_delegates_to_target_status(self, monkeypatch, capsys):
         cli_main_module = sys.modules["peeka.cli.main"]
@@ -160,9 +163,12 @@ class TestSessionAlias:
         assert "'peeka-cli session <X>' is deprecated" in captured.err
 
         parsed = json.loads(captured.out.strip())
-        assert parsed["schema_version"] == "1"
-        assert parsed["target_id"] == "target_87654321"
-        assert parsed["state"] == "alive"
+        assert parsed["type"] == "success"
+        assert parsed["command"] == "target.status"
+        assert "data" in parsed
+        assert parsed["data"]["schema_version"] == "1"
+        assert parsed["data"]["target_id"] == "target_87654321"
+        assert parsed["data"]["state"] == "alive"
 
     def test_session_detach_delegates_to_target_detach(self, monkeypatch, capsys):
         cli_main_module = sys.modules["peeka.cli.main"]
@@ -197,5 +203,8 @@ class TestSessionAlias:
         assert "'peeka-cli session <X>' is deprecated" in captured.err
 
         parsed = json.loads(captured.out.strip())
-        assert parsed["ok"] is True
-        assert parsed["target_id"] == "target_11111111"
+        assert parsed["type"] == "success"
+        assert parsed["command"] == "target.detach"
+        assert "data" in parsed
+        assert parsed["data"]["ok"] is True
+        assert parsed["data"]["target_id"] == "target_11111111"

@@ -97,10 +97,12 @@ class TestTargetCLIList:
 
         for line in lines:
             obj = json.loads(line)
-            assert "schema_version" in obj
-            assert "target_id" in obj
-            assert "state" in obj
-            assert obj["schema_version"] == "1"
+            assert obj["type"] == "event"
+            assert obj["event"] == "target.discovered"
+            assert "data" in obj
+            assert obj["data"]["schema_version"] == "1"
+            assert "target_id" in obj["data"]
+            assert "state" in obj["data"]
 
 
 class TestTargetCLICurrent:
@@ -118,7 +120,10 @@ class TestTargetCLICurrent:
         captured = capsys.readouterr()
 
         assert exit_code == 1
-        assert "TARGET_NOT_FOUND" in captured.err
+        obj = json.loads(captured.out.strip())
+        assert obj["type"] == "error"
+        assert obj["command"] == "target.current"
+        assert obj["error_code"] == "TARGET_NOT_FOUND"
 
     def test_current_one_alive_exits_0(self, monkeypatch, capsys):
 
@@ -184,7 +189,9 @@ class TestTargetCLICurrent:
 
         assert exit_code == 0
         obj = json.loads(captured.out.strip())
-        assert obj["target_id"] == "target_12345678"
+        assert obj["type"] == "success"
+        assert obj["command"] == "target.current"
+        assert obj["data"]["target_id"] == "target_12345678"
 
     def test_current_ambiguous_exits_2(self, monkeypatch, capsys):
 
@@ -268,7 +275,11 @@ class TestTargetCLICurrent:
         captured = capsys.readouterr()
 
         assert exit_code == 2
-        assert "TARGET_AMBIGUOUS" in captured.err
+        obj = json.loads(captured.out.strip())
+        assert obj["type"] == "error"
+        assert obj["command"] == "target.current"
+        assert obj["error_code"] == "TARGET_AMBIGUOUS"
+        assert "targets" in obj
 
 
 class TestTargetCLIDetach:
@@ -299,7 +310,10 @@ class TestTargetCLIDetach:
         captured = capsys.readouterr()
 
         assert exit_code == 2
-        assert "UNSUPPORTED_CAPABILITY" in captured.err
+        obj = json.loads(captured.out.strip())
+        assert obj["type"] == "error"
+        assert obj["command"] == "target.detach"
+        assert obj["error_code"] == "UNSUPPORTED_CAPABILITY"
 
 
 class TestTargetCLICleanup:
@@ -307,7 +321,7 @@ class TestTargetCLICleanup:
 
         cli_main_module = sys.modules["peeka.cli.main"]
 
-        def mock_cleanup_stale_targets(dry_run: bool = False) -> Dict[str, Any]:
+        def mock_cleanup_stale_targets(dry_run: bool = False, target_id: str = None) -> Dict[str, Any]:
             if dry_run:
                 return {"removed": ["target_12345678"], "skipped": [], "errors": []}
             return {"removed": [], "skipped": [], "errors": []}
@@ -317,6 +331,7 @@ class TestTargetCLICleanup:
         args = argparse.Namespace(
             command="target",
             target_action="cleanup",
+            target=None,
             stale_only=True,
             dry_run=True,
             format="json",
@@ -327,7 +342,38 @@ class TestTargetCLICleanup:
 
         assert exit_code == 0
         obj = json.loads(captured.out.strip())
-        assert obj["removed"] == ["target_12345678"]
+        assert obj["type"] == "success"
+        assert obj["command"] == "target.cleanup"
+        assert obj["data"]["removed"] == ["target_12345678"]
+
+    def test_cleanup_target_flag(self, monkeypatch, capsys):
+
+        cli_main_module = sys.modules["peeka.cli.main"]
+
+        def mock_cleanup_stale_targets(dry_run: bool = False, target_id: str = None) -> Dict[str, Any]:
+            if target_id == "target_12345678":
+                return {"removed": ["target_12345678"], "skipped": [], "errors": []}
+            return {"removed": [], "skipped": [], "errors": []}
+
+        monkeypatch.setattr(cli_main_module, "cleanup_stale_targets", mock_cleanup_stale_targets)
+
+        args = argparse.Namespace(
+            command="target",
+            target_action="cleanup",
+            target="target_12345678",
+            stale_only=True,
+            dry_run=False,
+            format="json",
+        )
+
+        exit_code = cli_main_module.cmd_target(args)
+        captured = capsys.readouterr()
+
+        assert exit_code == 0
+        obj = json.loads(captured.out.strip())
+        assert obj["type"] == "success"
+        assert obj["command"] == "target.cleanup"
+        assert obj["data"]["removed"] == ["target_12345678"]
 
 
 class TestTargetCLIHelp:
