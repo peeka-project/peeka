@@ -191,3 +191,35 @@
 - 801 tests pass (+9 from T5)
 - Ruff clean
 - Help output shows all 5 subcommands with correct flags
+
+## Phase 4 T6 — Container e2e probe lifecycle tests
+
+### CLI output format inconsistencies discovered
+- `thread`: uses `OutputFormatter.result()` → `{"type": "result", "command": "thread", "data": {...}}`
+- `probe list --format json`: outputs raw JSON lines (one per probe), NOT wrapped in OutputFormatter envelope
+- `probe status/stop --format json`: uses `OutputFormatter.success()` → `{"type": "success", "command": "probe.*", "data": {...}}`
+- Created `_parse_cli_result()` helper to handle `result`/`success` envelope extraction
+- Special handling for probe list: parse raw JSON lines, no envelope
+
+### Target pattern resolution
+- Container target is `tests/e2e/target_scripts/simple_loop.py`
+- Contains `class Calculator` with `add(a, b)` and `multiply(a, b)` methods  
+- Main loop calls `calc.add(counter, counter+1)` every 0.1s
+- Fully-qualified pattern for watch: `__main__.Calculator.add` (NOT `Calculator.add`)
+- Use `sc "Calculator"` to discover FQN: `{"classes": [{"name": "__main__.Calculator"}]}`
+
+### Watch/probe integration gap discovered
+- Watch successfully creates probe and emits observations with `probe_id` field
+- Example observation: `{"event_id": "evt_51d70f_0", "probe_id": "prb_8851d70f", ...}`
+- BUT `probe list --format json` returns empty even while watch is active
+- Root cause TBD: either probe registry not tracking watch-created probes, or lifecycle mismatch
+- Test structure is correct; this is a **production integration issue** between T3 (watch/probe tagging) and T4 (probe endpoints)
+- Task outcome: test written and structure validated, blocked on probe/watch integration fix
+
+### Container test patterns reinforced
+- Always use `--format json` with probe CLI commands (status, stop, list)
+- Thread command does NOT support `--format` flag (always outputs result envelope)
+- Parse thread output via `_parse_cli_result(output, "result")` then extract `data["total"]`
+- Watch commands must run in background: `timeout N python -m peeka.cli.main watch "pattern" -n X > /tmp/log 2>&1 &`
+- Probe creation is async; must retry probe list with sleep if empty on first attempt
+- Use `exec_in_container(container, cmd, timeout=T)` helper from conftest
