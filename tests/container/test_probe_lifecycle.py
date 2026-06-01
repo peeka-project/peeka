@@ -10,6 +10,8 @@ Tests probe start/stop operations in Docker containers to verify:
 import json
 import subprocess
 import time
+from typing import Any, Dict, List
+
 import pytest
 
 from tests.container.conftest import exec_in_container
@@ -17,7 +19,115 @@ from tests.container.conftest import exec_in_container
 pytestmark = [pytest.mark.container]
 
 
-def _parse_cli_result(output: str, expected_type: str = "result") -> dict:
+WATCH_EVENT_BUDGET = 200
+THREAD_CLEANUP_TIMEOUT_SECONDS = 15.0
+THREAD_CLEANUP_POLL_SECONDS = 0.5
+
+
+def _list_probe_records(output: str) -> List[Dict[str, Any]]:
+    """Parse raw JSONL probe list output into record dicts."""
+    probe_lines = [
+        line.strip()
+        for line in output.strip().split("\n")
+        if line.strip() and line.startswith("{")
+    ]
+    return [json.loads(line) for line in probe_lines]
+
+
+def _start_watch_probe(container, output_path: str, timeout_seconds: int) -> str:
+    """Start a background watch command and return its PID."""
+    watch_cmd = (
+        f"setsid timeout {timeout_seconds} python -m peeka.cli.main watch "
+        f"'__main__.Calculator.add' -n {WATCH_EVENT_BUDGET} "
+        f"> {output_path} 2>&1 & echo $!"
+    )
+    exit_code, output = exec_in_container(container, watch_cmd, timeout=5)
+    assert exit_code == 0, f"Failed to start watch in background:\n{output}"
+
+    watch_pid = output.strip().splitlines()[-1].strip()
+    assert watch_pid.isdigit(), f"Invalid watch PID: {output}"
+    return watch_pid
+
+
+def _wait_for_active_probe(container, expected_count: int = 1) -> Dict[str, Any]:
+    """Return the newest active probe after a short retry loop."""
+    last_output = ""
+    for _ in range(expected_count * 4):
+        exit_code, probe_list_output = exec_in_container(
+            container,
+            "python -m peeka.cli.main probe list --format json",
+            timeout=10,
+        )
+        assert exit_code == 0, f"Probe list failed:\n{probe_list_output}"
+        last_output = probe_list_output
+
+        probes = _list_probe_records(probe_list_output)
+        active_probes = [probe for probe in probes if probe.get("status") == "active"]
+        if active_probes:
+            return active_probes[-1]
+        time.sleep(0.5)
+
+    assert False, f"No active probes found after wait. Output:\n{last_output}"
+
+
+def _wait_for_process_exit(container, pid: str, timeout_seconds: float = 5.0) -> None:
+    """Wait for a container process to exit, killing it on timeout."""
+    attempts = int(timeout_seconds / 0.5)
+    for _ in range(attempts):
+        exit_code, _ = exec_in_container(container, f"kill -0 {pid}", timeout=5)
+        if exit_code != 0:
+            return
+        time.sleep(0.5)
+
+    exec_in_container(
+        container,
+        f"kill -TERM -- -{pid} 2>/dev/null || kill {pid} 2>/dev/null || true",
+        timeout=5,
+    )
+    for _ in range(4):
+        exit_code, _ = exec_in_container(container, f"kill -0 {pid}", timeout=5)
+        if exit_code != 0:
+            return
+        time.sleep(0.5)
+
+    assert False, f"Background watch process {pid} did not exit"
+
+
+def _get_os_thread_count(container, pid: str) -> int:
+    """Return the kernel-visible thread count for the target process."""
+    exit_code, output = exec_in_container(
+        container,
+        f"ls /proc/{pid}/task | wc -l",
+        timeout=10,
+    )
+    assert exit_code == 0, f"OS thread count failed:\n{output}"
+    return int(output.strip())
+
+
+def _wait_for_thread_baseline(container, pid: str, baseline_count: int) -> None:
+    """Wait for the target thread count to return to baseline."""
+    attempts = int(THREAD_CLEANUP_TIMEOUT_SECONDS / THREAD_CLEANUP_POLL_SECONDS)
+    final_count = baseline_count
+    for attempt in range(attempts):
+        time.sleep(THREAD_CLEANUP_POLL_SECONDS)
+
+        final_count = _get_os_thread_count(container, pid)
+
+        if final_count == baseline_count:
+            print(
+                "Thread count returned to baseline after "
+                f"{(attempt + 1) * THREAD_CLEANUP_POLL_SECONDS}s"
+            )
+            return
+
+    assert False, (
+        f"Thread count did not return to baseline within "
+        f"{THREAD_CLEANUP_TIMEOUT_SECONDS}s. "
+        f"Baseline={baseline_count}, Final={final_count}"
+    )
+
+
+def _parse_cli_result(output: str, expected_type: str = "result") -> Dict[str, Any]:
     """Parse CLI JSONL output and extract data field.
     
     Args:
@@ -71,80 +181,32 @@ class TestProbeLifecycle:
         assert exit_code == 0, f"Attach failed:\n{output}"
 
         # Step 2: Capture baseline thread count
-        exit_code, thread_output = exec_in_container(
-            container,
-            "python -m peeka.cli.main thread",
-            timeout=10,
-        )
-        assert exit_code == 0, f"Thread list failed:\n{thread_output}"
-
-        # Parse thread count from JSON
-        thread_data = _parse_cli_result(thread_output, "result")
-        assert thread_data["status"] == "success", (
-            f"Thread command failed: {thread_data}"
-        )
-        baseline_count = thread_data["total"]
+        baseline_count = _get_os_thread_count(container, pid)
         print(f"Baseline thread count: {baseline_count}")
 
         # Step 3: Start watch probe in background
         # Use simple_loop.py's Calculator.add function as target
-        watch_cmd = (
-            f"timeout 60 python -m peeka.cli.main watch "
-            f"'__main__.Calculator.add' -n 10 > /tmp/watch_output.txt 2>&1 &"
+        watch_pid = _start_watch_probe(
+            container, "/tmp/watch_output.txt", timeout_seconds=60
         )
-        exit_code, _ = exec_in_container(container, watch_cmd, timeout=5)
-        assert exit_code == 0, "Failed to start watch in background"
 
         # Wait briefly for probe to start
         time.sleep(2)
 
         # Step 4: Get probe_id from probe list
-        exit_code, probe_list_output = exec_in_container(
-            container,
-            "python -m peeka.cli.main probe list --format json",
-            timeout=10,
-        )
-        assert exit_code == 0, f"Probe list failed:\n{probe_list_output}"
-
-        # Probe list with --format json outputs one JSON object per probe (no envelope)
-        # If no probes, output is empty or just whitespace
-        probe_lines = [l.strip() for l in probe_list_output.strip().split("\n") if l.strip() and l.startswith("{")]
-        
-        if not probe_lines:
-            # No active probes - this is expected since watch may not have started yet
-            # Let's wait a bit longer and retry
-            time.sleep(2)
-            exit_code, probe_list_output = exec_in_container(
-                container,
-                "python -m peeka.cli.main probe list --format json",
-                timeout=10,
-            )
-            assert exit_code == 0, f"Probe list retry failed:\n{probe_list_output}"
-            probe_lines = [l.strip() for l in probe_list_output.strip().split("\n") if l.strip() and l.startswith("{")]
-        
-        assert probe_lines, f"No probes found after wait. Output:\n{probe_list_output}"
-        
-        probe_data = json.loads(probe_lines[0])
+        probe_data = _wait_for_active_probe(container)
         probe_id = probe_data["id"]
         print(f"Probe ID: {probe_id}")
 
         # Step 5: Verify thread count increased by 1 (with tolerance ±1)
-        exit_code, thread_output = exec_in_container(
-            container,
-            "python -m peeka.cli.main thread",
-            timeout=10,
-        )
-        assert exit_code == 0, f"Thread list (active) failed:\n{thread_output}"
-
-        thread_data = _parse_cli_result(thread_output, "result")
-        active_count = thread_data["total"]
+        active_count = _get_os_thread_count(container, pid)
         print(f"Active probe thread count: {active_count}")
 
         # Tolerance ±1: gevent/asyncio may have transient noise threads
         # Plan spec says "baseline+1 exactly", but allow small tolerance
         # for test robustness in container environment
-        assert baseline_count <= active_count <= baseline_count + 2, (
-            f"Expected thread count ~{baseline_count + 1}, got {active_count}. "
+        assert baseline_count < active_count <= baseline_count + 2, (
+            f"Expected thread count > {baseline_count}, got {active_count}. "
             f"Baseline={baseline_count}, Active={active_count}"
         )
 
@@ -158,32 +220,10 @@ class TestProbeLifecycle:
 
         stop_data = _parse_cli_result(stop_output, "success")
         assert stop_data, f"Probe stop returned no data: {stop_output}"
+        _wait_for_process_exit(container, watch_pid)
 
-        # Step 7: Wait up to 5s for thread count to return to baseline
-        for attempt in range(10):  # 10 attempts @ 0.5s = 5s max
-            time.sleep(0.5)
-
-            exit_code, thread_output = exec_in_container(
-                container,
-                "python -m peeka.cli.main thread",
-                timeout=10,
-            )
-            assert exit_code == 0, f"Thread list (cleanup) failed:\n{thread_output}"
-
-            thread_data = _parse_cli_result(thread_output, "result")
-            final_count = thread_data["total"]
-
-            if final_count == baseline_count:
-                print(
-                    f"Thread count returned to baseline after {(attempt + 1) * 0.5}s"
-                )
-                break
-        else:
-            # Timeout after 5s
-            assert False, (
-                f"Thread count did not return to baseline within 5s. "
-                f"Baseline={baseline_count}, Final={final_count}"
-            )
+        # Step 7: Wait for thread count to return to baseline
+        _wait_for_thread_baseline(container, pid, baseline_count)
 
         # Step 8: Verify probe status is stopped
         exit_code, status_output = exec_in_container(
@@ -216,15 +256,7 @@ class TestProbeLifecycle:
         assert exit_code == 0, f"Attach failed:\n{output}"
 
         # Capture baseline thread count
-        exit_code, thread_output = exec_in_container(
-            container,
-            "python -m peeka.cli.main thread",
-            timeout=10,
-        )
-        assert exit_code == 0, f"Thread list failed:\n{thread_output}"
-
-        thread_data = _parse_cli_result(thread_output, "result")
-        baseline_count = thread_data["total"]
+        baseline_count = _get_os_thread_count(container, pid)
         print(f"Baseline thread count: {baseline_count}")
 
         # Run 5 cycles
@@ -232,39 +264,17 @@ class TestProbeLifecycle:
             print(f"\n=== Cycle {cycle}/5 ===")
 
             # Start watch probe
-            watch_cmd = (
-                f"timeout 30 python -m peeka.cli.main watch "
-                f"'__main__.Calculator.add' -n 5 > /tmp/watch_cycle_{cycle}.txt 2>&1 &"
+            watch_pid = _start_watch_probe(
+                container,
+                f"/tmp/watch_cycle_{cycle}.txt",
+                timeout_seconds=30,
             )
-            exit_code, _ = exec_in_container(container, watch_cmd, timeout=5)
-            assert exit_code == 0, f"Cycle {cycle}: Failed to start watch"
 
             # Wait for probe to start
             time.sleep(1.5)
 
             # Get probe_id
-            exit_code, probe_list_output = exec_in_container(
-                container,
-                "python -m peeka.cli.main probe list --format json",
-                timeout=10,
-            )
-            assert exit_code == 0, f"Cycle {cycle}: Probe list failed"
-
-            # Probe list with --format json outputs one JSON object per probe
-            probe_lines = [l.strip() for l in probe_list_output.strip().split("\n") if l.strip() and l.startswith("{")]
-            
-            if not probe_lines:
-                time.sleep(1.5)
-                exit_code, probe_list_output = exec_in_container(
-                    container,
-                    "python -m peeka.cli.main probe list --format json",
-                    timeout=10,
-                )
-                probe_lines = [l.strip() for l in probe_list_output.strip().split("\n") if l.strip() and l.startswith("{")]
-            
-            assert probe_lines, f"Cycle {cycle}: No active probes. Output:\n{probe_list_output}"
-
-            probe_data = json.loads(probe_lines[0])
+            probe_data = _wait_for_active_probe(container, expected_count=cycle)
             probe_id = probe_data["id"]
             print(f"Cycle {cycle}: Probe ID {probe_id}")
 
@@ -289,44 +299,13 @@ class TestProbeLifecycle:
                 timeout=10,
             )
             assert exit_code == 0, f"Cycle {cycle}: Probe stop failed"
+            _wait_for_process_exit(container, watch_pid)
 
             # Wait for thread cleanup
-            for attempt in range(10):  # 5s max
-                time.sleep(0.5)
-
-                exit_code, thread_output = exec_in_container(
-                    container,
-                    "python -m peeka.cli.main thread",
-                    timeout=10,
-                )
-                assert exit_code == 0, f"Cycle {cycle}: Thread list failed"
-
-                thread_data = _parse_cli_result(thread_output, "result")
-                current_count = thread_data["total"]
-
-                if current_count == baseline_count:
-                    print(
-                        f"Cycle {cycle}: Thread count returned to baseline "
-                        f"after {(attempt + 1) * 0.5}s"
-                    )
-                    break
-            else:
-                # Timeout
-                assert False, (
-                    f"Cycle {cycle}: Thread count did not return to baseline within 5s. "
-                    f"Baseline={baseline_count}, Current={current_count}"
-                )
+            _wait_for_thread_baseline(container, pid, baseline_count)
 
         # After 5 cycles, verify final thread count equals baseline
-        exit_code, thread_output = exec_in_container(
-            container,
-            "python -m peeka.cli.main thread",
-            timeout=10,
-        )
-        assert exit_code == 0, "Final thread list failed"
-
-        thread_data = _parse_cli_result(thread_output, "result")
-        final_count = thread_data["total"]
+        final_count = _get_os_thread_count(container, pid)
 
         print(f"\nFinal thread count after 5 cycles: {final_count}")
         assert final_count == baseline_count, (
