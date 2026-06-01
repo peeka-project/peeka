@@ -287,7 +287,7 @@ class TestProbeCLICleanup:
                 assert command["completed_only"] is True
                 return {
                     "status": "success",
-                    "data": {"removed": ["prb_old1", "prb_old2"]},
+                    "data": {"removed_ids": ["prb_old1", "prb_old2"]},
                 }
 
             def disconnect(self):
@@ -304,7 +304,7 @@ class TestProbeCLICleanup:
             command="probe",
             probe_action="cleanup",
             target="target_alpha",
-            completed=True,
+            all=False,
             older_than=600,
             format="table",
         )
@@ -316,7 +316,7 @@ class TestProbeCLICleanup:
         output = captured.err + captured.out
         assert "Removed 2 probe(s)" in output
 
-    def test_probe_cleanup_default_sends_completed_only_false(self, monkeypatch, capsys):
+    def test_probe_cleanup_all_flag_sends_completed_only_false(self, monkeypatch, capsys):
         cli_main_module = sys.modules["peeka.cli.main"]
 
         class MockStreamingAgentClient:
@@ -330,7 +330,7 @@ class TestProbeCLICleanup:
                 assert command["completed_only"] is False
                 return {
                     "status": "success",
-                    "data": {"removed": []},
+                    "data": {"removed_ids": []},
                 }
 
             def disconnect(self):
@@ -347,7 +347,7 @@ class TestProbeCLICleanup:
             command="probe",
             probe_action="cleanup",
             target=None,
-            completed=False,
+            all=True,
             older_than=600,
             format="json",
         )

@@ -3064,7 +3064,7 @@ def cmd_probe_cleanup(args) -> int:
     command = {
         "type": "probe",
         "action": "cleanup",
-        "completed_only": args.completed,
+        "completed_only": not args.all,
         "older_than_seconds": args.older_than,
     }
     if args.target:
@@ -3075,7 +3075,7 @@ def cmd_probe_cleanup(args) -> int:
 
     if response.get("status") == "success":
         data = response.get("data", {})
-        removed_ids = data.get("removed", [])
+        removed_ids = data.get("removed_ids", [])
         
         if args.format == "json":
             OutputFormatter.success("probe.cleanup", data=data)

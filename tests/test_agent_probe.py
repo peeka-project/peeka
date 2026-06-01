@@ -353,7 +353,7 @@ class TestAgentProbeEndpoints:
         )
 
         assert result["status"] == "success"
-        assert result["data"]["removed"] == [probe_old_stopped.id]
+        assert result["data"]["removed_ids"] == [probe_old_stopped.id]
 
         assert reset_probe_registry.get(probe_active.id) is not None
         assert reset_probe_registry.get(probe_old_stopped.id) is None
@@ -406,6 +406,6 @@ class TestAgentProbeEndpoints:
         )
 
         assert result["status"] == "success"
-        assert result["data"]["removed"] == [stopped_probe.id]
+        assert result["data"]["removed_ids"] == [stopped_probe.id, failed_probe.id]
         assert reset_probe_registry.get(stopped_probe.id) is None
-        assert reset_probe_registry.get(failed_probe.id) is not None
+        assert reset_probe_registry.get(failed_probe.id) is None

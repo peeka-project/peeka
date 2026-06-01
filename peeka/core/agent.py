@@ -709,22 +709,18 @@ class PeekaAgent:
     def _handle_probe_cleanup(self, params: Dict[str, Any]) -> Dict[str, Any]:
         try:
             older_than_seconds = float(params.get("older_than_seconds", 600))
-            status_filter = params.get("status_filter")
-            completed_only = bool(params.get("completed_only", False))
+            completed_only = bool(params.get("completed_only", True))
             target_id = params.get("target_id")
-
-            if status_filter is None and completed_only:
-                status_filter = "stopped"
 
             removed_ids = self.probe_registry.cleanup(
                 older_than_seconds=older_than_seconds,
-                status_filter=status_filter,
                 target_id=target_id,
+                completed_only=completed_only,
             )
             
             return {
                 "status": "success",
-                "data": {"removed": removed_ids},
+                "data": {"removed_ids": removed_ids},
             }
         except Exception as e:
             result = _probe_error("COMMAND_EXECUTION_ERROR", str(e))
