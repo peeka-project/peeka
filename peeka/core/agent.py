@@ -710,14 +710,14 @@ class PeekaAgent:
             older_than_seconds = float(params.get("older_than_seconds", 600))
             status_filter = params.get("status_filter")
 
-            removed = self.probe_registry.cleanup(
+            removed_ids = self.probe_registry.cleanup(
                 older_than_seconds=older_than_seconds,
                 status_filter=status_filter,
             )
             
             return {
                 "status": "success",
-                "data": {"removed": removed},
+                "data": {"removed": removed_ids},
             }
         except Exception as e:
             result = _probe_error("COMMAND_EXECUTION_ERROR", str(e))
