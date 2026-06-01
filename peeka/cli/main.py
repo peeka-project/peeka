@@ -649,6 +649,63 @@ Examples:
         help="Output format (default: table)",
     )
 
+    session_parser = subparsers.add_parser(
+        "session", help="[DEPRECATED] Alias to 'target' command; use 'peeka-cli target' instead"
+    )
+    session_subparsers = session_parser.add_subparsers(
+        dest="session_action", help="Session subcommands"
+    )
+
+    session_list_parser = session_subparsers.add_parser(
+        "list", help="[DEPRECATED] List all discovered session agents"
+    )
+    session_list_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["json", "table"],
+        default="table",
+        help="Output format (default: table)",
+    )
+
+    session_status_parser = session_subparsers.add_parser(
+        "status", help="[DEPRECATED] Get status of a specific session"
+    )
+    session_status_parser.add_argument(
+        "--target",
+        type=str,
+        required=True,
+        help="Target ID",
+    )
+    session_status_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["json", "table"],
+        default="table",
+        help="Output format (default: table)",
+    )
+
+    session_detach_parser = session_subparsers.add_parser(
+        "detach", help="[DEPRECATED] Detach from a specific session"
+    )
+    session_detach_parser.add_argument(
+        "--target",
+        type=str,
+        required=True,
+        help="Target ID",
+    )
+    session_detach_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force detach even if target is alive",
+    )
+    session_detach_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["json", "table"],
+        default="table",
+        help="Output format (default: table)",
+    )
+
     args = parser.parse_args()
 
     if not args.command:
@@ -690,6 +747,8 @@ Examples:
             return cmd_run(args)
         elif args.command == "target":
             return cmd_target(args)
+        elif args.command == "session":
+            return cmd_session(args)
         else:
             OutputFormatter.error("peeka", error=f"Unknown command: {args.command}")
             return 1
@@ -2086,3 +2145,38 @@ def cmd_target_detach(args) -> int:
             for error in result.get("errors", []):
                 print(f"  {error.get('path')}: {error.get('message')}", file=sys.stderr)
         return 0
+
+
+def cmd_session(args) -> int:
+    if not args.session_action:
+        OutputFormatter.error("session", error="Missing session subcommand")
+        return 1
+
+    try:
+        if args.session_action == "list":
+            return cmd_session_list(args)
+        elif args.session_action == "status":
+            return cmd_session_status(args)
+        elif args.session_action == "detach":
+            return cmd_session_detach(args)
+        else:
+            OutputFormatter.error("session", error=f"Unknown session action: {args.session_action}")
+            return 1
+    except Exception as e:
+        OutputFormatter.error("session", error=str(e))
+        return 1
+
+
+def cmd_session_list(args) -> int:
+    print("[deprecated] 'peeka-cli session <X>' is deprecated; use 'peeka-cli target <X>'", file=sys.stderr)
+    return cmd_target_list(args)
+
+
+def cmd_session_status(args) -> int:
+    print("[deprecated] 'peeka-cli session <X>' is deprecated; use 'peeka-cli target <X>'", file=sys.stderr)
+    return cmd_target_status(args)
+
+
+def cmd_session_detach(args) -> int:
+    print("[deprecated] 'peeka-cli session <X>' is deprecated; use 'peeka-cli target <X>'", file=sys.stderr)
+    return cmd_target_detach(args)
