@@ -151,10 +151,54 @@ def get_target(target_id: str) -> Optional[TargetAgent]:
     return None
 
 
-def cleanup_stale_targets(dry_run: bool = False) -> Dict[str, Any]:
-    """Plan or perform stale target cleanup."""
+def cleanup_stale_targets(dry_run: bool = False, target_id: Optional[str] = None) -> Dict[str, Any]:
+    """Plan or perform stale target cleanup.
+    
+    Args:
+        dry_run: If True, report what would be removed without unlinking files.
+        target_id: If provided, clean only this specific target. Otherwise clean all stale targets.
+    
+    Returns:
+        Dictionary with "removed", "skipped", and "errors" lists.
+    """
     result: Dict[str, Any] = {"removed": [], "skipped": [], "errors": []}
 
+    if target_id:
+        # Single-target cleanup
+        target = get_target(target_id)
+        if target is None:
+            result["errors"].append(
+                {"target_id": target_id, "message": "TARGET_NOT_FOUND"}
+            )
+            return result
+        
+        if target.state != "stale":
+            result["skipped"].append(
+                {"target_id": target.target_id, "reason": f"not_stale (state={target.state})"}
+            )
+            return result
+        
+        if target.pid > 0 and _is_pid_alive(target.pid):
+            result["skipped"].append(
+                {"target_id": target.target_id, "reason": "race_alive"}
+            )
+            return result
+        
+        if dry_run:
+            result["removed"].append(target.target_id)
+            return result
+        
+        try:
+            for path in _target_related_paths(target.legacy_session_id):
+                path.unlink(missing_ok=True)
+            result["removed"].append(target.target_id)
+        except OSError as exc:
+            result["errors"].append(
+                {"target_id": target.target_id, "message": str(exc)}
+            )
+        return result
+
+    # Bulk cleanup: all stale targets
     for target in discover_targets():
         if target.state != "stale":
             continue

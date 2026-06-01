@@ -610,6 +610,12 @@ Examples:
         "cleanup", help="Clean up stale target marker files"
     )
     target_cleanup_parser.add_argument(
+        "--target",
+        type=str,
+        default=None,
+        help="Clean up a specific target by ID (default: clean all stale targets)",
+    )
+    target_cleanup_parser.add_argument(
         "--stale-only",
         action="store_true",
         help="Only clean up stale targets (default behavior)",
@@ -1978,8 +1984,7 @@ def cmd_target_list(args) -> int:
 
     if args.format == "json":
         for target in targets:
-            print(json.dumps(target.to_dict()))
-            sys.stdout.flush()
+            OutputFormatter.event("target.discovered", data=target.to_dict())
         return 0
     else:
         if not targets:
@@ -2003,26 +2008,24 @@ def cmd_target_current(args) -> int:
     if len(alive_targets) == 1:
         target = alive_targets[0]
         if args.format == "json":
-            print(json.dumps(target.to_dict()))
-            sys.stdout.flush()
+            OutputFormatter.success("target.current", data=target.to_dict())
         else:
             print(f"Current target: {target.target_id} (PID {target.pid})", file=sys.stderr)
         return 0
     elif len(alive_targets) == 0:
         if args.format == "json":
-            error_obj = {"error_code": "TARGET_NOT_FOUND", "message": "No alive targets found"}
-            print(json.dumps(error_obj), file=sys.stderr)
+            OutputFormatter.error("target.current", error="No alive targets found", error_code="TARGET_NOT_FOUND")
         else:
             print("TARGET_NOT_FOUND: No alive targets found", file=sys.stderr)
         return 1
     else:
         if args.format == "json":
-            error_obj = {
-                "error_code": "TARGET_AMBIGUOUS",
-                "message": f"Multiple alive targets found: {len(alive_targets)}",
-                "targets": [t.target_id for t in alive_targets],
-            }
-            print(json.dumps(error_obj), file=sys.stderr)
+            OutputFormatter.error(
+                "target.current",
+                error=f"Multiple alive targets found: {len(alive_targets)}",
+                error_code="TARGET_AMBIGUOUS",
+                targets=[t.target_id for t in alive_targets],
+            )
         else:
             print(
                 f"TARGET_AMBIGUOUS: Multiple alive targets found ({len(alive_targets)}): "
@@ -2036,15 +2039,13 @@ def cmd_target_status(args) -> int:
     target = get_target(args.target)
     if target is None:
         if args.format == "json":
-            error_obj = {"error_code": "TARGET_NOT_FOUND", "message": f"Target not found: {args.target}"}
-            print(json.dumps(error_obj), file=sys.stderr)
+            OutputFormatter.error("target.status", error=f"Target not found: {args.target}", error_code="TARGET_NOT_FOUND")
         else:
             print(f"TARGET_NOT_FOUND: {args.target}", file=sys.stderr)
         return 1
 
     if args.format == "json":
-        print(json.dumps(target.to_dict()))
-        sys.stdout.flush()
+        OutputFormatter.success("target.status", data=target.to_dict())
         return 0
     else:
         print(f"Target ID: {target.target_id}")
@@ -2062,15 +2063,13 @@ def cmd_target_inspect(args) -> int:
     target = get_target(args.target)
     if target is None:
         if args.format == "json":
-            error_obj = {"error_code": "TARGET_NOT_FOUND", "message": f"Target not found: {args.target}"}
-            print(json.dumps(error_obj), file=sys.stderr)
+            OutputFormatter.error("target.inspect", error=f"Target not found: {args.target}", error_code="TARGET_NOT_FOUND")
         else:
             print(f"TARGET_NOT_FOUND: {args.target}", file=sys.stderr)
         return 1
 
     if args.format == "json":
-        print(json.dumps(target.to_dict()))
-        sys.stdout.flush()
+        OutputFormatter.success("target.inspect", data=target.to_dict())
         return 0
     else:
         print(f"Target ID: {target.target_id}")
@@ -2090,11 +2089,10 @@ def cmd_target_inspect(args) -> int:
 
 
 def cmd_target_cleanup(args) -> int:
-    result = cleanup_stale_targets(dry_run=args.dry_run)
+    result = cleanup_stale_targets(dry_run=args.dry_run, target_id=getattr(args, "target", None))
 
     if args.format == "json":
-        print(json.dumps(result))
-        sys.stdout.flush()
+        OutputFormatter.success("target.cleanup", data=result)
         return 0
     else:
         removed_count = len(result.get("removed", []))
@@ -2121,12 +2119,11 @@ def cmd_target_detach(args) -> int:
     result = detach_target(args.target, force=args.force)
 
     if not result.get("ok"):
-        error_code = result.get("error_code", "UNKNOWN_ERROR")
+        error_code = result.get("error_code", "TRANSPORT_ERROR")
         message = result.get("message", "Detach failed")
 
         if args.format == "json":
-            error_obj = {"error_code": error_code, "message": message}
-            print(json.dumps(error_obj), file=sys.stderr)
+            OutputFormatter.error("target.detach", error=message, error_code=error_code)
         else:
             print(f"{error_code}: {message}", file=sys.stderr)
 
@@ -2135,8 +2132,7 @@ def cmd_target_detach(args) -> int:
         return 1
 
     if args.format == "json":
-        print(json.dumps(result))
-        sys.stdout.flush()
+        OutputFormatter.success("target.detach", data=result)
         return 0
     else:
         print(f"Successfully detached from target {result.get('target_id')}", file=sys.stderr)
