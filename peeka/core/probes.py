@@ -371,6 +371,154 @@ class ProbeRegistry:
         return "evt_{}_{}".format(probe_id[-6:], sequence)
 
 
+class ProbeContext:
+    """Context manager for probe-category commands streaming loop.
+    
+    Handles probe lifecycle: creates probe on entry, transitions to active,
+    records events, marks failures, and ensures proper cleanup on exit.
+    
+    Example usage:
+        with ProbeContext(registry, target_id="tgt_1", client_session_id="cli_1",
+                          job_id="job_1234", type="watch", pattern="pkg.fn") as ctx:
+            for event_data in stream_observations():
+                ctx.record_event(event_data)
+                if ctx.should_stop():
+                    break
+    """
+
+    def __init__(
+        self,
+        registry: ProbeRegistry,
+        *,
+        target_id: str,
+        client_session_id: Optional[str],
+        job_id: Optional[str],
+        type: str,
+        pattern: Optional[str] = None,
+        config: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Initialize probe context.
+        
+        Args:
+            registry: ProbeRegistry instance to manage probe lifecycle.
+            target_id: Public target identifier.
+            client_session_id: Client session initiating the probe.
+            job_id: Related command job identifier.
+            type: Probe kind such as watch, trace, or monitor.
+            pattern: Optional user-supplied match pattern.
+            config: Optional probe configuration snapshot.
+        """
+        self._registry = registry
+        self._target_id = target_id
+        self._client_session_id = client_session_id or ""
+        self._job_id = job_id or ""
+        self._type = type
+        self._pattern = pattern
+        self._config = config
+        self._probe: Optional[ProbeRun] = None
+
+    def __enter__(self) -> "ProbeContext":
+        """Create probe and transition to active status."""
+        self._probe = self._registry.create(
+            target_id=self._target_id,
+            client_session_id=self._client_session_id,
+            job_id=self._job_id,
+            type=self._type,
+            pattern=self._pattern,
+            config=self._config,
+        )
+        self._registry.set_status(self._probe.id, "active")
+        return self
+
+    def __exit__(
+        self,
+        exc_type: Any,
+        exc_val: Any,
+        exc_tb: Any,
+    ) -> None:
+        """Handle probe cleanup on context exit.
+        
+        On exception: marks probe as failed with error details.
+        On clean exit: transitions probe to stopped if still active.
+        
+        Returns None to propagate exceptions (does not suppress).
+        """
+        if self._probe is None:
+            return None
+
+        if exc_type is not None:
+            # Exception path: mark failed with error details
+            error_message = str(exc_val) if exc_val is not None else "Unknown error"
+            self.mark_failed(
+                error_code="COMMAND_EXECUTION_ERROR",
+                message=error_message,
+            )
+            return None  # Do not suppress exception
+
+        # Clean exit: transition to stopped if not already terminal
+        # Idempotent: if already failed/stopped, set_status returns False but that's OK
+        if self._probe.status not in {"stopped", "failed"}:
+            self._registry.set_status(self._probe.id, "stopped")
+        return None
+
+    def record_event(self, payload: Dict[str, Any]) -> Optional[ObservationEvent]:
+        """Record one observation event for this probe.
+        
+        Thread-safe: registry uses internal locking.
+        
+        Args:
+            payload: JSON-safe event payload.
+            
+        Returns:
+            ObservationEvent with auto-filled event_id, probe_id, target_id, timestamp.
+        """
+        if self._probe is None:
+            return None
+        return self._registry.record_event(self._probe.id, payload)
+
+    def mark_failed(self, error_code: str, message: str) -> None:
+        """Mark probe as failed with error details.
+        
+        Args:
+            error_code: Error category code.
+            message: Human-readable error message.
+        """
+        if self._probe is None:
+            return
+        self._registry.set_status(
+            self._probe.id,
+            "failed",
+            last_error={"code": error_code, "message": message},
+        )
+
+    def should_stop(self) -> bool:
+        """Check if probe has been externally stopped.
+        
+        Enables cooperative stop: streaming loops can poll this method
+        and exit gracefully when probe.status transitions to stopped.
+        
+        Returns:
+            True if probe status is stopped or failed, otherwise False.
+        """
+        if self._probe is None:
+            return False
+        # Refresh from registry to see external status changes
+        current = self._registry.get(self._probe.id)
+        if current is None:
+            return True  # Probe was removed, treat as stopped
+        return current.status in {"stopped", "failed"}
+
+    @property
+    def probe_id(self) -> Optional[str]:
+        """Return the created probe identifier."""
+        return self._probe.id if self._probe is not None else None
+
+    @property
+    def probe(self) -> Optional[ProbeRun]:
+        """Return the created ProbeRun dataclass."""
+        return self._probe
+
+
 def next_valid_actions(status: ProbeStatus) -> List[str]:
     """Return the next valid actions for a probe status."""
     return list(_NEXT_VALID_ACTIONS.get(status, []))
