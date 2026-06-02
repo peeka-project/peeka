@@ -2821,6 +2821,11 @@ def cmd_probe(args) -> int:
         return 1
 
 
+def _response_error_message(response, fallback: str) -> str:
+    """Return the most specific error string available in an agent response."""
+    return response.get("error") or response.get("message") or fallback
+
+
 def cmd_probe_list(args) -> int:
     try:
         socket_path, _ = _check_agent_attached()
@@ -2881,7 +2886,7 @@ def cmd_probe_list(args) -> int:
         return 0
     else:
         error_code = response.get("error_code", "TRANSPORT_ERROR")
-        message = response.get("message", "Probe list failed")
+        message = _response_error_message(response, "Probe list failed")
         if args.format == "json":
             OutputFormatter.error("probe.list", error=message, error_code=error_code)
         else:
@@ -2928,7 +2933,7 @@ def cmd_probe_status(args) -> int:
         return 0
     else:
         error_code = response.get("error_code", "TRANSPORT_ERROR")
-        message = response.get("message", "Probe status query failed")
+        message = _response_error_message(response, "Probe status query failed")
         if args.format == "json":
             OutputFormatter.error("probe.status", error=message, error_code=error_code)
         else:
@@ -2988,7 +2993,7 @@ def cmd_probe_inspect(args) -> int:
         return 0
     else:
         error_code = response.get("error_code", "TRANSPORT_ERROR")
-        message = response.get("message", "Probe inspect query failed")
+        message = _response_error_message(response, "Probe inspect query failed")
         if args.format == "json":
             OutputFormatter.error("probe.inspect", error=message, error_code=error_code)
         else:
@@ -3035,7 +3040,7 @@ def cmd_probe_stop(args) -> int:
         return 0
     else:
         error_code = response.get("error_code", "TRANSPORT_ERROR")
-        message = response.get("message", "Probe stop failed")
+        message = _response_error_message(response, "Probe stop failed")
         if args.format == "json":
             OutputFormatter.error("probe.stop", error=message, error_code=error_code)
         else:
@@ -3087,7 +3092,7 @@ def cmd_probe_cleanup(args) -> int:
         return 0
     else:
         error_code = response.get("error_code", "TRANSPORT_ERROR")
-        message = response.get("message", "Probe cleanup failed")
+        message = _response_error_message(response, "Probe cleanup failed")
         if args.format == "json":
             OutputFormatter.error("probe.cleanup", error=message, error_code=error_code)
         else:

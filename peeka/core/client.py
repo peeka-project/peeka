@@ -4,6 +4,7 @@ Unix domain sockets using the length-prefixed JSON protocol defined in
 ``peeka.core.agent``.
 """
 
+from contextlib import contextmanager
 import json
 import logging
 import os
@@ -44,10 +45,25 @@ class AgentClient:
         socket_path: str,
         timeout: float = 5.0,
         client_info: Optional[Dict[str, Any]] = None,
+        rpc_timeout: float = 30.0,
     ):
         self.socket_path = socket_path
         self.timeout = timeout
+        self.rpc_timeout = rpc_timeout
         self._client_info = _build_client_info(client_info, "request")
+
+    @staticmethod
+    @contextmanager
+    def _temporary_timeout(
+        sock: socket.socket, timeout: float
+    ) -> Generator[None, None, None]:
+        """Temporarily override a socket timeout for one RPC round-trip."""
+        previous_timeout = sock.gettimeout()
+        sock.settimeout(timeout)
+        try:
+            yield
+        finally:
+            sock.settimeout(previous_timeout)
 
     def _attach_client_info(self, command: Dict[str, Any]) -> Dict[str, Any]:
         """Attach client metadata without mutating the caller's command."""
@@ -79,14 +95,15 @@ class AgentClient:
                 sock.sendall(len(payload).to_bytes(4, "big"))
                 sock.sendall(payload)
 
-                length_bytes = self._recv_response_header(sock)
-                if not length_bytes:
-                    raise TimeoutError("No response length received")
+                with self._temporary_timeout(sock, self.rpc_timeout):
+                    length_bytes = self._recv_response_header(sock)
+                    if not length_bytes:
+                        raise TimeoutError("No response length received")
 
-                length = int.from_bytes(length_bytes, "big")
-                data = self._recv_exact(sock, length)
-                if not data:
-                    raise TimeoutError("No response payload received")
+                    length = int.from_bytes(length_bytes, "big")
+                    data = self._recv_exact(sock, length)
+                    if not data:
+                        raise TimeoutError("No response payload received")
 
                 return json.loads(data.decode("utf-8"))
 
@@ -147,9 +164,11 @@ class StreamingAgentClient:
         timeout: Optional[float] = None,
         activity_reporter: Optional[Callable[[str, str], None]] = None,
         client_info: Optional[Dict[str, Any]] = None,
+        rpc_timeout: float = 30.0,
     ):
         self.socket_path = socket_path
         self.timeout = timeout
+        self.rpc_timeout = rpc_timeout
         self._sock: Optional[socket.socket] = None
         self._buffer = b""
         self._stop_event = threading.Event()
@@ -190,6 +209,21 @@ class StreamingAgentClient:
         payload = dict(command)
         payload["_client"] = dict(self._client_info)
         return payload
+
+    @contextmanager
+    def _temporary_rpc_timeout(self) -> Generator[None, None, None]:
+        """Temporarily widen socket timeout while awaiting an RPC response."""
+        if self._sock is None:
+            yield
+            return
+
+        previous_timeout = self._sock.gettimeout()
+        self._sock.settimeout(self.rpc_timeout)
+        try:
+            yield
+        finally:
+            if self._sock is not None:
+                self._sock.settimeout(previous_timeout)
 
     def _identify_connection(self) -> Dict[str, Any]:
         """Send a lightweight identity frame for stream-only connections."""
@@ -256,43 +290,21 @@ class StreamingAgentClient:
         issuing commands and completions simultaneously) so that only one
         send/receive cycle uses the socket at a time.
         """
+        summary = self._summarize_command(command)
         if not self._sock:
-            summary = self._summarize_command(command)
             self._report_activity("ERROR", f"{summary} failed: not connected")
             return {"status": "error", "error": "Not connected"}
 
         with self._send_lock:
             try:
-                summary = self._summarize_command(command)
                 payload = json.dumps(self._attach_client_info(command)).encode("utf-8")
                 self._sock.sendall(len(payload).to_bytes(4, "big"))
                 self._sock.sendall(payload)
 
-                # Drain any OBS frames that arrived before the response
-                self._drain_obs_frames()
-
-                length_bytes = self._recv_exact(4)
-                if not length_bytes:
-                    self._report_activity("ERROR", f"{summary} failed: no response received")
-                    return {"status": "error", "error": "No response received"}
-
-                # After _recv_exact we may have read more data into _buffer.
-                # If the 4 bytes we got look like the OBS or LOG prefix, drain and retry.
-                while length_bytes == self.OBS_PREFIX or length_bytes == self.LOG_PREFIX:
-                    # We just consumed the prefix — read & discard the payload
-                    obs_len_bytes = self._recv_exact(4)
-                    if not obs_len_bytes:
-                        self._report_activity("ERROR", f"{summary} failed: truncated frame")
-                        return {"status": "error", "error": "Truncated frame"}
-                    obs_len = int.from_bytes(obs_len_bytes, "big")
-                    obs_data = self._recv_exact(obs_len)
-                    if not obs_data:
-                        self._report_activity(
-                            "ERROR", f"{summary} failed: truncated payload"
-                        )
-                        return {"status": "error", "error": "Truncated payload"}
-                    # Try reading the next 4 bytes (hopefully the real response)
+                with self._temporary_rpc_timeout():
+                    # Drain any OBS frames that arrived before the response
                     self._drain_obs_frames()
+
                     length_bytes = self._recv_exact(4)
                     if not length_bytes:
                         self._report_activity(
@@ -300,12 +312,38 @@ class StreamingAgentClient:
                         )
                         return {"status": "error", "error": "No response received"}
 
-                length = int.from_bytes(length_bytes, "big")
-                data = self._recv_exact(length)
-                if not data:
-                    result = {"status": "error", "error": "Incomplete response"}
-                    self._report_activity("ERROR", f"{summary} failed: incomplete response")
-                    return result
+                    # After _recv_exact we may have read more data into _buffer.
+                    # If the 4 bytes we got look like the OBS or LOG prefix, drain and retry.
+                    while length_bytes == self.OBS_PREFIX or length_bytes == self.LOG_PREFIX:
+                        # We just consumed the prefix — read & discard the payload
+                        obs_len_bytes = self._recv_exact(4)
+                        if not obs_len_bytes:
+                            self._report_activity("ERROR", f"{summary} failed: truncated frame")
+                            return {"status": "error", "error": "Truncated frame"}
+                        obs_len = int.from_bytes(obs_len_bytes, "big")
+                        obs_data = self._recv_exact(obs_len)
+                        if not obs_data:
+                            self._report_activity(
+                                "ERROR", f"{summary} failed: truncated payload"
+                            )
+                            return {"status": "error", "error": "Truncated payload"}
+                        # Try reading the next 4 bytes (hopefully the real response)
+                        self._drain_obs_frames()
+                        length_bytes = self._recv_exact(4)
+                        if not length_bytes:
+                            self._report_activity(
+                                "ERROR", f"{summary} failed: no response received"
+                            )
+                            return {"status": "error", "error": "No response received"}
+
+                    length = int.from_bytes(length_bytes, "big")
+                    data = self._recv_exact(length)
+                    if not data:
+                        result = {"status": "error", "error": "Incomplete response"}
+                        self._report_activity(
+                            "ERROR", f"{summary} failed: incomplete response"
+                        )
+                        return result
 
                 result = json.loads(data.decode("utf-8"))
                 if result.get("status") == "error":
@@ -319,6 +357,7 @@ class StreamingAgentClient:
                 logger.debug("send_command error: %s", e)
                 self._report_activity("ERROR", f"{summary} failed: {e}")
                 return {"status": "error", "error": str(e)}
+
     def stream_observations(self) -> Generator[Dict[str, Any], None, None]:
         """
         Yield observations as they arrive from the agent.

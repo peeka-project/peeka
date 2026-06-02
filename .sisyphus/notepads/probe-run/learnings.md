@@ -270,3 +270,8 @@
 - GDB-backed container variants report misleading Python-thread totals after streaming starts/stops; `/proc/<pid>/task` is a more stable backend-agnostic signal for leak assertions than the `thread` CLI snapshot.
 - The cross-probe transport issue came from agent-wide send serialization: `_send_observation()` held the global connection lock while writing to every peer, so one stalled stream could delay unrelated control-plane responses until the client timed out and closed.
 - Minimal remediation that worked: snapshot the connection list under the registry lock, then serialize writes per-connection with dedicated write locks so control-plane replies are not blocked by a slow streaming peer.
+
+## R3 D-C residual — 2026-06-02 08:01:27
+- Raising client-side RPC timeout alone was insufficient in live py314 stress reproduction: fresh control-plane `probe list` still starved behind OBS broadcast on its own newly-opened connection while watch/trace streams were active.
+- Durable fix: keep new agent connections in `control` mode by default, upgrade only successful watch/trace/stack/monitor/top start commands to `stream`, and broadcast OBS frames only to `stream` connections. This preserves per-connection write locks while preventing probe/job/control RPC sockets from joining the OBS queue.
+- Keep a dedicated RPC timeout override on both `StreamingAgentClient` and `AgentClient` anyway (`rpc_timeout`, default 30.0) so control replies tolerate transient latency; CLI probe handlers should prefer `error` over `message` to surface transport failures accurately.
