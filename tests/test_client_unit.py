@@ -7,6 +7,7 @@ import os
 import socket
 import threading
 import time
+from typing import Any, cast
 
 from peeka.core.client import AgentClient, StreamingAgentClient
 
@@ -65,6 +66,57 @@ class TestAgentClientTimeout:
             server.close()
             if os.path.exists(sock_path):
                 os.unlink(sock_path)
+
+    def test_send_command_uses_rpc_timeout_for_reads(self, monkeypatch):
+        """AgentClient widens read timeout for the response and restores it."""
+
+        class FakeSocket:
+            def __init__(self):
+                self.timeout = None
+                self.timeout_history = []
+                self.socket_path = ""
+                self.last_sent = b""
+                payload = json.dumps({"status": "ok"}).encode("utf-8")
+                self.responses = [len(payload).to_bytes(4, "big"), payload]
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc_val, exc_tb):
+                return None
+
+            def settimeout(self, value):
+                self.timeout = value
+                self.timeout_history.append(value)
+
+            def gettimeout(self):
+                return self.timeout
+
+            def connect(self, socket_path):
+                self.socket_path = socket_path
+
+            def sendall(self, data):
+                self.last_sent = data
+
+            def recv(self, size):
+                if not self.responses:
+                    return b""
+                chunk = self.responses[0][:size]
+                self.responses[0] = self.responses[0][size:]
+                if not self.responses[0]:
+                    self.responses.pop(0)
+                return chunk
+
+        fake_socket = FakeSocket()
+
+        monkeypatch.setattr("peeka.core.client.Path.exists", lambda self: True)
+        monkeypatch.setattr("peeka.core.client.socket.socket", lambda *args, **kwargs: fake_socket)
+
+        client = AgentClient("/tmp/test.sock", timeout=1.5, rpc_timeout=9.0)
+        result = client.send_command({"type": "test"})
+
+        assert result["status"] == "ok"
+        assert fake_socket.timeout_history == [1.5, 9.0, 1.5]
 
 
 class TestAgentClientRecvExact:
@@ -206,6 +258,7 @@ class TestStreamingAgentClientConnect:
     def test_connect_success(self, tmp_path):
         """Test successful connection."""
         sock_path = str(tmp_path / "test.sock")
+        client = None
 
         server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         server.bind(sock_path)
@@ -218,10 +271,17 @@ class TestStreamingAgentClientConnect:
             assert result["status"] == "success"
             assert client._sock is not None
         finally:
-            client.disconnect()
+            if client is not None:
+                client.disconnect()
             server.close()
             if os.path.exists(sock_path):
                 os.unlink(sock_path)
+
+    def test_connect_stores_rpc_timeout(self):
+        """Streaming clients expose a tunable RPC timeout for control commands."""
+        client = StreamingAgentClient("/tmp/test.sock", rpc_timeout=12.0)
+
+        assert client.rpc_timeout == 12.0
 
 
 class TestStreamingAgentClientDisconnect:
@@ -332,6 +392,45 @@ class TestStreamingAgentClientSendCommand:
             if os.path.exists(sock_path):
                 os.unlink(sock_path)
 
+    def test_send_command_uses_rpc_timeout_for_reads(self):
+        """StreamingAgentClient widens reads for control-plane RPCs only."""
+
+        class FakeSocket:
+            def __init__(self):
+                self.timeout = 1.0
+                self.timeout_history = []
+                self.last_sent = b""
+                payload = json.dumps({"status": "success"}).encode("utf-8")
+                self.responses = [len(payload).to_bytes(4, "big"), payload]
+
+            def settimeout(self, value):
+                self.timeout = value
+                self.timeout_history.append(value)
+
+            def gettimeout(self):
+                return self.timeout
+
+            def sendall(self, data):
+                self.last_sent = data
+
+            def recv(self, size):
+                if not self.responses:
+                    return b""
+                chunk = self.responses[0][:size]
+                self.responses[0] = self.responses[0][size:]
+                if not self.responses[0]:
+                    self.responses.pop(0)
+                return chunk
+
+        fake_socket = FakeSocket()
+        client = StreamingAgentClient("/tmp/test.sock", rpc_timeout=8.0)
+        client._sock = cast(Any, fake_socket)
+
+        result = client.send_command({"type": "probe", "action": "list"})
+
+        assert result["status"] == "success"
+        assert fake_socket.timeout_history == [8.0, 1.0]
+
 
 class TestStreamingAgentClientExtractObservation:
     """Test _extract_observation method."""
@@ -415,9 +514,11 @@ class TestStreamingAgentClientExtractObservation:
         )
 
         result1 = client._extract_observation()
+        assert result1 is not None
         assert result1["n"] == 1
 
         result2 = client._extract_observation()
+        assert result2 is not None
         assert result2["n"] == 2
 
         result3 = client._extract_observation()

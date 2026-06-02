@@ -87,6 +87,14 @@ def _write_session_log(
 class PeekaAgent:
     """Agent running inside target process"""
 
+    _OBS_STREAM_COMMANDS = {
+        "watch": {"", "start"},
+        "trace": {"", "start"},
+        "stack": {"", "start"},
+        "monitor": {"", "start"},
+        "top": {"", "start"},
+    }
+
     _QUIET_COMMAND_ACTIONS = {
         ("complete", ""),
         ("logger", "get"),
@@ -149,6 +157,7 @@ class PeekaAgent:
         self.server: Optional[socket.socket] = None
         self.command_handlers: Dict[str, Any] = {}
         self._client_connections: List[socket.socket] = []
+        self._client_connection_kinds: Dict[socket.socket, str] = {}
         self._client_write_locks: Dict[socket.socket, Any] = {}
         self._connections_lock = _rpl.allocate_lock()
         self._mutation_lock: threading.RLock = threading.RLock()
@@ -903,25 +912,53 @@ class PeekaAgent:
                     msg = f"[peeka Agent] Accept error: {e}"
                     self._emit_log("ERROR", msg, traceback.format_exc())
 
-    def _register_client_connection(self, conn: socket.socket) -> int:
+    def _register_client_connection(
+        self, conn: socket.socket, kind: str = "control"
+    ) -> int:
         """Track a live client connection and initialize its write lock."""
         with self._connections_lock:
             self._client_connections.append(conn)
+            self._client_connection_kinds[conn] = kind
             self._client_write_locks[conn] = _rpl.allocate_lock()
             return len(self._client_connections)
+
+    def _set_client_connection_kind(self, conn: socket.socket, kind: str) -> None:
+        """Update the broadcast kind for a live client connection."""
+        with self._connections_lock:
+            if conn in self._client_connections:
+                self._client_connection_kinds[conn] = kind
 
     def _unregister_client_connection(self, conn: socket.socket) -> int:
         """Forget a client connection and its write lock."""
         with self._connections_lock:
             if conn in self._client_connections:
                 self._client_connections.remove(conn)
+            self._client_connection_kinds.pop(conn, None)
             self._client_write_locks.pop(conn, None)
             return len(self._client_connections)
 
-    def _snapshot_client_connections(self) -> List[socket.socket]:
+    def _snapshot_client_connections(
+        self, kind: Optional[str] = None
+    ) -> List[socket.socket]:
         """Return a snapshot of currently tracked client sockets."""
         with self._connections_lock:
+            if kind is not None:
+                return [
+                    conn
+                    for conn in self._client_connections
+                    if self._client_connection_kinds.get(conn, "control") == kind
+                ]
             return list(self._client_connections)
+
+    @classmethod
+    def _command_opens_observation_stream(cls, command: Dict[str, Any]) -> bool:
+        """Return True when a command should receive future OBS broadcasts."""
+        cmd_type = str(command.get("type", ""))
+        action = str(command.get("action", ""))
+        allowed_actions = cls._OBS_STREAM_COMMANDS.get(cmd_type)
+        if allowed_actions is None:
+            return False
+        return action in allowed_actions
 
     def _send_frame_to_connection(self, conn: socket.socket, frame: bytes) -> bool:
         """Send one framed message to a tracked connection.
@@ -995,6 +1032,12 @@ class PeekaAgent:
                             f"[peeka Agent] {client_label} -> {command_summary}",
                         )
                     result = self._execute_command(command)
+
+                    if (
+                        result.get("status") == "success"
+                        and self._command_opens_observation_stream(command)
+                    ):
+                        self._set_client_connection_kind(conn, "stream")
 
                     if result.get("status") == "error":
                         self._emit_log(
@@ -1282,7 +1325,7 @@ class PeekaAgent:
         message = b"OBS:" + len(obs_json).to_bytes(4, "big") + obs_json
 
         dead_connections = []
-        for conn in self._snapshot_client_connections():
+        for conn in self._snapshot_client_connections(kind="stream"):
             if not self._send_frame_to_connection(conn, message):
                 dead_connections.append(conn)
 

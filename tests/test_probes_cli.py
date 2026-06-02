@@ -457,6 +457,91 @@ class TestProbeErrorHandling:
         assert error_obj["command"] == "probe.list"
         assert error_obj["error_code"] == "COMMAND_EXECUTION_ERROR"
 
+    def test_probe_list_prefers_error_key(self, monkeypatch, capsys):
+        cli_main_module = sys.modules["peeka.cli.main"]
+
+        class MockStreamingAgentClient:
+            def __init__(self, socket_path):
+                self.socket_path = socket_path
+
+            def connect(self) -> Dict[str, Any]:
+                return {"status": "success"}
+
+            def send_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
+                return {
+                    "status": "error",
+                    "error_code": "TRANSPORT_ERROR",
+                    "error": "No response received",
+                    "message": "Probe list failed",
+                }
+
+            def disconnect(self):
+                pass
+
+        monkeypatch.setattr(
+            cli_main_module, "StreamingAgentClient", MockStreamingAgentClient
+        )
+        monkeypatch.setattr(
+            cli_main_module, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
+        )
+
+        args = argparse.Namespace(
+            command="probe",
+            probe_action="list",
+            target=None,
+            probe_type=None,
+            status=None,
+            format="json",
+        )
+
+        exit_code = cli_main_module.cmd_probe(args)
+        captured = capsys.readouterr()
+
+        assert exit_code == 1
+        error_obj = json.loads(captured.out.strip().split("\n")[0])
+        assert error_obj["error"] == "No response received"
+
+    def test_probe_stop_prefers_error_key_in_table_mode(self, monkeypatch, capsys):
+        cli_main_module = sys.modules["peeka.cli.main"]
+
+        class MockStreamingAgentClient:
+            def __init__(self, socket_path):
+                self.socket_path = socket_path
+
+            def connect(self) -> Dict[str, Any]:
+                return {"status": "success"}
+
+            def send_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
+                return {
+                    "status": "error",
+                    "error_code": "TRANSPORT_ERROR",
+                    "error": "No response received",
+                    "message": "Probe stop failed",
+                }
+
+            def disconnect(self):
+                pass
+
+        monkeypatch.setattr(
+            cli_main_module, "StreamingAgentClient", MockStreamingAgentClient
+        )
+        monkeypatch.setattr(
+            cli_main_module, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
+        )
+
+        args = argparse.Namespace(
+            command="probe",
+            probe_action="stop",
+            probe="prb_stop_test",
+            format="table",
+        )
+
+        exit_code = cli_main_module.cmd_probe(args)
+        captured = capsys.readouterr()
+
+        assert exit_code == 1
+        assert "TRANSPORT_ERROR: No response received" in captured.err
+
 
 class TestProbeHelpOutput:
     def test_probe_help_lists_5_subcommands(self, monkeypatch, capsys):

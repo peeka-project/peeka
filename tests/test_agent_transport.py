@@ -3,6 +3,8 @@ import socket
 import threading
 from typing import Any, Dict, List, Optional, cast
 
+import pytest
+
 from peeka.core.agent import PeekaAgent
 
 
@@ -49,6 +51,35 @@ class _SlowConnection:
 
 
 class TestAgentTransport:
+    def test_observations_only_broadcast_to_stream_connections(self) -> None:
+        """Control connections should not receive unrelated OBS frames."""
+        agent = PeekaAgent("transport-test")
+
+        control_server, control_client = socket.socketpair()
+        stream_server, stream_client = socket.socketpair()
+
+        try:
+            agent._register_client_connection(control_server)
+            agent._register_client_connection(stream_server)
+            agent._set_client_connection_kind(stream_server, "stream")
+
+            control_client.settimeout(0.2)
+            stream_client.settimeout(0.5)
+
+            agent._send_observation({"event_id": "evt_1", "probe_id": "prb_stream"})
+
+            with pytest.raises(socket.timeout):
+                control_client.recv(1)
+
+            assert _recv_exact(stream_client, 4) == b"OBS:"
+        finally:
+            agent._unregister_client_connection(control_server)
+            agent._unregister_client_connection(stream_server)
+            control_server.close()
+            control_client.close()
+            stream_server.close()
+            stream_client.close()
+
     def test_response_not_blocked_by_stalled_stream_broadcast(self) -> None:
         """Control-plane responses should not wait on unrelated stalled peers."""
         agent = PeekaAgent("transport-test")
@@ -68,8 +99,8 @@ class TestAgentTransport:
 
         slow_conn = _SlowConnection(slow_send_entered, release_slow_send)
         slow_conn_key = cast(Any, slow_conn)
-        agent._client_connections.append(slow_conn_key)
-        agent._client_write_locks[slow_conn_key] = threading.Lock()
+        agent._register_client_connection(slow_conn_key)
+        agent._set_client_connection_kind(slow_conn_key, "stream")
 
         server_sock, client_sock = socket.socketpair()
         worker = threading.Thread(
