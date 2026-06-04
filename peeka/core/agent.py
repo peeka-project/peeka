@@ -58,6 +58,30 @@ def _get_dx_case_registry():
     return _dx_case_registry
 
 
+def _get_requesting_client_session_id(command: Dict[str, Any]) -> Optional[str]:
+    """Return the explicit client session id associated with a command."""
+    client_session_id = command.get("client_session_id")
+    if client_session_id in (None, ""):
+        return None
+    return str(client_session_id)
+
+
+def _consumer_owner_matches(consumer: Any, requesting_client_session_id: Optional[str]) -> bool:
+    """Return True if the requesting client is allowed to access the consumer."""
+    owner = consumer.client_session_id
+    if owner in (None, ""):
+        return requesting_client_session_id is None
+    return owner == requesting_client_session_id
+
+
+def _dx_owner_matches(dx_case: Any, requesting_client_session_id: Optional[str]) -> bool:
+    """Return True if the requesting client is allowed to access the DX case."""
+    owner = dx_case.client_session_id
+    if owner in (None, ""):
+        return requesting_client_session_id is None
+    return owner == requesting_client_session_id
+
+
 def _client_success(data: Dict[str, Any]) -> Dict[str, Any]:
     """Return a standard success envelope for client namespace handlers."""
     return {"status": "success", "data": data}
@@ -683,15 +707,18 @@ class PeekaAgent:
                     )
 
             registry = _get_consumer_registry()
-            consumer = registry.create(
-                target_id=target_id,
-                source=source,
-                scope_type=scope_type,
-                scope_id=scope_id,
-                client_session_id=str(client_session_id) if client_session_id else None,
-                max_buffer_size=max_buffer_size,
-                backpressure_policy=backpressure_policy,
-            )
+            try:
+                consumer = registry.create(
+                    target_id=target_id,
+                    source=source,
+                    scope_type=scope_type,
+                    scope_id=scope_id,
+                    client_session_id=str(client_session_id) if client_session_id else None,
+                    max_buffer_size=max_buffer_size,
+                    backpressure_policy=backpressure_policy,
+                )
+            except ValueError as exc:
+                return _consumer_error("UNSUPPORTED_CAPABILITY", str(exc))
 
             if client_session_id:
                 _get_client_registry().add_result_consumer(
@@ -710,6 +737,7 @@ class PeekaAgent:
             from peeka.core.result_consumers import to_dict as consumer_to_dict
 
             registry = _get_consumer_registry()
+            requesting_client_session_id = _get_requesting_client_session_id(command)
             consumers = registry.list(
                 target_id=command.get("target_id"),
                 client_session_id=command.get("client_session_id"),
@@ -717,6 +745,11 @@ class PeekaAgent:
                 scope_id=command.get("scope_id"),
                 status=command.get("status"),
             )
+            consumers = [
+                consumer
+                for consumer in consumers
+                if _consumer_owner_matches(consumer, requesting_client_session_id)
+            ]
             return _consumer_success(
                 {"consumers": [consumer_to_dict(consumer) for consumer in consumers]}
             )
@@ -731,12 +764,18 @@ class PeekaAgent:
             from peeka.core.result_consumers import to_dict as consumer_to_dict
 
             consumer_id = command.get("consumer_id", "")
+            requesting_client_session_id = _get_requesting_client_session_id(command)
             if not consumer_id:
                 return _consumer_error("CONSUMER_NOT_FOUND", "consumer_id is required")
 
             registry = _get_consumer_registry()
             consumer = registry.get(consumer_id)
             if consumer is None:
+                return _consumer_error(
+                    "CONSUMER_NOT_FOUND",
+                    f"Consumer {consumer_id!r} not found",
+                )
+            if not _consumer_owner_matches(consumer, requesting_client_session_id):
                 return _consumer_error(
                     "CONSUMER_NOT_FOUND",
                     f"Consumer {consumer_id!r} not found",
@@ -751,6 +790,7 @@ class PeekaAgent:
         """Handle consumer.drain command."""
         try:
             consumer_id = command.get("consumer_id", "")
+            requesting_client_session_id = _get_requesting_client_session_id(command)
             if not consumer_id:
                 return _consumer_error("CONSUMER_NOT_FOUND", "consumer_id is required")
 
@@ -763,6 +803,11 @@ class PeekaAgent:
             registry = _get_consumer_registry()
             consumer = registry.get(consumer_id)
             if consumer is None:
+                return _consumer_error(
+                    "CONSUMER_NOT_FOUND",
+                    f"Consumer {consumer_id!r} not found",
+                )
+            if not _consumer_owner_matches(consumer, requesting_client_session_id):
                 return _consumer_error(
                     "CONSUMER_NOT_FOUND",
                     f"Consumer {consumer_id!r} not found",
@@ -799,12 +844,18 @@ class PeekaAgent:
         """Handle consumer.close command."""
         try:
             consumer_id = command.get("consumer_id", "")
+            requesting_client_session_id = _get_requesting_client_session_id(command)
             if not consumer_id:
                 return _consumer_error("CONSUMER_NOT_FOUND", "consumer_id is required")
 
             registry = _get_consumer_registry()
             consumer = registry.get(consumer_id)
             if consumer is None:
+                return _consumer_error(
+                    "CONSUMER_NOT_FOUND",
+                    f"Consumer {consumer_id!r} not found",
+                )
+            if not _consumer_owner_matches(consumer, requesting_client_session_id):
                 return _consumer_error(
                     "CONSUMER_NOT_FOUND",
                     f"Consumer {consumer_id!r} not found",
@@ -827,9 +878,12 @@ class PeekaAgent:
         try:
             closed_only = bool(command.get("closed_only", True))
             registry = _get_consumer_registry()
+            requesting_client_session_id = _get_requesting_client_session_id(command)
             consumers = registry.list()
             removed_ids = []
             for consumer in consumers:
+                if not _consumer_owner_matches(consumer, requesting_client_session_id):
+                    continue
                 if closed_only and consumer.status not in ("closed", "failed"):
                     continue
                 removed = registry.remove(consumer.consumer_id)
@@ -858,6 +912,14 @@ class PeekaAgent:
             if not target_id or not title:
                 return _dx_error("DX_CASE_INVALID", "target_id and title are required")
 
+            if client_session_id:
+                client = _get_client_registry().get(str(client_session_id))
+                if client is None:
+                    return _dx_error(
+                        "DX_CASE_INVALID",
+                        f"Client session {client_session_id!r} not found",
+                    )
+
             dx_case = _get_dx_case_registry().create(
                 target_id=target_id,
                 title=title,
@@ -874,11 +936,17 @@ class PeekaAgent:
         try:
             from peeka.core.dx_cases import to_dict as dx_to_dict
 
+            requesting_client_session_id = _get_requesting_client_session_id(command)
             cases = _get_dx_case_registry().list(
                 target_id=command.get("target_id"),
                 client_session_id=command.get("client_session_id"),
                 status=command.get("status"),
             )
+            cases = [
+                dx_case
+                for dx_case in cases
+                if _dx_owner_matches(dx_case, requesting_client_session_id)
+            ]
             return _dx_success({"cases": [dx_to_dict(item) for item in cases]})
         except Exception as e:
             result = _dx_error("COMMAND_EXECUTION_ERROR", str(e))
@@ -891,10 +959,13 @@ class PeekaAgent:
             from peeka.core.dx_cases import to_dict as dx_to_dict
 
             dx_case_id = command.get("dx_case_id", "")
+            requesting_client_session_id = _get_requesting_client_session_id(command)
             if not dx_case_id:
                 return _dx_error("DX_CASE_NOT_FOUND", "dx_case_id is required")
             dx_case = _get_dx_case_registry().get(dx_case_id)
             if dx_case is None:
+                return _dx_error("DX_CASE_NOT_FOUND", f"DX case {dx_case_id!r} not found")
+            if not _dx_owner_matches(dx_case, requesting_client_session_id):
                 return _dx_error("DX_CASE_NOT_FOUND", f"DX case {dx_case_id!r} not found")
             return _dx_success(dx_to_dict(dx_case))
         except Exception as e:
@@ -906,6 +977,7 @@ class PeekaAgent:
         """Handle dx.add command."""
         try:
             dx_case_id = command.get("dx_case_id", "")
+            requesting_client_session_id = _get_requesting_client_session_id(command)
             section_type = command.get("section_type", "")
             title = command.get("title", "")
             payload = command.get("payload") or {}
@@ -915,6 +987,18 @@ class PeekaAgent:
                 return _dx_error(
                     "DX_CASE_INVALID",
                     "dx_case_id, section_type, and title are required",
+                )
+
+            existing_case = _get_dx_case_registry().get(dx_case_id)
+            if existing_case is None:
+                return _dx_error(
+                    "DX_CASE_NOT_FOUND",
+                    f"DX case {dx_case_id!r} not found or cannot be modified",
+                )
+            if not _dx_owner_matches(existing_case, requesting_client_session_id):
+                return _dx_error(
+                    "DX_CASE_NOT_FOUND",
+                    f"DX case {dx_case_id!r} not found or cannot be modified",
                 )
 
             section = _get_dx_case_registry().add_section(
@@ -942,9 +1026,13 @@ class PeekaAgent:
             from peeka.core.dx_cases import build_text_summary
 
             dx_case_id = command.get("dx_case_id", "")
+            requesting_client_session_id = _get_requesting_client_session_id(command)
             if not dx_case_id:
                 return _dx_error("DX_CASE_NOT_FOUND", "dx_case_id is required")
             registry = _get_dx_case_registry()
+            existing_case = registry.get(dx_case_id)
+            if existing_case is None or not _dx_owner_matches(existing_case, requesting_client_session_id):
+                return _dx_error("DX_CASE_NOT_FOUND", f"DX case {dx_case_id!r} not found")
             summary = registry.update_summary(dx_case_id)
             dx_case = registry.get(dx_case_id)
             if summary is None or dx_case is None:
@@ -967,20 +1055,23 @@ class PeekaAgent:
             from peeka.core.client_sessions import to_dict as client_to_dict
             from peeka.core.dx_cases import build_export_document
             from peeka.core.dx_cases import build_text_summary
-            from peeka.core.dx_cases import default_export_path
-            from peeka.core.dx_cases import export_document_json
+            from peeka.core.dx_cases import resolve_export_path
             from peeka.core.dx_cases import to_dict as dx_to_dict
+            from peeka.core.dx_cases import write_export_json
             from peeka.core.jobs import to_dict as job_to_dict
             from peeka.core.result_consumers import to_dict as consumer_to_dict
 
             dx_case_id = command.get("dx_case_id", "")
             output_path = command.get("output_path")
+            requesting_client_session_id = _get_requesting_client_session_id(command)
             if not dx_case_id:
                 return _dx_error("DX_CASE_NOT_FOUND", "dx_case_id is required")
 
             registry = _get_dx_case_registry()
             dx_case = registry.get(dx_case_id)
             if dx_case is None:
+                return _dx_error("DX_CASE_NOT_FOUND", f"DX case {dx_case_id!r} not found")
+            if not _dx_owner_matches(dx_case, requesting_client_session_id):
                 return _dx_error("DX_CASE_NOT_FOUND", f"DX case {dx_case_id!r} not found")
 
             missing_ref_messages = []
@@ -1055,8 +1146,8 @@ class PeekaAgent:
                 probe_snapshots=probe_snapshots,
                 consumer_snapshots=consumer_snapshots,
             )
-            destination = str(output_path or default_export_path(dx_case_id))
-            Path(destination).write_text(export_document_json(document), encoding="utf-8")
+            destination = resolve_export_path(dx_case_id, str(output_path) if output_path else None)
+            write_export_json(destination, document)
             registry.record_export(dx_case_id, destination)
             updated_case = registry.get(dx_case_id)
             if updated_case is None:
@@ -1077,9 +1168,14 @@ class PeekaAgent:
         """Handle dx.close command."""
         try:
             dx_case_id = command.get("dx_case_id", "")
+            requesting_client_session_id = _get_requesting_client_session_id(command)
             if not dx_case_id:
                 return _dx_error("DX_CASE_NOT_FOUND", "dx_case_id is required")
-            closed = _get_dx_case_registry().close(dx_case_id)
+            registry = _get_dx_case_registry()
+            existing_case = registry.get(dx_case_id)
+            if existing_case is None or not _dx_owner_matches(existing_case, requesting_client_session_id):
+                return _dx_error("DX_CASE_NOT_FOUND", f"DX case {dx_case_id!r} not found")
+            closed = registry.close(dx_case_id)
             if not closed:
                 return _dx_error("DX_CASE_NOT_FOUND", f"DX case {dx_case_id!r} not found")
             return _dx_success({"dx_case_id": dx_case_id, "closed": True})

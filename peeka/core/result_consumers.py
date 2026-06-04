@@ -25,9 +25,13 @@ from typing import List
 from typing import Literal
 from typing import Optional
 
+from peeka.core.jobs import prune_result_summary
+
 
 RESULT_CONSUMER_SCHEMA_VERSION = "1"
 RESULT_CONSUMER_RECORD_SCHEMA_VERSION = "1"
+MAX_RESULT_CONSUMERS = 256
+MAX_CONSUMER_BUFFER_SIZE = 10000
 
 ConsumerSource = Literal["cli", "tui", "mcp", "api", "internal"]
 ConsumerScopeType = Literal["job", "probe", "target"]
@@ -118,6 +122,10 @@ class ResultConsumerRegistry:
         """Create and register a result consumer."""
         if max_buffer_size <= 0:
             raise ValueError("max_buffer_size must be greater than zero")
+        if max_buffer_size > MAX_CONSUMER_BUFFER_SIZE:
+            raise ValueError(
+                f"max_buffer_size must be <= {MAX_CONSUMER_BUFFER_SIZE}"
+            )
 
         now = time.time()
         consumer = ResultConsumer(
@@ -139,6 +147,10 @@ class ResultConsumerRegistry:
             schema_version=RESULT_CONSUMER_SCHEMA_VERSION,
         )
         with self._lock:
+            if len(self._consumers) >= MAX_RESULT_CONSUMERS:
+                raise ValueError(
+                    f"consumer limit exceeded ({MAX_RESULT_CONSUMERS})"
+                )
             self._consumers[consumer.consumer_id] = consumer
             self._records[consumer.consumer_id] = deque(maxlen=max_buffer_size)
             self._next_sequences[consumer.consumer_id] = 0
@@ -185,6 +197,7 @@ class ResultConsumerRegistry:
         payload: Dict[str, Any],
     ) -> bool:
         """Append one record to a consumer according to its backpressure policy."""
+        normalized_payload = _normalize_record_payload(payload)
         with self._lock:
             consumer = self._consumers.get(consumer_id)
             if consumer is None:
@@ -223,7 +236,7 @@ class ResultConsumerRegistry:
                     source_type=source_type,
                     source_id=source_id,
                     record_type=record_type,
-                    payload=dict(payload),
+                    payload=normalized_payload,
                     schema_version=RESULT_CONSUMER_RECORD_SCHEMA_VERSION,
                 )
             )
@@ -365,3 +378,12 @@ class ResultConsumerRegistry:
 
 
 result_consumer_registry = ResultConsumerRegistry()
+
+
+def _normalize_record_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Bound payload size before storing records in consumer buffers."""
+    normalized = dict(payload)
+    pruned, truncated = prune_result_summary(normalized)
+    if truncated and "_truncated" not in pruned:
+        pruned["_truncated"] = True
+    return pruned
