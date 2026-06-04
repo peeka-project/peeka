@@ -72,6 +72,41 @@ class TestAgentDXHandlers:
         document = json.loads(output_path.read_text(encoding="utf-8"))
         assert document["dx_case"]["dx_case_id"] == dx_case_id
 
+    def test_export_rejects_path_outside_tmp(self, peeka_agent: PeekaAgent) -> None:
+        created = peeka_agent._handle_dx_create(
+            {"target_id": "target_1", "title": "Case export"}
+        )
+        dx_case_id = created["data"]["dx_case_id"]
+
+        exported = peeka_agent._handle_dx_export(
+            {"dx_case_id": dx_case_id, "output_path": "/etc/peeka.json"}
+        )
+        assert exported["status"] == "error"
+        assert exported["error_code"] == "DX_EXPORT_FAILED"
+
+    def test_export_hides_owned_case_without_matching_client(
+        self, peeka_agent: PeekaAgent, tmp_path: Path
+    ) -> None:
+        client_result = peeka_agent._handle_client_create(
+            {"target_id": "target_1", "source": "cli"}
+        )
+        client_session_id = client_result["data"]["client_session_id"]
+        created = peeka_agent._handle_dx_create(
+            {"target_id": "target_1", "title": "Case export", "client_session_id": client_session_id}
+        )
+        dx_case_id = created["data"]["dx_case_id"]
+        output_path = tmp_path / "dx-case.json"
+
+        exported = peeka_agent._handle_dx_export(
+            {
+                "dx_case_id": dx_case_id,
+                "output_path": str(output_path),
+                "client_session_id": "client_other",
+            }
+        )
+        assert exported["status"] == "error"
+        assert exported["error_code"] == "DX_CASE_NOT_FOUND"
+
     def test_export_adds_error_sections_for_missing_refs(
         self, peeka_agent: PeekaAgent, tmp_path: Path
     ) -> None:

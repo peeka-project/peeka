@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 from peeka.core.dx_cases import DXCaseRegistry
 from peeka.core.dx_cases import build_export_document
@@ -43,6 +44,22 @@ class TestDXCaseRegistry:
         assert stored is not None
         assert len(stored.redactions_applied) == 1
 
+    def test_add_section_redacts_home_paths(self) -> None:
+        registry = DXCaseRegistry()
+        dx_case = registry.create(target_id="target_1", title="Paths")
+        home_path = str(Path.home() / "workspace" / "secret.txt")
+
+        section = registry.add_section(
+            dx_case.dx_case_id,
+            section_type="note",
+            title="Path payload",
+            payload={"path": home_path},
+        )
+
+        assert section is not None
+        assert section.payload["path"].startswith("<home>")
+        assert any(marker["reason"] == "home_path" for marker in section.redactions)
+
     def test_add_section_truncates_large_payloads(self) -> None:
         registry = DXCaseRegistry()
         dx_case = registry.create(target_id="target_1", title="Large payload")
@@ -57,6 +74,22 @@ class TestDXCaseRegistry:
 
         assert section is not None
         assert section.payload.get("_truncated") is True
+
+    def test_redaction_truncates_oversized_string_value(self) -> None:
+        registry = DXCaseRegistry()
+        dx_case = registry.create(target_id="target_1", title="Large string")
+        big_value = "z" * 5000
+
+        section = registry.add_section(
+            dx_case.dx_case_id,
+            section_type="note",
+            title="Large note",
+            payload={"small": "ok", "large": big_value},
+        )
+
+        assert section is not None
+        assert section.payload["large"].endswith("...[truncated]")
+        assert len(section.payload["large"]) < len(big_value)
 
     def test_add_section_records_object_refs(self) -> None:
         registry = DXCaseRegistry()

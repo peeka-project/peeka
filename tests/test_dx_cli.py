@@ -91,6 +91,39 @@ class TestDXCLIList:
         assert obj["type"] == "event"
         assert obj["event"] == "dx.discovered"
 
+    def test_dx_list_passes_client_session_id(self, monkeypatch, capsys):
+        cli_main_module = sys.modules["peeka.cli.main"]
+        captured_command = {}
+
+        class MockStreamingAgentClient:
+            def __init__(self, socket_path):
+                self.socket_path = socket_path
+
+            def connect(self) -> Dict[str, Any]:
+                return {"status": "success"}
+
+            def send_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
+                captured_command.update(command)
+                return {"status": "success", "data": {"cases": []}}
+
+            def disconnect(self):
+                pass
+
+        monkeypatch.setattr(cli_main_module, "StreamingAgentClient", MockStreamingAgentClient)
+        monkeypatch.setattr(cli_main_module, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234))
+
+        args = argparse.Namespace(
+            command="dx",
+            dx_action="list",
+            target=None,
+            client="client_1",
+            status=None,
+            format="json",
+        )
+        _ = cli_main_module.cmd_dx(args)
+        _ = capsys.readouterr()
+        assert captured_command["client_session_id"] == "client_1"
+
 
 class TestDXCLIAddSummaryExportClose:
     def test_dx_add_validates_payload_json(self, monkeypatch, capsys):
