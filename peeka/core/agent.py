@@ -10,6 +10,7 @@ import sys
 import threading
 import time as _time
 import traceback
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, cast
 
@@ -25,6 +26,8 @@ from peeka.core.runtime import primitives as _rpl
 
 # Lazy import to avoid circular dependency issues
 _client_registry = None
+_consumer_registry = None
+_dx_case_registry = None
 
 
 def _get_client_registry():
@@ -34,6 +37,25 @@ def _get_client_registry():
         from peeka.core.client_sessions import ClientRegistry
         _client_registry = ClientRegistry()
     return _client_registry
+
+
+def _get_consumer_registry():
+    """Lazily initialize and return the global result consumer registry singleton."""
+    global _consumer_registry
+    if _consumer_registry is None:
+        from peeka.core.result_consumers import ResultConsumerRegistry
+        _consumer_registry = ResultConsumerRegistry()
+    return _consumer_registry
+
+
+def _get_dx_case_registry():
+    """Lazily initialize and return the global DX case registry singleton."""
+    global _dx_case_registry
+    if _dx_case_registry is None:
+        from peeka.core.dx_cases import DXCaseRegistry
+
+        _dx_case_registry = DXCaseRegistry()
+    return _dx_case_registry
 
 
 def _client_success(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -52,6 +74,36 @@ def _client_error(error_code: str, message: str) -> Dict[str, Any]:
 
 def _job_error(error_code: str, message: str) -> Dict[str, Any]:
     """Return a standard error envelope for job namespace handlers."""
+    return {
+        "status": "error",
+        "error_code": error_code,
+        "message": message,
+        "error": f"{error_code}: {message}",
+    }
+
+
+def _consumer_success(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a standard success envelope for consumer namespace handlers."""
+    return {"status": "success", "data": data}
+
+
+def _consumer_error(error_code: str, message: str) -> Dict[str, Any]:
+    """Return a standard error envelope for consumer namespace handlers."""
+    return {
+        "status": "error",
+        "error_code": error_code,
+        "message": message,
+        "error": f"{error_code}: {message}",
+    }
+
+
+def _dx_success(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a standard success envelope for dx namespace handlers."""
+    return {"status": "success", "data": data}
+
+
+def _dx_error(error_code: str, message: str) -> Dict[str, Any]:
+    """Return a standard error envelope for dx namespace handlers."""
     return {
         "status": "error",
         "error_code": error_code,
@@ -591,6 +643,448 @@ class PeekaAgent:
             }
         except Exception as e:
             result = _job_error("COMMAND_EXECUTION_ERROR", str(e))
+            result["traceback"] = traceback.format_exc()
+            return result
+
+    def _handle_consumer_create(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle consumer.create command."""
+        try:
+            from peeka.core.result_consumers import to_dict as consumer_to_dict
+
+            target_id = command.get("target_id", "")
+            source = command.get("source", "")
+            scope_type = command.get("scope_type", "")
+            scope_id = command.get("scope_id", "")
+            client_session_id = command.get("client_session_id")
+            max_buffer_size = int(command.get("max_buffer_size", 1000))
+            backpressure_policy = command.get("backpressure_policy", "drop_oldest")
+
+            if not target_id:
+                return _consumer_error("UNSUPPORTED_CAPABILITY", "target_id is required")
+            if source not in {"cli", "tui", "mcp", "api", "internal"}:
+                return _consumer_error("UNSUPPORTED_CAPABILITY", f"invalid source: {source!r}")
+            if scope_type not in {"job", "probe", "target"}:
+                return _consumer_error("UNSUPPORTED_CAPABILITY", f"invalid scope_type: {scope_type!r}")
+            if not scope_id:
+                return _consumer_error("UNSUPPORTED_CAPABILITY", "scope_id is required")
+            if backpressure_policy not in {"drop_oldest", "drop_newest", "fail"}:
+                return _consumer_error(
+                    "UNSUPPORTED_CAPABILITY",
+                    f"invalid backpressure_policy: {backpressure_policy!r}",
+                )
+
+            if client_session_id:
+                client_registry = _get_client_registry()
+                client = client_registry.get(str(client_session_id))
+                if client is None:
+                    return _consumer_error(
+                        "CLIENT_NOT_FOUND",
+                        f"Client session {client_session_id!r} not found",
+                    )
+
+            registry = _get_consumer_registry()
+            consumer = registry.create(
+                target_id=target_id,
+                source=source,
+                scope_type=scope_type,
+                scope_id=scope_id,
+                client_session_id=str(client_session_id) if client_session_id else None,
+                max_buffer_size=max_buffer_size,
+                backpressure_policy=backpressure_policy,
+            )
+
+            if client_session_id:
+                _get_client_registry().add_result_consumer(
+                    str(client_session_id), consumer.consumer_id
+                )
+
+            return _consumer_success(consumer_to_dict(consumer))
+        except Exception as e:
+            result = _consumer_error("COMMAND_EXECUTION_ERROR", str(e))
+            result["traceback"] = traceback.format_exc()
+            return result
+
+    def _handle_consumer_list(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle consumer.list command."""
+        try:
+            from peeka.core.result_consumers import to_dict as consumer_to_dict
+
+            registry = _get_consumer_registry()
+            consumers = registry.list(
+                target_id=command.get("target_id"),
+                client_session_id=command.get("client_session_id"),
+                scope_type=command.get("scope_type"),
+                scope_id=command.get("scope_id"),
+                status=command.get("status"),
+            )
+            return _consumer_success(
+                {"consumers": [consumer_to_dict(consumer) for consumer in consumers]}
+            )
+        except Exception as e:
+            result = _consumer_error("COMMAND_EXECUTION_ERROR", str(e))
+            result["traceback"] = traceback.format_exc()
+            return result
+
+    def _handle_consumer_status(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle consumer.status command."""
+        try:
+            from peeka.core.result_consumers import to_dict as consumer_to_dict
+
+            consumer_id = command.get("consumer_id", "")
+            if not consumer_id:
+                return _consumer_error("CONSUMER_NOT_FOUND", "consumer_id is required")
+
+            registry = _get_consumer_registry()
+            consumer = registry.get(consumer_id)
+            if consumer is None:
+                return _consumer_error(
+                    "CONSUMER_NOT_FOUND",
+                    f"Consumer {consumer_id!r} not found",
+                )
+            return _consumer_success(consumer_to_dict(consumer))
+        except Exception as e:
+            result = _consumer_error("COMMAND_EXECUTION_ERROR", str(e))
+            result["traceback"] = traceback.format_exc()
+            return result
+
+    def _handle_consumer_drain(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle consumer.drain command."""
+        try:
+            consumer_id = command.get("consumer_id", "")
+            if not consumer_id:
+                return _consumer_error("CONSUMER_NOT_FOUND", "consumer_id is required")
+
+            limit = int(command.get("limit", 100))
+            after_sequence = command.get("after_sequence")
+            timeout_ms = int(command.get("timeout_ms", 0))
+            if after_sequence is not None:
+                after_sequence = int(after_sequence)
+
+            registry = _get_consumer_registry()
+            consumer = registry.get(consumer_id)
+            if consumer is None:
+                return _consumer_error(
+                    "CONSUMER_NOT_FOUND",
+                    f"Consumer {consumer_id!r} not found",
+                )
+            if consumer.status == "closed":
+                return _consumer_error(
+                    "CONSUMER_CLOSED",
+                    f"Consumer {consumer_id!r} is closed",
+                )
+
+            drained = registry.drain(
+                consumer_id,
+                limit=limit,
+                after_sequence=after_sequence,
+                timeout_ms=timeout_ms,
+            )
+            if drained is None:
+                return _consumer_error(
+                    "CONSUMER_NOT_FOUND",
+                    f"Consumer {consumer_id!r} not found",
+                )
+            if drained.get("timed_out") and not drained.get("records"):
+                return _consumer_error(
+                    "CONSUMER_DRAIN_TIMEOUT",
+                    f"No records available for consumer {consumer_id!r} within {timeout_ms}ms",
+                )
+            return _consumer_success(drained)
+        except Exception as e:
+            result = _consumer_error("COMMAND_EXECUTION_ERROR", str(e))
+            result["traceback"] = traceback.format_exc()
+            return result
+
+    def _handle_consumer_close(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle consumer.close command."""
+        try:
+            consumer_id = command.get("consumer_id", "")
+            if not consumer_id:
+                return _consumer_error("CONSUMER_NOT_FOUND", "consumer_id is required")
+
+            registry = _get_consumer_registry()
+            consumer = registry.get(consumer_id)
+            if consumer is None:
+                return _consumer_error(
+                    "CONSUMER_NOT_FOUND",
+                    f"Consumer {consumer_id!r} not found",
+                )
+
+            closed = registry.close(consumer_id)
+            if consumer.client_session_id:
+                _get_client_registry().remove_result_consumer(
+                    consumer.client_session_id,
+                    consumer_id,
+                )
+            return _consumer_success({"closed": closed, "consumer_id": consumer_id})
+        except Exception as e:
+            result = _consumer_error("COMMAND_EXECUTION_ERROR", str(e))
+            result["traceback"] = traceback.format_exc()
+            return result
+
+    def _handle_consumer_cleanup(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle consumer.cleanup command."""
+        try:
+            closed_only = bool(command.get("closed_only", True))
+            registry = _get_consumer_registry()
+            consumers = registry.list()
+            removed_ids = []
+            for consumer in consumers:
+                if closed_only and consumer.status not in ("closed", "failed"):
+                    continue
+                removed = registry.remove(consumer.consumer_id)
+                if removed is None:
+                    continue
+                removed_ids.append(removed.consumer_id)
+                if removed.client_session_id:
+                    _get_client_registry().remove_result_consumer(
+                        removed.client_session_id,
+                        removed.consumer_id,
+                    )
+            return _consumer_success({"removed_ids": removed_ids})
+        except Exception as e:
+            result = _consumer_error("COMMAND_EXECUTION_ERROR", str(e))
+            result["traceback"] = traceback.format_exc()
+            return result
+
+    def _handle_dx_create(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle dx.create command."""
+        try:
+            from peeka.core.dx_cases import to_dict as dx_to_dict
+
+            target_id = command.get("target_id", "")
+            title = command.get("title", "")
+            client_session_id = command.get("client_session_id")
+            if not target_id or not title:
+                return _dx_error("DX_CASE_INVALID", "target_id and title are required")
+
+            dx_case = _get_dx_case_registry().create(
+                target_id=target_id,
+                title=title,
+                client_session_id=str(client_session_id) if client_session_id else None,
+            )
+            return _dx_success(dx_to_dict(dx_case))
+        except Exception as e:
+            result = _dx_error("COMMAND_EXECUTION_ERROR", str(e))
+            result["traceback"] = traceback.format_exc()
+            return result
+
+    def _handle_dx_list(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle dx.list command."""
+        try:
+            from peeka.core.dx_cases import to_dict as dx_to_dict
+
+            cases = _get_dx_case_registry().list(
+                target_id=command.get("target_id"),
+                client_session_id=command.get("client_session_id"),
+                status=command.get("status"),
+            )
+            return _dx_success({"cases": [dx_to_dict(item) for item in cases]})
+        except Exception as e:
+            result = _dx_error("COMMAND_EXECUTION_ERROR", str(e))
+            result["traceback"] = traceback.format_exc()
+            return result
+
+    def _handle_dx_status(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle dx.status command."""
+        try:
+            from peeka.core.dx_cases import to_dict as dx_to_dict
+
+            dx_case_id = command.get("dx_case_id", "")
+            if not dx_case_id:
+                return _dx_error("DX_CASE_NOT_FOUND", "dx_case_id is required")
+            dx_case = _get_dx_case_registry().get(dx_case_id)
+            if dx_case is None:
+                return _dx_error("DX_CASE_NOT_FOUND", f"DX case {dx_case_id!r} not found")
+            return _dx_success(dx_to_dict(dx_case))
+        except Exception as e:
+            result = _dx_error("COMMAND_EXECUTION_ERROR", str(e))
+            result["traceback"] = traceback.format_exc()
+            return result
+
+    def _handle_dx_add(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle dx.add command."""
+        try:
+            dx_case_id = command.get("dx_case_id", "")
+            section_type = command.get("section_type", "")
+            title = command.get("title", "")
+            payload = command.get("payload") or {}
+            object_ref_type = command.get("object_ref_type")
+            object_ref_id = command.get("object_ref_id")
+            if not dx_case_id or not section_type or not title:
+                return _dx_error(
+                    "DX_CASE_INVALID",
+                    "dx_case_id, section_type, and title are required",
+                )
+
+            section = _get_dx_case_registry().add_section(
+                dx_case_id,
+                section_type=section_type,
+                title=title,
+                payload=payload,
+                object_ref_type=object_ref_type,
+                object_ref_id=object_ref_id,
+            )
+            if section is None:
+                return _dx_error(
+                    "DX_CASE_NOT_FOUND",
+                    f"DX case {dx_case_id!r} not found or cannot be modified",
+                )
+            return _dx_success({"section": asdict(section), "dx_case_id": dx_case_id})
+        except Exception as e:
+            result = _dx_error("COMMAND_EXECUTION_ERROR", str(e))
+            result["traceback"] = traceback.format_exc()
+            return result
+
+    def _handle_dx_summary(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle dx.summary command."""
+        try:
+            from peeka.core.dx_cases import build_text_summary
+
+            dx_case_id = command.get("dx_case_id", "")
+            if not dx_case_id:
+                return _dx_error("DX_CASE_NOT_FOUND", "dx_case_id is required")
+            registry = _get_dx_case_registry()
+            summary = registry.update_summary(dx_case_id)
+            dx_case = registry.get(dx_case_id)
+            if summary is None or dx_case is None:
+                return _dx_error("DX_CASE_NOT_FOUND", f"DX case {dx_case_id!r} not found")
+            return _dx_success(
+                {
+                    "dx_case_id": dx_case_id,
+                    "summary": summary,
+                    "text_summary": build_text_summary(dx_case),
+                }
+            )
+        except Exception as e:
+            result = _dx_error("COMMAND_EXECUTION_ERROR", str(e))
+            result["traceback"] = traceback.format_exc()
+            return result
+
+    def _handle_dx_export(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle dx.export command."""
+        try:
+            from peeka.core.client_sessions import to_dict as client_to_dict
+            from peeka.core.dx_cases import build_export_document
+            from peeka.core.dx_cases import build_text_summary
+            from peeka.core.dx_cases import default_export_path
+            from peeka.core.dx_cases import export_document_json
+            from peeka.core.dx_cases import to_dict as dx_to_dict
+            from peeka.core.jobs import to_dict as job_to_dict
+            from peeka.core.result_consumers import to_dict as consumer_to_dict
+
+            dx_case_id = command.get("dx_case_id", "")
+            output_path = command.get("output_path")
+            if not dx_case_id:
+                return _dx_error("DX_CASE_NOT_FOUND", "dx_case_id is required")
+
+            registry = _get_dx_case_registry()
+            dx_case = registry.get(dx_case_id)
+            if dx_case is None:
+                return _dx_error("DX_CASE_NOT_FOUND", f"DX case {dx_case_id!r} not found")
+
+            missing_ref_messages = []
+
+            target_snapshot = {}
+            target = None
+            try:
+                from peeka.core.targets import get_target
+
+                target = get_target(dx_case.target_id)
+            except Exception:
+                target = None
+            if target is not None:
+                target_snapshot = target.to_dict()
+            elif dx_case.target_id:
+                missing_ref_messages.append(("target", dx_case.target_id, "TARGET_NOT_FOUND"))
+
+            client_snapshot = {}
+            if dx_case.client_session_id:
+                client = _get_client_registry().get(dx_case.client_session_id)
+                if client is not None:
+                    client_snapshot = client_to_dict(client)
+                else:
+                    missing_ref_messages.append(("client", dx_case.client_session_id, "CLIENT_NOT_FOUND"))
+
+            job_snapshots = []
+            for job_id in dx_case.object_refs.get("jobs", []):
+                job = job_registry.get(job_id)
+                if job is not None:
+                    job_snapshots.append(job_to_dict(job))
+                else:
+                    missing_ref_messages.append(("job", job_id, "JOB_NOT_FOUND"))
+
+            probe_snapshots = []
+            for probe_id in dx_case.object_refs.get("probes", []):
+                probe = self.probe_registry.get(probe_id)
+                if probe is not None:
+                    probe_snapshots.append(probe.to_dict())
+                else:
+                    missing_ref_messages.append(("probe", probe_id, "PROBE_NOT_FOUND"))
+
+            consumer_snapshots = []
+            for consumer_id in dx_case.object_refs.get("consumers", []):
+                consumer = _get_consumer_registry().get(consumer_id)
+                if consumer is not None:
+                    consumer_snapshots.append(consumer_to_dict(consumer))
+                else:
+                    missing_ref_messages.append(("consumer", consumer_id, "CONSUMER_NOT_FOUND"))
+
+            if missing_ref_messages:
+                for ref_type, ref_id, error_code in missing_ref_messages:
+                    registry.add_section(
+                        dx_case_id,
+                        section_type="error",
+                        title=f"Missing {ref_type} reference",
+                        payload={
+                            "error_code": error_code,
+                            "ref_type": ref_type,
+                            "ref_id": ref_id,
+                            "message": f"Referenced {ref_type} {ref_id!r} was not found during export",
+                        },
+                    )
+                refreshed_case = registry.get(dx_case_id)
+                if refreshed_case is not None:
+                    dx_case = refreshed_case
+
+            document = build_export_document(
+                dx_case,
+                target_snapshot=target_snapshot,
+                client_snapshot=client_snapshot,
+                job_snapshots=job_snapshots,
+                probe_snapshots=probe_snapshots,
+                consumer_snapshots=consumer_snapshots,
+            )
+            destination = str(output_path or default_export_path(dx_case_id))
+            Path(destination).write_text(export_document_json(document), encoding="utf-8")
+            registry.record_export(dx_case_id, destination)
+            updated_case = registry.get(dx_case_id)
+            if updated_case is None:
+                return _dx_error("DX_CASE_NOT_FOUND", f"DX case {dx_case_id!r} not found")
+            return _dx_success(
+                {
+                    "dx_case": dx_to_dict(updated_case),
+                    "output_path": destination,
+                    "text_summary": build_text_summary(updated_case),
+                }
+            )
+        except Exception as e:
+            result = _dx_error("DX_EXPORT_FAILED", str(e))
+            result["traceback"] = traceback.format_exc()
+            return result
+
+    def _handle_dx_close(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle dx.close command."""
+        try:
+            dx_case_id = command.get("dx_case_id", "")
+            if not dx_case_id:
+                return _dx_error("DX_CASE_NOT_FOUND", "dx_case_id is required")
+            closed = _get_dx_case_registry().close(dx_case_id)
+            if not closed:
+                return _dx_error("DX_CASE_NOT_FOUND", f"DX case {dx_case_id!r} not found")
+            return _dx_success({"dx_case_id": dx_case_id, "closed": True})
+        except Exception as e:
+            result = _dx_error("COMMAND_EXECUTION_ERROR", str(e))
             result["traceback"] = traceback.format_exc()
             return result
 
@@ -1143,6 +1637,48 @@ class PeekaAgent:
                     f"Unknown probe action: {action}",
                 )
 
+        if cmd_type == "consumer":
+            action = command.get("action", "")
+            if action == "create":
+                return self._handle_consumer_create(command)
+            elif action == "list":
+                return self._handle_consumer_list(command)
+            elif action == "status":
+                return self._handle_consumer_status(command)
+            elif action == "drain":
+                return self._handle_consumer_drain(command)
+            elif action == "close":
+                return self._handle_consumer_close(command)
+            elif action == "cleanup":
+                return self._handle_consumer_cleanup(command)
+            else:
+                return _consumer_error(
+                    "UNSUPPORTED_CAPABILITY",
+                    f"Unknown consumer action: {action}",
+                )
+
+        if cmd_type == "dx":
+            action = command.get("action", "")
+            if action == "create":
+                return self._handle_dx_create(command)
+            elif action == "list":
+                return self._handle_dx_list(command)
+            elif action == "status":
+                return self._handle_dx_status(command)
+            elif action == "add":
+                return self._handle_dx_add(command)
+            elif action == "summary":
+                return self._handle_dx_summary(command)
+            elif action == "export":
+                return self._handle_dx_export(command)
+            elif action == "close":
+                return self._handle_dx_close(command)
+            else:
+                return _dx_error(
+                    "UNSUPPORTED_CAPABILITY",
+                    f"Unknown dx action: {action}",
+                )
+
         handler = self._get_handler(cmd_type)
         if handler:
             job_registry.cleanup(retention_seconds=600)
@@ -1233,6 +1769,19 @@ class PeekaAgent:
                         "message": str(result.get("message") or result.get("error", "")),
                     }
                     job_registry.set_status(job.id, "failed", last_error=last_error)
+                    _get_consumer_registry().append_for_scope(
+                        job.target_id,
+                        source_type="job",
+                        source_id=job.id,
+                        record_type="error",
+                        payload={
+                            "job_id": job.id,
+                            "command_type": cmd_type,
+                            "action": action,
+                            "error_code": last_error["code"],
+                            "message": last_error["message"],
+                        },
+                    )
                     if (
                         job.foreground
                         and client_session_id
@@ -1260,6 +1809,19 @@ class PeekaAgent:
                         final_status,
                         result_summary=result_summary,
                     )
+                _get_consumer_registry().append_for_scope(
+                    job.target_id,
+                    source_type="job",
+                    source_id=job.id,
+                    record_type="summary" if final_status in TERMINAL_STATUSES else "result",
+                    payload={
+                        "job_id": job.id,
+                        "command_type": cmd_type,
+                        "action": action,
+                        "status": final_status,
+                        "data": result_summary,
+                    },
+                )
                 if (
                     final_status in TERMINAL_STATUSES
                     and job.foreground
@@ -1291,6 +1853,19 @@ class PeekaAgent:
                         "failed",
                         last_error={
                             "code": "COMMAND_EXECUTION_ERROR",
+                            "message": str(e),
+                        },
+                    )
+                    _get_consumer_registry().append_for_scope(
+                        job.target_id,
+                        source_type="job",
+                        source_id=job.id,
+                        record_type="error",
+                        payload={
+                            "job_id": job.id,
+                            "command_type": cmd_type,
+                            "action": action,
+                            "error_code": "COMMAND_EXECUTION_ERROR",
                             "message": str(e),
                         },
                     )
