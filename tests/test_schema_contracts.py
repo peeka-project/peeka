@@ -5,9 +5,6 @@ and documented public identifiers.
 """
 
 import time
-from typing import Any, Dict, List
-
-import pytest
 
 from peeka.core.client_sessions import CLIENT_SCHEMA_VERSION, ClientRegistry, to_dict as client_to_dict
 from peeka.core.dx_cases import (
@@ -21,7 +18,6 @@ from peeka.core.jobs import JOB_SCHEMA_VERSION, JobRegistry, to_dict as job_to_d
 from peeka.core.probes import (
     PROBE_SCHEMA_VERSION,
     ObservationEvent,
-    ProbeContext,
     ProbeRegistry,
 )
 from peeka.core.result_consumers import (
