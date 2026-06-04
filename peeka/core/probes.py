@@ -294,6 +294,27 @@ class ProbeRegistry:
                 event_count_delta=1,
                 last_event_at=timestamp,
             )
+
+            try:
+                from peeka.core.agent import _get_consumer_registry
+
+                _get_consumer_registry().append_for_scope(
+                    probe.target_id,
+                    source_type="probe",
+                    source_id=probe_id,
+                    record_type="observation",
+                    payload={
+                        "event_id": event.event_id,
+                        "probe_id": event.probe_id,
+                        "target_id": event.target_id,
+                        "sequence": event.sequence,
+                        "timestamp": event.timestamp,
+                        "payload": event.payload,
+                    },
+                )
+            except Exception:
+                pass
+
             return event
 
     def get_recent_events(self, probe_id: str, limit: int = 100) -> List[ObservationEvent]:

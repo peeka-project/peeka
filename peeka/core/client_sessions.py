@@ -189,6 +189,28 @@ class ClientRegistry:
             del self._clients[client_session_id]
             return True
 
+    def add_result_consumer(self, client_session_id: str, consumer_id: str) -> bool:
+        """Associate a result consumer identifier with a client session."""
+        with self._lock:
+            client = self._clients.get(client_session_id)
+            if client is None:
+                return False
+            if consumer_id not in client.result_consumers:
+                client.result_consumers.append(consumer_id)
+            client.last_access_at = time.time()
+            return True
+
+    def remove_result_consumer(self, client_session_id: str, consumer_id: str) -> bool:
+        """Remove an associated result consumer identifier from a client session."""
+        with self._lock:
+            client = self._clients.get(client_session_id)
+            if client is None:
+                return False
+            if consumer_id in client.result_consumers:
+                client.result_consumers.remove(consumer_id)
+            client.last_access_at = time.time()
+            return True
+
     def cleanup_idle(
         self, now: Optional[float] = None, idle_threshold_seconds: float = 900.0
     ) -> List[str]:
