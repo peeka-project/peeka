@@ -976,6 +976,12 @@ Examples:
         default="table",
         help="Output format (default: table)",
     )
+    consumer_status_parser.add_argument(
+        "--client",
+        type=str,
+        default=None,
+        help="Optional owning client session ID for access control",
+    )
 
     consumer_drain_parser = consumer_subparsers.add_parser(
         "drain", help="Drain buffered records from a consumer"
@@ -1005,6 +1011,12 @@ Examples:
         default="table",
         help="Output format (default: table)",
     )
+    consumer_drain_parser.add_argument(
+        "--client",
+        type=str,
+        default=None,
+        help="Optional owning client session ID for access control",
+    )
 
     consumer_close_parser = consumer_subparsers.add_parser(
         "close", help="Close a result consumer"
@@ -1019,6 +1031,12 @@ Examples:
         default="table",
         help="Output format (default: table)",
     )
+    consumer_close_parser.add_argument(
+        "--client",
+        type=str,
+        default=None,
+        help="Optional owning client session ID for access control",
+    )
 
     consumer_cleanup_parser = consumer_subparsers.add_parser(
         "cleanup", help="Cleanup closed/failed result consumers"
@@ -1032,6 +1050,12 @@ Examples:
         choices=["json", "table"],
         default="table",
         help="Output format (default: table)",
+    )
+    consumer_cleanup_parser.add_argument(
+        "--client",
+        type=str,
+        default=None,
+        help="Optional owning client session ID for access control",
     )
 
     dx_parser = subparsers.add_parser(
@@ -1074,6 +1098,12 @@ Examples:
         default="table",
         help="Output format (default: table)",
     )
+    dx_status_parser.add_argument(
+        "--client",
+        type=str,
+        default=None,
+        help="Optional owning client session ID for access control",
+    )
 
     dx_add_parser = dx_subparsers.add_parser("add", help="Add a section to a DX case")
     dx_add_parser.add_argument("--dx-case", type=str, required=True, help="DX case ID")
@@ -1110,6 +1140,12 @@ Examples:
         default="table",
         help="Output format (default: table)",
     )
+    dx_add_parser.add_argument(
+        "--client",
+        type=str,
+        default=None,
+        help="Optional owning client session ID for access control",
+    )
 
     dx_summary_parser = dx_subparsers.add_parser("summary", help="Build DX case summary")
     dx_summary_parser.add_argument("--dx-case", type=str, required=True, help="DX case ID")
@@ -1119,6 +1155,12 @@ Examples:
         choices=["json", "table"],
         default="table",
         help="Output format (default: table)",
+    )
+    dx_summary_parser.add_argument(
+        "--client",
+        type=str,
+        default=None,
+        help="Optional owning client session ID for access control",
     )
 
     dx_export_parser = dx_subparsers.add_parser("export", help="Export a DX case")
@@ -1131,6 +1173,12 @@ Examples:
         default="table",
         help="Output format (default: table)",
     )
+    dx_export_parser.add_argument(
+        "--client",
+        type=str,
+        default=None,
+        help="Optional owning client session ID for access control",
+    )
 
     dx_close_parser = dx_subparsers.add_parser("close", help="Close a DX case")
     dx_close_parser.add_argument("--dx-case", type=str, required=True, help="DX case ID")
@@ -1140,6 +1188,12 @@ Examples:
         choices=["json", "table"],
         default="table",
         help="Output format (default: table)",
+    )
+    dx_close_parser.add_argument(
+        "--client",
+        type=str,
+        default=None,
+        help="Optional owning client session ID for access control",
     )
 
     job_parser = subparsers.add_parser(
@@ -1448,6 +1502,8 @@ Examples:
             return cmd_client(args)
         elif args.command == "consumer":
             return cmd_consumer(args)
+        elif args.command == "dx":
+            return cmd_dx(args)
         elif args.command == "job":
             return cmd_job(args)
         elif args.command == "probe":
@@ -3371,10 +3427,6 @@ def cmd_probe_cleanup(args) -> int:
         return 1
 
 
-if __name__ == "__main__":
-    sys.exit(main())
-
-
 def cmd_target(args) -> int:
     if not args.target_action:
         OutputFormatter.error("target", error="Missing target subcommand")
@@ -3975,7 +4027,12 @@ def cmd_consumer_status(args) -> int:
         return 1
 
     response = streaming_client.send_command(
-        {"type": "consumer", "action": "status", "consumer_id": args.consumer}
+        {
+            "type": "consumer",
+            "action": "status",
+            "consumer_id": args.consumer,
+            "client_session_id": getattr(args, "client", None),
+        }
     )
     streaming_client.disconnect()
 
@@ -4021,6 +4078,7 @@ def cmd_consumer_drain(args) -> int:
         "limit": args.limit,
         "after_sequence": args.after_sequence,
         "timeout_ms": getattr(args, "timeout_ms", 0),
+        "client_session_id": getattr(args, "client", None),
     }
     response = streaming_client.send_command(command)
     streaming_client.disconnect()
@@ -4076,7 +4134,12 @@ def cmd_consumer_close(args) -> int:
         return 1
 
     response = streaming_client.send_command(
-        {"type": "consumer", "action": "close", "consumer_id": args.consumer}
+        {
+            "type": "consumer",
+            "action": "close",
+            "consumer_id": args.consumer,
+            "client_session_id": getattr(args, "client", None),
+        }
     )
     streaming_client.disconnect()
 
@@ -4119,6 +4182,7 @@ def cmd_consumer_cleanup(args) -> int:
             "type": "consumer",
             "action": "cleanup",
             "closed_only": not args.all,
+            "client_session_id": getattr(args, "client", None),
         }
     )
     streaming_client.disconnect()
@@ -4275,7 +4339,12 @@ def cmd_dx_status(args) -> int:
         return 1
 
     response = streaming_client.send_command(
-        {"type": "dx", "action": "status", "dx_case_id": args.dx_case}
+        {
+            "type": "dx",
+            "action": "status",
+            "dx_case_id": args.dx_case,
+            "client_session_id": getattr(args, "client", None),
+        }
     )
     streaming_client.disconnect()
     if response.get("status") == "success":
@@ -4321,6 +4390,7 @@ def cmd_dx_add(args) -> int:
             "payload": payload,
             "object_ref_type": args.object_ref_type,
             "object_ref_id": args.object_ref_id,
+            "client_session_id": getattr(args, "client", None),
         }
     )
     streaming_client.disconnect()
@@ -4350,7 +4420,12 @@ def cmd_dx_summary(args) -> int:
         return 1
 
     response = streaming_client.send_command(
-        {"type": "dx", "action": "summary", "dx_case_id": args.dx_case}
+        {
+            "type": "dx",
+            "action": "summary",
+            "dx_case_id": args.dx_case,
+            "client_session_id": getattr(args, "client", None),
+        }
     )
     streaming_client.disconnect()
     if response.get("status") == "success":
@@ -4384,6 +4459,7 @@ def cmd_dx_export(args) -> int:
             "action": "export",
             "dx_case_id": args.dx_case,
             "output_path": args.output_path,
+            "client_session_id": getattr(args, "client", None),
         }
     )
     streaming_client.disconnect()
@@ -4413,7 +4489,12 @@ def cmd_dx_close(args) -> int:
         return 1
 
     response = streaming_client.send_command(
-        {"type": "dx", "action": "close", "dx_case_id": args.dx_case}
+        {
+            "type": "dx",
+            "action": "close",
+            "dx_case_id": args.dx_case,
+            "client_session_id": getattr(args, "client", None),
+        }
     )
     streaming_client.disconnect()
     if response.get("status") == "success":
@@ -4430,3 +4511,7 @@ def cmd_dx_close(args) -> int:
     else:
         print(f"{error_code}: {message}", file=sys.stderr)
     return 2 if error_code == "DX_CASE_NOT_FOUND" else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

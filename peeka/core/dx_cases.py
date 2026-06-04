@@ -13,6 +13,7 @@ DXCase status state machine:
 
 import copy
 import json
+import os
 import tempfile
 import threading
 import time
@@ -262,11 +263,11 @@ def redact_payload(payload: Dict[str, Any]) -> Any:
     """Return a redacted deep copy of a payload and applied markers."""
     cloned = copy.deepcopy(payload)
     markers: List[Dict[str, str]] = []
-    _redact_in_place(cloned, "payload", markers)
+    cloned = _redact_in_place(cloned, "payload", markers)
     return cloned, markers
 
 
-def _redact_in_place(value: Any, path: str, markers: List[Dict[str, str]]) -> None:
+def _redact_in_place(value: Any, path: str, markers: List[Dict[str, str]]) -> Any:
     if isinstance(value, dict):
         for key, item in list(value.items()):
             child_path = f"{path}.{key}"
@@ -280,29 +281,51 @@ def _redact_in_place(value: Any, path: str, markers: List[Dict[str, str]]) -> No
                     }
                 )
                 continue
-            _redact_in_place(item, child_path, markers)
-        return
+            value[key] = _redact_in_place(item, child_path, markers)
+        return value
 
     if isinstance(value, list):
         for index, item in enumerate(value):
-            _redact_in_place(item, f"{path}[{index}]", markers)
-        return
+            value[index] = _redact_in_place(item, f"{path}[{index}]", markers)
+        return value
 
     if isinstance(value, str):
+        home_redacted = _redact_home_paths(value)
+        if home_redacted != value:
+            markers.append(
+                {
+                    "path": path,
+                    "reason": "home_path",
+                    "replacement": home_redacted,
+                }
+            )
+            value = home_redacted
         if len(value) > 4096:
+            truncated = value[:4096] + "...[truncated]"
             markers.append(
                 {
                     "path": path,
                     "reason": "oversized_payload",
-                    "replacement": value[:4096] + "...[truncated]",
+                    "replacement": truncated,
                 }
             )
-        return
+            value = truncated
+        return value
+
+    return value
 
 
 def _looks_secret_key(key: str) -> bool:
     upper = key.upper()
     return any(token in upper for token in ("KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL"))
+
+
+def _redact_home_paths(value: str) -> str:
+    """Redact absolute home-directory paths inside a string."""
+    home = str(Path.home())
+    if not home or home == "/":
+        return value
+    return value.replace(home, "<home>")
 
 
 def build_case_summary(dx_case: DXCase) -> Dict[str, Any]:
@@ -385,4 +408,44 @@ dx_case_registry = DXCaseRegistry()
 
 def default_export_path(dx_case_id: str) -> str:
     """Return the default export path for a DX case JSON artifact."""
-    return str(Path(tempfile.gettempdir()) / f"{dx_case_id}.json")
+    export_root = Path(tempfile.gettempdir()) / "peeka_dx_exports"
+    export_root.mkdir(parents=True, exist_ok=True)
+    return str(export_root / f"{dx_case_id}.json")
+
+
+def resolve_export_path(dx_case_id: str, requested_path: Optional[str]) -> str:
+    """Resolve a safe export path under the system temp directory."""
+    export_root = Path(tempfile.gettempdir()).resolve()
+    if not requested_path:
+        return default_export_path(dx_case_id)
+
+    candidate = Path(requested_path)
+    if not candidate.is_absolute():
+        candidate = export_root / candidate
+
+    resolved = candidate.resolve()
+    try:
+        resolved.relative_to(export_root)
+    except ValueError as exc:
+        raise ValueError("DX export path must stay under the system temp directory") from exc
+
+    return str(resolved)
+
+
+def write_export_json(destination: str, document: Dict[str, Any]) -> None:
+    """Write an export document using exclusive creation and restrictive permissions."""
+    output_path = Path(destination)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    fd = os.open(str(output_path), flags, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(export_document_json(document))
+    except Exception:
+        try:
+            output_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
