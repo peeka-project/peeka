@@ -84,6 +84,30 @@ class TestAgentConsumerHandlers:
         assert result["status"] == "error"
         assert result["error_code"] == "CONSUMER_NOT_FOUND"
 
+    def test_status_hides_owned_consumer_without_matching_client(
+        self, peeka_agent: PeekaAgent
+    ) -> None:
+        client_result = peeka_agent._handle_client_create(
+            {"target_id": "target_1", "source": "cli"}
+        )
+        client_session_id = client_result["data"]["client_session_id"]
+        create_result = peeka_agent._handle_consumer_create(
+            {
+                "target_id": "target_1",
+                "source": "cli",
+                "scope_type": "probe",
+                "scope_id": "prb_1",
+                "client_session_id": client_session_id,
+            }
+        )
+        consumer_id = create_result["data"]["consumer_id"]
+
+        result = peeka_agent._handle_consumer_status(
+            {"consumer_id": consumer_id, "client_session_id": "client_other"}
+        )
+        assert result["status"] == "error"
+        assert result["error_code"] == "CONSUMER_NOT_FOUND"
+
     def test_drain_returns_records(self, peeka_agent: PeekaAgent) -> None:
         create_result = peeka_agent._handle_consumer_create(
             {
@@ -198,8 +222,12 @@ class TestAgentConsumerHandlers:
         assert status_result["status"] == "success"
         assert status_result["data"]["result_consumers"] == [consumer_id]
 
-        peeka_agent._handle_consumer_close({"consumer_id": consumer_id})
-        cleanup_result = peeka_agent._handle_consumer_cleanup({"closed_only": True})
+        peeka_agent._handle_consumer_close(
+            {"consumer_id": consumer_id, "client_session_id": client_session_id}
+        )
+        cleanup_result = peeka_agent._handle_consumer_cleanup(
+            {"closed_only": True, "client_session_id": client_session_id}
+        )
         assert cleanup_result["status"] == "success"
 
         status_after = peeka_agent._handle_client_status(

@@ -161,6 +161,39 @@ class TestConsumerCLIStatus:
         assert obj["type"] == "error"
         assert obj["error_code"] == "CONSUMER_NOT_FOUND"
 
+    def test_consumer_status_passes_client_session_id(self, monkeypatch, capsys):
+        cli_main_module = sys.modules["peeka.cli.main"]
+
+        captured_command = {}
+
+        class MockStreamingAgentClient:
+            def __init__(self, socket_path):
+                self.socket_path = socket_path
+
+            def connect(self) -> Dict[str, Any]:
+                return {"status": "success"}
+
+            def send_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
+                captured_command.update(command)
+                return {"status": "error", "error_code": "CONSUMER_NOT_FOUND", "message": "missing"}
+
+            def disconnect(self):
+                pass
+
+        monkeypatch.setattr(cli_main_module, "StreamingAgentClient", MockStreamingAgentClient)
+        monkeypatch.setattr(cli_main_module, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234))
+
+        args = argparse.Namespace(
+            command="consumer",
+            consumer_action="status",
+            consumer="consumer_missing",
+            client="client_1",
+            format="json",
+        )
+        _ = cli_main_module.cmd_consumer(args)
+        _ = capsys.readouterr()
+        assert captured_command["client_session_id"] == "client_1"
+
 
 class TestConsumerCLIDrain:
     def test_consumer_drain_emits_envelope_then_jsonl_records(self, monkeypatch, capsys):

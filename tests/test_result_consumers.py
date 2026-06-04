@@ -1,3 +1,4 @@
+from peeka.core.result_consumers import MAX_RESULT_CONSUMERS
 from peeka.core.result_consumers import ResultConsumerRegistry
 
 
@@ -226,3 +227,38 @@ class TestResultConsumerRegistry:
         assert removed is not None
         assert removed.consumer_id == consumer.consumer_id
         assert registry.get(consumer.consumer_id) is None
+
+    def test_create_rejects_excessive_buffer_size(self) -> None:
+        registry = ResultConsumerRegistry()
+        try:
+            registry.create(
+                target_id="target_1",
+                source="cli",
+                scope_type="probe",
+                scope_id="prb_1",
+                max_buffer_size=10001,
+            )
+            assert False, "Expected ValueError"
+        except ValueError as exc:
+            assert "max_buffer_size" in str(exc)
+
+    def test_create_rejects_excessive_consumer_count(self) -> None:
+        registry = ResultConsumerRegistry()
+        for index in range(MAX_RESULT_CONSUMERS):
+            registry.create(
+                target_id="target_1",
+                source="cli",
+                scope_type="probe",
+                scope_id=f"prb_{index}",
+            )
+
+        try:
+            registry.create(
+                target_id="target_1",
+                source="cli",
+                scope_type="probe",
+                scope_id="prb_overflow",
+            )
+            assert False, "Expected ValueError"
+        except ValueError as exc:
+            assert "consumer limit exceeded" in str(exc)
