@@ -873,6 +873,275 @@ Examples:
         help="Output format (default: table)",
     )
 
+    consumer_parser = subparsers.add_parser(
+        "consumer", help="Manage result consumers"
+    )
+    consumer_subparsers = consumer_parser.add_subparsers(
+        dest="consumer_action", help="Consumer subcommands"
+    )
+
+    consumer_create_parser = consumer_subparsers.add_parser(
+        "create", help="Create a result consumer"
+    )
+    consumer_create_parser.add_argument(
+        "--target", type=str, required=True, help="Target ID"
+    )
+    consumer_create_parser.add_argument(
+        "--source",
+        type=str,
+        required=True,
+        choices=["cli", "tui", "mcp", "api", "internal"],
+        help="Source of the consumer request",
+    )
+    consumer_create_parser.add_argument(
+        "--scope-type",
+        type=str,
+        required=True,
+        choices=["job", "probe", "target"],
+        help="Scope type bound to this consumer",
+    )
+    consumer_create_parser.add_argument(
+        "--scope-id",
+        type=str,
+        required=True,
+        help="Scope identifier (job/probe/target id)",
+    )
+    consumer_create_parser.add_argument(
+        "--client",
+        type=str,
+        default=None,
+        help="Optional owning client session ID",
+    )
+    consumer_create_parser.add_argument(
+        "--max-buffer-size",
+        type=int,
+        default=1000,
+        help="Maximum buffered records",
+    )
+    consumer_create_parser.add_argument(
+        "--backpressure-policy",
+        type=str,
+        choices=["drop_oldest", "drop_newest", "fail"],
+        default="drop_oldest",
+        help="Backpressure policy when the consumer buffer is full",
+    )
+    consumer_create_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["json", "table"],
+        default="table",
+        help="Output format (default: table)",
+    )
+
+    consumer_list_parser = consumer_subparsers.add_parser(
+        "list", help="List result consumers"
+    )
+    consumer_list_parser.add_argument(
+        "--target", type=str, default=None, help="Filter by target ID"
+    )
+    consumer_list_parser.add_argument(
+        "--client", type=str, default=None, help="Filter by client session ID"
+    )
+    consumer_list_parser.add_argument(
+        "--scope-type",
+        type=str,
+        choices=["job", "probe", "target"],
+        default=None,
+        help="Filter by scope type",
+    )
+    consumer_list_parser.add_argument(
+        "--scope-id", type=str, default=None, help="Filter by scope ID"
+    )
+    consumer_list_parser.add_argument(
+        "--status", type=str, default=None, help="Filter by consumer status"
+    )
+    consumer_list_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["json", "table"],
+        default="table",
+        help="Output format (default: table)",
+    )
+
+    consumer_status_parser = consumer_subparsers.add_parser(
+        "status", help="Get status of a result consumer"
+    )
+    consumer_status_parser.add_argument(
+        "--consumer", type=str, required=True, help="Consumer ID"
+    )
+    consumer_status_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["json", "table"],
+        default="table",
+        help="Output format (default: table)",
+    )
+
+    consumer_drain_parser = consumer_subparsers.add_parser(
+        "drain", help="Drain buffered records from a consumer"
+    )
+    consumer_drain_parser.add_argument(
+        "--consumer", type=str, required=True, help="Consumer ID"
+    )
+    consumer_drain_parser.add_argument(
+        "--limit", type=int, default=100, help="Maximum records to return"
+    )
+    consumer_drain_parser.add_argument(
+        "--after-sequence",
+        type=int,
+        default=None,
+        help="Return records with sequence greater than this value",
+    )
+    consumer_drain_parser.add_argument(
+        "--timeout-ms",
+        type=int,
+        default=0,
+        help="Wait for new records for up to this many milliseconds",
+    )
+    consumer_drain_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["json", "table"],
+        default="table",
+        help="Output format (default: table)",
+    )
+
+    consumer_close_parser = consumer_subparsers.add_parser(
+        "close", help="Close a result consumer"
+    )
+    consumer_close_parser.add_argument(
+        "--consumer", type=str, required=True, help="Consumer ID"
+    )
+    consumer_close_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["json", "table"],
+        default="table",
+        help="Output format (default: table)",
+    )
+
+    consumer_cleanup_parser = consumer_subparsers.add_parser(
+        "cleanup", help="Cleanup closed/failed result consumers"
+    )
+    consumer_cleanup_parser.add_argument(
+        "--all", action="store_true", help="Remove active consumers too"
+    )
+    consumer_cleanup_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["json", "table"],
+        default="table",
+        help="Output format (default: table)",
+    )
+
+    dx_parser = subparsers.add_parser(
+        "dx", help="Manage diagnostic case bundles"
+    )
+    dx_subparsers = dx_parser.add_subparsers(
+        dest="dx_action", help="DX case subcommands"
+    )
+
+    dx_create_parser = dx_subparsers.add_parser("create", help="Create a DX case")
+    dx_create_parser.add_argument("--target", type=str, required=True, help="Target ID")
+    dx_create_parser.add_argument("--title", type=str, required=True, help="DX case title")
+    dx_create_parser.add_argument("--client", type=str, default=None, help="Optional client session ID")
+    dx_create_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["json", "table"],
+        default="table",
+        help="Output format (default: table)",
+    )
+
+    dx_list_parser = dx_subparsers.add_parser("list", help="List DX cases")
+    dx_list_parser.add_argument("--target", type=str, default=None, help="Filter by target ID")
+    dx_list_parser.add_argument("--client", type=str, default=None, help="Filter by client session ID")
+    dx_list_parser.add_argument("--status", type=str, default=None, help="Filter by DX case status")
+    dx_list_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["json", "table"],
+        default="table",
+        help="Output format (default: table)",
+    )
+
+    dx_status_parser = dx_subparsers.add_parser("status", help="Get DX case status")
+    dx_status_parser.add_argument("--dx-case", type=str, required=True, help="DX case ID")
+    dx_status_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["json", "table"],
+        default="table",
+        help="Output format (default: table)",
+    )
+
+    dx_add_parser = dx_subparsers.add_parser("add", help="Add a section to a DX case")
+    dx_add_parser.add_argument("--dx-case", type=str, required=True, help="DX case ID")
+    dx_add_parser.add_argument(
+        "--section-type",
+        type=str,
+        required=True,
+        choices=["target", "client", "job", "probe", "consumer", "note", "error", "summary"],
+        help="Section type",
+    )
+    dx_add_parser.add_argument("--title", type=str, required=True, help="Section title")
+    dx_add_parser.add_argument(
+        "--payload-json",
+        type=str,
+        default="{}",
+        help="JSON payload for the section",
+    )
+    dx_add_parser.add_argument(
+        "--object-ref-type",
+        type=str,
+        default=None,
+        help="Optional object ref collection name",
+    )
+    dx_add_parser.add_argument(
+        "--object-ref-id",
+        type=str,
+        default=None,
+        help="Optional object ref identifier",
+    )
+    dx_add_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["json", "table"],
+        default="table",
+        help="Output format (default: table)",
+    )
+
+    dx_summary_parser = dx_subparsers.add_parser("summary", help="Build DX case summary")
+    dx_summary_parser.add_argument("--dx-case", type=str, required=True, help="DX case ID")
+    dx_summary_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["json", "table"],
+        default="table",
+        help="Output format (default: table)",
+    )
+
+    dx_export_parser = dx_subparsers.add_parser("export", help="Export a DX case")
+    dx_export_parser.add_argument("--dx-case", type=str, required=True, help="DX case ID")
+    dx_export_parser.add_argument("--output-path", type=str, default=None, help="Optional export destination path")
+    dx_export_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["json", "table"],
+        default="table",
+        help="Output format (default: table)",
+    )
+
+    dx_close_parser = dx_subparsers.add_parser("close", help="Close a DX case")
+    dx_close_parser.add_argument("--dx-case", type=str, required=True, help="DX case ID")
+    dx_close_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["json", "table"],
+        default="table",
+        help="Output format (default: table)",
+    )
+
     job_parser = subparsers.add_parser(
         "job", help="Manage command jobs"
     )
@@ -1177,6 +1446,8 @@ Examples:
             return cmd_session(args)
         elif args.command == "client":
             return cmd_client(args)
+        elif args.command == "consumer":
+            return cmd_consumer(args)
         elif args.command == "job":
             return cmd_job(args)
         elif args.command == "probe":
@@ -3552,3 +3823,610 @@ def cmd_client_close(args) -> int:
         else:
             print(f"{error_code}: {message}", file=sys.stderr)
         return 2 if error_code == "CLIENT_NOT_FOUND" else 1
+
+
+def cmd_consumer(args) -> int:
+    if not args.consumer_action:
+        OutputFormatter.error("consumer", error="Missing consumer subcommand")
+        return 1
+
+    try:
+        if args.consumer_action == "create":
+            return cmd_consumer_create(args)
+        elif args.consumer_action == "list":
+            return cmd_consumer_list(args)
+        elif args.consumer_action == "status":
+            return cmd_consumer_status(args)
+        elif args.consumer_action == "drain":
+            return cmd_consumer_drain(args)
+        elif args.consumer_action == "close":
+            return cmd_consumer_close(args)
+        elif args.consumer_action == "cleanup":
+            return cmd_consumer_cleanup(args)
+        else:
+            OutputFormatter.error("consumer", error=f"Unknown consumer action: {args.consumer_action}")
+            return 1
+    except Exception as e:
+        OutputFormatter.error("consumer", error=str(e))
+        return 1
+
+
+def cmd_consumer_create(args) -> int:
+    try:
+        socket_path, _ = _check_agent_attached()
+    except ValueError as e:
+        OutputFormatter.error("consumer.create", error=str(e), error_code="AGENT_UNREACHABLE")
+        return 1
+
+    streaming_client = StreamingAgentClient(socket_path)
+    connect_result = streaming_client.connect()
+    if connect_result.get("status") != "success":
+        OutputFormatter.error(
+            "consumer.create",
+            error=connect_result.get("error", "Connection failed"),
+            error_code="TRANSPORT_ERROR",
+        )
+        return 1
+
+    command = {
+        "type": "consumer",
+        "action": "create",
+        "target_id": args.target,
+        "source": args.source,
+        "scope_type": args.scope_type,
+        "scope_id": args.scope_id,
+        "client_session_id": args.client,
+        "max_buffer_size": args.max_buffer_size,
+        "backpressure_policy": args.backpressure_policy,
+    }
+    response = streaming_client.send_command(command)
+    streaming_client.disconnect()
+
+    if response.get("status") == "success":
+        data = response.get("data", {})
+        if args.format == "json":
+            OutputFormatter.success("consumer.create", data=data)
+        else:
+            print(f"Consumer created: {data.get('consumer_id')}", file=sys.stderr)
+            print(f"Scope: {data.get('scope_type')} {data.get('scope_id')}", file=sys.stderr)
+        return 0
+
+    error_code = response.get("error_code", "TRANSPORT_ERROR")
+    message = _response_error_message(response, "Consumer create failed")
+    if args.format == "json":
+        OutputFormatter.error("consumer.create", error=message, error_code=error_code)
+    else:
+        print(f"{error_code}: {message}", file=sys.stderr)
+    return 2 if error_code in ("CLIENT_NOT_FOUND", "UNSUPPORTED_CAPABILITY") else 1
+
+
+def cmd_consumer_list(args) -> int:
+    try:
+        socket_path, _ = _check_agent_attached()
+    except ValueError as e:
+        OutputFormatter.error("consumer.list", error=str(e), error_code="AGENT_UNREACHABLE")
+        return 1
+
+    streaming_client = StreamingAgentClient(socket_path)
+    connect_result = streaming_client.connect()
+    if connect_result.get("status") != "success":
+        OutputFormatter.error(
+            "consumer.list",
+            error=connect_result.get("error", "Connection failed"),
+            error_code="TRANSPORT_ERROR",
+        )
+        return 1
+
+    command = {
+        "type": "consumer",
+        "action": "list",
+        "target_id": args.target,
+        "client_session_id": args.client,
+        "scope_type": args.scope_type,
+        "scope_id": args.scope_id,
+        "status": args.status,
+    }
+    response = streaming_client.send_command(command)
+    streaming_client.disconnect()
+
+    if response.get("status") == "success":
+        consumers = response.get("data", {}).get("consumers", [])
+        if args.format == "json":
+            for consumer in consumers:
+                OutputFormatter.event("consumer.discovered", data=consumer)
+        else:
+            if not consumers:
+                print("No consumers found.", file=sys.stderr)
+            else:
+                print(f"{'CONSUMER_ID':<20} {'SCOPE':<28} {'STATUS':<12} {'BUFFER':<10} {'DROPPED':<8}")
+                print("-" * 86)
+                for consumer in consumers:
+                    scope = f"{consumer.get('scope_type')}:{consumer.get('scope_id')}"
+                    print(
+                        f"{consumer.get('consumer_id', '-'):<20} {scope:<28} {consumer.get('status', '-'):<12} "
+                        f"{consumer.get('buffer_size', 0):<10} {consumer.get('dropped_count', 0):<8}"
+                    )
+        return 0
+
+    error_code = response.get("error_code", "TRANSPORT_ERROR")
+    message = _response_error_message(response, "Consumer list failed")
+    if args.format == "json":
+        OutputFormatter.error("consumer.list", error=message, error_code=error_code)
+    else:
+        print(f"{error_code}: {message}", file=sys.stderr)
+    return 1
+
+
+def cmd_consumer_status(args) -> int:
+    try:
+        socket_path, _ = _check_agent_attached()
+    except ValueError as e:
+        OutputFormatter.error("consumer.status", error=str(e), error_code="AGENT_UNREACHABLE")
+        return 1
+
+    streaming_client = StreamingAgentClient(socket_path)
+    connect_result = streaming_client.connect()
+    if connect_result.get("status") != "success":
+        OutputFormatter.error(
+            "consumer.status",
+            error=connect_result.get("error", "Connection failed"),
+            error_code="TRANSPORT_ERROR",
+        )
+        return 1
+
+    response = streaming_client.send_command(
+        {"type": "consumer", "action": "status", "consumer_id": args.consumer}
+    )
+    streaming_client.disconnect()
+
+    if response.get("status") == "success":
+        data = response.get("data", {})
+        if args.format == "json":
+            OutputFormatter.success("consumer.status", data=data)
+        else:
+            for key, value in data.items():
+                print(f"{key:<20} {value}")
+        return 0
+
+    error_code = response.get("error_code", "TRANSPORT_ERROR")
+    message = _response_error_message(response, "Consumer status query failed")
+    if args.format == "json":
+        OutputFormatter.error("consumer.status", error=message, error_code=error_code)
+    else:
+        print(f"{error_code}: {message}", file=sys.stderr)
+    return 2 if error_code == "CONSUMER_NOT_FOUND" else 1
+
+
+def cmd_consumer_drain(args) -> int:
+    try:
+        socket_path, _ = _check_agent_attached()
+    except ValueError as e:
+        OutputFormatter.error("consumer.drain", error=str(e), error_code="AGENT_UNREACHABLE")
+        return 1
+
+    streaming_client = StreamingAgentClient(socket_path)
+    connect_result = streaming_client.connect()
+    if connect_result.get("status") != "success":
+        OutputFormatter.error(
+            "consumer.drain",
+            error=connect_result.get("error", "Connection failed"),
+            error_code="TRANSPORT_ERROR",
+        )
+        return 1
+
+    command = {
+        "type": "consumer",
+        "action": "drain",
+        "consumer_id": args.consumer,
+        "limit": args.limit,
+        "after_sequence": args.after_sequence,
+        "timeout_ms": getattr(args, "timeout_ms", 0),
+    }
+    response = streaming_client.send_command(command)
+    streaming_client.disconnect()
+
+    if response.get("status") == "success":
+        data = response.get("data", {})
+        records = data.get("records", [])
+        if args.format == "json":
+            OutputFormatter.success(
+                "consumer.drain",
+                data={
+                    "consumer_id": data.get("consumer_id"),
+                    "next_sequence": data.get("next_sequence"),
+                    "has_more": data.get("has_more"),
+                    "timed_out": data.get("timed_out"),
+                },
+            )
+            for record in records:
+                print(json.dumps(record))
+        else:
+            print(
+                f"Consumer {data.get('consumer_id')} returned {len(records)} record(s); has_more={data.get('has_more')}",
+                file=sys.stderr,
+            )
+            for record in records:
+                print(json.dumps(record))
+        return 0
+
+    error_code = response.get("error_code", "TRANSPORT_ERROR")
+    message = _response_error_message(response, "Consumer drain failed")
+    if args.format == "json":
+        OutputFormatter.error("consumer.drain", error=message, error_code=error_code)
+    else:
+        print(f"{error_code}: {message}", file=sys.stderr)
+    return 2 if error_code in ("CONSUMER_NOT_FOUND", "CONSUMER_CLOSED", "CONSUMER_DRAIN_TIMEOUT") else 1
+
+
+def cmd_consumer_close(args) -> int:
+    try:
+        socket_path, _ = _check_agent_attached()
+    except ValueError as e:
+        OutputFormatter.error("consumer.close", error=str(e), error_code="AGENT_UNREACHABLE")
+        return 1
+
+    streaming_client = StreamingAgentClient(socket_path)
+    connect_result = streaming_client.connect()
+    if connect_result.get("status") != "success":
+        OutputFormatter.error(
+            "consumer.close",
+            error=connect_result.get("error", "Connection failed"),
+            error_code="TRANSPORT_ERROR",
+        )
+        return 1
+
+    response = streaming_client.send_command(
+        {"type": "consumer", "action": "close", "consumer_id": args.consumer}
+    )
+    streaming_client.disconnect()
+
+    if response.get("status") == "success":
+        data = response.get("data", {})
+        if args.format == "json":
+            OutputFormatter.success("consumer.close", data=data)
+        else:
+            print(f"Consumer closed: {args.consumer}", file=sys.stderr)
+        return 0
+
+    error_code = response.get("error_code", "TRANSPORT_ERROR")
+    message = _response_error_message(response, "Consumer close failed")
+    if args.format == "json":
+        OutputFormatter.error("consumer.close", error=message, error_code=error_code)
+    else:
+        print(f"{error_code}: {message}", file=sys.stderr)
+    return 2 if error_code == "CONSUMER_NOT_FOUND" else 1
+
+
+def cmd_consumer_cleanup(args) -> int:
+    try:
+        socket_path, _ = _check_agent_attached()
+    except ValueError as e:
+        OutputFormatter.error("consumer.cleanup", error=str(e), error_code="AGENT_UNREACHABLE")
+        return 1
+
+    streaming_client = StreamingAgentClient(socket_path)
+    connect_result = streaming_client.connect()
+    if connect_result.get("status") != "success":
+        OutputFormatter.error(
+            "consumer.cleanup",
+            error=connect_result.get("error", "Connection failed"),
+            error_code="TRANSPORT_ERROR",
+        )
+        return 1
+
+    response = streaming_client.send_command(
+        {
+            "type": "consumer",
+            "action": "cleanup",
+            "closed_only": not args.all,
+        }
+    )
+    streaming_client.disconnect()
+
+    if response.get("status") == "success":
+        data = response.get("data", {})
+        removed_ids = data.get("removed_ids", [])
+        if args.format == "json":
+            OutputFormatter.success("consumer.cleanup", data=data)
+        else:
+            print(f"Removed {len(removed_ids)} consumer(s)", file=sys.stderr)
+            for consumer_id in removed_ids:
+                print(f"  {consumer_id}", file=sys.stderr)
+        return 0
+
+    error_code = response.get("error_code", "TRANSPORT_ERROR")
+    message = _response_error_message(response, "Consumer cleanup failed")
+    if args.format == "json":
+        OutputFormatter.error("consumer.cleanup", error=message, error_code=error_code)
+    else:
+        print(f"{error_code}: {message}", file=sys.stderr)
+    return 1
+
+
+def cmd_dx(args) -> int:
+    if not args.dx_action:
+        OutputFormatter.error("dx", error="Missing dx subcommand")
+        return 1
+
+    try:
+        if args.dx_action == "create":
+            return cmd_dx_create(args)
+        elif args.dx_action == "list":
+            return cmd_dx_list(args)
+        elif args.dx_action == "status":
+            return cmd_dx_status(args)
+        elif args.dx_action == "add":
+            return cmd_dx_add(args)
+        elif args.dx_action == "summary":
+            return cmd_dx_summary(args)
+        elif args.dx_action == "export":
+            return cmd_dx_export(args)
+        elif args.dx_action == "close":
+            return cmd_dx_close(args)
+        else:
+            OutputFormatter.error("dx", error=f"Unknown dx action: {args.dx_action}")
+            return 1
+    except Exception as e:
+        OutputFormatter.error("dx", error=str(e))
+        return 1
+
+
+def _connect_dx_client(command_name: str):
+    socket_path, _ = _check_agent_attached()
+    streaming_client = StreamingAgentClient(socket_path)
+    connect_result = streaming_client.connect()
+    if connect_result.get("status") != "success":
+        OutputFormatter.error(
+            command_name,
+            error=connect_result.get("error", "Connection failed"),
+            error_code="TRANSPORT_ERROR",
+        )
+        return None
+    return streaming_client
+
+
+def cmd_dx_create(args) -> int:
+    try:
+        streaming_client = _connect_dx_client("dx.create")
+    except ValueError as e:
+        OutputFormatter.error("dx.create", error=str(e), error_code="AGENT_UNREACHABLE")
+        return 1
+    if streaming_client is None:
+        return 1
+
+    response = streaming_client.send_command(
+        {
+            "type": "dx",
+            "action": "create",
+            "target_id": args.target,
+            "title": args.title,
+            "client_session_id": args.client,
+        }
+    )
+    streaming_client.disconnect()
+    if response.get("status") == "success":
+        data = response.get("data", {})
+        if args.format == "json":
+            OutputFormatter.success("dx.create", data=data)
+        else:
+            print(f"DX case created: {data.get('dx_case_id')}", file=sys.stderr)
+        return 0
+    error_code = response.get("error_code", "TRANSPORT_ERROR")
+    message = _response_error_message(response, "DX case create failed")
+    if args.format == "json":
+        OutputFormatter.error("dx.create", error=message, error_code=error_code)
+    else:
+        print(f"{error_code}: {message}", file=sys.stderr)
+    return 2 if error_code == "DX_CASE_INVALID" else 1
+
+
+def cmd_dx_list(args) -> int:
+    try:
+        streaming_client = _connect_dx_client("dx.list")
+    except ValueError as e:
+        OutputFormatter.error("dx.list", error=str(e), error_code="AGENT_UNREACHABLE")
+        return 1
+    if streaming_client is None:
+        return 1
+
+    response = streaming_client.send_command(
+        {
+            "type": "dx",
+            "action": "list",
+            "target_id": args.target,
+            "client_session_id": args.client,
+            "status": args.status,
+        }
+    )
+    streaming_client.disconnect()
+    if response.get("status") == "success":
+        cases = response.get("data", {}).get("cases", [])
+        if args.format == "json":
+            for dx_case in cases:
+                OutputFormatter.event("dx.discovered", data=dx_case)
+        else:
+            if not cases:
+                print("No DX cases found.", file=sys.stderr)
+            else:
+                print(f"{'DX_CASE_ID':<20} {'TARGET':<20} {'STATUS':<12} {'TITLE':<30}")
+                print("-" * 84)
+                for dx_case in cases:
+                    print(
+                        f"{dx_case.get('dx_case_id', '-'):<20} {dx_case.get('target_id', '-'):<20} "
+                        f"{dx_case.get('status', '-'):<12} {dx_case.get('title', '-'):<30}"
+                    )
+        return 0
+    error_code = response.get("error_code", "TRANSPORT_ERROR")
+    message = _response_error_message(response, "DX case list failed")
+    if args.format == "json":
+        OutputFormatter.error("dx.list", error=message, error_code=error_code)
+    else:
+        print(f"{error_code}: {message}", file=sys.stderr)
+    return 1
+
+
+def cmd_dx_status(args) -> int:
+    try:
+        streaming_client = _connect_dx_client("dx.status")
+    except ValueError as e:
+        OutputFormatter.error("dx.status", error=str(e), error_code="AGENT_UNREACHABLE")
+        return 1
+    if streaming_client is None:
+        return 1
+
+    response = streaming_client.send_command(
+        {"type": "dx", "action": "status", "dx_case_id": args.dx_case}
+    )
+    streaming_client.disconnect()
+    if response.get("status") == "success":
+        data = response.get("data", {})
+        if args.format == "json":
+            OutputFormatter.success("dx.status", data=data)
+        else:
+            for key, value in data.items():
+                print(f"{key:<20} {value}")
+        return 0
+    error_code = response.get("error_code", "TRANSPORT_ERROR")
+    message = _response_error_message(response, "DX case status failed")
+    if args.format == "json":
+        OutputFormatter.error("dx.status", error=message, error_code=error_code)
+    else:
+        print(f"{error_code}: {message}", file=sys.stderr)
+    return 2 if error_code == "DX_CASE_NOT_FOUND" else 1
+
+
+def cmd_dx_add(args) -> int:
+    try:
+        streaming_client = _connect_dx_client("dx.add")
+    except ValueError as e:
+        OutputFormatter.error("dx.add", error=str(e), error_code="AGENT_UNREACHABLE")
+        return 1
+    if streaming_client is None:
+        return 1
+
+    try:
+        payload = json.loads(args.payload_json)
+    except json.JSONDecodeError as e:
+        OutputFormatter.error("dx.add", error=str(e), error_code="DX_CASE_INVALID")
+        streaming_client.disconnect()
+        return 2
+
+    response = streaming_client.send_command(
+        {
+            "type": "dx",
+            "action": "add",
+            "dx_case_id": args.dx_case,
+            "section_type": args.section_type,
+            "title": args.title,
+            "payload": payload,
+            "object_ref_type": args.object_ref_type,
+            "object_ref_id": args.object_ref_id,
+        }
+    )
+    streaming_client.disconnect()
+    if response.get("status") == "success":
+        data = response.get("data", {})
+        if args.format == "json":
+            OutputFormatter.success("dx.add", data=data)
+        else:
+            print(f"Added section to DX case {data.get('dx_case_id')}", file=sys.stderr)
+        return 0
+    error_code = response.get("error_code", "TRANSPORT_ERROR")
+    message = _response_error_message(response, "DX case add failed")
+    if args.format == "json":
+        OutputFormatter.error("dx.add", error=message, error_code=error_code)
+    else:
+        print(f"{error_code}: {message}", file=sys.stderr)
+    return 2 if error_code in ("DX_CASE_INVALID", "DX_CASE_NOT_FOUND") else 1
+
+
+def cmd_dx_summary(args) -> int:
+    try:
+        streaming_client = _connect_dx_client("dx.summary")
+    except ValueError as e:
+        OutputFormatter.error("dx.summary", error=str(e), error_code="AGENT_UNREACHABLE")
+        return 1
+    if streaming_client is None:
+        return 1
+
+    response = streaming_client.send_command(
+        {"type": "dx", "action": "summary", "dx_case_id": args.dx_case}
+    )
+    streaming_client.disconnect()
+    if response.get("status") == "success":
+        data = response.get("data", {})
+        if args.format == "json":
+            OutputFormatter.success("dx.summary", data=data)
+        else:
+            print(data.get("text_summary", ""))
+        return 0
+    error_code = response.get("error_code", "TRANSPORT_ERROR")
+    message = _response_error_message(response, "DX case summary failed")
+    if args.format == "json":
+        OutputFormatter.error("dx.summary", error=message, error_code=error_code)
+    else:
+        print(f"{error_code}: {message}", file=sys.stderr)
+    return 2 if error_code == "DX_CASE_NOT_FOUND" else 1
+
+
+def cmd_dx_export(args) -> int:
+    try:
+        streaming_client = _connect_dx_client("dx.export")
+    except ValueError as e:
+        OutputFormatter.error("dx.export", error=str(e), error_code="AGENT_UNREACHABLE")
+        return 1
+    if streaming_client is None:
+        return 1
+
+    response = streaming_client.send_command(
+        {
+            "type": "dx",
+            "action": "export",
+            "dx_case_id": args.dx_case,
+            "output_path": args.output_path,
+        }
+    )
+    streaming_client.disconnect()
+    if response.get("status") == "success":
+        data = response.get("data", {})
+        if args.format == "json":
+            OutputFormatter.success("dx.export", data=data)
+        else:
+            print(f"Exported DX case to {data.get('output_path')}", file=sys.stderr)
+        return 0
+    error_code = response.get("error_code", "TRANSPORT_ERROR")
+    message = _response_error_message(response, "DX case export failed")
+    if args.format == "json":
+        OutputFormatter.error("dx.export", error=message, error_code=error_code)
+    else:
+        print(f"{error_code}: {message}", file=sys.stderr)
+    return 2 if error_code in ("DX_CASE_NOT_FOUND", "DX_EXPORT_FAILED") else 1
+
+
+def cmd_dx_close(args) -> int:
+    try:
+        streaming_client = _connect_dx_client("dx.close")
+    except ValueError as e:
+        OutputFormatter.error("dx.close", error=str(e), error_code="AGENT_UNREACHABLE")
+        return 1
+    if streaming_client is None:
+        return 1
+
+    response = streaming_client.send_command(
+        {"type": "dx", "action": "close", "dx_case_id": args.dx_case}
+    )
+    streaming_client.disconnect()
+    if response.get("status") == "success":
+        data = response.get("data", {})
+        if args.format == "json":
+            OutputFormatter.success("dx.close", data=data)
+        else:
+            print(f"Closed DX case {data.get('dx_case_id')}", file=sys.stderr)
+        return 0
+    error_code = response.get("error_code", "TRANSPORT_ERROR")
+    message = _response_error_message(response, "DX case close failed")
+    if args.format == "json":
+        OutputFormatter.error("dx.close", error=message, error_code=error_code)
+    else:
+        print(f"{error_code}: {message}", file=sys.stderr)
+    return 2 if error_code == "DX_CASE_NOT_FOUND" else 1
