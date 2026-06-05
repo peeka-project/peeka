@@ -45,6 +45,7 @@ class ClientSession:
         last_access_at: Last client access timestamp in epoch seconds.
         result_consumers: Result consumer identifiers associated with this client.
         auth: Optional authentication metadata reserved for future use.
+        last_error: Optional terminal error details for the client session.
     """
 
     client_session_id: str
@@ -57,6 +58,7 @@ class ClientSession:
     last_access_at: float
     result_consumers: List[str] = field(default_factory=list)
     auth: Optional[Dict[str, Any]] = None
+    last_error: Optional[Dict[str, str]] = None
 
 
 class ClientRegistry:
@@ -94,6 +96,7 @@ class ClientRegistry:
             last_access_at=now,
             result_consumers=[],
             auth=None,
+            last_error=None,
         )
         with self._lock:
             self._clients[client.client_session_id] = client
@@ -239,6 +242,20 @@ class ClientRegistry:
 
 def to_dict(client: ClientSession) -> Dict[str, Any]:
     """Serialize a client session into a JSON-safe dictionary."""
-    result = {"schema_version": CLIENT_SCHEMA_VERSION}
+    result: Dict[str, Any] = {"schema_version": CLIENT_SCHEMA_VERSION}
     result.update(asdict(client))
+    result["next_valid_actions"] = next_valid_actions(client.input_status)
     return result
+
+
+def next_valid_actions(input_status: InputStatus) -> List[str]:
+    """Return the next valid actions for a client input status."""
+    if input_status == "idle":
+        return ["send", "close", "inspect"]
+    if input_status == "waiting_input":
+        return ["respond", "close", "inspect"]
+    if input_status == "sending":
+        return ["close", "inspect"]
+    if input_status == "streaming":
+        return ["pause", "close", "inspect"]
+    return []  # pyright: ignore[reportUnreachable]

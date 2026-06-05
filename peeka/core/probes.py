@@ -29,6 +29,7 @@ from typing import Optional
 
 
 PROBE_SCHEMA_VERSION = "1"
+OBSERVATION_EVENT_SCHEMA_VERSION = "1"
 _RECENT_EVENT_LIMIT = 100
 
 ProbeStatus = Literal["created", "active", "paused", "stopped", "failed"]
@@ -118,6 +119,7 @@ class ObservationEvent:
         sequence: Zero-based sequence number scoped to the probe.
         timestamp: Event creation timestamp in epoch seconds.
         payload: JSON-safe event payload.
+        schema_version: Wire schema version for serialized records.
     """
 
     event_id: str
@@ -126,6 +128,7 @@ class ObservationEvent:
     sequence: int
     timestamp: float
     payload: Dict[str, Any] = field(default_factory=dict)
+    schema_version: str = OBSERVATION_EVENT_SCHEMA_VERSION
 
 
 class ProbeRegistry:
