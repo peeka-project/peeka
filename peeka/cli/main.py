@@ -1878,7 +1878,6 @@ def cmd_trace(args) -> int:
 
 
 def cmd_stack(args) -> int:
-    # TODO(client-session): wrap with ephemeral_client per boulder client-session.md T4
     try:
         socket_path, attached_pid = _check_agent_attached()
     except ValueError as e:
@@ -1918,50 +1917,57 @@ def cmd_stack(args) -> int:
         return 1
 
     pattern = args.pattern
-
-    command = {
-        "type": "stack",
-        "action": "start",
-        "pattern": pattern,
-        "depth": args.depth,
-        "times": args.times,
-        "condition_express": args.condition_express,
-    }
-
-    response = streaming_client.send_command(command)
-
-    if response.get("status") != "success":
-        OutputFormatter.error(
-            "stack", error=response.get("error", "Stack start failed")
-        )
-        streaming_client.disconnect()
-        return 1
-
-    stack_id = response.get("stack_id")
-
-    OutputFormatter.event(
-        "stack_started", data={"stack_id": stack_id, "pattern": pattern}
-    )
-    sys.stdout.flush()
+    target_id = _socket_path_to_target_id(socket_path)
 
     try:
-        for observation in streaming_client.stream_observations():
-            print(json.dumps(observation))
+        with ephemeral_client(target_id) as cid:
+            command = {
+                "type": "stack",
+                "action": "start",
+                "client_session_id": cid,
+                "pattern": pattern,
+                "depth": args.depth,
+                "times": args.times,
+                "condition_express": args.condition_express,
+            }
+
+            response = streaming_client.send_command(command)
+
+            if response.get("status") != "success":
+                OutputFormatter.error(
+                    "stack", error=response.get("error", "Stack start failed")
+                )
+                streaming_client.disconnect()
+                return 1
+
+            stack_id = response.get("stack_id")
+
+            OutputFormatter.event(
+                "stack_started", data={"stack_id": stack_id, "pattern": pattern}
+            )
             sys.stdout.flush()
 
-            if args.times > 0:
-                count = observation.get("count", 0)
-                if count >= args.times:
-                    break
+            try:
+                for observation in streaming_client.stream_observations():
+                    print(json.dumps(observation))
+                    sys.stdout.flush()
 
-    finally:
+                    if args.times > 0:
+                        count = observation.get("count", 0)
+                        if count >= args.times:
+                            break
+
+            finally:
+                cleanup_stack()
+
+            return 0
+    except Exception as e:
+        OutputFormatter.error("stack", error=str(e))
         cleanup_stack()
-
-    return 0
+        return 0
 
 
 def cmd_logger(args) -> int:
-    # TODO(client-session): wrap with ephemeral_client per boulder client-session.md T4
     try:
         socket_path, attached_pid = _check_agent_attached()
     except ValueError as e:
@@ -1977,30 +1983,38 @@ def cmd_logger(args) -> int:
         )
         return 1
 
-    command = {
-        "type": "logger",
-        "action": args.action,
-        "name": args.logger,
-        "level": args.level,
-        "pattern": args.pattern,
-    }
+    target_id = _socket_path_to_target_id(socket_path)
 
-    response = streaming_client.send_command(command)
+    try:
+        with ephemeral_client(target_id) as cid:
+            command = {
+                "type": "logger",
+                "action": args.action,
+                "client_session_id": cid,
+                "name": args.logger,
+                "level": args.level,
+                "pattern": args.pattern,
+            }
 
-    if response.get("status") == "success":
-        OutputFormatter.result("logger", data=response)
-    else:
-        OutputFormatter.error(
-            "logger", error=response.get("error", "Logger command failed")
-        )
+            response = streaming_client.send_command(command)
 
-    streaming_client.disconnect()
+            if response.get("status") == "success":
+                OutputFormatter.result("logger", data=response)
+            else:
+                OutputFormatter.error(
+                    "logger", error=response.get("error", "Logger command failed")
+                )
 
-    return 0 if response.get("status") == "success" else 1
+            streaming_client.disconnect()
+
+            return 0 if response.get("status") == "success" else 1
+    except Exception as e:
+        OutputFormatter.error("logger", error=str(e))
+        streaming_client.disconnect()
+        return 1
 
 
 def cmd_memory(args) -> int:
-    # TODO(client-session): wrap with ephemeral_client per boulder client-session.md T4
     try:
         socket_path, attached_pid = _check_agent_attached()
     except ValueError as e:
@@ -2016,34 +2030,42 @@ def cmd_memory(args) -> int:
         )
         return 1
 
-    command = {
-        "type": "memory",
-        "action": args.action,
-        "nframe": args.nframe,
-        "limit": args.limit,
-        "group_by": args.group_by,
-        "filename": args.filename,
-        "type_name": args.type_name,
-        "max_depth": args.max_depth,
-        "max_per_level": args.max_per_level,
-    }
+    target_id = _socket_path_to_target_id(socket_path)
 
-    response = streaming_client.send_command(command)
+    try:
+        with ephemeral_client(target_id) as cid:
+            command = {
+                "type": "memory",
+                "action": args.action,
+                "client_session_id": cid,
+                "nframe": args.nframe,
+                "limit": args.limit,
+                "group_by": args.group_by,
+                "filename": args.filename,
+                "type_name": args.type_name,
+                "max_depth": args.max_depth,
+                "max_per_level": args.max_per_level,
+            }
 
-    if response.get("status") == "success":
-        OutputFormatter.result("memory", data=response)
-    else:
-        OutputFormatter.error(
-            "memory", error=response.get("error", "Memory command failed")
-        )
+            response = streaming_client.send_command(command)
 
-    streaming_client.disconnect()
+            if response.get("status") == "success":
+                OutputFormatter.result("memory", data=response)
+            else:
+                OutputFormatter.error(
+                    "memory", error=response.get("error", "Memory command failed")
+                )
 
-    return 0 if response.get("status") == "success" else 1
+            streaming_client.disconnect()
+
+            return 0 if response.get("status") == "success" else 1
+    except Exception as e:
+        OutputFormatter.error("memory", error=str(e))
+        streaming_client.disconnect()
+        return 1
 
 
 def cmd_thread(args) -> int:
-    # TODO(client-session): wrap with ephemeral_client per boulder client-session.md T4
     try:
         socket_path, attached_pid = _check_agent_attached()
     except ValueError as e:
@@ -2059,33 +2081,43 @@ def cmd_thread(args) -> int:
         )
         return 1
 
-    if args.tid is not None:
-        command = {
-            "type": "thread",
-            "action": "detail",
-            "tid": args.tid,
-            "depth": args.depth,
-        }
-    else:
-        command = {
-            "type": "thread",
-            "action": "list",
-            "state": args.state,
-            "sort_by": args.sort_by,
-        }
+    target_id = _socket_path_to_target_id(socket_path)
 
-    response = streaming_client.send_command(command)
+    try:
+        with ephemeral_client(target_id) as cid:
+            if args.tid is not None:
+                command = {
+                    "type": "thread",
+                    "action": "detail",
+                    "client_session_id": cid,
+                    "tid": args.tid,
+                    "depth": args.depth,
+                }
+            else:
+                command = {
+                    "type": "thread",
+                    "action": "list",
+                    "client_session_id": cid,
+                    "state": args.state,
+                    "sort_by": args.sort_by,
+                }
 
-    if response.get("status") == "success":
-        OutputFormatter.result("thread", data=response)
-    else:
-        OutputFormatter.error(
-            "thread", error=response.get("error", "Thread command failed")
-        )
+            response = streaming_client.send_command(command)
 
-    streaming_client.disconnect()
+            if response.get("status") == "success":
+                OutputFormatter.result("thread", data=response)
+            else:
+                OutputFormatter.error(
+                    "thread", error=response.get("error", "Thread command failed")
+                )
 
-    return 0 if response.get("status") == "success" else 1
+            streaming_client.disconnect()
+
+            return 0 if response.get("status") == "success" else 1
+    except Exception as e:
+        OutputFormatter.error("thread", error=str(e))
+        streaming_client.disconnect()
+        return 1
 
 
 def cmd_patch_status(args) -> int:
@@ -2123,7 +2155,6 @@ def cmd_patch_status(args) -> int:
 
 
 def cmd_vmtool(args) -> int:
-    # TODO(client-session): wrap with ephemeral_client per boulder client-session.md T4
     try:
         socket_path, attached_pid = _check_agent_attached()
     except ValueError as e:
@@ -2139,29 +2170,38 @@ def cmd_vmtool(args) -> int:
         )
         return 1
 
-    command = {
-        "type": "vmtool",
-        "action": args.action,
-        "target": args.target,
-        "class_name": args.class_name,
-        "limit": args.limit,
-        "depth": args.depth,
-        "filter_express": args.filter_express,
-        "gc_first": args.gc_first,
-    }
+    target_id = _socket_path_to_target_id(socket_path)
 
-    response = streaming_client.send_command(command)
+    try:
+        with ephemeral_client(target_id) as cid:
+            command = {
+                "type": "vmtool",
+                "action": args.action,
+                "client_session_id": cid,
+                "target": args.target,
+                "class_name": args.class_name,
+                "limit": args.limit,
+                "depth": args.depth,
+                "filter_express": args.filter_express,
+                "gc_first": args.gc_first,
+            }
 
-    if response.get("status") == "success":
-        OutputFormatter.result("vmtool", data=response)
-    else:
-        OutputFormatter.error(
-            "vmtool", error=response.get("error", "Vmtool command failed")
-        )
+            response = streaming_client.send_command(command)
 
-    streaming_client.disconnect()
+            if response.get("status") == "success":
+                OutputFormatter.result("vmtool", data=response)
+            else:
+                OutputFormatter.error(
+                    "vmtool", error=response.get("error", "Vmtool command failed")
+                )
 
-    return 0 if response.get("status") == "success" else 1
+            streaming_client.disconnect()
+
+            return 0 if response.get("status") == "success" else 1
+    except Exception as e:
+        OutputFormatter.error("vmtool", error=str(e))
+        streaming_client.disconnect()
+        return 1
 
 
 def cmd_reset(args) -> int:
@@ -2203,7 +2243,6 @@ def cmd_reset(args) -> int:
 
 
 def cmd_monitor(args) -> int:
-    # TODO(client-session): wrap with ephemeral_client per boulder client-session.md T4
     try:
         socket_path, attached_pid = _check_agent_attached()
     except ValueError as e:
@@ -2243,50 +2282,57 @@ def cmd_monitor(args) -> int:
         return 1
 
     pattern = args.pattern
-
-    command = {
-        "type": "monitor",
-        "action": "start",
-        "pattern": pattern,
-        "cycle": args.interval,
-        "cycles": args.cycles,
-    }
-
-    response = streaming_client.send_command(command)
-
-    if response.get("status") != "success":
-        OutputFormatter.error(
-            "monitor", error=response.get("error", "Monitor start failed")
-        )
-        streaming_client.disconnect()
-        return 1
-
-    monitor_id = response.get("monitor_id")
-
-    OutputFormatter.event(
-        "monitor_started", data={"monitor_id": monitor_id, "pattern": pattern}
-    )
-    sys.stdout.flush()
+    target_id = _socket_path_to_target_id(socket_path)
 
     try:
-        cycles_count = 0
-        for observation in streaming_client.stream_observations():
-            print(json.dumps(observation))
+        with ephemeral_client(target_id) as cid:
+            command = {
+                "type": "monitor",
+                "action": "start",
+                "client_session_id": cid,
+                "pattern": pattern,
+                "cycle": args.interval,
+                "cycles": args.cycles,
+            }
+
+            response = streaming_client.send_command(command)
+
+            if response.get("status") != "success":
+                OutputFormatter.error(
+                    "monitor", error=response.get("error", "Monitor start failed")
+                )
+                streaming_client.disconnect()
+                return 1
+
+            monitor_id = response.get("monitor_id")
+
+            OutputFormatter.event(
+                "monitor_started", data={"monitor_id": monitor_id, "pattern": pattern}
+            )
             sys.stdout.flush()
 
-            if args.cycles > 0:
-                cycles_count += 1
-                if cycles_count >= args.cycles:
-                    break
+            try:
+                cycles_count = 0
+                for observation in streaming_client.stream_observations():
+                    print(json.dumps(observation))
+                    sys.stdout.flush()
 
-    finally:
+                    if args.cycles > 0:
+                        cycles_count += 1
+                        if cycles_count >= args.cycles:
+                            break
+
+            finally:
+                cleanup_monitor()
+
+            return 0
+    except Exception as e:
+        OutputFormatter.error("monitor", error=str(e))
         cleanup_monitor()
-
-    return 0
+        return 1
 
 
 def cmd_top(args) -> int:
-    # TODO(client-session): wrap with ephemeral_client per boulder client-session.md T4
     try:
         socket_path, attached_pid = _check_agent_attached()
     except ValueError as e:
@@ -2319,49 +2365,60 @@ def cmd_top(args) -> int:
         )
         return 1
 
-    command = {
-        "type": "top",
-        "action": "start",
-        "interval": args.interval,
-        "stream": True,
-        "filter_peeka": not args.no_filter_peeka,
-    }
-
-    response = streaming_client.send_command(command)
-
-    if response.get("status") != "success":
-        OutputFormatter.error("top", error=response.get("error", "Top start failed"))
-        streaming_client.disconnect()
-        return 1
-
-    top_id = response.get("top_id")
-
-    OutputFormatter.event(
-        "top_started",
-        data={
-            "top_id": top_id,
-            "interval": args.interval,
-            "filter_peeka": not args.no_filter_peeka,
-        },
-        meta=response.get("meta"),
-    )
-    sys.stdout.flush()
+    target_id = _socket_path_to_target_id(socket_path)
 
     try:
-        cycles_count = 0
-        for observation in streaming_client.stream_observations():
-            print(json.dumps(observation))
+        with ephemeral_client(target_id) as cid:
+            command = {
+                "type": "top",
+                "action": "start",
+                "client_session_id": cid,
+                "interval": args.interval,
+                "stream": True,
+                "filter_peeka": not args.no_filter_peeka,
+            }
+
+            response = streaming_client.send_command(command)
+
+            if response.get("status") != "success":
+                OutputFormatter.error(
+                    "top", error=response.get("error", "Top start failed")
+                )
+                streaming_client.disconnect()
+                return 1
+
+            top_id = response.get("top_id")
+
+            OutputFormatter.event(
+                "top_started",
+                data={
+                    "top_id": top_id,
+                    "interval": args.interval,
+                    "filter_peeka": not args.no_filter_peeka,
+                },
+                meta=response.get("meta"),
+            )
             sys.stdout.flush()
 
-            if args.cycles > 0:
-                cycles_count += 1
-                if cycles_count >= args.cycles:
-                    break
+            try:
+                cycles_count = 0
+                for observation in streaming_client.stream_observations():
+                    print(json.dumps(observation))
+                    sys.stdout.flush()
 
-    finally:
+                    if args.cycles > 0:
+                        cycles_count += 1
+                        if cycles_count >= args.cycles:
+                            break
+
+            finally:
+                cleanup_top()
+
+            return 0
+    except Exception as e:
+        OutputFormatter.error("top", error=str(e))
         cleanup_top()
-
-    return 0
+        return 1
 
 
 def cmd_sc(args) -> int:
