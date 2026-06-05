@@ -74,6 +74,19 @@ _LEGAL_TRANSITIONS: Dict[str, FrozenSet[str]] = {
 _TRUNCATED_SENTINEL = "...[truncated]"
 
 
+def next_valid_actions(status: JobStatus) -> List[str]:
+    """Return the next valid actions for a job status."""
+    if status == "created":
+        return ["start", "cancel", "inspect"]
+    if status == "running":
+        return ["interrupt", "cancel", "inspect"]
+    if status == "streaming":
+        return ["interrupt", "cancel", "inspect"]
+    if status in ("completed", "failed", "cancelled", "interrupted", "timed_out"):
+        return ["inspect", "cleanup"]
+    return []  # pyright: ignore[reportUnreachable]
+
+
 @dataclass
 class CommandJob:
     """Represents one command execution lifecycle.
@@ -280,8 +293,9 @@ class JobRegistry:
 
 def to_dict(job: CommandJob) -> Dict[str, Any]:
     """Serialize a command job into a JSON-safe dictionary."""
-    result = {"schema_version": JOB_SCHEMA_VERSION}
+    result: Dict[str, Any] = {"schema_version": JOB_SCHEMA_VERSION}
     result.update(asdict(job))
+    result["next_valid_actions"] = next_valid_actions(job.status)
     return result
 
 

@@ -16,6 +16,7 @@ from peeka.core.dx_cases import (
 )
 from peeka.core.jobs import JOB_SCHEMA_VERSION, JobRegistry, to_dict as job_to_dict
 from peeka.core.probes import (
+    OBSERVATION_EVENT_SCHEMA_VERSION,
     PROBE_SCHEMA_VERSION,
     ObservationEvent,
     ProbeRegistry,
@@ -60,6 +61,7 @@ class TestClientSessionContract:
         assert result["target_id"] == "target_1"
         assert "input_status" in result
         assert "created_at" in result
+        assert "next_valid_actions" in result
 
 
 class TestCommandJobContract:
@@ -78,6 +80,7 @@ class TestCommandJobContract:
         assert result["status"] == "created"
         assert "created_at" in result
         assert "updated_at" in result
+        assert "next_valid_actions" in result
 
 
 class TestProbeRunContract:
@@ -128,6 +131,7 @@ class TestObservationEventContract:
         assert event.target_id == "target_1"
         assert event.sequence == 0
         assert "timestamp" in event.__dict__
+        assert event.schema_version == OBSERVATION_EVENT_SCHEMA_VERSION
 
 
 class TestResultConsumerContract:
