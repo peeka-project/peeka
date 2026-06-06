@@ -241,9 +241,25 @@ def detach_target(target_id: str, force: bool = False) -> Dict[str, Any]:
             "message": "force required for alive detach",
         }
 
-    if target.state in ("alive", "stale"):
-        _send_detach_command(target.socket_path)
+    if target.state == "alive":
+        detach_response = _send_detach_command(target.socket_path)
+        if detach_response is None or detach_response.get("status") != "success":
+            return {
+                "ok": False,
+                "error_code": "AGENT_UNREACHABLE",
+                "message": _detach_error_message(detach_response),
+            }
 
+    if target.state == "stale" and target.pid > 0 and _is_pid_alive(target.pid):
+        detach_response = _send_detach_command(target.socket_path)
+        if detach_response is None or detach_response.get("status") != "success":
+            return {
+                "ok": False,
+                "error_code": "AGENT_UNREACHABLE",
+                "message": _detach_error_message(detach_response),
+            }
+
+    if target.state in ("alive", "stale"):
         errors: List[Dict[str, str]] = []
         for path in _target_related_paths(target.legacy_session_id):
             try:
@@ -330,8 +346,17 @@ def _probe_target_hello(socket_path: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def _send_detach_command(socket_path: str) -> None:
-    _ = _send_target_command(socket_path, {"type": "target", "action": "detach"})
+def _send_detach_command(socket_path: str) -> Optional[Dict[str, Any]]:
+    return _send_target_command(socket_path, {"type": "detach"})
+
+
+def _detach_error_message(response: Optional[Dict[str, Any]]) -> str:
+    if response is None:
+        return "Agent detach RPC failed"
+    message = response.get("message") or response.get("error")
+    if message:
+        return str(message)
+    return "Agent detach RPC failed"
 
 
 def _send_target_command(

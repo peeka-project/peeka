@@ -1,15 +1,15 @@
+import argparse
 import json
-import sys
 from typing import Any
 from typing import Dict
 
-import peeka.cli.main  # noqa: F401
+from peeka.cli.handlers import targets as cli_targets
 
 
 class TestSessionAlias:
-    def test_session_list_emits_deprecation_and_matches_target_list(self, monkeypatch, capsys):
-        cli_main_module = sys.modules["peeka.cli.main"]
-
+    def test_session_list_emits_deprecation_and_matches_target_list(
+        self, monkeypatch, capsys
+    ):
         targets_data = [
             {
                 "target_id": "target_12345678",
@@ -60,18 +60,18 @@ class TestSessionAlias:
             to_dict = mock_to_dict
 
         monkeypatch.setattr(
-            cli_main_module,
+            cli_targets,
             "discover_targets",
             lambda: [MockTarget(t) for t in targets_data],
         )
 
-        args = cli_main_module.argparse.Namespace(
+        args = argparse.Namespace(
             command="session",
             session_action="list",
             format="json",
         )
 
-        result = cli_main_module.cmd_session_list(args)
+        result = cli_targets.cmd_session_list(args)
 
         captured = capsys.readouterr()
 
@@ -80,7 +80,9 @@ class TestSessionAlias:
         assert "'peeka-cli session <X>' is deprecated" in captured.err
         assert "use 'peeka-cli target <X>'" in captured.err
 
-        lines = [line.strip() for line in captured.out.strip().split("\n") if line.strip()]
+        lines = [
+            line.strip() for line in captured.out.strip().split("\n") if line.strip()
+        ]
         assert len(lines) == 1
 
         parsed = json.loads(lines[0])
@@ -92,8 +94,6 @@ class TestSessionAlias:
         assert parsed["data"]["state"] == "alive"
 
     def test_session_status_delegates_to_target_status(self, monkeypatch, capsys):
-        cli_main_module = sys.modules["peeka.cli.main"]
-
         target_data = {
             "target_id": "target_87654321",
             "legacy_session_id": "87654321-4321-4321-4321-210987654321",
@@ -142,19 +142,19 @@ class TestSessionAlias:
             to_dict = mock_to_dict
 
         monkeypatch.setattr(
-            cli_main_module,
+            cli_targets,
             "get_target",
             lambda target_id: MockTarget(target_data),
         )
 
-        args = cli_main_module.argparse.Namespace(
+        args = argparse.Namespace(
             command="session",
             session_action="status",
             target="target_87654321",
             format="json",
         )
 
-        result = cli_main_module.cmd_session_status(args)
+        result = cli_targets.cmd_session_status(args)
 
         captured = capsys.readouterr()
 
@@ -171,8 +171,6 @@ class TestSessionAlias:
         assert parsed["data"]["state"] == "alive"
 
     def test_session_detach_delegates_to_target_detach(self, monkeypatch, capsys):
-        cli_main_module = sys.modules["peeka.cli.main"]
-
         detach_result = {
             "ok": True,
             "target_id": "target_11111111",
@@ -181,12 +179,12 @@ class TestSessionAlias:
         }
 
         monkeypatch.setattr(
-            cli_main_module,
+            cli_targets,
             "detach_target",
             lambda target_id, force: detach_result,
         )
 
-        args = cli_main_module.argparse.Namespace(
+        args = argparse.Namespace(
             command="session",
             session_action="detach",
             target="target_11111111",
@@ -194,7 +192,7 @@ class TestSessionAlias:
             format="json",
         )
 
-        result = cli_main_module.cmd_session_detach(args)
+        result = cli_targets.cmd_session_detach(args)
 
         captured = capsys.readouterr()
 

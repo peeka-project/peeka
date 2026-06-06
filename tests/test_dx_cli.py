@@ -4,13 +4,12 @@ import sys
 from typing import Any
 from typing import Dict
 
-import peeka.cli.main  # noqa: F401
+from peeka.cli import context as cli_context
+from peeka.cli.handlers import dx as cli_dx
 
 
 class TestDXCLICreate:
     def test_dx_create_emits_json_envelope(self, monkeypatch, capsys):
-        cli_main_module = sys.modules["peeka.cli.main"]
-
         class MockStreamingAgentClient:
             def __init__(self, socket_path):
                 self.socket_path = socket_path
@@ -34,8 +33,12 @@ class TestDXCLICreate:
             def disconnect(self):
                 pass
 
-        monkeypatch.setattr(cli_main_module, "StreamingAgentClient", MockStreamingAgentClient)
-        monkeypatch.setattr(cli_main_module, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234))
+        monkeypatch.setattr(
+            cli_context, "StreamingAgentClient", MockStreamingAgentClient
+        )
+        monkeypatch.setattr(
+            cli_context, "_check_agent_attached", lambda: ("/tmp/peeka_1.sock", 1234)
+        )
 
         args = argparse.Namespace(
             command="dx",
@@ -45,7 +48,7 @@ class TestDXCLICreate:
             client=None,
             format="json",
         )
-        exit_code = cli_main_module.cmd_dx(args)
+        exit_code = cli_dx.cmd_dx(args)
         captured = capsys.readouterr()
         assert exit_code == 0
         obj = json.loads(captured.out.strip())
@@ -55,8 +58,6 @@ class TestDXCLICreate:
 
 class TestDXCLIList:
     def test_dx_list_emits_event_jsonl(self, monkeypatch, capsys):
-        cli_main_module = sys.modules["peeka.cli.main"]
-
         class MockStreamingAgentClient:
             def __init__(self, socket_path):
                 self.socket_path = socket_path
@@ -67,14 +68,27 @@ class TestDXCLIList:
             def send_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
                 return {
                     "status": "success",
-                    "data": {"cases": [{"dx_case_id": "dx_a", "target_id": "target_1", "status": "open", "title": "A"}]},
+                    "data": {
+                        "cases": [
+                            {
+                                "dx_case_id": "dx_a",
+                                "target_id": "target_1",
+                                "status": "open",
+                                "title": "A",
+                            }
+                        ]
+                    },
                 }
 
             def disconnect(self):
                 pass
 
-        monkeypatch.setattr(cli_main_module, "StreamingAgentClient", MockStreamingAgentClient)
-        monkeypatch.setattr(cli_main_module, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234))
+        monkeypatch.setattr(
+            cli_context, "StreamingAgentClient", MockStreamingAgentClient
+        )
+        monkeypatch.setattr(
+            cli_context, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
+        )
 
         args = argparse.Namespace(
             command="dx",
@@ -84,7 +98,7 @@ class TestDXCLIList:
             status=None,
             format="json",
         )
-        exit_code = cli_main_module.cmd_dx(args)
+        exit_code = cli_dx.cmd_dx(args)
         captured = capsys.readouterr()
         assert exit_code == 0
         obj = json.loads(captured.out.strip())
@@ -92,7 +106,6 @@ class TestDXCLIList:
         assert obj["event"] == "dx.discovered"
 
     def test_dx_list_passes_client_session_id(self, monkeypatch, capsys):
-        cli_main_module = sys.modules["peeka.cli.main"]
         captured_command = {}
 
         class MockStreamingAgentClient:
@@ -109,8 +122,12 @@ class TestDXCLIList:
             def disconnect(self):
                 pass
 
-        monkeypatch.setattr(cli_main_module, "StreamingAgentClient", MockStreamingAgentClient)
-        monkeypatch.setattr(cli_main_module, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234))
+        monkeypatch.setattr(
+            cli_context, "StreamingAgentClient", MockStreamingAgentClient
+        )
+        monkeypatch.setattr(
+            cli_context, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
+        )
 
         args = argparse.Namespace(
             command="dx",
@@ -120,15 +137,13 @@ class TestDXCLIList:
             status=None,
             format="json",
         )
-        _ = cli_main_module.cmd_dx(args)
+        _ = cli_dx.cmd_dx(args)
         _ = capsys.readouterr()
         assert captured_command["client_session_id"] == "client_1"
 
 
 class TestDXCLIAddSummaryExportClose:
     def test_dx_add_validates_payload_json(self, monkeypatch, capsys):
-        cli_main_module = sys.modules["peeka.cli.main"]
-
         class MockStreamingAgentClient:
             def __init__(self, socket_path):
                 self.socket_path = socket_path
@@ -139,8 +154,12 @@ class TestDXCLIAddSummaryExportClose:
             def disconnect(self):
                 pass
 
-        monkeypatch.setattr(cli_main_module, "StreamingAgentClient", MockStreamingAgentClient)
-        monkeypatch.setattr(cli_main_module, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234))
+        monkeypatch.setattr(
+            cli_context, "StreamingAgentClient", MockStreamingAgentClient
+        )
+        monkeypatch.setattr(
+            cli_context, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
+        )
 
         args = argparse.Namespace(
             command="dx",
@@ -153,14 +172,12 @@ class TestDXCLIAddSummaryExportClose:
             object_ref_id=None,
             format="json",
         )
-        exit_code = cli_main_module.cmd_dx(args)
+        exit_code = cli_dx.cmd_dx(args)
         captured = capsys.readouterr()
         assert exit_code == 2
         assert json.loads(captured.out.strip())["error_code"] == "DX_CASE_INVALID"
 
     def test_dx_summary_and_export(self, monkeypatch, capsys):
-        cli_main_module = sys.modules["peeka.cli.main"]
-
         class MockStreamingAgentClient:
             def __init__(self, socket_path):
                 self.socket_path = socket_path
@@ -190,24 +207,34 @@ class TestDXCLIAddSummaryExportClose:
             def disconnect(self):
                 pass
 
-        monkeypatch.setattr(cli_main_module, "StreamingAgentClient", MockStreamingAgentClient)
-        monkeypatch.setattr(cli_main_module, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234))
+        monkeypatch.setattr(
+            cli_context, "StreamingAgentClient", MockStreamingAgentClient
+        )
+        monkeypatch.setattr(
+            cli_context, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
+        )
 
-        summary_args = argparse.Namespace(command="dx", dx_action="summary", dx_case="dx_a", format="json")
-        exit_code = cli_main_module.cmd_dx(summary_args)
+        summary_args = argparse.Namespace(
+            command="dx", dx_action="summary", dx_case="dx_a", format="json"
+        )
+        exit_code = cli_dx.cmd_dx(summary_args)
         captured = capsys.readouterr()
         assert exit_code == 0
         assert json.loads(captured.out.strip())["command"] == "dx.summary"
 
-        export_args = argparse.Namespace(command="dx", dx_action="export", dx_case="dx_a", output_path=None, format="json")
-        exit_code = cli_main_module.cmd_dx(export_args)
+        export_args = argparse.Namespace(
+            command="dx",
+            dx_action="export",
+            dx_case="dx_a",
+            output_path=None,
+            format="json",
+        )
+        exit_code = cli_dx.cmd_dx(export_args)
         captured = capsys.readouterr()
         assert exit_code == 0
         assert json.loads(captured.out.strip())["command"] == "dx.export"
 
     def test_dx_close_not_found_exit_2(self, monkeypatch, capsys):
-        cli_main_module = sys.modules["peeka.cli.main"]
-
         class MockStreamingAgentClient:
             def __init__(self, socket_path):
                 self.socket_path = socket_path
@@ -216,16 +243,26 @@ class TestDXCLIAddSummaryExportClose:
                 return {"status": "success"}
 
             def send_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
-                return {"status": "error", "error_code": "DX_CASE_NOT_FOUND", "message": "missing"}
+                return {
+                    "status": "error",
+                    "error_code": "DX_CASE_NOT_FOUND",
+                    "message": "missing",
+                }
 
             def disconnect(self):
                 pass
 
-        monkeypatch.setattr(cli_main_module, "StreamingAgentClient", MockStreamingAgentClient)
-        monkeypatch.setattr(cli_main_module, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234))
+        monkeypatch.setattr(
+            cli_context, "StreamingAgentClient", MockStreamingAgentClient
+        )
+        monkeypatch.setattr(
+            cli_context, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
+        )
 
-        args = argparse.Namespace(command="dx", dx_action="close", dx_case="dx_missing", format="json")
-        exit_code = cli_main_module.cmd_dx(args)
+        args = argparse.Namespace(
+            command="dx", dx_action="close", dx_case="dx_missing", format="json"
+        )
+        exit_code = cli_dx.cmd_dx(args)
         captured = capsys.readouterr()
         assert exit_code == 2
         assert json.loads(captured.out.strip())["error_code"] == "DX_CASE_NOT_FOUND"

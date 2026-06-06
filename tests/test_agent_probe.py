@@ -4,8 +4,11 @@ from typing import Generator
 
 import pytest
 
+from peeka.core import agent as agent_module
 from peeka.core import probes as probes_module
 from peeka.core.agent import PeekaAgent
+from peeka.core.jobs import JobRegistry
+from peeka.core.probes import ProbeContext
 from peeka.core.probes import ProbeRegistry
 
 
@@ -259,6 +262,75 @@ class TestAgentProbeEndpoints:
         refreshed = reset_probe_registry.get(probe.id)
         assert refreshed is not None
         assert refreshed.status == "stopped"
+
+    def test_probe_stop_stops_resources_and_completes_start_job(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        reset_probe_registry: ProbeRegistry,
+    ) -> None:
+        job_registry = JobRegistry()
+        monkeypatch.setattr(agent_module, "job_registry", job_registry)
+        monkeypatch.setattr(agent_module, "_client_registry", None)
+
+        agent = _new_agent("test-probe-stop-resources")
+        target_id = f"target_{agent.session_id[:8]}"
+        client_registry = agent_module._get_client_registry()
+        client = client_registry.create(target_id, "cli")
+        start_job = job_registry.create(
+            target_id=target_id,
+            client_session_id=client.client_session_id,
+            command_type="watch",
+            action="start",
+            category="probe",
+        )
+        job_registry.set_status(start_job.id, "running")
+        job_registry.set_status(start_job.id, "streaming")
+        client_registry.set_foreground_job(client.client_session_id, start_job.id)
+
+        probe_context = ProbeContext(
+            reset_probe_registry,
+            target_id=target_id,
+            client_session_id=client.client_session_id,
+            job_id=start_job.id,
+            type="watch",
+            pattern="module.func",
+            config={},
+        )
+        probe_context.__enter__()
+        assert probe_context.probe_id is not None
+        agent.track_probe_context("watch_123", probe_context, "watch")
+
+        handler = agent._get_handler("watch")
+        assert handler is not None
+        stop_commands = []
+
+        def stop_watch(command):
+            stop_commands.append(dict(command))
+            agent.stop_probe_context(command["watch_id"])
+            return {"status": "success", "watch_id": command["watch_id"]}
+
+        monkeypatch.setattr(handler, "execute", stop_watch)
+
+        result = agent._execute_command(
+            {
+                "type": "probe",
+                "action": "stop",
+                "probe_id": probe_context.probe_id,
+            }
+        )
+
+        refreshed_probe = reset_probe_registry.get(probe_context.probe_id)
+        refreshed_job = job_registry.get(start_job.id)
+        refreshed_client = client_registry.get(client.client_session_id)
+
+        assert result["status"] == "success"
+        assert stop_commands == [{"action": "stop", "watch_id": "watch_123"}]
+        assert refreshed_probe is not None
+        assert refreshed_probe.status == "stopped"
+        assert refreshed_job is not None
+        assert refreshed_job.status == "completed"
+        assert refreshed_client is not None
+        assert refreshed_client.foreground_job_id is None
 
     def test_probe_stop_unknown_returns_PROBE_NOT_FOUND(self) -> None:
         agent = _new_agent("test-probe-stop-unknown")
