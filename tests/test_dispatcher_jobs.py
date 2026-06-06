@@ -57,6 +57,38 @@ class TestDispatcherJobs:
         assert job.status == "streaming"
         assert job.result_summary == {"x": 1}
 
+    def test_probe_stop_action_completes_job_and_clears_foreground(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        agent = PeekaAgent(session_id="test-dispatch-trace-stop", attached_pid=12345)
+        client_registry = agent_module._get_client_registry()
+        client = client_registry.create(agent._target_id_for_jobs(), "cli")
+        handler = agent._get_handler("trace")
+        assert handler is not None
+
+        def succeed(command: Dict[str, Any]) -> Dict[str, Any]:
+            assert command["action"] == "stop"
+            return {"status": "success", "watch_id": "trace_123"}
+
+        monkeypatch.setattr(handler, "execute", succeed)
+
+        result = agent._execute_command(
+            {
+                "type": "trace",
+                "action": "stop",
+                "watch_id": "trace_123",
+                "client_session_id": client.client_session_id,
+            }
+        )
+
+        refreshed_client = client_registry.get(client.client_session_id)
+        job = agent_module.job_registry.get(result["job_id"])
+        assert result["status"] == "success"
+        assert job is not None
+        assert job.status == "completed"
+        assert refreshed_client is not None
+        assert refreshed_client.foreground_job_id is None
+
     def test_failed_command_records_last_error(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

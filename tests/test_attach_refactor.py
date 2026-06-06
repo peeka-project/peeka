@@ -2,7 +2,6 @@
 Unit tests for attach.py RTLD constants and injector utility functions.
 """
 
-import importlib
 import json
 import logging
 from types import SimpleNamespace
@@ -10,12 +9,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from peeka.cli.handlers import attach as cli_attach
 from peeka.core import attach
 from peeka.core import agent as agent_module
 from peeka.core.agent import PeekaAgent, _init_agent
 from peeka.core.attach import ProcessAttacher
-
-cli_main = importlib.import_module("peeka.cli.main")
 
 
 class TestRTLDConstants:
@@ -116,6 +114,7 @@ class TestHasInjector:
         """Test that _has_injector returns True when extension exists."""
         import sys
         import types
+
         fake_module = types.ModuleType("peeka.core._inject")
         with patch.dict(sys.modules, {"peeka.core._inject": fake_module}):
             result = attach._has_injector()
@@ -124,6 +123,7 @@ class TestHasInjector:
     def test_returns_false_when_injector_missing(self):
         """Test that _has_injector returns False when extension is missing."""
         import sys
+
         with patch.dict(sys.modules, {"peeka.core._inject": None}):
             result = attach._has_injector()
             assert result is False
@@ -131,12 +131,11 @@ class TestHasInjector:
     def test_calls_find_injector_path(self):
         import sys
         import types
+
         fake_module = types.ModuleType("peeka.core._inject")
         with patch.dict(sys.modules, {"peeka.core._inject": fake_module}):
             result = attach._has_injector()
             assert result is True
-
-
 
     def test_attach_internal_saves_last_error_on_exception(self, monkeypatch):
         """Verify that exceptions in _attach_internal are saved to _last_attach_error."""
@@ -186,9 +185,7 @@ class TestAttachProgressEvents:
         def fail_existing_check():
             raise RuntimeError("Mocked attach failure")
 
-        monkeypatch.setattr(
-            attacher, "_check_existing_attachment", fail_existing_check
-        )
+        monkeypatch.setattr(attacher, "_check_existing_attachment", fail_existing_check)
 
         assert attacher._attach_internal() is False
 
@@ -222,9 +219,7 @@ class TestAttachFallbackDispatch:
         attacher = ProcessAttacher(12345)
         with patch("peeka.core.attach._has_injector", return_value=True), patch(
             "platform.system", return_value="Linux"
-        ), patch.object(
-            attacher, "_inject_via_gdb", return_value=True
-        ) as mock_gdb:
+        ), patch.object(attacher, "_inject_via_gdb", return_value=True) as mock_gdb:
             assert attacher._attach_fallback() is True
             mock_gdb.assert_called_once_with()
 
@@ -240,9 +235,7 @@ class TestAttachFallbackDispatch:
             attacher, "_check_existing_attachment", return_value=None
         ), patch.object(
             attacher, "_get_target_python_version", return_value=(3, 12)
-        ), patch.object(
-            attacher, "_check_python_version_match"
-        ), patch.object(
+        ), patch.object(attacher, "_check_python_version_match"), patch.object(
             attacher, "_attach_fallback", return_value=False
         ):
             assert attacher._attach_internal() is False
@@ -298,9 +291,7 @@ class TestAttachFallbackDispatch:
             "platform.system", return_value="Darwin"
         ), patch.object(
             attacher, "_inject_via_lldb", return_value=True
-        ) as mock_lldb, patch.object(
-            attacher, "_inject_via_gdb"
-        ) as mock_gdb:
+        ) as mock_lldb, patch.object(attacher, "_inject_via_gdb") as mock_gdb:
             assert attacher._attach_fallback() is True
             mock_lldb.assert_called_once_with()
             mock_gdb.assert_not_called()
@@ -418,14 +409,14 @@ class TestAttachProgress:
             propagate_inside = attach.logger.propagate
 
         # Verify state inside was False
-        assert (
-            propagate_inside is False
-        ), "logger.propagate should be False inside _capture_attach_diagnostics"
+        assert propagate_inside is False, (
+            "logger.propagate should be False inside _capture_attach_diagnostics"
+        )
 
         # Verify state was restored outside the with-block
-        assert (
-            attach.logger.propagate == original_propagate
-        ), "logger.propagate should be restored to original state after _capture_attach_diagnostics"
+        assert attach.logger.propagate == original_propagate, (
+            "logger.propagate should be restored to original state after _capture_attach_diagnostics"
+        )
 
     def test_capture_diag_preserves_debug_capture(self):
         """Verify logger.setLevel(DEBUG) is preserved (DEBUG events still captured)."""
@@ -468,7 +459,9 @@ class TestAttachProgress:
         check_events = [e for e in events if e.phase == "check_existing_session"]
 
         # Verify we got one running and one done
-        assert len(check_events) == 2, f"Expected 2 events, got {len(check_events)}: {check_events}"
+        assert len(check_events) == 2, (
+            f"Expected 2 events, got {len(check_events)}: {check_events}"
+        )
         assert check_events[0].status == "running", "First event should be running"
         assert check_events[1].status == "done", "Second event should be done"
 
@@ -552,9 +545,9 @@ class TestAttachProgress:
         ]
 
         # Assert exactly one terminal event, not two
-        assert (
-            len(terminal_events) == 1
-        ), f"Expected 1 terminal event, got {len(terminal_events)}: {[e.to_dict() for e in terminal_events]}"
+        assert len(terminal_events) == 1, (
+            f"Expected 1 terminal event, got {len(terminal_events)}: {[e.to_dict() for e in terminal_events]}"
+        )
         assert terminal_events[0].status in ("done", "failed")
 
     def test_progress_events_capped_at_256(self):
@@ -665,15 +658,13 @@ class TestAttachOutputIsolation:
         mock_attacher.attach.return_value = False
 
         with patch.object(
-            cli_main, "ProcessAttacher", return_value=mock_attacher
-        ) as mock_attacher_cls, patch.object(cli_main.OutputFormatter, "status"), patch.object(
-            cli_main.OutputFormatter, "error"
-        ):
-            cli_main.cmd_attach(SimpleNamespace(pid=12345))
+            cli_attach, "ProcessAttacher", return_value=mock_attacher
+        ) as mock_attacher_cls, patch.object(
+            cli_attach.OutputFormatter, "status"
+        ), patch.object(cli_attach.OutputFormatter, "error"):
+            cli_attach.cmd_attach(SimpleNamespace(pid=12345))
 
-        mock_attacher_cls.assert_called_once_with(
-            12345, suppress_startup_messages=True
-        )
+        mock_attacher_cls.assert_called_once_with(12345, suppress_startup_messages=True)
 
     def test_agent_handler_import_failures_do_not_print_tracebacks(self):
         agent = PeekaAgent("session-1")
@@ -687,7 +678,9 @@ class TestAttachOutputIsolation:
         mock_print_exc.assert_not_called()
 
     def test_init_agent_failures_write_session_log_without_stdio(self):
-        with patch("peeka.core.agent.PeekaAgent.start", side_effect=RuntimeError("boom")), patch(
+        with patch(
+            "peeka.core.agent.PeekaAgent.start", side_effect=RuntimeError("boom")
+        ), patch(
             "peeka.core.agent._write_session_log"
         ) as mock_write_session_log, patch("builtins.print") as mock_print, patch(
             "traceback.print_exc"
@@ -728,7 +721,9 @@ class TestAgentCodeSideChannel:
         received = []
 
         def client():
-            with socket.create_connection(("127.0.0.1", attacher._notify_server.getsockname()[1])) as sock:
+            with socket.create_connection(
+                ("127.0.0.1", attacher._notify_server.getsockname()[1])
+            ) as sock:
                 data = b""
                 while True:
                     chunk = sock.recv(4096)
@@ -755,7 +750,9 @@ class TestAgentCodeSideChannel:
         attacher._create_notify_server()
 
         def client():
-            with socket.create_connection(("127.0.0.1", attacher._notify_server.getsockname()[1])) as sock:
+            with socket.create_connection(
+                ("127.0.0.1", attacher._notify_server.getsockname()[1])
+            ) as sock:
                 while sock.recv(4096):
                     pass
                 sock.sendall(b"SyntaxError: invalid non-printable character")
@@ -770,7 +767,9 @@ class TestAgentCodeSideChannel:
             attacher._close_notify_server()
 
         mock_warning.assert_called_once()
-        assert "Injector reported agent bootstrap error" in mock_warning.call_args.args[0]
+        assert (
+            "Injector reported agent bootstrap error" in mock_warning.call_args.args[0]
+        )
 
 
 class TestGDBSymbolErrors:

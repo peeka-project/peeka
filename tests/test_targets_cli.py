@@ -5,13 +5,11 @@ import sys
 from typing import Any
 from typing import Dict
 
-import peeka.cli.main  # noqa: F401
+from peeka.cli.handlers import targets as cli_targets
 
 
 class TestTargetCLIList:
     def test_target_list_json_jsonl(self, monkeypatch, capsys):
-        cli_main_module = sys.modules["peeka.cli.main"]
-
         targets_data = [
             {
                 "target_id": "target_12345678",
@@ -80,15 +78,11 @@ class TestTargetCLIList:
 
         mock_targets = [MockTarget(data) for data in targets_data]
 
-        monkeypatch.setattr(
-            cli_main_module, "discover_targets", lambda: mock_targets
-        )
+        monkeypatch.setattr(cli_targets, "discover_targets", lambda: mock_targets)
 
-        args = argparse.Namespace(
-            command="target", target_action="list", format="json"
-        )
+        args = argparse.Namespace(command="target", target_action="list", format="json")
 
-        exit_code = cli_main_module.cmd_target(args)
+        exit_code = cli_targets.cmd_target(args)
         captured = capsys.readouterr()
 
         assert exit_code == 0
@@ -107,16 +101,13 @@ class TestTargetCLIList:
 
 class TestTargetCLICurrent:
     def test_current_zero_alive_exits_1(self, monkeypatch, capsys):
-
-        cli_main_module = sys.modules["peeka.cli.main"]
-
-        monkeypatch.setattr(cli_main_module, "discover_targets", lambda: [])
+        monkeypatch.setattr(cli_targets, "discover_targets", lambda: [])
 
         args = argparse.Namespace(
             command="target", target_action="current", format="json"
         )
 
-        exit_code = cli_main_module.cmd_target(args)
+        exit_code = cli_targets.cmd_target(args)
         captured = capsys.readouterr()
 
         assert exit_code == 1
@@ -126,9 +117,6 @@ class TestTargetCLICurrent:
         assert obj["error_code"] == "TARGET_NOT_FOUND"
 
     def test_current_one_alive_exits_0(self, monkeypatch, capsys):
-
-        cli_main_module = sys.modules["peeka.cli.main"]
-
         target_data = {
             "target_id": "target_12345678",
             "legacy_session_id": "12345678-1234-1234-1234-123456789012",
@@ -178,13 +166,13 @@ class TestTargetCLICurrent:
 
         mock_target = MockTarget(target_data)
 
-        monkeypatch.setattr(cli_main_module, "discover_targets", lambda: [mock_target])
+        monkeypatch.setattr(cli_targets, "discover_targets", lambda: [mock_target])
 
         args = argparse.Namespace(
             command="target", target_action="current", format="json"
         )
 
-        exit_code = cli_main_module.cmd_target(args)
+        exit_code = cli_targets.cmd_target(args)
         captured = capsys.readouterr()
 
         assert exit_code == 0
@@ -194,9 +182,6 @@ class TestTargetCLICurrent:
         assert obj["data"]["target_id"] == "target_12345678"
 
     def test_current_ambiguous_exits_2(self, monkeypatch, capsys):
-
-        cli_main_module = sys.modules["peeka.cli.main"]
-
         targets_data = [
             {
                 "target_id": "target_12345678",
@@ -265,13 +250,13 @@ class TestTargetCLICurrent:
 
         mock_targets = [MockTarget(data) for data in targets_data]
 
-        monkeypatch.setattr(cli_main_module, "discover_targets", lambda: mock_targets)
+        monkeypatch.setattr(cli_targets, "discover_targets", lambda: mock_targets)
 
         args = argparse.Namespace(
             command="target", target_action="current", format="json"
         )
 
-        exit_code = cli_main_module.cmd_target(args)
+        exit_code = cli_targets.cmd_target(args)
         captured = capsys.readouterr()
 
         assert exit_code == 2
@@ -284,9 +269,6 @@ class TestTargetCLICurrent:
 
 class TestTargetCLIDetach:
     def test_detach_alive_without_force_exits_2(self, monkeypatch, capsys):
-
-        cli_main_module = sys.modules["peeka.cli.main"]
-
         def mock_detach_target(target_id: str, force: bool = False) -> Dict[str, Any]:
             if not force:
                 return {
@@ -296,7 +278,7 @@ class TestTargetCLIDetach:
                 }
             return {"ok": True, "target_id": target_id}
 
-        monkeypatch.setattr(cli_main_module, "detach_target", mock_detach_target)
+        monkeypatch.setattr(cli_targets, "detach_target", mock_detach_target)
 
         args = argparse.Namespace(
             command="target",
@@ -306,7 +288,7 @@ class TestTargetCLIDetach:
             format="json",
         )
 
-        exit_code = cli_main_module.cmd_target(args)
+        exit_code = cli_targets.cmd_target(args)
         captured = capsys.readouterr()
 
         assert exit_code == 2
@@ -318,15 +300,16 @@ class TestTargetCLIDetach:
 
 class TestTargetCLICleanup:
     def test_cleanup_dry_run_no_unlink(self, monkeypatch, capsys):
-
-        cli_main_module = sys.modules["peeka.cli.main"]
-
-        def mock_cleanup_stale_targets(dry_run: bool = False, target_id: str = None) -> Dict[str, Any]:
+        def mock_cleanup_stale_targets(
+            dry_run: bool = False, target_id: str = None
+        ) -> Dict[str, Any]:
             if dry_run:
                 return {"removed": ["target_12345678"], "skipped": [], "errors": []}
             return {"removed": [], "skipped": [], "errors": []}
 
-        monkeypatch.setattr(cli_main_module, "cleanup_stale_targets", mock_cleanup_stale_targets)
+        monkeypatch.setattr(
+            cli_targets, "cleanup_stale_targets", mock_cleanup_stale_targets
+        )
 
         args = argparse.Namespace(
             command="target",
@@ -337,7 +320,7 @@ class TestTargetCLICleanup:
             format="json",
         )
 
-        exit_code = cli_main_module.cmd_target(args)
+        exit_code = cli_targets.cmd_target(args)
         captured = capsys.readouterr()
 
         assert exit_code == 0
@@ -347,15 +330,16 @@ class TestTargetCLICleanup:
         assert obj["data"]["removed"] == ["target_12345678"]
 
     def test_cleanup_target_flag(self, monkeypatch, capsys):
-
-        cli_main_module = sys.modules["peeka.cli.main"]
-
-        def mock_cleanup_stale_targets(dry_run: bool = False, target_id: str = None) -> Dict[str, Any]:
+        def mock_cleanup_stale_targets(
+            dry_run: bool = False, target_id: str = None
+        ) -> Dict[str, Any]:
             if target_id == "target_12345678":
                 return {"removed": ["target_12345678"], "skipped": [], "errors": []}
             return {"removed": [], "skipped": [], "errors": []}
 
-        monkeypatch.setattr(cli_main_module, "cleanup_stale_targets", mock_cleanup_stale_targets)
+        monkeypatch.setattr(
+            cli_targets, "cleanup_stale_targets", mock_cleanup_stale_targets
+        )
 
         args = argparse.Namespace(
             command="target",
@@ -366,7 +350,7 @@ class TestTargetCLICleanup:
             format="json",
         )
 
-        exit_code = cli_main_module.cmd_target(args)
+        exit_code = cli_targets.cmd_target(args)
         captured = capsys.readouterr()
 
         assert exit_code == 0

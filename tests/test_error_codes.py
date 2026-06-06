@@ -64,6 +64,7 @@ class TestKnownErrorCodes:
         "PROBE_NOT_FOUND",
         "TARGET_NOT_FOUND",
         "TARGET_AMBIGUOUS",
+        "TARGET_STALE",
         "UNSUPPORTED_CAPABILITY",
         "AGENT_UNREACHABLE",
         "TRANSPORT_ERROR",

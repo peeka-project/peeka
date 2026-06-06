@@ -1,16 +1,14 @@
 import argparse
 import json
-import sys
 from typing import Any
 from typing import Dict
 
-import peeka.cli.main  # noqa: F401
+from peeka.cli import context as cli_context
+from peeka.cli.handlers import probes as cli_probes
 
 
 class TestProbeCLIList:
     def test_probe_list_parses_filters(self, monkeypatch, capsys):
-        cli_main_module = sys.modules["peeka.cli.main"]
-
         class MockStreamingAgentClient:
             def __init__(self, socket_path):
                 self.socket_path = socket_path
@@ -44,10 +42,10 @@ class TestProbeCLIList:
                 pass
 
         monkeypatch.setattr(
-            cli_main_module, "StreamingAgentClient", MockStreamingAgentClient
+            cli_context, "StreamingAgentClient", MockStreamingAgentClient
         )
         monkeypatch.setattr(
-            cli_main_module, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
+            cli_context, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
         )
 
         args = argparse.Namespace(
@@ -59,7 +57,7 @@ class TestProbeCLIList:
             format="table",
         )
 
-        exit_code = cli_main_module.cmd_probe(args)
+        exit_code = cli_probes.cmd_probe(args)
         captured = capsys.readouterr()
 
         assert exit_code == 0
@@ -70,8 +68,6 @@ class TestProbeCLIList:
 
 class TestProbeCLIStatus:
     def test_probe_status_requires_probe_id(self, monkeypatch, capsys):
-        cli_main_module = sys.modules["peeka.cli.main"]
-
         class MockStreamingAgentClient:
             def __init__(self, socket_path):
                 self.socket_path = socket_path
@@ -99,10 +95,10 @@ class TestProbeCLIStatus:
                 pass
 
         monkeypatch.setattr(
-            cli_main_module, "StreamingAgentClient", MockStreamingAgentClient
+            cli_context, "StreamingAgentClient", MockStreamingAgentClient
         )
         monkeypatch.setattr(
-            cli_main_module, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
+            cli_context, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
         )
 
         args = argparse.Namespace(
@@ -112,7 +108,7 @@ class TestProbeCLIStatus:
             format="table",
         )
 
-        exit_code = cli_main_module.cmd_probe(args)
+        exit_code = cli_probes.cmd_probe(args)
         captured = capsys.readouterr()
 
         assert exit_code == 0
@@ -122,8 +118,6 @@ class TestProbeCLIStatus:
 
 class TestProbeCLIInspect:
     def test_probe_inspect_events_limit_default_100(self, monkeypatch, capsys):
-        cli_main_module = sys.modules["peeka.cli.main"]
-
         class MockStreamingAgentClient:
             def __init__(self, socket_path):
                 self.socket_path = socket_path
@@ -148,10 +142,10 @@ class TestProbeCLIInspect:
                 pass
 
         monkeypatch.setattr(
-            cli_main_module, "StreamingAgentClient", MockStreamingAgentClient
+            cli_context, "StreamingAgentClient", MockStreamingAgentClient
         )
         monkeypatch.setattr(
-            cli_main_module, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
+            cli_context, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
         )
 
         args = argparse.Namespace(
@@ -162,12 +156,10 @@ class TestProbeCLIInspect:
             format="table",
         )
 
-        exit_code = cli_main_module.cmd_probe(args)
+        exit_code = cli_probes.cmd_probe(args)
         assert exit_code == 0
 
     def test_probe_inspect_events_limit_custom(self, monkeypatch, capsys):
-        cli_main_module = sys.modules["peeka.cli.main"]
-
         class MockStreamingAgentClient:
             def __init__(self, socket_path):
                 self.socket_path = socket_path
@@ -197,10 +189,12 @@ class TestProbeCLIInspect:
                 pass
 
         monkeypatch.setattr(
-            cli_main_module, "StreamingAgentClient", MockStreamingAgentClient
+            cli_context, "StreamingAgentClient", MockStreamingAgentClient
         )
         monkeypatch.setattr(
-            cli_main_module, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
+            cli_context,
+            "_check_agent_attached",
+            lambda: ("/tmp/peeka_alpha.sock", 1234),
         )
 
         args = argparse.Namespace(
@@ -211,7 +205,7 @@ class TestProbeCLIInspect:
             format="json",
         )
 
-        exit_code = cli_main_module.cmd_probe(args)
+        exit_code = cli_probes.cmd_probe(args)
         captured = capsys.readouterr()
 
         assert exit_code == 0
@@ -226,8 +220,6 @@ class TestProbeCLIInspect:
 
 class TestProbeCLIStop:
     def test_probe_stop_invokes_correct_cmd_type(self, monkeypatch, capsys):
-        cli_main_module = sys.modules["peeka.cli.main"]
-
         class MockStreamingAgentClient:
             def __init__(self, socket_path):
                 self.socket_path = socket_path
@@ -251,10 +243,10 @@ class TestProbeCLIStop:
                 pass
 
         monkeypatch.setattr(
-            cli_main_module, "StreamingAgentClient", MockStreamingAgentClient
+            cli_context, "StreamingAgentClient", MockStreamingAgentClient
         )
         monkeypatch.setattr(
-            cli_main_module, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
+            cli_context, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
         )
 
         args = argparse.Namespace(
@@ -264,14 +256,12 @@ class TestProbeCLIStop:
             format="table",
         )
 
-        exit_code = cli_main_module.cmd_probe(args)
+        exit_code = cli_probes.cmd_probe(args)
         assert exit_code == 0
 
 
 class TestProbeCLICleanup:
     def test_probe_cleanup_parses_duration(self, monkeypatch, capsys):
-        cli_main_module = sys.modules["peeka.cli.main"]
-
         class MockStreamingAgentClient:
             def __init__(self, socket_path):
                 self.socket_path = socket_path
@@ -294,10 +284,12 @@ class TestProbeCLICleanup:
                 pass
 
         monkeypatch.setattr(
-            cli_main_module, "StreamingAgentClient", MockStreamingAgentClient
+            cli_context, "StreamingAgentClient", MockStreamingAgentClient
         )
         monkeypatch.setattr(
-            cli_main_module, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
+            cli_context,
+            "_check_agent_attached",
+            lambda: ("/tmp/peeka_alpha.sock", 1234),
         )
 
         args = argparse.Namespace(
@@ -309,16 +301,16 @@ class TestProbeCLICleanup:
             format="table",
         )
 
-        exit_code = cli_main_module.cmd_probe(args)
+        exit_code = cli_probes.cmd_probe(args)
         captured = capsys.readouterr()
 
         assert exit_code == 0
         output = captured.err + captured.out
         assert "Removed 2 probe(s)" in output
 
-    def test_probe_cleanup_all_flag_sends_completed_only_false(self, monkeypatch, capsys):
-        cli_main_module = sys.modules["peeka.cli.main"]
-
+    def test_probe_cleanup_all_flag_sends_completed_only_false(
+        self, monkeypatch, capsys
+    ):
         class MockStreamingAgentClient:
             def __init__(self, socket_path):
                 self.socket_path = socket_path
@@ -337,10 +329,10 @@ class TestProbeCLICleanup:
                 pass
 
         monkeypatch.setattr(
-            cli_main_module, "StreamingAgentClient", MockStreamingAgentClient
+            cli_context, "StreamingAgentClient", MockStreamingAgentClient
         )
         monkeypatch.setattr(
-            cli_main_module, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
+            cli_context, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
         )
 
         args = argparse.Namespace(
@@ -352,15 +344,13 @@ class TestProbeCLICleanup:
             format="json",
         )
 
-        exit_code = cli_main_module.cmd_probe(args)
+        exit_code = cli_probes.cmd_probe(args)
 
         assert exit_code == 0
 
 
 class TestProbeFormatFlag:
     def test_format_flag_choices(self, monkeypatch, capsys):
-        cli_main_module = sys.modules["peeka.cli.main"]
-
         class MockStreamingAgentClient:
             def __init__(self, socket_path):
                 self.socket_path = socket_path
@@ -378,10 +368,10 @@ class TestProbeFormatFlag:
                 pass
 
         monkeypatch.setattr(
-            cli_main_module, "StreamingAgentClient", MockStreamingAgentClient
+            cli_context, "StreamingAgentClient", MockStreamingAgentClient
         )
         monkeypatch.setattr(
-            cli_main_module, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
+            cli_context, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
         )
 
         args_table = argparse.Namespace(
@@ -393,7 +383,7 @@ class TestProbeFormatFlag:
             format="table",
         )
 
-        exit_code = cli_main_module.cmd_probe(args_table)
+        exit_code = cli_probes.cmd_probe(args_table)
         assert exit_code == 0
 
         args_json = argparse.Namespace(
@@ -405,14 +395,12 @@ class TestProbeFormatFlag:
             format="json",
         )
 
-        exit_code = cli_main_module.cmd_probe(args_json)
+        exit_code = cli_probes.cmd_probe(args_json)
         assert exit_code == 0
 
 
 class TestProbeErrorHandling:
     def test_error_envelope_exit_code_1(self, monkeypatch, capsys):
-        cli_main_module = sys.modules["peeka.cli.main"]
-
         class MockStreamingAgentClient:
             def __init__(self, socket_path):
                 self.socket_path = socket_path
@@ -431,10 +419,10 @@ class TestProbeErrorHandling:
                 pass
 
         monkeypatch.setattr(
-            cli_main_module, "StreamingAgentClient", MockStreamingAgentClient
+            cli_context, "StreamingAgentClient", MockStreamingAgentClient
         )
         monkeypatch.setattr(
-            cli_main_module, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
+            cli_context, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
         )
 
         args = argparse.Namespace(
@@ -446,7 +434,7 @@ class TestProbeErrorHandling:
             format="json",
         )
 
-        exit_code = cli_main_module.cmd_probe(args)
+        exit_code = cli_probes.cmd_probe(args)
         captured = capsys.readouterr()
 
         assert exit_code == 1
@@ -458,8 +446,6 @@ class TestProbeErrorHandling:
         assert error_obj["error_code"] == "COMMAND_EXECUTION_ERROR"
 
     def test_probe_list_prefers_error_key(self, monkeypatch, capsys):
-        cli_main_module = sys.modules["peeka.cli.main"]
-
         class MockStreamingAgentClient:
             def __init__(self, socket_path):
                 self.socket_path = socket_path
@@ -479,10 +465,10 @@ class TestProbeErrorHandling:
                 pass
 
         monkeypatch.setattr(
-            cli_main_module, "StreamingAgentClient", MockStreamingAgentClient
+            cli_context, "StreamingAgentClient", MockStreamingAgentClient
         )
         monkeypatch.setattr(
-            cli_main_module, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
+            cli_context, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
         )
 
         args = argparse.Namespace(
@@ -494,7 +480,7 @@ class TestProbeErrorHandling:
             format="json",
         )
 
-        exit_code = cli_main_module.cmd_probe(args)
+        exit_code = cli_probes.cmd_probe(args)
         captured = capsys.readouterr()
 
         assert exit_code == 1
@@ -502,8 +488,6 @@ class TestProbeErrorHandling:
         assert error_obj["error"] == "No response received"
 
     def test_probe_stop_prefers_error_key_in_table_mode(self, monkeypatch, capsys):
-        cli_main_module = sys.modules["peeka.cli.main"]
-
         class MockStreamingAgentClient:
             def __init__(self, socket_path):
                 self.socket_path = socket_path
@@ -523,10 +507,10 @@ class TestProbeErrorHandling:
                 pass
 
         monkeypatch.setattr(
-            cli_main_module, "StreamingAgentClient", MockStreamingAgentClient
+            cli_context, "StreamingAgentClient", MockStreamingAgentClient
         )
         monkeypatch.setattr(
-            cli_main_module, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
+            cli_context, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
         )
 
         args = argparse.Namespace(
@@ -536,7 +520,7 @@ class TestProbeErrorHandling:
             format="table",
         )
 
-        exit_code = cli_main_module.cmd_probe(args)
+        exit_code = cli_probes.cmd_probe(args)
         captured = capsys.readouterr()
 
         assert exit_code == 1

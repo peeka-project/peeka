@@ -343,6 +343,59 @@ def test_get_target_returns_none_for_unknown(
         shutil.rmtree(socket_dir)
 
 
+def test_detach_alive_target_uses_supported_rpc_and_unlinks_on_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = _build_target()
+    monkeypatch.setattr(targets, "SOCKET_DIR", tmp_path)
+    monkeypatch.setattr(targets, "get_target", lambda target_id: target)
+
+    for path in targets._target_related_paths(target.legacy_session_id):
+        _ = path.write_text("marker", encoding="utf-8")
+
+    sent_commands = []
+
+    def fake_send(socket_path: str, command: Dict[str, Any]) -> Dict[str, Any]:
+        sent_commands.append((socket_path, command))
+        return {"status": "success"}
+
+    monkeypatch.setattr(targets, "_send_target_command", fake_send)
+
+    result = targets.detach_target(target.target_id, force=True)
+
+    assert result["ok"] is True
+    assert sent_commands == [(target.socket_path, {"type": "detach"})]
+    for path in targets._target_related_paths(target.legacy_session_id):
+        assert not path.exists()
+
+
+def test_detach_alive_target_keeps_files_when_rpc_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = _build_target()
+    monkeypatch.setattr(targets, "SOCKET_DIR", tmp_path)
+    monkeypatch.setattr(targets, "get_target", lambda target_id: target)
+
+    for path in targets._target_related_paths(target.legacy_session_id):
+        _ = path.write_text("marker", encoding="utf-8")
+
+    def fake_send(socket_path: str, command: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "status": "error",
+            "error_code": "COMMAND_NOT_FOUND",
+            "message": "unsupported",
+        }
+
+    monkeypatch.setattr(targets, "_send_target_command", fake_send)
+
+    result = targets.detach_target(target.target_id, force=True)
+
+    assert result["ok"] is False
+    assert result["error_code"] == "AGENT_UNREACHABLE"
+    for path in targets._target_related_paths(target.legacy_session_id):
+        assert path.exists()
+
+
 def test_discover_deterministic_sort(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

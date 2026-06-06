@@ -6,7 +6,7 @@ import pytest
 from peeka.cli._client_helper import ephemeral_client
 
 
-cli_main = importlib.import_module("peeka.cli.main")
+observe_cli = importlib.import_module("peeka.cli.handlers.observe")
 
 
 class MockAgentClient:
@@ -26,7 +26,11 @@ class MockAgentClient:
             }
         if command.get("action") == "close":
             return {"status": "success", "data": {"closed": True}}
-        return {"status": "error", "error_code": "TRANSPORT_ERROR", "message": "Unknown action"}
+        return {
+            "status": "error",
+            "error_code": "TRANSPORT_ERROR",
+            "message": "Unknown action",
+        }
 
 
 class TestEphemeralClient:
@@ -49,7 +53,9 @@ class TestEphemeralClient:
         assert close_cmd["action"] == "close"
         assert close_cmd["client_session_id"] == "client_12345678"
 
-    def test_ephemeral_client_creates_owned_streaming_client_when_missing(self, monkeypatch):
+    def test_ephemeral_client_creates_owned_streaming_client_when_missing(
+        self, monkeypatch
+    ):
         class MockTarget:
             socket_path = "/tmp/peeka_owned.sock"
 
@@ -65,7 +71,10 @@ class TestEphemeralClient:
             def send_command(self, command):
                 self.commands_sent.append(command)
                 if command["action"] == "create":
-                    return {"status": "success", "data": {"client_session_id": "client_owned"}}
+                    return {
+                        "status": "success",
+                        "data": {"client_session_id": "client_owned"},
+                    }
                 return {"status": "success", "data": {"closed": True}}
 
             def disconnect(self):
@@ -78,8 +87,12 @@ class TestEphemeralClient:
             created_clients.append(client)
             return client
 
-        monkeypatch.setattr("peeka.cli._client_helper.get_target", lambda target_id: MockTarget())
-        monkeypatch.setattr("peeka.cli._client_helper.StreamingAgentClient", build_client)
+        monkeypatch.setattr(
+            "peeka.cli._client_helper.get_target", lambda target_id: MockTarget()
+        )
+        monkeypatch.setattr(
+            "peeka.cli._client_helper.StreamingAgentClient", build_client
+        )
 
         with ephemeral_client("target_abcdef12") as cid:
             assert cid == "client_owned"
@@ -162,7 +175,9 @@ class TestEphemeralClientErrorHandling:
                 return {"status": "success", "data": {"closed": True}}
 
         with pytest.raises(RuntimeError, match="No client_session_id"):
-            with ephemeral_client("target_abcdef12", agent_client=MissingIdAgentClient()):
+            with ephemeral_client(
+                "target_abcdef12", agent_client=MissingIdAgentClient()
+            ):
                 pass
 
 
@@ -215,9 +230,13 @@ class TestWatchTraceClientPropagation:
             def __exit__(self, exc_type, exc_val, exc_tb):
                 return False
 
-        monkeypatch.setattr(cli_main, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234))
-        monkeypatch.setattr(cli_main, "StreamingAgentClient", build_streaming_client)
-        monkeypatch.setattr(cli_main, "ephemeral_client", lambda target_id: MockContext())
+        monkeypatch.setattr(
+            observe_cli, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
+        )
+        monkeypatch.setattr(observe_cli, "StreamingAgentClient", build_streaming_client)
+        monkeypatch.setattr(
+            observe_cli, "ephemeral_client", lambda target_id: MockContext()
+        )
 
         args = argparse.Namespace(
             pattern="module.fn",
@@ -231,8 +250,11 @@ class TestWatchTraceClientPropagation:
             client=None,
         )
 
-        assert cli_main.cmd_watch(args) == 0
-        assert streaming_clients[0].commands_sent[0]["client_session_id"] == "client_ephemeral"
+        assert observe_cli.cmd_watch(args) == 0
+        assert (
+            streaming_clients[0].commands_sent[0]["client_session_id"]
+            == "client_ephemeral"
+        )
 
     def test_cmd_watch_uses_explicit_client_session_id(self, monkeypatch):
         streaming_clients = []
@@ -242,8 +264,10 @@ class TestWatchTraceClientPropagation:
             streaming_clients.append(client)
             return client
 
-        monkeypatch.setattr(cli_main, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234))
-        monkeypatch.setattr(cli_main, "StreamingAgentClient", build_streaming_client)
+        monkeypatch.setattr(
+            observe_cli, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
+        )
+        monkeypatch.setattr(observe_cli, "StreamingAgentClient", build_streaming_client)
 
         args = argparse.Namespace(
             pattern="module.fn",
@@ -257,8 +281,11 @@ class TestWatchTraceClientPropagation:
             client="client_existing",
         )
 
-        assert cli_main.cmd_watch(args) == 0
-        assert streaming_clients[0].commands_sent[0]["client_session_id"] == "client_existing"
+        assert observe_cli.cmd_watch(args) == 0
+        assert (
+            streaming_clients[0].commands_sent[0]["client_session_id"]
+            == "client_existing"
+        )
 
     def test_cmd_trace_uses_ephemeral_client_session_id(self, monkeypatch):
         streaming_clients = []
@@ -275,9 +302,13 @@ class TestWatchTraceClientPropagation:
             def __exit__(self, exc_type, exc_val, exc_tb):
                 return False
 
-        monkeypatch.setattr(cli_main, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234))
-        monkeypatch.setattr(cli_main, "StreamingAgentClient", build_streaming_client)
-        monkeypatch.setattr(cli_main, "ephemeral_client", lambda target_id: MockContext())
+        monkeypatch.setattr(
+            observe_cli, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
+        )
+        monkeypatch.setattr(observe_cli, "StreamingAgentClient", build_streaming_client)
+        monkeypatch.setattr(
+            observe_cli, "ephemeral_client", lambda target_id: MockContext()
+        )
 
         args = argparse.Namespace(
             pattern="module.fn",
@@ -289,5 +320,8 @@ class TestWatchTraceClientPropagation:
             client=None,
         )
 
-        assert cli_main.cmd_trace(args) == 0
-        assert streaming_clients[0].commands_sent[0]["client_session_id"] == "client_trace_ephemeral"
+        assert observe_cli.cmd_trace(args) == 0
+        assert (
+            streaming_clients[0].commands_sent[0]["client_session_id"]
+            == "client_trace_ephemeral"
+        )

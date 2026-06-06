@@ -1,16 +1,73 @@
 import argparse
 import json
-import sys
 from typing import Any
 from typing import Dict
 
-import peeka.cli.main  # noqa: F401
+from peeka.cli import context as cli_context
+from peeka.cli.handlers import clients as cli_clients
 
 
 class TestClientCLICreate:
-    def test_client_create_emits_json_envelope(self, monkeypatch, capsys):
-        cli_main_module = sys.modules["peeka.cli.main"]
+    def test_client_create_resolves_target_before_connecting(self, monkeypatch, capsys):
+        sockets = []
 
+        class Target:
+            target_id = "target_bbbbbbbb"
+            socket_path = "/tmp/peeka_bbbbbbbb.sock"
+            pid = 2222
+            state = "alive"
+
+        class MockStreamingAgentClient:
+            def __init__(self, socket_path):
+                sockets.append(socket_path)
+
+            def connect(self) -> Dict[str, Any]:
+                return {"status": "success"}
+
+            def send_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
+                assert command["target_id"] == "target_bbbbbbbb"
+                return {
+                    "status": "success",
+                    "data": {
+                        "client_session_id": "client_b",
+                        "target_id": "target_bbbbbbbb",
+                        "source": "cli",
+                    },
+                }
+
+            def disconnect(self):
+                pass
+
+        monkeypatch.setattr(
+            cli_context, "StreamingAgentClient", MockStreamingAgentClient
+        )
+        monkeypatch.setattr(
+            cli_context,
+            "get_target",
+            lambda target_id: Target() if target_id == "target_bbbbbbbb" else None,
+        )
+        monkeypatch.setattr(
+            cli_context,
+            "_check_agent_attached",
+            lambda: ("/tmp/peeka_aaaaaaaa.sock", 1111),
+        )
+
+        args = argparse.Namespace(
+            command="client",
+            client_action="create",
+            target="target_bbbbbbbb",
+            source="cli",
+            user=None,
+            format="json",
+        )
+
+        exit_code = cli_clients.cmd_client(args)
+        _ = capsys.readouterr()
+
+        assert exit_code == 0
+        assert sockets == ["/tmp/peeka_bbbbbbbb.sock"]
+
+    def test_client_create_emits_json_envelope(self, monkeypatch, capsys):
         class MockStreamingAgentClient:
             def __init__(self, socket_path):
                 self.socket_path = socket_path
@@ -43,10 +100,12 @@ class TestClientCLICreate:
                 pass
 
         monkeypatch.setattr(
-            cli_main_module, "StreamingAgentClient", MockStreamingAgentClient
+            cli_context, "StreamingAgentClient", MockStreamingAgentClient
         )
         monkeypatch.setattr(
-            cli_main_module, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
+            cli_context,
+            "_check_agent_attached",
+            lambda: ("/tmp/peeka_12345678.sock", 1234),
         )
 
         args = argparse.Namespace(
@@ -58,7 +117,7 @@ class TestClientCLICreate:
             format="json",
         )
 
-        exit_code = cli_main_module.cmd_client(args)
+        exit_code = cli_clients.cmd_client(args)
         captured = capsys.readouterr()
 
         assert exit_code == 0
@@ -72,8 +131,6 @@ class TestClientCLICreate:
 
 class TestClientCLIList:
     def test_client_list_filter_by_target(self, monkeypatch, capsys):
-        cli_main_module = sys.modules["peeka.cli.main"]
-
         class MockStreamingAgentClient:
             def __init__(self, socket_path):
                 self.socket_path = socket_path
@@ -119,10 +176,12 @@ class TestClientCLIList:
                 pass
 
         monkeypatch.setattr(
-            cli_main_module, "StreamingAgentClient", MockStreamingAgentClient
+            cli_context, "StreamingAgentClient", MockStreamingAgentClient
         )
         monkeypatch.setattr(
-            cli_main_module, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
+            cli_context,
+            "_check_agent_attached",
+            lambda: ("/tmp/peeka_12345678.sock", 1234),
         )
 
         args = argparse.Namespace(
@@ -132,7 +191,7 @@ class TestClientCLIList:
             format="json",
         )
 
-        exit_code = cli_main_module.cmd_client(args)
+        exit_code = cli_clients.cmd_client(args)
         captured = capsys.readouterr()
 
         assert exit_code == 0
@@ -149,8 +208,6 @@ class TestClientCLIList:
 
 class TestClientCLIStatus:
     def test_client_status_found(self, monkeypatch, capsys):
-        cli_main_module = sys.modules["peeka.cli.main"]
-
         class MockStreamingAgentClient:
             def __init__(self, socket_path):
                 self.socket_path = socket_path
@@ -181,10 +238,10 @@ class TestClientCLIStatus:
                 pass
 
         monkeypatch.setattr(
-            cli_main_module, "StreamingAgentClient", MockStreamingAgentClient
+            cli_context, "StreamingAgentClient", MockStreamingAgentClient
         )
         monkeypatch.setattr(
-            cli_main_module, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
+            cli_context, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
         )
 
         args = argparse.Namespace(
@@ -194,7 +251,7 @@ class TestClientCLIStatus:
             format="json",
         )
 
-        exit_code = cli_main_module.cmd_client(args)
+        exit_code = cli_clients.cmd_client(args)
         captured = capsys.readouterr()
 
         assert exit_code == 0
@@ -203,9 +260,9 @@ class TestClientCLIStatus:
         assert obj["command"] == "client.status"
         assert obj["data"]["client_session_id"] == "client_abcd1234"
 
-    def test_client_status_not_found_returns_CLIENT_NOT_FOUND_and_exits_2(self, monkeypatch, capsys):
-        cli_main_module = sys.modules["peeka.cli.main"]
-
+    def test_client_status_not_found_returns_CLIENT_NOT_FOUND_and_exits_2(
+        self, monkeypatch, capsys
+    ):
         class MockStreamingAgentClient:
             def __init__(self, socket_path):
                 self.socket_path = socket_path
@@ -226,10 +283,10 @@ class TestClientCLIStatus:
                 pass
 
         monkeypatch.setattr(
-            cli_main_module, "StreamingAgentClient", MockStreamingAgentClient
+            cli_context, "StreamingAgentClient", MockStreamingAgentClient
         )
         monkeypatch.setattr(
-            cli_main_module, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
+            cli_context, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
         )
 
         args = argparse.Namespace(
@@ -239,7 +296,7 @@ class TestClientCLIStatus:
             format="json",
         )
 
-        exit_code = cli_main_module.cmd_client(args)
+        exit_code = cli_clients.cmd_client(args)
         captured = capsys.readouterr()
 
         assert exit_code == 2
@@ -251,8 +308,6 @@ class TestClientCLIStatus:
 
 class TestClientCLIClose:
     def test_client_close_idempotent_exit_codes(self, monkeypatch, capsys):
-        cli_main_module = sys.modules["peeka.cli.main"]
-
         class MockStreamingAgentClientSuccess:
             def __init__(self, socket_path):
                 self.socket_path = socket_path
@@ -292,10 +347,10 @@ class TestClientCLIClose:
 
         # Test success case
         monkeypatch.setattr(
-            cli_main_module, "StreamingAgentClient", MockStreamingAgentClientSuccess
+            cli_context, "StreamingAgentClient", MockStreamingAgentClientSuccess
         )
         monkeypatch.setattr(
-            cli_main_module, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
+            cli_context, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
         )
 
         args = argparse.Namespace(
@@ -305,7 +360,7 @@ class TestClientCLIClose:
             format="json",
         )
 
-        exit_code = cli_main_module.cmd_client(args)
+        exit_code = cli_clients.cmd_client(args)
         captured = capsys.readouterr()
 
         assert exit_code == 0
@@ -315,10 +370,10 @@ class TestClientCLIClose:
 
         # Test not found case (should exit 2)
         monkeypatch.setattr(
-            cli_main_module, "StreamingAgentClient", MockStreamingAgentClientNotFound
+            cli_context, "StreamingAgentClient", MockStreamingAgentClientNotFound
         )
 
-        exit_code = cli_main_module.cmd_client(args)
+        exit_code = cli_clients.cmd_client(args)
         captured = capsys.readouterr()
 
         assert exit_code == 2

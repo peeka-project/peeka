@@ -34,6 +34,7 @@ EXPECTED_KEYS = [
     "result_summary",
     "last_error",
 ]
+SERIALIZED_EXPECTED_KEYS = EXPECTED_KEYS + ["next_valid_actions"]
 
 
 def _build_job(status: JobStatus = "created") -> CommandJob:
@@ -65,7 +66,7 @@ class TestCommandJob:
 
         serialized = to_dict(job)
 
-        assert list(serialized.keys()) == EXPECTED_KEYS
+        assert list(serialized.keys()) == SERIALIZED_EXPECTED_KEYS
         assert serialized["schema_version"] == JOB_SCHEMA_VERSION
         assert serialized["id"] == "job_deadbeefcafe"
         assert serialized["completed_at"] == 13.0

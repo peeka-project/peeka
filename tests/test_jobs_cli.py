@@ -1,16 +1,14 @@
 import argparse
 import json
-import sys
 from typing import Any
 from typing import Dict
 
-import peeka.cli.main  # noqa: F401
+from peeka.cli import context as cli_context
+from peeka.cli.handlers import jobs as cli_jobs
 
 
 class TestJobCLIList:
     def test_job_list_table_renders_columns(self, monkeypatch, capsys):
-        cli_main_module = sys.modules["peeka.cli.main"]
-
         class MockStreamingAgentClient:
             def __init__(self, socket_path):
                 self.socket_path = socket_path
@@ -53,10 +51,12 @@ class TestJobCLIList:
                 pass
 
         monkeypatch.setattr(
-            cli_main_module, "StreamingAgentClient", MockStreamingAgentClient
+            cli_context, "StreamingAgentClient", MockStreamingAgentClient
         )
         monkeypatch.setattr(
-            cli_main_module, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
+            cli_context,
+            "_check_agent_attached",
+            lambda: ("/tmp/peeka_12345678.sock", 1234),
         )
 
         args = argparse.Namespace(
@@ -68,7 +68,7 @@ class TestJobCLIList:
             format="table",
         )
 
-        exit_code = cli_main_module.cmd_job(args)
+        exit_code = cli_jobs.cmd_job(args)
         captured = capsys.readouterr()
 
         assert exit_code == 0
@@ -84,8 +84,6 @@ class TestJobCLIList:
         assert "job_def456" in output
 
     def test_job_list_json_format(self, monkeypatch, capsys):
-        cli_main_module = sys.modules["peeka.cli.main"]
-
         class MockStreamingAgentClient:
             def __init__(self, socket_path):
                 self.socket_path = socket_path
@@ -128,10 +126,12 @@ class TestJobCLIList:
                 pass
 
         monkeypatch.setattr(
-            cli_main_module, "StreamingAgentClient", MockStreamingAgentClient
+            cli_context, "StreamingAgentClient", MockStreamingAgentClient
         )
         monkeypatch.setattr(
-            cli_main_module, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
+            cli_context,
+            "_check_agent_attached",
+            lambda: ("/tmp/peeka_12345678.sock", 1234),
         )
 
         args = argparse.Namespace(
@@ -143,7 +143,7 @@ class TestJobCLIList:
             format="json",
         )
 
-        exit_code = cli_main_module.cmd_job(args)
+        exit_code = cli_jobs.cmd_job(args)
         captured = capsys.readouterr()
 
         assert exit_code == 0
@@ -159,8 +159,6 @@ class TestJobCLIList:
         assert "job_def456" in job_ids
 
     def test_job_list_filters_passed_through(self, monkeypatch, capsys):
-        cli_main_module = sys.modules["peeka.cli.main"]
-
         captured_command = {}
 
         class MockStreamingAgentClient:
@@ -181,10 +179,12 @@ class TestJobCLIList:
                 pass
 
         monkeypatch.setattr(
-            cli_main_module, "StreamingAgentClient", MockStreamingAgentClient
+            cli_context, "StreamingAgentClient", MockStreamingAgentClient
         )
         monkeypatch.setattr(
-            cli_main_module, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
+            cli_context,
+            "_check_agent_attached",
+            lambda: ("/tmp/peeka_12345678.sock", 1234),
         )
 
         args = argparse.Namespace(
@@ -196,7 +196,7 @@ class TestJobCLIList:
             format="table",
         )
 
-        exit_code = cli_main_module.cmd_job(args)
+        exit_code = cli_jobs.cmd_job(args)
         _ = capsys.readouterr()
 
         assert exit_code == 0
@@ -225,8 +225,6 @@ class TestJobCLIStatus:
 
 class TestJobCLIInterrupt:
     def test_job_interrupt_success(self, monkeypatch, capsys):
-        cli_main_module = sys.modules["peeka.cli.main"]
-
         class MockStreamingAgentClient:
             def __init__(self, socket_path):
                 self.socket_path = socket_path
@@ -250,10 +248,12 @@ class TestJobCLIInterrupt:
                 pass
 
         monkeypatch.setattr(
-            cli_main_module, "StreamingAgentClient", MockStreamingAgentClient
+            cli_context, "StreamingAgentClient", MockStreamingAgentClient
         )
         monkeypatch.setattr(
-            cli_main_module, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
+            cli_context,
+            "_check_agent_attached",
+            lambda: ("/tmp/peeka_12345678.sock", 1234),
         )
 
         args = argparse.Namespace(
@@ -263,7 +263,7 @@ class TestJobCLIInterrupt:
             format="table",
         )
 
-        exit_code = cli_main_module.cmd_job(args)
+        exit_code = cli_jobs.cmd_job(args)
         captured = capsys.readouterr()
 
         assert exit_code == 0
@@ -271,8 +271,6 @@ class TestJobCLIInterrupt:
         assert "interrupted" in captured.err
 
     def test_job_interrupt_unsupported_capability(self, monkeypatch, capsys):
-        cli_main_module = sys.modules["peeka.cli.main"]
-
         class MockStreamingAgentClient:
             def __init__(self, socket_path):
                 self.socket_path = socket_path
@@ -293,10 +291,12 @@ class TestJobCLIInterrupt:
                 pass
 
         monkeypatch.setattr(
-            cli_main_module, "StreamingAgentClient", MockStreamingAgentClient
+            cli_context, "StreamingAgentClient", MockStreamingAgentClient
         )
         monkeypatch.setattr(
-            cli_main_module, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
+            cli_context,
+            "_check_agent_attached",
+            lambda: ("/tmp/peeka_12345678.sock", 1234),
         )
 
         args = argparse.Namespace(
@@ -306,7 +306,7 @@ class TestJobCLIInterrupt:
             format="table",
         )
 
-        exit_code = cli_main_module.cmd_job(args)
+        exit_code = cli_jobs.cmd_job(args)
         captured = capsys.readouterr()
 
         assert exit_code == 2
@@ -315,8 +315,6 @@ class TestJobCLIInterrupt:
 
 class TestJobCLICleanup:
     def test_job_cleanup_default_older_than_is_10_minutes(self, monkeypatch, capsys):
-        cli_main_module = sys.modules["peeka.cli.main"]
-
         captured_command = {}
 
         class MockStreamingAgentClient:
@@ -337,10 +335,12 @@ class TestJobCLICleanup:
                 pass
 
         monkeypatch.setattr(
-            cli_main_module, "StreamingAgentClient", MockStreamingAgentClient
+            cli_context, "StreamingAgentClient", MockStreamingAgentClient
         )
         monkeypatch.setattr(
-            cli_main_module, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
+            cli_context,
+            "_check_agent_attached",
+            lambda: ("/tmp/peeka_12345678.sock", 1234),
         )
 
         args = argparse.Namespace(
@@ -352,25 +352,21 @@ class TestJobCLICleanup:
             format="table",
         )
 
-        exit_code = cli_main_module.cmd_job(args)
+        exit_code = cli_jobs.cmd_job(args)
         _ = capsys.readouterr()
 
         assert exit_code == 0
         assert captured_command["older_than_seconds"] == 600
 
     def test_job_cleanup_custom_older_than_parses_units(self, monkeypatch):
-        cli_main_module = sys.modules["peeka.cli.main"]
-
-        assert cli_main_module._parse_duration("1h") == 3600
-        assert cli_main_module._parse_duration("30s") == 30
-        assert cli_main_module._parse_duration("5m") == 300
-        assert cli_main_module._parse_duration("120") == 120
+        assert cli_context._parse_duration("1h") == 3600
+        assert cli_context._parse_duration("30s") == 30
+        assert cli_context._parse_duration("5m") == 300
+        assert cli_context._parse_duration("120") == 120
 
     def test_job_cleanup_invalid_older_than_rejected(self):
-        cli_main_module = sys.modules["peeka.cli.main"]
-
         try:
-            cli_main_module._parse_duration("5xyz")
+            cli_context._parse_duration("5xyz")
             assert False, "Expected ArgumentTypeError"
         except argparse.ArgumentTypeError:
             pass
@@ -378,8 +374,6 @@ class TestJobCLICleanup:
 
 class TestJobCLIPull:
     def test_job_pull_stub_returns_unsupported(self, capsys):
-        cli_main_module = sys.modules["peeka.cli.main"]
-
         args = argparse.Namespace(
             command="job",
             job_action="pull",
@@ -388,7 +382,7 @@ class TestJobCLIPull:
             format="json",
         )
 
-        exit_code = cli_main_module.cmd_job_pull(args)
+        exit_code = cli_jobs.cmd_job_pull(args)
         captured = capsys.readouterr()
 
         assert exit_code == 2
@@ -402,15 +396,17 @@ class TestJobCLIPull:
         subparsers = parser.add_subparsers(dest="command")
         job_parser = subparsers.add_parser("job")
         job_subparsers = job_parser.add_subparsers(dest="job_action")
-        
+
         job_pull_parser = job_subparsers.add_parser("pull")
         job_pull_parser.add_argument("--job", type=str, required=True)
         job_pull_parser.add_argument("--consumer", type=str, required=True)
-        job_pull_parser.add_argument("--format", choices=["json", "table"], default="table")
+        job_pull_parser.add_argument(
+            "--format", choices=["json", "table"], default="table"
+        )
 
-        parsed = parser.parse_args([
-            "job", "pull", "--job", "j1", "--consumer", "c1", "--format", "json"
-        ])
+        parsed = parser.parse_args(
+            ["job", "pull", "--job", "j1", "--consumer", "c1", "--format", "json"]
+        )
 
         assert parsed.job == "j1"
         assert parsed.consumer == "c1"

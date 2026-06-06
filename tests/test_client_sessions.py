@@ -25,7 +25,9 @@ EXPECTED_KEYS = [
     "last_access_at",
     "result_consumers",
     "auth",
+    "last_error",
 ]
+SERIALIZED_EXPECTED_KEYS = EXPECTED_KEYS + ["next_valid_actions"]
 
 
 def _build_client() -> ClientSession:
@@ -52,7 +54,7 @@ class TestClientSession:
 
         serialized = to_dict(client)
 
-        assert list(serialized.keys()) == EXPECTED_KEYS
+        assert list(serialized.keys()) == SERIALIZED_EXPECTED_KEYS
         assert serialized["schema_version"] == CLIENT_SCHEMA_VERSION
 
 
