@@ -51,6 +51,57 @@ class _SlowConnection:
 
 
 class TestAgentTransport:
+    @pytest.mark.parametrize(
+        "stream_source",
+        [
+            "watch-stream",
+            "trace-stream",
+            "stack-stream",
+            "monitor-stream",
+            "dashboard-stream",
+        ],
+    )
+    def test_stream_identity_receives_observations_after_hello(
+        self, stream_source: str
+    ) -> None:
+        """TUI stream-only clients should receive OBS after client hello."""
+        agent = PeekaAgent("transport-test")
+        agent._emit_log = lambda level, message, details=None: None  # type: ignore[method-assign]
+
+        server_sock, client_sock = socket.socketpair()
+        worker = threading.Thread(
+            target=agent._handle_client,
+            args=(server_sock, 1),
+            daemon=True,
+        )
+        worker.start()
+
+        try:
+            client_sock.settimeout(0.5)
+            command = json.dumps(
+                {
+                    "type": "client",
+                    "action": "hello",
+                    "_client": {
+                        "id": "tui-test01",
+                        "kind": "tui",
+                        "source": stream_source,
+                        "pid": 12345,
+                    },
+                }
+            ).encode("utf-8")
+            client_sock.sendall(len(command).to_bytes(4, "big"))
+            client_sock.sendall(command)
+            response = _recv_response(client_sock)
+            assert response["status"] == "success"
+
+            agent._send_observation({"event_id": "evt_1", "probe_id": "prb_stream"})
+
+            assert _recv_exact(client_sock, 4) == b"OBS:"
+        finally:
+            client_sock.close()
+            worker.join(timeout=1.0)
+
     def test_observations_only_broadcast_to_stream_connections(self) -> None:
         """Control connections should not receive unrelated OBS frames."""
         agent = PeekaAgent("transport-test")
