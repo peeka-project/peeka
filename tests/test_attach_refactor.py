@@ -14,6 +14,7 @@ from peeka.core import attach
 from peeka.core import agent as agent_module
 from peeka.core.agent import PeekaAgent, _init_agent
 from peeka.core.attach import ProcessAttacher
+from peeka.core.attach_workflow import capability
 
 
 class TestRTLDConstants:
@@ -848,3 +849,29 @@ class TestAgentReadinessProbe:
 
         with patch("peeka.core.attach.sock_mod.socket", FakeSocket):
             assert ProcessAttacher._is_agent_responsive("/tmp/peeka-test.sock") is False
+
+
+class TestTargetPythonVersionProbeCommand:
+    """Test subprocess probe command string for target Python version detection."""
+
+    def test_probe_command_uses_sys_version_info_only(self, monkeypatch):
+        """The subprocess -c snippet must not depend on _attach_module()."""
+        attacher = ProcessAttacher(12345)
+        calls = []
+
+        def fake_run(cmd, capture_output, text, timeout):
+            calls.append(cmd)
+            if cmd[0] == "lsof":
+                return SimpleNamespace(returncode=0, stdout="n/usr/bin/python3.12\n")
+            return SimpleNamespace(returncode=0, stdout="3 12\n")
+
+        monkeypatch.setattr(capability.platform, "system", lambda: "Darwin")
+        monkeypatch.setattr(capability.subprocess, "run", fake_run)
+
+        result = attacher._get_target_python_version()
+
+        assert result == (3, 12)
+        assert len(calls) == 2
+        assert calls[1][1] == "-c"
+        assert "sys.version_info" in calls[1][2]
+        assert "_attach_module" not in calls[1][2]

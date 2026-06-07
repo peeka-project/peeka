@@ -120,7 +120,7 @@ class AttachCapabilityMixin:
                 [
                     exe_path,
                     "-c",
-                    "import sys; print(_attach_module().sys.version_info[0], _attach_module().sys.version_info[1])",
+                    "import sys; print(sys.version_info[0], sys.version_info[1])",
                 ],
                 capture_output=True,
                 text=True,
