@@ -357,6 +357,13 @@ class MonitorCommand(BaseCommand):
         Returns:
             Tuple of (target_func, parent_obj, attr_name) or None if not found
         """
+        injector = getattr(self.agent, "injector", None)
+        injector_resolve = getattr(injector, "_resolve_target", None)
+        if callable(injector_resolve):
+            target_info = injector_resolve(pattern)
+            if target_info is not None:
+                return target_info
+
         import importlib
         import sys
 
