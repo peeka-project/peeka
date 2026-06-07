@@ -3,7 +3,7 @@
 import json
 import sys
 
-from peeka.cli.context import _connect_streaming_agent
+from peeka.cli.connection import _connect_streaming_agent
 from peeka.cli.responses import response_error_message as _response_error_message
 from peeka.core.output import OutputFormatter
 

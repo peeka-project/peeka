@@ -3,8 +3,8 @@
 from typing import Any, Dict, Optional
 
 from peeka.cli._client_helper import ephemeral_client
-from peeka.cli.context import _check_agent_attached
-from peeka.cli.context import _socket_path_to_target_id
+from peeka.cli.connection import _socket_path_to_target_id
+from peeka.cli.sessions import _check_agent_attached
 from peeka.cli.streaming import LimitPredicate
 from peeka.cli.streaming import counted_limit
 from peeka.cli.streaming import observation_count_limit
