@@ -12,6 +12,11 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from peeka.cli.parsers.observe import build_monitor_run_parser
+from peeka.cli.parsers.observe import build_stack_run_parser
+from peeka.cli.parsers.observe import build_trace_run_parser
+from peeka.cli.parsers.observe import build_watch_run_parser
+from peeka.cli.parsers.runtime import build_top_run_parser
 from peeka.core.attach import ProcessAttacher
 from peeka.core.client import StreamingAgentClient
 from peeka.core.output import OutputFormatter
@@ -29,38 +34,24 @@ def _build_run_command(
     parser = argparse.ArgumentParser(prog=f"peeka-cli run ... -- {command_type}")
 
     command: Dict[str, Any] = {"type": command_type, "action": "start"}
+    parser_builders = {
+        "watch": build_watch_run_parser,
+        "trace": build_trace_run_parser,
+        "stack": build_stack_run_parser,
+        "monitor": build_monitor_run_parser,
+        "top": build_top_run_parser,
+    }
+
+    parser_builder = parser_builders.get(command_type)
+    if parser_builder is None:
+        return None
 
     if command_type in ("watch", "trace", "stack"):
         if len(command_parts) < 2:
             return None
         command["pattern"] = command_parts[1]
         remaining = command_parts[2:]
-
-        if command_type == "watch":
-            parser.add_argument("-x", "--depth", type=int, default=2)
-            parser.add_argument("-n", "--times", type=int, default=-1)
-            parser.add_argument("-b", "--before", action="store_true")
-            parser.add_argument("-e", "--exception", action="store_true")
-            parser.add_argument("-s", "--success", action="store_true")
-            parser.add_argument("-f", "--finish", action="store_true", default=True)
-            parser.add_argument("--condition", dest="condition_express", type=str)
-        elif command_type == "trace":
-            parser.add_argument("-d", "--depth", type=int, default=3)
-            parser.add_argument("-n", "--times", type=int, default=-1)
-            parser.add_argument("--condition", dest="condition_express", type=str)
-            parser.add_argument(
-                "--skip-builtin",
-                dest="skip_builtin",
-                type=lambda x: x.lower() in ("true", "1", "yes"),
-                default=True,
-            )
-            parser.add_argument(
-                "--min-duration", dest="min_duration", type=float, default=0
-            )
-        elif command_type == "stack":
-            parser.add_argument("-n", "--times", type=int, default=-1)
-            parser.add_argument("--condition", dest="condition_express", type=str)
-            parser.add_argument("--depth", type=int, default=10)
+        parser_builder(parser)
 
         parsed = parser.parse_args(remaining)
         command.update(vars(parsed))
@@ -71,23 +62,14 @@ def _build_run_command(
             return None
         command["pattern"] = command_parts[0]
         remaining = command_parts[1:]
-        parser.add_argument("--interval", type=int, default=60)
-        parser.add_argument("-c", "--cycles", type=int, default=-1)
+        parser_builder(parser)
         parsed = parser.parse_args(remaining)
         command.update(vars(parsed))
         return command
 
     elif command_type == "top":
         remaining = command_parts
-        parser.add_argument("--interval", "-i", type=float, default=0.01)
-        parser.add_argument("--cycles", "-c", type=int, default=-1)
-        parser.add_argument(
-            "--sort",
-            type=str,
-            default="own",
-            choices=["own", "total", "own-time", "total-time"],
-        )
-        parser.add_argument("--no-filter-peeka", action="store_true", default=False)
+        parser_builder(parser)
         parsed = parser.parse_args(remaining)
         command["interval"] = parsed.interval
         command["cycles"] = parsed.cycles

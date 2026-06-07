@@ -1,6 +1,36 @@
 """Parser declarations for runtime CLI commands."""
 
+import argparse
 from typing import Any
+
+
+def build_top_run_parser(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--interval",
+        "-i",
+        type=float,
+        default=0.01,
+        help="Sampling interval in seconds (default: 0.01)",
+    )
+    parser.add_argument(
+        "--cycles",
+        "-c",
+        type=int,
+        default=-1,
+        help="Number of display cycles before auto-stop (default: -1 for infinite)",
+    )
+    parser.add_argument(
+        "--sort",
+        type=str,
+        default="own",
+        choices=["own", "total", "own-time", "total-time"],
+        help="Sort column: own (default), total, own-time, total-time",
+    )
+    parser.add_argument(
+        "--no-filter-peeka",
+        action="store_true",
+        help="Disable peeka thread filtering (default: filter enabled)",
+    )
 
 
 def add_runtime_parsers(subparsers: Any) -> None:
