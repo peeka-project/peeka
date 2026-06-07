@@ -3,6 +3,7 @@ Process Selector Screen - List and select Python processes to attach.
 """
 
 import time
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from rich.markup import escape
@@ -14,12 +15,30 @@ from textual.screen import Screen
 from textual.widgets import DataTable, Header, Footer, Input, RichLog, Static
 
 from peeka.core.attach import AttachProgressEvent
+from peeka.core.processes import PythonProcess
+from peeka.core.processes import discover_python_processes
+from peeka.core.targets import TargetAgent
 from peeka.core.targets import discover_targets
 from peeka.tui.activity import (
     attach_activity_metadata,
     format_attach_activity,
     format_attach_summary,
 )
+
+
+@dataclass
+class _ProcessRow:
+    """Display row for either an attached Peeka target or an attachable process."""
+
+    row_id: str
+    display_id: str
+    name: str
+    pid: int
+    state: str
+    python_version: str
+    peeka_version: str
+    created_at: float
+    command: str
 
 
 class ProcessSelectorScreen(Screen):
@@ -41,17 +60,19 @@ class ProcessSelectorScreen(Screen):
         self._attach_generation: int = 0
         self._attach_phase_states: Dict[str, Dict[str, Any]] = {}
         self._attach_activity_events: List[AttachProgressEvent] = []
+        self._selectable_pids: Dict[str, int] = {}
+        self._visible_row_count: int = 0
 
     def compose(self) -> ComposeResult:
         # Design Contract:
-        # 1. Six columns visible at >= 140 cols: Target ID, PID, State, Python, Peeka, Created
-        # 2. At < 140 cols: Target ID, State, Created remain; others omitted
-        # 3. Alive rows use 'green' text, stale use 'dim red', unknown use 'yellow'
-        # 4. Stale/unknown rows are unselectable (Enter/select does nothing) and skip focus interaction
-        # 5. Refresh key 'r' triggers reload; status bar shows "Refreshed N targets at HH:MM:SS"
+        # 1. Six columns visible at >= 140 cols: Name, PID, State, Python, Command, Created
+        # 2. At < 140 cols: Name, State, Created remain; others omitted
+        # 3. Alive rows use 'green', attachable rows use 'cyan', stale/failed use 'dim red'
+        # 4. Alive/attachable rows are selectable; stale/unknown rows are not
+        # 5. Refresh key 'r' triggers reload; status bar shows "Refreshed N processes at HH:MM:SS"
         yield Header()
         selector = Container(
-            Input(placeholder="Filter by Target ID, PID, or State...", id="filter", classes="compact-control"),
+            Input(placeholder="Filter by Name, Command, PID, or State...", id="filter", classes="compact-control"),
             DataTable(id="process-table"),
             id="process-selector",
             classes="panel",
@@ -106,9 +127,9 @@ class ProcessSelectorScreen(Screen):
         """Setup columns based on available width."""
         table.clear(columns=True)
         if width >= 140:
-            table.add_columns("Target ID", "PID", "State", "Python", "Peeka", "Created")
+            table.add_columns("Name", "PID", "State", "Python", "Command", "Created")
         else:
-            table.add_columns("Target ID", "State", "Created")
+            table.add_columns("Name", "State", "Created")
 
     def _format_relative_time(self, ts: float) -> str:
         """Format epoch seconds as relative time string."""
@@ -128,24 +149,35 @@ class ProcessSelectorScreen(Screen):
         
         filter_input = self.query_one("#filter", Input)
         filter_text = filter_input.value.lower()
-        targets = discover_targets()
+        rows = self._discover_rows()
+        self._selectable_pids = {}
+        self._visible_row_count = 0
         
         is_wide = len(table.columns) == 6
-        for target in targets:
-            pid_str = str(target.pid)
-            state_str = target.state
+        for row in rows:
+            pid_str = str(row.pid)
+            state_str = row.state
             
             # Filtering
-            if filter_text and filter_text not in target.target_id.lower() and filter_text not in pid_str and filter_text not in state_str.lower():
+            if (
+                filter_text
+                and filter_text not in row.display_id.lower()
+                and filter_text not in row.name.lower()
+                and filter_text not in pid_str
+                and filter_text not in state_str.lower()
+                and filter_text not in row.command.lower()
+            ):
                 continue
 
-            created_str = self._format_relative_time(target.created_at)
+            created_str = self._format_relative_time(row.created_at)
 
             # Row styling
             style = ""
-            if target.state == "alive":
+            if row.state == "alive":
                 style = "green"
-            elif target.state in ("stale", "failed", "detached"):
+            elif row.state == "attachable":
+                style = "cyan"
+            elif row.state in ("stale", "failed", "detached"):
                 style = "dim red"
             else:
                 style = "yellow"
@@ -153,23 +185,78 @@ class ProcessSelectorScreen(Screen):
             def _fmt(text: str) -> str:
                 return f"[{style}]{escape(text)}[/]" if style else escape(text)
 
+            if row.state in ("alive", "attachable") and row.pid > 0:
+                self._selectable_pids[row.row_id] = row.pid
+
             if is_wide:
                 table.add_row(
-                    _fmt(target.target_id),
+                    _fmt(row.name),
                     _fmt(pid_str),
                     _fmt(state_str),
-                    _fmt(target.python_version or "-"),
-                    _fmt(target.peeka_version or "-"),
+                    _fmt(row.python_version or "-"),
+                    _fmt(row.command or row.display_id),
                     _fmt(created_str),
-                    key=target.target_id
+                    key=row.row_id,
                 )
             else:
                 table.add_row(
-                    _fmt(target.target_id),
+                    _fmt(row.name),
                     _fmt(state_str),
                     _fmt(created_str),
-                    key=target.target_id
+                    key=row.row_id,
                 )
+            self._visible_row_count += 1
+
+    def _discover_rows(self) -> List[_ProcessRow]:
+        """Return rows for attached targets plus unattached Python processes."""
+        targets = discover_targets()
+        process_info_by_pid = {
+            process.pid: process for process in discover_python_processes()
+        }
+        attached_pids = {
+            target.pid
+            for target in targets
+            if target.pid > 0 and target.state == "alive"
+        }
+        rows = [
+            self._row_from_target(target, process_info_by_pid.get(target.pid))
+            for target in targets
+        ]
+        for process in process_info_by_pid.values():
+            if process.pid in attached_pids:
+                continue
+            rows.append(self._row_from_process(process))
+        return sorted(rows, key=lambda row: (row.created_at, row.name, row.pid))
+
+    def _row_from_target(
+        self, target: TargetAgent, process: Optional[PythonProcess]
+    ) -> _ProcessRow:
+        name = process.name if process is not None else target.target_id
+        command = process.command if process is not None else target.target_id
+        return _ProcessRow(
+            row_id=target.target_id,
+            display_id=target.target_id,
+            name=name,
+            pid=target.pid,
+            state=target.state,
+            python_version=target.python_version,
+            peeka_version=target.peeka_version,
+            created_at=target.created_at,
+            command=command,
+        )
+
+    def _row_from_process(self, process: PythonProcess) -> _ProcessRow:
+        return _ProcessRow(
+            row_id=f"process_{process.pid}",
+            display_id=f"pid_{process.pid}",
+            name=process.name,
+            pid=process.pid,
+            state="attachable",
+            python_version=process.python_version,
+            peeka_version="",
+            created_at=process.created_at,
+            command=process.command,
+        )
 
     def on_input_changed(self, event: Input.Changed) -> None:
         """Filter targets based on input."""
@@ -177,38 +264,29 @@ class ProcessSelectorScreen(Screen):
 
     def action_refresh(self) -> None:
         """Refresh process list."""
-        self.app.call_from_thread(self.refresh_processes)
-        targets = discover_targets()
+        self.refresh_processes()
         ts = time.strftime("%H:%M:%S", time.localtime())
-        self.notify(f"Refreshed {len(targets)} targets at {ts}", severity="information")
+        self.notify(
+            f"Refreshed {self._visible_row_count} processes at {ts}",
+            severity="information",
+        )
 
     def action_select(self) -> None:
         """Select the highlighted process."""
-        import re
-        
         table = self.query_one("#process-table", DataTable)
         if table.cursor_row is not None and len(table.rows) > 0:
             row_key = table.coordinate_to_cell_key((table.cursor_row, 0)).row_key
-            row = table.get_row(row_key)
-            is_wide = len(table.columns) == 6
-            state_idx = 2 if is_wide else 1
-            
-            state_str = str(row[state_idx])
-            if "alive" not in state_str:
-                return
+            key_text = self._row_key_text(row_key)
+            pid = self._selectable_pids.get(key_text)
+            if pid is not None:
+                self._attach_to_process(pid)
 
-            if is_wide:
-                pid_str = re.sub(r"\[.*?\]", "", str(row[1]))
-                try:
-                    pid = int(pid_str)
-                    self._attach_to_process(pid)
-                except ValueError:
-                    pass
-            else:
-                target_id_str = re.sub(r"\[.*?\]", "", str(row[0]))
-                target = next((t for t in discover_targets() if t.target_id == target_id_str), None)
-                if target:
-                    self._attach_to_process(target.pid)
+    def _row_key_text(self, row_key: Any) -> str:
+        """Return a stable string key from Textual's row key wrapper."""
+        value = getattr(row_key, "value", None)
+        if isinstance(value, str):
+            return value
+        return str(row_key)
 
     def action_copy_attach_log(self) -> None:
         """Copy the current attach log to the terminal clipboard."""
