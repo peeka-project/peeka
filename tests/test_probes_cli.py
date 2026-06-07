@@ -1,5 +1,6 @@
 import argparse
 import json
+import sys
 from typing import Any
 from typing import Dict
 
@@ -504,7 +505,7 @@ class TestProbeHelpOutput:
         import subprocess
 
         result = subprocess.run(
-            ["uv", "run", "peeka-cli", "probe", "--help"],
+            [sys.executable, "-m", "peeka.cli.main", "probe", "--help"],
             capture_output=True,
             text=True,
         )
