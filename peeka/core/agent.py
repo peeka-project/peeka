@@ -418,6 +418,13 @@ class PeekaAgent(
         return cmd_type == "client" and action == "hello"
 
     @staticmethod
+    def _client_info_requests_stream(client_info: Dict[str, Any]) -> bool:
+        """Return True when client metadata identifies a stream-only connection."""
+        source = str(client_info.get("source", ""))
+        kind = str(client_info.get("kind", ""))
+        return kind == "stream" or source.endswith("-stream")
+
+    @staticmethod
     def _format_client_label(client_id: int, client_info: Dict[str, Any]) -> str:
         """Return a readable stable client label for activity logs."""
         instance_id = client_info.get("id")
@@ -620,6 +627,8 @@ class PeekaAgent(
                 if extracted_info:
                     client_info = extracted_info
                     client_label = self._format_client_label(client_id, client_info)
+                    if self._client_info_requests_stream(client_info):
+                        self._set_client_connection_kind(conn, "stream")
                     if not identified:
                         pid = client_info.get("pid")
                         pid_suffix = f" pid={pid}" if pid else ""
