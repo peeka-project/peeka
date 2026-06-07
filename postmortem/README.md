@@ -1,6 +1,6 @@
 # Postmortem 索引
 
-生成日期：2026-05-27
+生成日期：2026-06-07
 
 ## 话题列表
 
@@ -11,14 +11,14 @@
 | [003](./003-tui-autocomplete.md) | TUI 自动补全：缓存、触发、光标、`__main__` | SEV-2 | tui, commands (complete) | 5 | 2026-02-07 ~ 2026-03-05 |
 | [004](./004-streaming-client-concurrency.md) | StreamingAgentClient 并发与 BrokenPipe | SEV-1 | core/client, tui views | 6 | 2026-02-28 ~ 2026-03-10 |
 | [005](./005-tui-threading-and-lifecycle.md) | TUI 线程模型、主线程阻塞与关机生命周期 | SEV-1 | tui (app, screens, views) | 8 | 2026-02-07 ~ 2026-05-07 |
-| [006](./006-attach-and-agent-lifecycle.md) | 进程 Attach 就绪探测与 Agent 生命周期 | SEV-0 | core/attach, core/agent | 7 | 2026-02-26 ~ 2026-05-25 |
+| [006](./006-attach-and-agent-lifecycle.md) | 进程 Attach 就绪探测与 Agent 生命周期 | SEV-0 | core/attach, core/agent | 8 | 2026-02-26 ~ 2026-06-07 |
 | [007](./007-gdb-injection-and-python38.md) | GDB 注入路径与 Python 3.8 兼容性 | SEV-1 | core/attach, core/agent | 4 | 2026-02-05 ~ 2026-03-24 |
 | [008](./008-injector-and-tracing.md) | DecoratorInjector 实例方法、`__main__` 解析与 trace 调用树 | SEV-1 | core/injector, commands/trace | 3 | 2026-01-29 ~ 2026-02-28 |
-| [009](./009-cli-commands-and-payloads.md) | CLI 命令分发、参数键与 JSONL payload 契约漂移 | SEV-1 | cli/main.py, core/output.py, core/injector.py, commands/monitor.py | 6 | 2026-01-29 ~ 2026-05-27 |
+| [009](./009-cli-commands-and-payloads.md) | CLI 命令分发、参数键与 JSONL payload 契约漂移 | SEV-1 | cli/main.py, core/output.py, core/injector.py, commands/monitor.py | 7 | 2026-01-29 ~ 2026-06-07 |
 | [010](./010-top-profiling.md) | Top 命令线程过滤、TopView 并发与 Agent 响应帧竞态 | SEV-1 | commands/top, tui/views/top, core/agent | 5 | 2026-02-26 ~ 2026-04-26 |
 | [011](./011-docker-build-and-images.md) | Docker 镜像构建、镜像源与容器进程模型 | SEV-2 | docker, 容器测试 | 5 | 2026-02-07 ~ 2026-03-01 |
 | [012](./012-tui-ui-and-textual-api.md) | TUI 样式、DataTable API 与 Textual 兼容 | SEV-1 | tui/views, tui/screens | 6 | 2026-02-07 ~ 2026-03-06 |
-| [013](./013-tests-and-examples.md) | 测试期望、demo 日志与测试维护 | SEV-2 | tests, examples/demo.py | 3 | 2026-02-07 ~ 2026-03-23 |
+| [013](./013-tests-and-examples.md) | 测试期望、demo 日志与测试维护 | SEV-2 | tests, examples/demo.py | 4 | 2026-02-07 ~ 2026-06-07 |
 | [014](./014-security-safeeval.md) | simpleeval 异常处理与 fail-closed 安全机制 | SEV-0 | security, injector | 1 | 2026-01-29 |
 | [015](./015-basecommand-and-command-system.md) | BaseCommand 缺少 agent 参数 | SEV-1 | commands/base.py | 1 | 2026-02-05 |
 | [016](./016-dependencies.md) | 依赖配置问题：版本约束不兼容与格式废弃 | SEV-3 | dependencies, pyproject.toml | 2 | 2026-03-20 ~ 2026-04-12 |
@@ -27,7 +27,7 @@
 ## 统计
 
 - **话题总数**：17
-- **事故总次数**：85
+- **事故总次数**：88
 - **按话题最高严重级别**：SEV-0: 3, SEV-1: 10, SEV-2: 3, SEV-3: 1, SEV-4: 0
 - **按组件**：
   - tui: 7 个话题（002, 003, 004, 005, 010, 012, 013）
@@ -62,6 +62,9 @@
 
 | 日期 | 话题 | 事故 | 变更说明 |
 |------|------|------|----------|
+| 2026-06-07 | [013](./013-tests-and-examples.md) | #4 | 新增事故：probe help 测试依赖本地 uv 导致 release workflow 失败（v0.1.16） |
+| 2026-06-07 | [009](./009-cli-commands-and-payloads.md) | #7 | 新增事故：session control-plane 多目标路由与 probe 契约缺口（v0.1.16） |
+| 2026-06-07 | [006](./006-attach-and-agent-lifecycle.md) | #8 | 新增事故：GDB fallback injector build 路径误假设用户安装 uv（v0.1.16） |
 | 2026-05-27 | [009](./009-cli-commands-and-payloads.md) | #6 | 新增事故：容器诊断 CLI 兼容性回归（v0.1.15） |
 | 2026-05-26 | [017](./017-rpl-primitives-rollout.md) | #4 | 新增事故：gevent data-plane 兼容矩阵契约漂移（v0.1.15） |
 | 2026-05-25 | [006](./006-attach-and-agent-lifecycle.md) | #7 | 新增事故：attach 异常路径未同步 `_last_attach_error`（v0.1.15） |

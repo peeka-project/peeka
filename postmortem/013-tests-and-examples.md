@@ -5,13 +5,14 @@
 | **话题** | 测试期望、demo 日志示例与测试维护 |
 | **受影响组件** | tests, tui, examples/demo.py |
 | **最高严重级别** | SEV-2 (Medium) |
-| **事故次数** | 3 |
-| **时间跨度** | 2026-02-07 至 2026-03-23 |
+| **事故次数** | 4 |
+| **时间跨度** | 2026-02-07 至 2026-06-07 |
 
 ## 案例索引
 
 | # | 事故 | 严重级别 | 日期 |
 |---|------|----------|------|
+| [#4](#事故-4probe-help-测试依赖本地-uv-导致-release-workflow-失败) | probe help 测试依赖本地 uv 导致 release workflow 失败 | SEV-2 | 2026-06-07 |
 | [#3](#事故-3移除-agent-log-标签后测试仍期望-11-个标签) | 移除 Agent Log 标签后测试仍期望 11 个标签 | SEV-2 | 2026-03-23 |
 | [#2](#事故-2demopy-缺失-logging-场景导致-logger-命令无法测试) | demo.py 缺失 logging 场景导致 logger 命令无法测试 | SEV-3 | 2026-03-02 |
 | [#1](#事故-1mainscreen-构造函数签名变更后测试调用未更新) | MainScreen 构造函数签名变更后测试调用未更新 | SEV-3 | 2026-02-07 |
@@ -21,6 +22,114 @@
 ## 话题概述
 
 该话题聚焦“实现变更后测试或示例未同步更新”的问题模式。具体表现为：TUI 结构/签名发生变化后，测试断言与构造调用仍停留在旧状态；示例程序未覆盖 logger 命令所需 logging 场景，导致命令可测试性缺失。影响主要集中在测试与验证链路，不直接影响核心运行时逻辑。
+
+2026-06-07 的新增事故说明，测试代码也必须区分“本地开发约定”和“CI runner 可用工具”。项目开发规则要求开发者用 `uv run` 执行 Python 命令，但测试自身不能假设 GitHub Actions runner 已安装 uv；测试应使用当前解释器或直接调用被测函数。
+
+---
+
+## 事故 #4：probe help 测试依赖本地 uv 导致 release workflow 失败
+
+> **Tag 范围**：`v0.1.15` → `v0.1.16` | **严重级别**：SEV-2 | **日期**：2026-06-07
+
+### 概要
+
+`v0.1.16` 第一次 tag push 后，`publish-pypi.yml` 的 Run Tests job 失败。失败用例是 `tests/test_probes_cli.py::TestProbeHelpOutput::test_probe_help_lists_5_subcommands`，它通过 `subprocess.run(["uv", "run", "peeka-cli", "probe", "--help"])` 启动 CLI。在本地开发机该命令可用，但 GitHub Actions 的 Python 3.12 runner 没有安装 uv，导致 `FileNotFoundError: [Errno 2] No such file or directory: 'uv'`，PyPI 发布和 GitHub Release 创建被阻断。
+
+### 根因分析
+
+#### 类别
+Test Environment Assumption / Release Gate Failure
+
+#### 分析
+
+测试把项目开发指南中的“开发者运行 Python 命令必须加 `uv run`”误用到了测试内部。开发指南约束的是人和 agent 在仓库中执行命令的方式，不代表 CI runner 或最终用户环境一定存在 uv。
+
+测试目标只是验证 `probe --help` 包含 5 个子命令，因此不需要经过 uv，也不需要依赖 entrypoint 是否安装到 PATH。更稳妥的方式是用当前测试解释器执行模块：
+
+```python
+[sys.executable, "-m", "peeka.cli.main", "probe", "--help"]
+```
+
+这保持了“使用同一个测试环境解释器”的合同，也避免引入额外工具依赖。
+
+### 复现
+
+#### 前置条件
+- GitHub Actions runner 或任意没有安装 uv 的 Python 环境。
+
+#### 步骤
+1. 运行 `pytest tests/ -v --tb=short -m "not e2e and not container and not tui" --timeout=30 --ignore=tests/tui --ignore=tests/test_tui.py --ignore=tests/test_theme.py`。
+2. 执行到 `TestProbeHelpOutput`。
+
+#### 预期行为
+测试使用当前解释器验证 probe help 输出并通过。
+
+#### 实际行为
+`subprocess.run()` 找不到 `uv`，测试失败，release workflow 中断。
+
+### 修复
+
+#### 修复提交
+
+| 提交 | 作者 | 日期 | 描述 |
+|------|------|------|------|
+| [`e0a8c14`](https://github.com/peeka-project/peeka/commit/e0a8c1410a41e04b7807e2a8d2a8fc66041fb4e3) | lufeihaidao | 2026-06-07 | test(cli): avoid uv dependency in probe help test |
+
+#### 变更内容
+
+- 引入 `sys.executable`。
+- 将 subprocess 命令从 `uv run peeka-cli probe --help` 改为 `python -m peeka.cli.main probe --help`。
+- 移动本地 `v0.1.16` tag 到修复后的 HEAD，强制更新远端 tag 后重新触发 release workflow。
+
+#### 验证
+- 本地复现 GitHub Actions 命令：834 passed。
+- `uv run ruff check peeka/ tests/test_probes_cli.py tests/tui/test_dashboard_view.py`：通过。
+- 第二次 `v0.1.16` `publish-pypi.yml` run 通过，PyPI 和 GitHub Release 成功发布。
+
+### 影响
+
+- **受影响用户**：无直接用户影响。
+- **受影响流程**：`v0.1.16` 首次 release workflow 被阻断，PyPI 发布延后到第二次 tag 更新后完成。
+- **数据影响**：无。
+
+### 时间线
+
+| 时间 | 事件 |
+|------|------|
+| 2026-06-07 | 第一次推送 `v0.1.16` tag |
+| 2026-06-07 | GitHub Actions Run Tests 因找不到 `uv` 失败 |
+| 2026-06-07 | `e0a8c14` 修复测试命令 |
+| 2026-06-07 | 强制更新 `v0.1.16` tag 并重新触发 workflow |
+| 2026-06-07 | 第二次 workflow 通过并完成 PyPI/GitHub Release |
+
+### 经验教训
+
+#### 做得好的方面
+- release workflow 在发布前阻断了 PyPI，避免了半成品发布。
+- 失败日志定位明确，修复范围小。
+
+#### 可以改进的方面
+- 本地 release 前的全量 pytest 在有 uv 的环境中无法暴露“CI 无 uv”问题。
+- 测试中出现外部工具命令时应优先使用 `sys.executable` 或 mock 入口，而不是依赖开发工具。
+
+#### 行动项
+
+| 行动 | 优先级 | 状态 |
+|------|--------|------|
+| 测试内部不得调用 `uv run`，除非该测试明确验证 uv 集成 | P0 | 已完成 |
+| 增加静态扫描或 review checklist：测试 subprocess 中禁止硬编码开发工具 | P1 | 待处理 |
+
+### 预防
+
+- **立即执行**：搜索测试目录中硬编码 `uv run` 的 subprocess 调用。
+- **短期**：CLI help/entrypoint 测试统一使用 `sys.executable -m peeka.cli.main`。
+- **长期**：release gate 加入“CI 命令与本地验证命令一致性”检查。
+
+### 参考
+
+- 修复提交：`e0a8c14`
+- 失败 workflow：`27094576503`
+- 成功 workflow：`27094670987`
 
 ---
 

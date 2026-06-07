@@ -5,13 +5,14 @@
 | **话题** | 进程 attach 就绪探测、会话文件清理、accept 循环时序与 agent 线程生命周期问题 |
 | **受影响组件** | core/attach, core/agent, tui process attach flow |
 | **最高严重级别** | SEV-0 (Critical) |
-| **事故次数** | 7 |
-| **时间跨度** | 2026-02-26 至 2026-05-25 |
+| **事故次数** | 8 |
+| **时间跨度** | 2026-02-26 至 2026-06-07 |
 
 ## 案例索引
 
 | # | 事故 | 严重级别 | 日期 |
 |---|------|----------|------|
+| [#8](#事故-8gdb-fallback-injector-build-路径误假设用户安装-uv) | GDB fallback injector build 路径误假设用户安装 uv | SEV-2 | 2026-06-07 |
 | [#7](#事故-7attach-异常路径未同步-_last_attach_error) | attach 异常路径未同步 `_last_attach_error` | SEV-2 | 2026-05-25 |
 | [#6](#事故-6attach-错误传播改进与-gdb-附加状态解析) | attach 错误传播改进与 GDB 附加状态解析 | SEV-2 | 2026-05-03 |
 | [#5](#事故-5首次-attach-间歇性超时) | 首次 attach 间歇性超时 | SEV-2 | 2026-03-01 |
@@ -27,6 +28,115 @@
 该话题集中暴露 attach 与 agent 的“就绪判定—运行—清理”全链路时序问题：仅依赖 `.ready` 文件会误判就绪；accept 线程 event 设置过早导致连接窗口竞态；首次冷启动导入耗时与固定超时冲突；rapid attach 场景出现脚本清理时序与 stale 文件误判；最终在多次 attach/detach 循环中演化为线程泄漏（SEV-0）。
 
 2026-05-25 的新增事故说明，attach 链路的“错误可观测性”也是同一生命周期合同的一部分。`_attach_internal()` 在捕获异常后会返回 `False` 并发送 progress 事件，但若没有同步 `_last_attach_error`，CLI/TUI 上层只能看到泛化失败状态，无法稳定展示真实错误原因。
+
+2026-06-07 的新增事故说明，attach 的 fallback 路径不能依赖开发者本机工具链。`uv run python setup.py build_ext --inplace` 对仓库开发者方便，但用户容器或生产环境只保证有目标 Python 和编译依赖，不保证安装 uv。attach workflow 必须用当前解释器作为最小假设。
+
+---
+
+## 事故 #8：GDB fallback injector build 路径误假设用户安装 uv
+
+> **Tag 范围**：`v0.1.15` → `v0.1.16` | **严重级别**：SEV-2 | **日期**：2026-06-07
+
+### 概要
+
+pre-3.14 的 GDB fallback 路径需要 C injector extension。实现中曾直接运行 `uv run python setup.py build_ext --inplace` 来构建 injector。这对开发仓库有效，但用户实际环境未必安装 uv；在容器或普通 pip 安装场景中，attach 会因为找不到 uv 而失败，即使系统具备 Python、GDB 和 ptrace 能力。
+
+### 根因分析
+
+#### 类别
+Environment Assumption / Attach Workflow Regression
+
+#### 分析
+
+attach workflow 把“项目开发环境命令”当成了“目标用户环境命令”：
+
+```text
+uv run python setup.py build_ext --inplace
+```
+
+该命令隐含两个错误假设：
+
+1. 用户环境安装了 uv。
+2. peeka 源码以可编辑仓库形式存在，而不是普通 wheel/site-packages 安装。
+
+对于 Python 3.8-3.13，GDB fallback 本身已经要求 GDB、python debug symbols 和 ptrace；但这些是 attach 机制的必要条件，uv 不是。构建 extension 应使用当前解释器或已安装 artifact，不应把开发工具暴露为运行时要求。
+
+### 复现
+
+#### 前置条件
+- Python 3.8-3.13 目标进程。
+- 环境可执行 `python`，但没有安装 `uv`。
+- 需要走 GDB fallback injector 路径。
+
+#### 步骤
+1. 在没有 uv 的容器中运行 peeka attach。
+2. 触发 `_build_injector_if_needed()`。
+
+#### 预期行为
+使用当前 Python 解释器构建或发现 injector，attach 继续进行；缺少编译依赖时给出针对 GDB/injector 的错误。
+
+#### 实际行为
+构建命令因 `uv` 不存在而失败，attach 直接中断。
+
+### 修复
+
+#### 修复提交
+
+| 提交 | 作者 | 日期 | 描述 |
+|------|------|------|------|
+| [`8f510a9`](https://github.com/peeka-project/peeka/commit/8f510a963b0da9d934c2a84242822577f693fad6) | lufeihaidao | 2026-06-07 | fix(attach): remove uv assumption from injector build path |
+
+#### 变更内容
+
+- attach 构建 injector 时不再调用 `uv run`。
+- 使用当前 Python 解释器作为 build command 的基础。
+- 文档补充 pre-3.14 场景下“挂载源码仍需 build extension”的说明，避免用户误以为源码 volume mount 即可直接运行所有 attach 路径。
+
+#### 验证
+- `tests/test_attach_refactor.py` 覆盖错误消息中不再出现 `uv run`。
+- `v0.1.16` 发布流水线 `publish-pypi.yml` 通过。
+
+### 影响
+
+- **受影响用户**：未安装 uv 的 Python 3.8-3.13 用户、容器环境、只按运行时依赖安装 peeka 的用户。
+- **持续时间**：同一 release 开发周期内发现并修复，未进入成功发布的 PyPI 版本。
+- **数据影响**：无。影响是 attach fallback 不可用。
+
+### 时间线
+
+| 时间 | 事件 |
+|------|------|
+| 2026-06-07 | review 发现 attach build command 依赖 uv |
+| 2026-06-07 | `8f510a9` 移除 uv 假设 |
+| 2026-06-07 | 文档补充 pre-3.14 injector build 要求 |
+| 2026-06-07 | `v0.1.16` 发布流水线验证通过 |
+
+### 经验教训
+
+#### 做得好的方面
+- 问题在 release 前通过环境假设 review 发现。
+- 修复将运行时要求收敛到当前解释器，减少用户环境依赖。
+
+#### 可以改进的方面
+- attach fallback 的环境要求应以“用户安装场景”为基准，而不是以开发仓库为基准。
+- 所有 subprocess build command 都应有“无 uv/无 dev tool”测试。
+
+#### 行动项
+
+| 行动 | 优先级 | 状态 |
+|------|--------|------|
+| 为 attach injector build command 保留“不依赖 uv”的单元测试 | P0 | 已完成 |
+| 在容器测试矩阵中覆盖无 uv 的 pre-3.14 attach 环境 | P1 | 待处理 |
+
+### 预防
+
+- **立即执行**：运行时路径禁止调用 `uv run`、`poetry run` 等开发环境命令。
+- **短期**：审计 attach、docker、container helper 中的 build/install 命令，区分开发命令与用户命令。
+- **长期**：在 release gate 中加入“minimal user environment” smoke test。
+
+### 参考
+
+- 修复提交：`8f510a9`
 
 ---
 

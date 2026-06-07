@@ -5,13 +5,14 @@
 | **话题** | CLI 到 Agent 的命令分发、参数键和 JSONL payload 契约不一致问题，以及 CLI run 命令实现缺陷 |
 | **受影响组件** | cli/main.py, core/output.py, core/bootstrap.py, core/injector.py, commands/monitor.py, tests/container/ |
 | **最高严重级别** | SEV-1 (High) |
-| **事故次数** | 6 |
-| **时间跨度** | 2026-01-29 至 2026-05-27 |
+| **事故次数** | 7 |
+| **时间跨度** | 2026-01-29 至 2026-06-07 |
 
 ## 案例索引
 
 | # | 事故 | 严重级别 | 日期 |
 |---|------|----------|------|
+| [#7](#事故-7session-control-plane-多目标路由与-probe-契约缺口) | session control-plane 多目标路由与 probe 契约缺口 | SEV-2 | 2026-06-07 |
 | [#6](#事故-6容器诊断-cli-兼容性回归) | 容器诊断 CLI 兼容性回归 | SEV-2 | 2026-05-27 |
 | [#5](#事故-5peeka-cli-run-命令-outputformatter-stdout-捕获缺陷及多处实现问题) | peeka-cli run 命令 OutputFormatter stdout 捕获缺陷及多处实现问题 | SEV-2 | 2026-04-03 |
 | [#4](#事故-4cli-与-agent-payload-键名重构后失配) | CLI 与 Agent payload 键名重构后失配 | SEV-2 | 2026-03-18 |
@@ -28,6 +29,133 @@
 2026-04-03 新增第五类问题：`peeka-cli run` 命令初始实现中存在多处缺陷，包括 `OutputFormatter` 的 `file=` 参数默认值在 pytest 环境下捕获了 monkeypatch 前的 stdout 对象，导致测试输出路由错误；bootstrap 模板内联维护困难；run 命令缺少 `--output-file` 等实用参数；临时文件未在异常路径下清理。
 
 2026-05-27 新增第六类问题：容器级诊断测试暴露了 CLI shell 参数拼接、logger 参数别名、monitor 统计字段、instance method 参数语义、stack observation 兼容字段和 TUI smoke 覆盖之间的多点契约漂移。这类问题不一定表现为单个命令完全不可用，但会让真实容器中的 CLI/TUI 工作流出现断言失败、条件表达式误判或输出字段缺失。
+
+2026-06-07 新增第七类问题：session/control-plane 重构引入了 target、client、job、probe、consumer 和 dx 等新命名空间，但 CLI 侧 target 解析、agent 侧响应 envelope、probe/job 生命周期和 streaming observation 路由没有一次性用跨命名空间契约测试冻结。问题不是某个单点命令拼错，而是“对象模型扩展后，入口、路由、生命周期和输出 schema 同步不足”。
+
+---
+
+## 事故 #7：session control-plane 多目标路由与 probe 契约缺口
+
+> **Tag 范围**：`v0.1.15` → `v0.1.16` | **严重级别**：SEV-2 | **日期**：2026-06-07
+
+### 概要
+
+`v0.1.16` 引入 target/client/job/probe/consumer/dx 控制面后，review 发现几类契约缺口：带 `--target` 的 CLI 命令仍可能连接 `_check_agent_attached()` 找到的第一个 agent；target detach 使用了 agent 不支持的 RPC 形状；`probe.stop` 只更新 registry 状态而没有传播到实际 instrumentation；probe 非 start 动作被错误标记为 streaming job；TUI stream client 在 hello 身份建立后收不到 observation。
+
+这些问题会在多目标或长生命周期 probe 场景下表现为“命令打到错误进程”“agent 被从文件系统隐藏但仍留在目标进程中”“用户看到 probe stopped 但 wrapper/top/monitor 还在运行”或“Dashboard/TUI 连接存在但没有实时数据”。
+
+### 根因分析
+
+#### 类别
+Contract Drift / Lifecycle State Mismatch
+
+#### 分析
+
+这次缺口来自同一个系统性根因：新的 session/control-plane 对象模型被分层实现，但跨层合同没有一开始就冻结为测试矩阵。
+
+1. CLI handler 已支持 `--target`，但部分路径仍先调用通用 `_check_agent_attached()`，导致 socket 选择早于 target 解析。
+2. target detach 清理文件前没有确认 agent 实际执行了支持的 `{"type": "detach"}` 命令，形成“本地已解绑、目标仍注入”的不可发现状态。
+3. probe registry 的状态更新与 DecoratorInjector/monitor/top 运行资源之间缺少双向绑定，`probe.stop` 只改账本，不停实际资源。
+4. job lifecycle 将 probe namespace 的成功动作泛化为 streaming，导致 stop/status/inspect 这类终止型 RPC 也可能占住 foreground job。
+5. agent transport 的 observation 广播没有把 hello 后的 stream-only client 身份作为稳定路由条件，TUI stream client 能连接但收不到数据。
+
+### 复现
+
+#### 前置条件
+- 至少两个 alive target。
+- 一个通过 watch/trace/monitor/top 启动的 probe。
+- 一个 TUI 或 StreamingAgentClient stream 连接。
+
+#### 步骤
+1. 对 target A 和 target B 分别 attach。
+2. 执行 `peeka-cli client create --target <target_B>` 或 target-filtered `job/probe/consumer/dx` 命令。
+3. 启动 watch/trace probe 后执行 `peeka-cli probe stop --probe <id>`。
+4. 在 TUI Dashboard/stream view 中观察是否收到实时 observation。
+
+#### 预期行为
+- 所有 target-scoped CLI 命令先解析 target，再连接对应 socket。
+- detach 只在 agent 确认成功后清理 target 文件。
+- probe stop 终止实际 instrumentation 并清理 foreground job。
+- 只有 probe start 类动作保持 streaming；status/inspect/stop/cleanup 应进入终态。
+- stream client 通过 hello 建立身份后可收到匹配 observation。
+
+#### 实际行为
+review 时发现上述路径存在偏差，可能导致错误路由、孤儿 agent、非终态 job 或 TUI 无实时数据。
+
+### 修复
+
+#### 修复提交
+
+| 提交 | 作者 | 日期 | 描述 |
+|------|------|------|------|
+| [`4f5797f`](https://github.com/peeka-project/peeka/commit/4f5797f9f262eba588d3a24154781c014f585639) | lufeihaidao | 2026-06-07 | fix(client-session): remediate F1 oracle architectural defects |
+| [`3c91a1d`](https://github.com/peeka-project/peeka/commit/3c91a1de2f5f41f3f236f30f9bc75bc8bbb86aff) | lufeihaidao | 2026-06-07 | fix(command-job): F-wave remediation (D1-D7) — lifecycle, envelope, scope |
+| [`8376876`](https://github.com/peeka-project/peeka/commit/8376876a1d18073854b4d6f7c5a514ba14bf0e71) | lufeihaidao | 2026-06-07 | fix(agent): wrap probe.* responses in data envelope to match job.* convention |
+| [`ff6b1d1`](https://github.com/peeka-project/peeka/commit/ff6b1d16928c4df96ac6cb0725904c391e032598) | lufeihaidao | 2026-06-07 | fix(probe): probe.cleanup returns list of removed ids matching job.cleanup pattern |
+| [`b8a68a1`](https://github.com/peeka-project/peeka/commit/b8a68a142077011981410a472c4c767dab7e16f8) | lufeihaidao | 2026-06-07 | fix(probe): rename inspect response key recent_events -> events to match CLI contract |
+| [`ef8be8c`](https://github.com/peeka-project/peeka/commit/ef8be8cebdb9c2dab813379c9bc3dffc6d91f212) | lufeihaidao | 2026-06-07 | fix(probe): align cleanup/inspect/status with plan spec |
+| [`6d7e6d4`](https://github.com/peeka-project/peeka/commit/6d7e6d49e8fc3882459ff3ee48a990b0d34d09c2) | lufeihaidao | 2026-06-07 | fix(probe): isolate control-plane RPC from OBS broadcast latency |
+| [`b34160f`](https://github.com/peeka-project/peeka/commit/b34160f224635e864624e93de108fc8b5a8f5c01) | lufeihaidao | 2026-06-07 | fix(agent): serialize control-plane responses to prevent transport error under streaming load |
+| [`a1c5df2`](https://github.com/peeka-project/peeka/commit/a1c5df24521027c03062cfac80cea7523a7b1677) | lufeihaidao | 2026-06-07 | fix(agent): stream observations to TUI stream clients |
+| [`169b57d`](https://github.com/peeka-project/peeka/commit/169b57d372632da25c4a71f4ca5ab9a548103da5) | lufeihaidao | 2026-06-07 | fix(cli): require target-aware resource routing |
+| [`9fd579e`](https://github.com/peeka-project/peeka/commit/9fd579eb14b6858a1af727ed4afeb0ee49af55fb) | lufeihaidao | 2026-06-07 | fix(monitor): reuse injector target resolution |
+
+#### 变更内容
+
+- CLI target-scoped handlers 在创建 client/session 前解析 target，并把 socket、target_id 和 client_session_id 显式传入后续命令。
+- `target detach --force` 改为使用 agent 支持的 detach RPC，并在 RPC 失败时保留 socket/pid 文件。
+- probe stop 传播到 watch/trace/monitor/top 的实际资源，start job 也进入终态。
+- probe inspect/cleanup/status 的响应 envelope、字段名和 cleanup 返回结构向 job namespace 对齐。
+- agent transport 将 control-plane 响应和 observation 广播隔离，避免 stream 背压影响 RPC。
+- TUI stream client 通过 hello 身份后可收到 observation。
+
+#### 验证
+- `uv run pytest tests/ -v --tb=short -m "not e2e and not container and not tui" --timeout=30 --ignore=tests/tui --ignore=tests/test_tui.py --ignore=tests/test_theme.py`：834 passed。
+- `uv run pytest tests/tui/test_dashboard_view.py -q`：15 passed。
+- `v0.1.16` 发布流水线 `publish-pypi.yml` 第二次运行通过。
+
+### 影响
+
+- **受影响用户**：多目标 attach 用户、通过 CLI 管理 client/job/probe/consumer/dx 的用户、TUI 实时流用户。
+- **持续时间**：同一 release 开发周期内被 review 和测试发现，未进入成功发布的 PyPI 版本。
+- **数据影响**：无持久数据损坏。风险是命令作用于错误进程、agent 孤儿化、probe 账本与实际 instrumentation 不一致。
+
+### 时间线
+
+| 时间 | 事件 |
+|------|------|
+| 2026-06-07 | session/control-plane 功能实现后进入 review |
+| 2026-06-07 | review 发现 target detach、multi-target routing、probe lifecycle 和 stream routing 缺口 |
+| 2026-06-07 | 多个 fix 提交修复 control-plane 契约和生命周期 |
+| 2026-06-07 | `v0.1.16` 发布流水线验证通过 |
+
+### 经验教训
+
+#### 做得好的方面
+- review 明确指出了跨命名空间的系统性缺口，而不是只修单个命令。
+- 后续补充了 agent/client/job/probe/target/consumer/dx 的单元和容器契约覆盖。
+
+#### 可以改进的方面
+- 新增 control-plane namespace 时，应先定义 target/client/job/probe 的对象图和路由矩阵。
+- “registry 状态”和“实际运行资源”必须有同一套 lifecycle 不变量，不能只测账本。
+
+#### 行动项
+
+| 行动 | 优先级 | 状态 |
+|------|--------|------|
+| 为所有 target-scoped CLI handler 保留“先解析 target 再连接 socket”的测试 | P0 | 已完成 |
+| 为 probe stop 增加实际 instrumentation/resource cleanup 断言 | P0 | 已完成 |
+| 为新增 control-plane namespace 维护共享 envelope/schema contract 表 | P1 | 待处理 |
+
+### 预防
+
+- **立即执行**：所有新增 namespace 必须有 handler-level envelope 测试和 CLI target routing 测试。
+- **短期**：把 target/client/job/probe/consumer/dx 的状态迁移和 cross-reference 写入 schema 文档。
+- **长期**：考虑从同一份 schema 生成 CLI parser 参数、agent handler envelope 和 JSONL contract tests。
+
+### 参考
+
+- 修复提交：`4f5797f`, `3c91a1d`, `8376876`, `ff6b1d1`, `b8a68a1`, `ef8be8c`, `6d7e6d4`, `b34160f`, `a1c5df2`, `169b57d`, `9fd579e`
 
 ---
 
