@@ -3,7 +3,9 @@ import json
 from typing import Any
 from typing import Dict
 
-from peeka.cli import context as cli_context
+from peeka.cli import connection as cli_connection
+from peeka.cli import sessions as cli_sessions
+from peeka.cli.parsers import types as cli_types
 from peeka.cli.handlers import jobs as cli_jobs
 
 
@@ -50,14 +52,8 @@ class TestJobCLIList:
             def disconnect(self):
                 pass
 
-        monkeypatch.setattr(
-            cli_context, "StreamingAgentClient", MockStreamingAgentClient
-        )
-        monkeypatch.setattr(
-            cli_context,
-            "_check_agent_attached",
-            lambda: ("/tmp/peeka_12345678.sock", 1234),
-        )
+        monkeypatch.setattr(cli_connection, "StreamingAgentClient", MockStreamingAgentClient)
+        monkeypatch.setattr(cli_sessions, "_check_agent_attached", lambda: ("/tmp/peeka_12345678.sock", 1234))
 
         args = argparse.Namespace(
             command="job",
@@ -125,14 +121,8 @@ class TestJobCLIList:
             def disconnect(self):
                 pass
 
-        monkeypatch.setattr(
-            cli_context, "StreamingAgentClient", MockStreamingAgentClient
-        )
-        monkeypatch.setattr(
-            cli_context,
-            "_check_agent_attached",
-            lambda: ("/tmp/peeka_12345678.sock", 1234),
-        )
+        monkeypatch.setattr(cli_connection, "StreamingAgentClient", MockStreamingAgentClient)
+        monkeypatch.setattr(cli_sessions, "_check_agent_attached", lambda: ("/tmp/peeka_12345678.sock", 1234))
 
         args = argparse.Namespace(
             command="job",
@@ -178,14 +168,8 @@ class TestJobCLIList:
             def disconnect(self):
                 pass
 
-        monkeypatch.setattr(
-            cli_context, "StreamingAgentClient", MockStreamingAgentClient
-        )
-        monkeypatch.setattr(
-            cli_context,
-            "_check_agent_attached",
-            lambda: ("/tmp/peeka_12345678.sock", 1234),
-        )
+        monkeypatch.setattr(cli_connection, "StreamingAgentClient", MockStreamingAgentClient)
+        monkeypatch.setattr(cli_sessions, "_check_agent_attached", lambda: ("/tmp/peeka_12345678.sock", 1234))
 
         args = argparse.Namespace(
             command="job",
@@ -247,14 +231,8 @@ class TestJobCLIInterrupt:
             def disconnect(self):
                 pass
 
-        monkeypatch.setattr(
-            cli_context, "StreamingAgentClient", MockStreamingAgentClient
-        )
-        monkeypatch.setattr(
-            cli_context,
-            "_check_agent_attached",
-            lambda: ("/tmp/peeka_12345678.sock", 1234),
-        )
+        monkeypatch.setattr(cli_connection, "StreamingAgentClient", MockStreamingAgentClient)
+        monkeypatch.setattr(cli_sessions, "_check_agent_attached", lambda: ("/tmp/peeka_12345678.sock", 1234))
 
         args = argparse.Namespace(
             command="job",
@@ -290,14 +268,8 @@ class TestJobCLIInterrupt:
             def disconnect(self):
                 pass
 
-        monkeypatch.setattr(
-            cli_context, "StreamingAgentClient", MockStreamingAgentClient
-        )
-        monkeypatch.setattr(
-            cli_context,
-            "_check_agent_attached",
-            lambda: ("/tmp/peeka_12345678.sock", 1234),
-        )
+        monkeypatch.setattr(cli_connection, "StreamingAgentClient", MockStreamingAgentClient)
+        monkeypatch.setattr(cli_sessions, "_check_agent_attached", lambda: ("/tmp/peeka_12345678.sock", 1234))
 
         args = argparse.Namespace(
             command="job",
@@ -334,14 +306,8 @@ class TestJobCLICleanup:
             def disconnect(self):
                 pass
 
-        monkeypatch.setattr(
-            cli_context, "StreamingAgentClient", MockStreamingAgentClient
-        )
-        monkeypatch.setattr(
-            cli_context,
-            "_check_agent_attached",
-            lambda: ("/tmp/peeka_12345678.sock", 1234),
-        )
+        monkeypatch.setattr(cli_connection, "StreamingAgentClient", MockStreamingAgentClient)
+        monkeypatch.setattr(cli_sessions, "_check_agent_attached", lambda: ("/tmp/peeka_12345678.sock", 1234))
 
         args = argparse.Namespace(
             command="job",
@@ -359,14 +325,14 @@ class TestJobCLICleanup:
         assert captured_command["older_than_seconds"] == 600
 
     def test_job_cleanup_custom_older_than_parses_units(self, monkeypatch):
-        assert cli_context._parse_duration("1h") == 3600
-        assert cli_context._parse_duration("30s") == 30
-        assert cli_context._parse_duration("5m") == 300
-        assert cli_context._parse_duration("120") == 120
+        assert cli_types._parse_duration("1h") == 3600
+        assert cli_types._parse_duration("30s") == 30
+        assert cli_types._parse_duration("5m") == 300
+        assert cli_types._parse_duration("120") == 120
 
     def test_job_cleanup_invalid_older_than_rejected(self):
         try:
-            cli_context._parse_duration("5xyz")
+            cli_types._parse_duration("5xyz")
             assert False, "Expected ArgumentTypeError"
         except argparse.ArgumentTypeError:
             pass

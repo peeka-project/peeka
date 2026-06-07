@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from peeka.cli.context import _parse_duration
+from peeka.cli.parsers.types import _parse_duration
 
 
 def add_job_parsers(subparsers: Any) -> None:

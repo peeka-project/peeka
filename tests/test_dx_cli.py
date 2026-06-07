@@ -4,7 +4,8 @@ import sys
 from typing import Any
 from typing import Dict
 
-from peeka.cli import context as cli_context
+from peeka.cli import connection as cli_connection
+from peeka.cli import sessions as cli_sessions
 from peeka.cli.handlers import dx as cli_dx
 
 
@@ -33,12 +34,8 @@ class TestDXCLICreate:
             def disconnect(self):
                 pass
 
-        monkeypatch.setattr(
-            cli_context, "StreamingAgentClient", MockStreamingAgentClient
-        )
-        monkeypatch.setattr(
-            cli_context, "_check_agent_attached", lambda: ("/tmp/peeka_1.sock", 1234)
-        )
+        monkeypatch.setattr(cli_connection, "StreamingAgentClient", MockStreamingAgentClient)
+        monkeypatch.setattr(cli_sessions, "_check_agent_attached", lambda: ("/tmp/peeka_1.sock", 1234))
 
         args = argparse.Namespace(
             command="dx",
@@ -83,12 +80,8 @@ class TestDXCLIList:
             def disconnect(self):
                 pass
 
-        monkeypatch.setattr(
-            cli_context, "StreamingAgentClient", MockStreamingAgentClient
-        )
-        monkeypatch.setattr(
-            cli_context, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
-        )
+        monkeypatch.setattr(cli_connection, "StreamingAgentClient", MockStreamingAgentClient)
+        monkeypatch.setattr(cli_sessions, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234))
 
         args = argparse.Namespace(
             command="dx",
@@ -122,12 +115,8 @@ class TestDXCLIList:
             def disconnect(self):
                 pass
 
-        monkeypatch.setattr(
-            cli_context, "StreamingAgentClient", MockStreamingAgentClient
-        )
-        monkeypatch.setattr(
-            cli_context, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
-        )
+        monkeypatch.setattr(cli_connection, "StreamingAgentClient", MockStreamingAgentClient)
+        monkeypatch.setattr(cli_sessions, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234))
 
         args = argparse.Namespace(
             command="dx",
@@ -154,12 +143,8 @@ class TestDXCLIAddSummaryExportClose:
             def disconnect(self):
                 pass
 
-        monkeypatch.setattr(
-            cli_context, "StreamingAgentClient", MockStreamingAgentClient
-        )
-        monkeypatch.setattr(
-            cli_context, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
-        )
+        monkeypatch.setattr(cli_connection, "StreamingAgentClient", MockStreamingAgentClient)
+        monkeypatch.setattr(cli_sessions, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234))
 
         args = argparse.Namespace(
             command="dx",
@@ -207,12 +192,8 @@ class TestDXCLIAddSummaryExportClose:
             def disconnect(self):
                 pass
 
-        monkeypatch.setattr(
-            cli_context, "StreamingAgentClient", MockStreamingAgentClient
-        )
-        monkeypatch.setattr(
-            cli_context, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
-        )
+        monkeypatch.setattr(cli_connection, "StreamingAgentClient", MockStreamingAgentClient)
+        monkeypatch.setattr(cli_sessions, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234))
 
         summary_args = argparse.Namespace(
             command="dx", dx_action="summary", dx_case="dx_a", format="json"
@@ -252,12 +233,8 @@ class TestDXCLIAddSummaryExportClose:
             def disconnect(self):
                 pass
 
-        monkeypatch.setattr(
-            cli_context, "StreamingAgentClient", MockStreamingAgentClient
-        )
-        monkeypatch.setattr(
-            cli_context, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
-        )
+        monkeypatch.setattr(cli_connection, "StreamingAgentClient", MockStreamingAgentClient)
+        monkeypatch.setattr(cli_sessions, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234))
 
         args = argparse.Namespace(
             command="dx", dx_action="close", dx_case="dx_missing", format="json"

@@ -1,8 +1,8 @@
 """Non-streaming runtime inspection CLI handlers."""
 
 from peeka.cli._client_helper import ephemeral_client
-from peeka.cli.context import _check_agent_attached
-from peeka.cli.context import _socket_path_to_target_id
+from peeka.cli.connection import _socket_path_to_target_id
+from peeka.cli.sessions import _check_agent_attached
 from peeka.core.client import StreamingAgentClient
 from peeka.core.output import OutputFormatter
 

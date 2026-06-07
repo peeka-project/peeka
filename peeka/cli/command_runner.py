@@ -2,7 +2,7 @@
 
 from typing import Any, Callable, Dict, Optional
 
-from peeka.cli.context import _connect_streaming_agent
+from peeka.cli.connection import _connect_streaming_agent
 from peeka.core.output import OutputFormatter
 
 

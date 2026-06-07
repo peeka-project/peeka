@@ -4,7 +4,8 @@ import sys
 from typing import Any
 from typing import Dict
 
-from peeka.cli import context as cli_context
+from peeka.cli import connection as cli_connection
+from peeka.cli import sessions as cli_sessions
 import peeka.cli.main as cli_main
 from peeka.cli.handlers import consumers as cli_consumers
 
@@ -40,12 +41,8 @@ class TestConsumerCLICreate:
             def disconnect(self):
                 pass
 
-        monkeypatch.setattr(
-            cli_context, "StreamingAgentClient", MockStreamingAgentClient
-        )
-        monkeypatch.setattr(
-            cli_context, "_check_agent_attached", lambda: ("/tmp/peeka_1.sock", 1234)
-        )
+        monkeypatch.setattr(cli_connection, "StreamingAgentClient", MockStreamingAgentClient)
+        monkeypatch.setattr(cli_sessions, "_check_agent_attached", lambda: ("/tmp/peeka_1.sock", 1234))
 
         args = argparse.Namespace(
             command="consumer",
@@ -100,12 +97,8 @@ class TestConsumerCLIList:
             def disconnect(self):
                 pass
 
-        monkeypatch.setattr(
-            cli_context, "StreamingAgentClient", MockStreamingAgentClient
-        )
-        monkeypatch.setattr(
-            cli_context, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
-        )
+        monkeypatch.setattr(cli_connection, "StreamingAgentClient", MockStreamingAgentClient)
+        monkeypatch.setattr(cli_sessions, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234))
 
         args = argparse.Namespace(
             command="consumer",
@@ -148,12 +141,8 @@ class TestConsumerCLIStatus:
             def disconnect(self):
                 pass
 
-        monkeypatch.setattr(
-            cli_context, "StreamingAgentClient", MockStreamingAgentClient
-        )
-        monkeypatch.setattr(
-            cli_context, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
-        )
+        monkeypatch.setattr(cli_connection, "StreamingAgentClient", MockStreamingAgentClient)
+        monkeypatch.setattr(cli_sessions, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234))
 
         args = argparse.Namespace(
             command="consumer",
@@ -190,12 +179,8 @@ class TestConsumerCLIStatus:
             def disconnect(self):
                 pass
 
-        monkeypatch.setattr(
-            cli_context, "StreamingAgentClient", MockStreamingAgentClient
-        )
-        monkeypatch.setattr(
-            cli_context, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
-        )
+        monkeypatch.setattr(cli_connection, "StreamingAgentClient", MockStreamingAgentClient)
+        monkeypatch.setattr(cli_sessions, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234))
 
         args = argparse.Namespace(
             command="consumer",
@@ -251,12 +236,8 @@ class TestConsumerCLIDrain:
             def disconnect(self):
                 pass
 
-        monkeypatch.setattr(
-            cli_context, "StreamingAgentClient", MockStreamingAgentClient
-        )
-        monkeypatch.setattr(
-            cli_context, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
-        )
+        monkeypatch.setattr(cli_connection, "StreamingAgentClient", MockStreamingAgentClient)
+        monkeypatch.setattr(cli_sessions, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234))
 
         args = argparse.Namespace(
             command="consumer",
@@ -298,12 +279,8 @@ class TestConsumerCLIDrain:
             def disconnect(self):
                 pass
 
-        monkeypatch.setattr(
-            cli_context, "StreamingAgentClient", MockStreamingAgentClient
-        )
-        monkeypatch.setattr(
-            cli_context, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
-        )
+        monkeypatch.setattr(cli_connection, "StreamingAgentClient", MockStreamingAgentClient)
+        monkeypatch.setattr(cli_sessions, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234))
 
         args = argparse.Namespace(
             command="consumer",
@@ -353,13 +330,9 @@ class TestConsumerCLICloseCleanup:
             def disconnect(self):
                 pass
 
-        monkeypatch.setattr(
-            cli_context, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
-        )
+        monkeypatch.setattr(cli_sessions, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234))
 
-        monkeypatch.setattr(
-            cli_context, "StreamingAgentClient", MockStreamingAgentClientClose
-        )
+        monkeypatch.setattr(cli_connection, "StreamingAgentClient", MockStreamingAgentClientClose)
         close_args = argparse.Namespace(
             command="consumer",
             consumer_action="close",
@@ -371,9 +344,7 @@ class TestConsumerCLICloseCleanup:
         assert exit_code == 0
         assert json.loads(captured.out.strip())["command"] == "consumer.close"
 
-        monkeypatch.setattr(
-            cli_context, "StreamingAgentClient", MockStreamingAgentClientCleanup
-        )
+        monkeypatch.setattr(cli_connection, "StreamingAgentClient", MockStreamingAgentClientCleanup)
         cleanup_args = argparse.Namespace(
             command="consumer",
             consumer_action="cleanup",

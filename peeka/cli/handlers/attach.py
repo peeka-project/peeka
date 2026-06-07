@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from peeka.cli.context import _check_agent_attached
+from peeka.cli.sessions import _check_agent_attached
 from peeka.core.attach import ProcessAttacher
 from peeka.core.client import StreamingAgentClient
 from peeka.core.output import OutputFormatter
