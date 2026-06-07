@@ -289,6 +289,44 @@ class TestMonitorCommand:
         assert "monitors" in result
         assert watch_id in result["monitors"]
 
+    def test_monitor_uses_agent_injector_target_resolution(self, test_module):
+        """Monitor should reuse agent target resolution for script aliases."""
+
+        class RedirectingInjector:
+            def _resolve_target(self, pattern):
+                if pattern == "demo_alias.fast_function":
+                    return (
+                        test_module.fast_function,
+                        test_module,
+                        "fast_function",
+                    )
+                return None
+
+        agent = MockAgent()
+        agent.injector = RedirectingInjector()
+        monitor_cmd = MonitorCommand(agent)
+
+        result = monitor_cmd.execute(
+            {
+                "action": "start",
+                "pattern": "demo_alias.fast_function",
+                "cycle": 0.05,
+            }
+        )
+
+        assert result["status"] == "success"
+        watch_id = result["watch_id"]
+
+        try:
+            assert test_module.fast_function(21) == 42
+            time.sleep(0.15)
+
+            observations = agent._observations
+            assert observations
+            assert observations[-1]["total"] >= 1
+        finally:
+            monitor_cmd.execute({"action": "stop", "watch_id": watch_id})
+
     def test_monitor_invalid_pattern(self, monitor_cmd):
         """Invalid pattern should return error."""
         params = {
