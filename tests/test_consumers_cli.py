@@ -413,7 +413,7 @@ class TestConsumerMainDispatch:
             assert args.consumer_action == "list"
             return 7
 
-        monkeypatch.setitem(cli_main._COMMAND_HANDLERS, "consumer", fake_cmd_consumer)
+        monkeypatch.setattr(cli_consumers, "cmd_consumer", fake_cmd_consumer)
         monkeypatch.setattr(
             sys,
             "argv",

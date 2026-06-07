@@ -170,4 +170,4 @@ def add_observe_parsers(subparsers: Any) -> None:
         action="store_true",
         help="Disable peeka thread filtering (default: filter enabled)",
     )
-    top_parser.set_defaults(func="top")
+
