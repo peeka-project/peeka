@@ -14,17 +14,24 @@ Before using this skill, ensure the following are configured:
 1. **GitHub CLI authenticated**:
    ```bash
    gh auth status
-   # Must show: Logged in to github.com as wwulfric
+   # Must show an authenticated account with repo access.
    ```
 
 2. **PyPI Trusted Publisher** configured on pypi.org:
-   - Add `wwulfric/peeka` repository as a trusted publisher
+   - Add the repository reported by `gh repo view --json nameWithOwner --jq .nameWithOwner` as a trusted publisher
    - GitHub environment: `pypi` (uses OIDC token exchange, no secrets needed)
 
 3. **Clean working directory**:
    - All changes committed
    - On `master` branch
    - No version drift between `pyproject.toml` and `peeka/__init__.py`
+
+4. **Repository identity resolved from the local checkout**:
+   ```bash
+   repo_full_name=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
+   # Expected for this repository: peeka-project/peeka
+   ```
+   Do not hard-code a personal fork name in release commands. Use `repo_full_name` for `gh release`, `gh run`, and GitHub URLs.
 
 ## Quick Reference
 
@@ -151,8 +158,10 @@ if new <= current:
 
 #### Check 3: Tag Does Not Exist
 ```bash
+repo_full_name=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
+
 # Check if tag already exists on remote
-gh release view v$new_version --repo wwulfric/peeka 2>/dev/null
+gh release view v$new_version --repo "$repo_full_name" 2>/dev/null
 if [ $? -eq 0 ]; then
     echo "Error: Release v$new_version already exists"
     exit 1
@@ -213,6 +222,24 @@ fi
 ✓ On master branch
 ✓ Version files in sync
 ```
+
+### 1.4 Release Gate: Run the CI-equivalent Local Check
+
+Before changing versions or creating tags, run the repository release gate:
+
+```bash
+scripts/release_check.sh
+```
+
+This script is the single source of truth for the release test gate. It runs the same non-container, non-e2e, non-TUI unit-test set as `.github/workflows/publish-pypi.yml`, plus `ruff check peeka/`.
+
+Important details:
+- Locally, the script uses `uv run` when `uv` is available, matching repository development rules.
+- In GitHub Actions or minimal environments without `uv`, it falls back to the current Python environment.
+- Tests must not hard-code `uv` in subprocess calls. CLI subprocess tests should use `sys.executable -m peeka.cli.main ...`.
+- `tests/test_release_checks.py` enforces this for direct `subprocess.*(["uv", ...])` calls in tests.
+
+For changes that touch attach, target routing, probes, consumers, DX cases, Docker images, or runtime compatibility, also run the relevant container/manual matrix before release. The default publish workflow does not run Docker or ptrace-dependent tests.
 
 ---
 
@@ -490,23 +517,32 @@ notes_file="/tmp/peeka-release-v$new_version.md"
 ### 4.4 Push Commit and Tag
 
 ```bash
-# Push both in one command (atomic, safer)
+repo_full_name=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
+
+# Prefer the configured remote first.
 git push origin master --follow-tags
 ```
+
+If the configured remote is SSH and fails because the SSH agent cannot sign, use GitHub CLI's HTTPS credentials:
+
+```bash
+gh auth setup-git
+git push "https://github.com/${repo_full_name}.git" master --follow-tags
+```
+
+If push still fails because of permissions, stop the release flow and tell the user exactly what remains to push. Do not keep trying unrelated credentials or remotes.
 
 **Verification**:
 ```bash
 # Verify remote tag
-git ls-remote --tags origin v0.2.0
-# Expected output:
-# abc123...  refs/tags/v0.2.0
+gh api "repos/${repo_full_name}/git/ref/tags/v0.2.0" --jq .object.sha
 ```
 
 ### 4.5 Automated GitHub Actions Trigger
 
 The tag push automatically triggers `.github/workflows/publish-pypi.yml` which:
 
-1. **test** job: Runs unit tests
+1. **test** job: Runs `scripts/release_check.sh`
 2. **publish** job: Builds wheel and publishes to PyPI via Trusted Publisher (OIDC)
 3. **release** job: Creates the initial GitHub Release
 
@@ -522,8 +558,9 @@ Verify the workflow succeeded and the package is available.
 
 ```bash
 # Watch the triggered workflow run in real time
-gh run list --workflow=publish-pypi.yml --limit=1
-gh run watch  # watches the latest run until completion
+repo_full_name=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
+gh run list --repo "$repo_full_name" --workflow=publish-pypi.yml --limit=1
+gh run watch --repo "$repo_full_name"  # watches the latest run until completion
 ```
 
 The workflow typically completes in 2-5 minutes.
@@ -531,15 +568,15 @@ The workflow typically completes in 2-5 minutes.
 ### 5.2 Verify and Update GitHub Release Description
 
 ```bash
-gh release view v0.2.0
+gh release view v0.2.0 --repo "$repo_full_name"
 ```
 
 After the workflow creates the release, replace the generated commit-list body with the curated summary from Phase 4.3:
 
 ```bash
 notes_file="/tmp/peeka-release-v$new_version.md"
-gh release edit "v$new_version" --notes-file "$notes_file"
-gh release view "v$new_version"
+gh release edit "v$new_version" --repo "$repo_full_name" --notes-file "$notes_file"
+gh release view "v$new_version" --repo "$repo_full_name"
 ```
 
 Verify the release body:
@@ -577,10 +614,10 @@ python -c "import peeka; print(peeka.__version__)"
 Summary:
   - Commit: abc1234 "chore(release): bump version to 0.2.0"
   - Tag: v0.2.0 (pushed to origin)
-  - GitHub Release: https://github.com/wwulfric/peeka/releases/tag/v0.2.0
+  - GitHub Release: https://github.com/<owner>/<repo>/releases/tag/v0.2.0
   - Release notes: curated summary applied
   - PyPI Package: https://pypi.org/project/peeka/0.2.0/
-  - Workflow: https://github.com/wwulfric/peeka/actions/workflows/publish-pypi.yml
+  - Workflow: https://github.com/<owner>/<repo>/actions/workflows/publish-pypi.yml
 ```
 
 ---
@@ -649,7 +686,8 @@ status=$(git status --porcelain ./postmortem/)
 if [ -n "$status" ]; then
     git add ./postmortem/
     git commit -m "docs(postmortem): add post-release analysis for v$new_version"
-    git push origin master
+    repo_full_name=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
+    git push "https://github.com/${repo_full_name}.git" master
 fi
 ```
 
@@ -684,7 +722,8 @@ Summary:
 | Not on `master` branch | Error, abort | `Error: Must be on master branch (currently on develop)` |
 | Version mismatch between files | Error, abort | `Error: Version mismatch between files` |
 | Network error during push | Error, retry | `Error: Failed to push to origin. Check network connection.` |
-| GitHub Actions workflow fails | Warning, check Actions tab | `Warning: Check workflow at https://github.com/wwulfric/peeka/actions` |
+| GitHub Actions workflow fails before PyPI publish | Fix, commit, move local tag, force-update the same tag | `git tag -f -a vX.Y.Z -m "Release vX.Y.Z"` then `git push --force ... vX.Y.Z` |
+| GitHub Actions workflow fails after PyPI publish succeeds | Do not reuse the version; fix and bump a new patch version | `Error: vX.Y.Z already published to PyPI; release vX.Y.(Z+1)` |
 | GitHub Release body is still a commit list | Replace with curated notes from Phase 4.3 | `gh release edit vX.Y.Z --notes-file /tmp/peeka-release-vX.Y.Z.md` |
 | GitHub Release is not created yet | Wait for the release job, then retry notes update | `Warning: Release not found yet; retry after workflow completes` |
 | PyPI publishing fails | Warning, check Actions tab | `Warning: PyPI publish failed. Check Trusted Publisher config.` |
@@ -697,13 +736,51 @@ Summary:
 
 ---
 
-## Rollback Procedure
+## Failure Recovery Procedure
 
-If a release fails after pushing tags/commits:
+If a release fails after pushing tags/commits, first identify the last successful stage in the workflow:
+
+```bash
+repo_full_name=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
+gh run view <run_id> --repo "$repo_full_name" --log-failed
+```
+
+### Case A: Failure happened before PyPI publish
+
+Examples: unit tests fail, build fails before the `Publish to PyPI` step, or the workflow fails before artifacts are uploaded to PyPI.
+
+In this case the version has not escaped to PyPI. It is acceptable to fix the issue and reuse the same version:
+
+```bash
+# 1. Fix the problem and commit it.
+git add <files>
+git commit -m "test(...): fix release gate"
+
+# 2. Move the local tag to the new commit.
+git tag -f -a v0.2.0 -m "Release v0.2.0"
+
+# 3. Push master and force-update only this release tag.
+repo_full_name=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
+git push "https://github.com/${repo_full_name}.git" master
+git push --force "https://github.com/${repo_full_name}.git" v0.2.0
+```
+
+### Case B: PyPI publish succeeded
+
+PyPI versions are immutable. If the package was published but a later step failed, do **not** move or reuse the tag/version for another package build.
+
+Allowed actions:
+- If only GitHub Release creation or notes replacement failed, fix the GitHub Release manually with `gh release create/edit`.
+- If package contents are wrong, make a new fix commit and release the next patch version.
+
+### Delete Tag Only When Aborting an Unpublished Release
+
+Use this only when PyPI publish did not happen and you want to abandon the version entirely:
 
 ### 1. Delete Remote Tag
 ```bash
-git push origin --delete v0.2.0
+repo_full_name=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
+git push "https://github.com/${repo_full_name}.git" --delete v0.2.0
 ```
 
 ### 2. Delete Local Tag
@@ -715,7 +792,7 @@ git tag -d v0.2.0
 ```bash
 # If commit was pushed
 git revert HEAD
-git push origin master
+git push "https://github.com/${repo_full_name}.git" master
 
 # If commit not yet pushed
 git reset --hard HEAD~1
@@ -725,13 +802,13 @@ git reset --hard HEAD~1
 
 Check the workflow logs at:
 ```
-https://github.com/wwulfric/peeka/actions/workflows/publish-pypi.yml
+https://github.com/<owner>/<repo>/actions/workflows/publish-pypi.yml
 ```
 
 Common issues:
 - Build failures: Check pyproject.toml dependencies
 - PyPI errors: Verify Trusted Publisher config at https://pypi.org/manage/account/publishing/
-- Test failures: Run `pytest tests/ -v -m "not e2e and not container"` locally first
+- Test failures: Run `scripts/release_check.sh` locally first
 
 ### 5. Fix and Retry
 After fixing the issue, restart from Phase 1.
@@ -764,11 +841,12 @@ git add pyproject.toml peeka/__init__.py
 git commit -m "chore(release): bump version to X.Y.Z"
 git tag -a vX.Y.Z -m "Release vX.Y.Z"
 
-# Push (atomic)
-git push origin master --follow-tags
+# Push
+repo_full_name=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
+git push "https://github.com/${repo_full_name}.git" master --follow-tags
 
 # Verify
-git ls-remote --tags origin vX.Y.Z
+gh api "repos/${repo_full_name}/git/ref/tags/vX.Y.Z" --jq .object.sha
 ```
 
 ### PyPI Verification Commands
@@ -800,6 +878,7 @@ $ /release minor
 ✓ Working directory clean
 ✓ On master branch
 ✓ Version files in sync
+✓ scripts/release_check.sh passed
 
 # === Phase 2: Pre-release Postmortem Check ===
 Analyzing 23 commits from v0.1.0 to HEAD...
@@ -840,8 +919,9 @@ $ notes_file="/tmp/peeka-release-v0.2.0.md"
 # - Improves ...
 # - Fixes ...
 
-$ git push origin master --follow-tags
-To github.com:wwulfric/peeka.git
+$ repo_full_name=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
+$ git push "https://github.com/${repo_full_name}.git" master --follow-tags
+To https://github.com/peeka-project/peeka.git
    def5678..abc1234  master -> master
  * [new tag]         v0.2.0 -> v0.2.0
 
@@ -850,9 +930,9 @@ To github.com:wwulfric/peeka.git
 
 # === Phase 5: Post-Release Verification ===
 # Wait 2-5 minutes for workflow to complete
-# Check: https://github.com/wwulfric/peeka/actions/workflows/publish-pypi.yml
+# Check: https://github.com/<owner>/<repo>/actions/workflows/publish-pypi.yml
 
-$ gh release edit v0.2.0 --notes-file /tmp/peeka-release-v0.2.0.md
+$ gh release edit v0.2.0 --repo "$repo_full_name" --notes-file /tmp/peeka-release-v0.2.0.md
 ✓ GitHub Release description replaced with curated summary
 
 $ curl -s https://pypi.org/pypi/peeka/json | python3 -c "import sys,json; print(json.load(sys.stdin)['info']['version'])"
@@ -863,7 +943,7 @@ $ curl -s https://pypi.org/pypi/peeka/json | python3 -c "import sys,json; print(
 Summary:
   - Commit: abc1234 "chore(release): bump version to 0.2.0"
   - Tag: v0.2.0 (pushed to origin)
-  - GitHub Release: https://github.com/wwulfric/peeka/releases/tag/v0.2.0
+  - GitHub Release: https://github.com/<owner>/<repo>/releases/tag/v0.2.0
   - Release notes: curated summary applied
   - PyPI Package: https://pypi.org/project/peeka/0.2.0/
   - Workflow: ✓ automated via GitHub Actions
@@ -879,7 +959,7 @@ Invoking: /postmortem v0.1.0
 
 $ git add ./postmortem/
 $ git commit -m "docs(postmortem): add post-release analysis for v0.2.0"
-$ git push origin master
+$ git push "https://github.com/${repo_full_name}.git" master
 
 ✓ Post-release postmortem analysis completed
 ```
