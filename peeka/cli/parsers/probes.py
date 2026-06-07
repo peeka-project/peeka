@@ -49,6 +49,12 @@ def add_probe_parsers(subparsers: Any) -> None:
         help="Probe ID",
     )
     probe_status_parser.add_argument(
+        "--target",
+        type=str,
+        default=None,
+        help="Target ID that owns the probe",
+    )
+    probe_status_parser.add_argument(
         "--format",
         type=str,
         choices=["json", "table"],
@@ -64,6 +70,12 @@ def add_probe_parsers(subparsers: Any) -> None:
         type=str,
         required=True,
         help="Probe ID",
+    )
+    probe_inspect_parser.add_argument(
+        "--target",
+        type=str,
+        default=None,
+        help="Target ID that owns the probe",
     )
     probe_inspect_parser.add_argument(
         "--events",
@@ -85,6 +97,12 @@ def add_probe_parsers(subparsers: Any) -> None:
         type=str,
         required=True,
         help="Probe ID",
+    )
+    probe_stop_parser.add_argument(
+        "--target",
+        type=str,
+        default=None,
+        help="Target ID that owns the probe",
     )
     probe_stop_parser.add_argument(
         "--format",

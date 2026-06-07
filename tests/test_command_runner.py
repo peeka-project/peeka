@@ -1,6 +1,7 @@
 import argparse
 from typing import Any, Dict
 
+import peeka.cli.connection as cli_connection
 import peeka.cli.command_runner as command_runner_module
 from peeka.cli.command_runner import run_command
 
@@ -26,7 +27,7 @@ class TestRunCommandSuccess:
         monkeypatch.setattr(
             command_runner_module,
             "_connect_streaming_agent",
-            lambda cmd, tid: mock_client,
+            lambda cmd, tid, **kwargs: mock_client,
         )
 
         rendered = []
@@ -56,7 +57,7 @@ class TestRunCommandSuccess:
         monkeypatch.setattr(
             command_runner_module,
             "_connect_streaming_agent",
-            lambda cmd, tid: BrokenClient(),
+            lambda cmd, tid, **kwargs: BrokenClient(),
         )
 
         args = argparse.Namespace(target=None)
@@ -78,7 +79,7 @@ class TestRunCommandConnectionFailure:
         monkeypatch.setattr(
             command_runner_module,
             "_connect_streaming_agent",
-            lambda cmd, tid: None,
+            lambda cmd, tid, **kwargs: None,
         )
 
         build_called = []
@@ -99,7 +100,7 @@ class TestRunCommandConnectionFailure:
         monkeypatch.setattr(
             command_runner_module,
             "_connect_streaming_agent",
-            lambda cmd, tid: captured.append((cmd, tid)) or None,
+            lambda cmd, tid, **kwargs: captured.append((cmd, tid, kwargs)) or None,
         )
 
         args = argparse.Namespace(target="my-target")
@@ -110,14 +111,16 @@ class TestRunCommandConnectionFailure:
             render_success=lambda a, r: None,
         )
 
-        assert captured == [("my.cmd", "my-target")]
+        assert captured == [
+            ("my.cmd", "my-target", {"require_unambiguous_default": True})
+        ]
 
     def test_target_defaults_to_none_when_absent(self, monkeypatch) -> None:
         captured = []
         monkeypatch.setattr(
             command_runner_module,
             "_connect_streaming_agent",
-            lambda cmd, tid: captured.append(tid) or None,
+            lambda cmd, tid, **kwargs: captured.append((tid, kwargs)) or None,
         )
 
         args = argparse.Namespace()
@@ -128,7 +131,27 @@ class TestRunCommandConnectionFailure:
             render_success=lambda a, r: None,
         )
 
-        assert captured == [None]
+        assert captured == [(None, {"require_unambiguous_default": False})]
+
+    def test_target_none_requires_unambiguous_default_when_attr_present(
+        self, monkeypatch
+    ) -> None:
+        captured = []
+        monkeypatch.setattr(
+            command_runner_module,
+            "_connect_streaming_agent",
+            lambda cmd, tid, **kwargs: captured.append((tid, kwargs)) or None,
+        )
+
+        args = argparse.Namespace(target=None)
+        run_command(
+            args,
+            "my.cmd",
+            build_command=lambda a: {},
+            render_success=lambda a, r: None,
+        )
+
+        assert captured == [(None, {"require_unambiguous_default": True})]
 
 
 class TestRunCommandError:
@@ -142,7 +165,7 @@ class TestRunCommandError:
         monkeypatch.setattr(
             command_runner_module,
             "_connect_streaming_agent",
-            lambda cmd, tid: mock_client,
+            lambda cmd, tid, **kwargs: mock_client,
         )
 
         rendered = []
@@ -165,7 +188,7 @@ class TestRunCommandError:
         monkeypatch.setattr(
             command_runner_module,
             "_connect_streaming_agent",
-            lambda cmd, tid: mock_client,
+            lambda cmd, tid, **kwargs: mock_client,
         )
 
         args = argparse.Namespace(target=None)
@@ -193,7 +216,7 @@ class TestRunCommandErrorExitCodeMapping:
         monkeypatch.setattr(
             command_runner_module,
             "_connect_streaming_agent",
-            lambda cmd, tid: mock_client,
+            lambda cmd, tid, **kwargs: mock_client,
         )
 
         args = argparse.Namespace(target=None)
@@ -218,7 +241,7 @@ class TestRunCommandErrorExitCodeMapping:
         monkeypatch.setattr(
             command_runner_module,
             "_connect_streaming_agent",
-            lambda cmd, tid: mock_client,
+            lambda cmd, tid, **kwargs: mock_client,
         )
 
         args = argparse.Namespace(target=None)
@@ -231,3 +254,59 @@ class TestRunCommandErrorExitCodeMapping:
         )
 
         assert rc == 1
+
+
+class TestTargetAwareConnection:
+    def test_unambiguous_default_uses_single_alive_target(self, monkeypatch) -> None:
+        class Target:
+            target_id = "target_bbbbbbbb"
+            socket_path = "/tmp/peeka_bbbbbbbb.sock"
+            pid = 2222
+            state = "alive"
+
+        monkeypatch.setattr(cli_connection, "discover_targets", lambda: [Target()])
+        monkeypatch.setattr(
+            cli_connection.cli_sessions,
+            "_check_agent_attached",
+            lambda: (_ for _ in ()).throw(AssertionError("fallback not expected")),
+        )
+
+        socket_path, pid = cli_connection._check_agent_for_target(
+            None,
+            require_unambiguous_default=True,
+        )
+
+        assert socket_path == "/tmp/peeka_bbbbbbbb.sock"
+        assert pid == 2222
+
+    def test_unambiguous_default_rejects_multiple_alive_targets(
+        self, monkeypatch
+    ) -> None:
+        class TargetA:
+            target_id = "target_aaaaaaaa"
+            socket_path = "/tmp/peeka_aaaaaaaa.sock"
+            pid = 1111
+            state = "alive"
+
+        class TargetB:
+            target_id = "target_bbbbbbbb"
+            socket_path = "/tmp/peeka_bbbbbbbb.sock"
+            pid = 2222
+            state = "alive"
+
+        monkeypatch.setattr(
+            cli_connection,
+            "discover_targets",
+            lambda: [TargetA(), TargetB()],
+        )
+
+        try:
+            cli_connection._check_agent_for_target(
+                None,
+                require_unambiguous_default=True,
+            )
+            assert False, "Expected TargetResolutionError"
+        except cli_connection.TargetResolutionError as exc:
+            assert exc.error_code == "TARGET_AMBIGUOUS"
+            assert "target_aaaaaaaa" in str(exc)
+            assert "target_bbbbbbbb" in str(exc)

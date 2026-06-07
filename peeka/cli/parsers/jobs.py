@@ -48,6 +48,12 @@ def add_job_parsers(subparsers: Any) -> None:
         help="Job ID",
     )
     job_status_parser.add_argument(
+        "--target",
+        type=str,
+        default=None,
+        help="Target ID that owns the job",
+    )
+    job_status_parser.add_argument(
         "--format",
         type=str,
         choices=["json", "table"],
@@ -65,6 +71,12 @@ def add_job_parsers(subparsers: Any) -> None:
         help="Job ID",
     )
     job_inspect_parser.add_argument(
+        "--target",
+        type=str,
+        default=None,
+        help="Target ID that owns the job",
+    )
+    job_inspect_parser.add_argument(
         "--format",
         type=str,
         choices=["json", "table"],
@@ -80,6 +92,12 @@ def add_job_parsers(subparsers: Any) -> None:
         type=str,
         required=True,
         help="Job ID",
+    )
+    job_interrupt_parser.add_argument(
+        "--target",
+        type=str,
+        default=None,
+        help="Target ID that owns the job",
     )
     job_interrupt_parser.add_argument(
         "--format",
@@ -125,6 +143,12 @@ def add_job_parsers(subparsers: Any) -> None:
         type=str,
         required=True,
         help="Job ID",
+    )
+    job_pull_parser.add_argument(
+        "--target",
+        type=str,
+        default=None,
+        help="Target ID that owns the job",
     )
     job_pull_parser.add_argument(
         "--consumer",

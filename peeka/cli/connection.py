@@ -6,6 +6,7 @@ from typing import Optional, Tuple
 import peeka.cli.sessions as cli_sessions
 from peeka.core.client import StreamingAgentClient
 from peeka.core.output import OutputFormatter
+from peeka.core.targets import discover_targets
 from peeka.core.targets import get_target
 
 
@@ -17,9 +18,15 @@ class TargetResolutionError(ValueError):
         self.error_code = error_code
 
 
-def _check_agent_for_target(target_id: Optional[str]) -> Tuple[str, int]:
+def _check_agent_for_target(
+    target_id: Optional[str],
+    *,
+    require_unambiguous_default: bool = False,
+) -> Tuple[str, int]:
     """Return the socket and PID for a specific target or the default agent."""
     if not target_id:
+        if require_unambiguous_default:
+            return _check_unambiguous_default_agent()
         return cli_sessions._check_agent_attached()
 
     target = get_target(target_id)
@@ -38,13 +45,37 @@ def _check_agent_for_target(target_id: Optional[str]) -> Tuple[str, int]:
     raise TargetResolutionError("TARGET_NOT_FOUND", f"Target not found: {target_id}")
 
 
+def _check_unambiguous_default_agent() -> Tuple[str, int]:
+    """Return the only alive target, or reject ambiguous target selection."""
+    alive_targets = [
+        target for target in discover_targets() if target.state == "alive"
+    ]
+    if len(alive_targets) == 1:
+        target = alive_targets[0]
+        return target.socket_path, target.pid
+
+    if len(alive_targets) > 1:
+        target_ids = ", ".join(target.target_id for target in alive_targets)
+        raise TargetResolutionError(
+            "TARGET_AMBIGUOUS",
+            f"Multiple alive targets found ({target_ids}); pass --target",
+        )
+
+    return cli_sessions._check_agent_attached()
+
+
 def _connect_streaming_agent(
     command_name: str,
     target_id: Optional[str] = None,
+    *,
+    require_unambiguous_default: bool = False,
 ) -> Optional[StreamingAgentClient]:
     """Connect to the default or target-specific agent for a CLI command."""
     try:
-        socket_path, _ = _check_agent_for_target(target_id)
+        socket_path, _ = _check_agent_for_target(
+            target_id,
+            require_unambiguous_default=require_unambiguous_default,
+        )
     except ValueError as exc:
         OutputFormatter.error(
             command_name,

@@ -99,6 +99,12 @@ def add_consumer_parsers(subparsers: Any) -> None:
         "--consumer", type=str, required=True, help="Consumer ID"
     )
     consumer_status_parser.add_argument(
+        "--target",
+        type=str,
+        default=None,
+        help="Target ID that owns the consumer",
+    )
+    consumer_status_parser.add_argument(
         "--format",
         type=str,
         choices=["json", "table"],
@@ -117,6 +123,12 @@ def add_consumer_parsers(subparsers: Any) -> None:
     )
     consumer_drain_parser.add_argument(
         "--consumer", type=str, required=True, help="Consumer ID"
+    )
+    consumer_drain_parser.add_argument(
+        "--target",
+        type=str,
+        default=None,
+        help="Target ID that owns the consumer",
     )
     consumer_drain_parser.add_argument(
         "--limit", type=int, default=100, help="Maximum records to return"
@@ -154,6 +166,12 @@ def add_consumer_parsers(subparsers: Any) -> None:
         "--consumer", type=str, required=True, help="Consumer ID"
     )
     consumer_close_parser.add_argument(
+        "--target",
+        type=str,
+        default=None,
+        help="Target ID that owns the consumer",
+    )
+    consumer_close_parser.add_argument(
         "--format",
         type=str,
         choices=["json", "table"],
@@ -169,6 +187,12 @@ def add_consumer_parsers(subparsers: Any) -> None:
 
     consumer_cleanup_parser = consumer_subparsers.add_parser(
         "cleanup", help="Cleanup closed/failed result consumers"
+    )
+    consumer_cleanup_parser.add_argument(
+        "--target",
+        type=str,
+        default=None,
+        help="Clean up consumers for a specific target",
     )
     consumer_cleanup_parser.add_argument(
         "--all", action="store_true", help="Remove active consumers too"

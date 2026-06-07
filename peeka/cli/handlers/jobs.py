@@ -114,7 +114,9 @@ def cmd_job_pull(args) -> int:
             pass
 
     try:
-        command_runner_module._connect_streaming_agent = lambda command_name, target_id=None: _JobPullStubClient()
+        command_runner_module._connect_streaming_agent = (
+            lambda command_name, target_id=None, **kwargs: _JobPullStubClient()
+        )
         return run_command(
             args,
             "job.pull",

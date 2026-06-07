@@ -202,10 +202,18 @@ class TestProbeCLIInspect:
 
 
 class TestProbeCLIStop:
-    def test_probe_stop_invokes_correct_cmd_type(self, monkeypatch, capsys):
+    def test_probe_stop_resolves_target_before_connecting(self, monkeypatch, capsys):
+        sockets = []
+
+        class Target:
+            target_id = "target_bbbbbbbb"
+            socket_path = "/tmp/peeka_bbbbbbbb.sock"
+            pid = 2222
+            state = "alive"
+
         class MockStreamingAgentClient:
             def __init__(self, socket_path):
-                self.socket_path = socket_path
+                sockets.append(socket_path)
 
             def connect(self) -> Dict[str, Any]:
                 return {"status": "success"}
@@ -226,17 +234,28 @@ class TestProbeCLIStop:
                 pass
 
         monkeypatch.setattr(cli_connection, "StreamingAgentClient", MockStreamingAgentClient)
-        monkeypatch.setattr(cli_sessions, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234))
+        monkeypatch.setattr(
+            cli_connection,
+            "get_target",
+            lambda target_id: Target() if target_id == "target_bbbbbbbb" else None,
+        )
+        monkeypatch.setattr(
+            cli_sessions,
+            "_check_agent_attached",
+            lambda: ("/tmp/peeka_aaaaaaaa.sock", 1111),
+        )
 
         args = argparse.Namespace(
             command="probe",
             probe_action="stop",
             probe="prb_stop_test",
+            target="target_bbbbbbbb",
             format="table",
         )
 
         exit_code = cli_probes.cmd_probe(args)
         assert exit_code == 0
+        assert sockets == ["/tmp/peeka_bbbbbbbb.sock"]
 
 
 class TestProbeCLICleanup:

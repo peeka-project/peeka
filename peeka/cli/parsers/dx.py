@@ -48,6 +48,12 @@ def add_dx_parsers(subparsers: Any) -> None:
         "--dx-case", type=str, required=True, help="DX case ID"
     )
     dx_status_parser.add_argument(
+        "--target",
+        type=str,
+        default=None,
+        help="Target ID that owns the DX case",
+    )
+    dx_status_parser.add_argument(
         "--format",
         type=str,
         choices=["json", "table"],
@@ -63,6 +69,12 @@ def add_dx_parsers(subparsers: Any) -> None:
 
     dx_add_parser = dx_subparsers.add_parser("add", help="Add a section to a DX case")
     dx_add_parser.add_argument("--dx-case", type=str, required=True, help="DX case ID")
+    dx_add_parser.add_argument(
+        "--target",
+        type=str,
+        default=None,
+        help="Target ID that owns the DX case",
+    )
     dx_add_parser.add_argument(
         "--section-type",
         type=str,
@@ -119,6 +131,12 @@ def add_dx_parsers(subparsers: Any) -> None:
         "--dx-case", type=str, required=True, help="DX case ID"
     )
     dx_summary_parser.add_argument(
+        "--target",
+        type=str,
+        default=None,
+        help="Target ID that owns the DX case",
+    )
+    dx_summary_parser.add_argument(
         "--format",
         type=str,
         choices=["json", "table"],
@@ -135,6 +153,12 @@ def add_dx_parsers(subparsers: Any) -> None:
     dx_export_parser = dx_subparsers.add_parser("export", help="Export a DX case")
     dx_export_parser.add_argument(
         "--dx-case", type=str, required=True, help="DX case ID"
+    )
+    dx_export_parser.add_argument(
+        "--target",
+        type=str,
+        default=None,
+        help="Target ID that owns the DX case",
     )
     dx_export_parser.add_argument(
         "--output-path", type=str, default=None, help="Optional export destination path"
@@ -156,6 +180,12 @@ def add_dx_parsers(subparsers: Any) -> None:
     dx_close_parser = dx_subparsers.add_parser("close", help="Close a DX case")
     dx_close_parser.add_argument(
         "--dx-case", type=str, required=True, help="DX case ID"
+    )
+    dx_close_parser.add_argument(
+        "--target",
+        type=str,
+        default=None,
+        help="Target ID that owns the DX case",
     )
     dx_close_parser.add_argument(
         "--format",
