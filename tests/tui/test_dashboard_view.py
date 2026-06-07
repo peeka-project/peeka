@@ -316,7 +316,7 @@ class TestDashboardView:
             encoding="utf-8",
         )
         monkeypatch.setattr(
-            "peeka.tui.views.dashboard.tempfile.gettempdir",
+            "peeka.tui.views.dashboard_activity.tempfile.gettempdir",
             lambda: str(tmp_path),
         )
 
