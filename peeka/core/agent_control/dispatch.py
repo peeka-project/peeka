@@ -2,13 +2,131 @@
 
 import traceback
 import time as _time
-from typing import Any, Dict, cast
+from typing import Any, Callable, Dict, Optional, cast
 
 from peeka.core.jobs import JobCategory
 from peeka.core.jobs import TERMINAL_STATUSES
 
 
 class AgentCommandDispatchMixin:
+    def _build_namespace_table(
+        self,
+    ) -> Dict[str, Dict[str, Any]]:
+        """Return the namespace dispatch table.
+
+        Each namespace maps action names to handler callables with signature
+        ``(command: Dict[str, Any]) -> Dict[str, Any]``.  Two reserved keys
+        control per-namespace behaviour:
+
+        * ``"_pre"``: a zero-argument callable invoked before action dispatch.
+        * ``"_unknown_error"``: a one-argument callable ``(action: str)``
+          that returns the error dict for an unrecognised action.
+        """
+        return {
+            "target": {
+                "_unknown_error": lambda action: {
+                    "status": "error",
+                    "error_code": "UNSUPPORTED_CAPABILITY",
+                    "message": f"Unknown target action: {action}",
+                },
+                "hello": lambda cmd: self._handle_target_hello(),
+                "status": lambda cmd: self._handle_target_status(),
+            },
+            "client": {
+                "_pre": lambda: self._get_client_registry().cleanup_idle(
+                    idle_threshold_seconds=900
+                ),
+                "_unknown_error": lambda action: self._client_error(
+                    "UNSUPPORTED_CAPABILITY", f"Unknown client action: {action}"
+                ),
+                "create": self._handle_client_create,
+                "list": self._handle_client_list,
+                "status": self._handle_client_status,
+                "close": self._handle_client_close,
+            },
+            "job": {
+                "_pre": lambda: self._job_registry().cleanup(retention_seconds=600),
+                "_unknown_error": lambda action: self._job_error(
+                    "UNSUPPORTED_CAPABILITY", f"Unknown job action: {action}"
+                ),
+                "list": self._handle_job_list,
+                "status": self._handle_job_status,
+                "inspect": self._handle_job_inspect,
+                "interrupt": self._handle_job_interrupt,
+                "cleanup": self._handle_job_cleanup,
+            },
+            "probe": {
+                "_unknown_error": lambda action: self._probe_error(
+                    "UNSUPPORTED_CAPABILITY", f"Unknown probe action: {action}"
+                ),
+                "list": self._handle_probe_list,
+                "status": self._handle_probe_status,
+                "inspect": self._handle_probe_inspect,
+                "stop": self._handle_probe_stop,
+                "pause": self._handle_probe_pause,
+                "cleanup": self._handle_probe_cleanup,
+            },
+            "consumer": {
+                "_unknown_error": lambda action: self._consumer_error(
+                    "UNSUPPORTED_CAPABILITY", f"Unknown consumer action: {action}"
+                ),
+                "create": self._handle_consumer_create,
+                "list": self._handle_consumer_list,
+                "status": self._handle_consumer_status,
+                "drain": self._handle_consumer_drain,
+                "close": self._handle_consumer_close,
+                "cleanup": self._handle_consumer_cleanup,
+            },
+            "dx": {
+                "_unknown_error": lambda action: self._dx_error(
+                    "UNSUPPORTED_CAPABILITY", f"Unknown dx action: {action}"
+                ),
+                "create": self._handle_dx_create,
+                "list": self._handle_dx_list,
+                "status": self._handle_dx_status,
+                "add": self._handle_dx_add,
+                "summary": self._handle_dx_summary,
+                "export": self._handle_dx_export,
+                "close": self._handle_dx_close,
+            },
+        }
+
+    def _dispatch_namespace(
+        self,
+        cmd_type: str,
+        action: str,
+        command: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        """Dispatch *command* to its namespace handler.
+
+        Returns ``None`` when *cmd_type* is not a recognised namespace, so the
+        caller can fall through to the legacy ``_get_handler`` path.  For
+        known namespaces an error dict is always returned for unknown actions
+        (never ``None``).
+        """
+        ns_table = self._build_namespace_table()
+        ns = ns_table.get(cmd_type)
+        if ns is None:
+            return None
+
+        pre: Optional[Callable[[], None]] = ns.get("_pre")
+        if pre is not None:
+            pre()
+
+        handler: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = ns.get(action)
+        if handler is None:
+            unknown_error: Optional[Callable[[str], Dict[str, Any]]] = ns.get(
+                "_unknown_error"
+            )
+            if unknown_error is not None:
+                return unknown_error(action)
+            return {
+                "status": "error",
+                "error_code": "UNSUPPORTED_CAPABILITY",
+                "message": f"Unknown action {action!r} for namespace {cmd_type!r}",
+            }
+        return handler(command)
+
     def _execute_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
         cmd_type = command.get("type", "")
 
@@ -16,114 +134,13 @@ class AgentCommandDispatchMixin:
         if "command" in command and command.get("command") == "ping":
             return self._handle_target_hello()
 
-        # Handle new target namespace
-        if cmd_type == "target":
-            action = command.get("action", "")
-            if action == "hello":
-                return self._handle_target_hello()
-            elif action == "status":
-                return self._handle_target_status()
-            else:
-                return {"status": "error", "error": f"Unknown target action: {action}"}
+        action = command.get("action") or ""
+        if cmd_type == "probe" and not action:
+            action = "start"
 
-        if cmd_type == "client":
-            action = command.get("action", "")
-            registry = self._get_client_registry()
-            registry.cleanup_idle(idle_threshold_seconds=900)
-            if action == "create":
-                return self._handle_client_create(command)
-            elif action == "list":
-                return self._handle_client_list(command)
-            elif action == "status":
-                return self._handle_client_status(command)
-            elif action == "close":
-                return self._handle_client_close(command)
-            else:
-                return self._client_error(
-                    "UNSUPPORTED_CAPABILITY",
-                    f"Unknown client action: {action}",
-                )
-
-        if cmd_type == "job":
-            action = command.get("action", "")
-            self._job_registry().cleanup(retention_seconds=600)
-            if action == "list":
-                return self._handle_job_list(command)
-            elif action == "status":
-                return self._handle_job_status(command)
-            elif action == "inspect":
-                return self._handle_job_inspect(command)
-            elif action == "interrupt":
-                return self._handle_job_interrupt(command)
-            elif action == "cleanup":
-                return self._handle_job_cleanup(command)
-            else:
-                return self._job_error(
-                    "UNSUPPORTED_CAPABILITY",
-                    f"Unknown job action: {action}",
-                )
-
-        if cmd_type == "probe":
-            action = command.get("action", "")
-            if action == "list":
-                return self._handle_probe_list(command)
-            elif action == "status":
-                return self._handle_probe_status(command)
-            elif action == "inspect":
-                return self._handle_probe_inspect(command)
-            elif action == "stop":
-                return self._handle_probe_stop(command)
-            elif action == "pause":
-                return self._handle_probe_pause(command)
-            elif action == "cleanup":
-                return self._handle_probe_cleanup(command)
-            else:
-                return self._probe_error(
-                    "UNSUPPORTED_CAPABILITY",
-                    f"Unknown probe action: {action}",
-                )
-
-        if cmd_type == "consumer":
-            action = command.get("action", "")
-            if action == "create":
-                return self._handle_consumer_create(command)
-            elif action == "list":
-                return self._handle_consumer_list(command)
-            elif action == "status":
-                return self._handle_consumer_status(command)
-            elif action == "drain":
-                return self._handle_consumer_drain(command)
-            elif action == "close":
-                return self._handle_consumer_close(command)
-            elif action == "cleanup":
-                return self._handle_consumer_cleanup(command)
-            else:
-                return self._consumer_error(
-                    "UNSUPPORTED_CAPABILITY",
-                    f"Unknown consumer action: {action}",
-                )
-
-        if cmd_type == "dx":
-            action = command.get("action", "")
-            if action == "create":
-                return self._handle_dx_create(command)
-            elif action == "list":
-                return self._handle_dx_list(command)
-            elif action == "status":
-                return self._handle_dx_status(command)
-            elif action == "add":
-                return self._handle_dx_add(command)
-            elif action == "summary":
-                return self._handle_dx_summary(command)
-            elif action == "export":
-                return self._handle_dx_export(command)
-            elif action == "close":
-                return self._handle_dx_close(command)
-            else:
-                return self._dx_error(
-                    "UNSUPPORTED_CAPABILITY",
-                    f"Unknown dx action: {action}",
-                )
+        result = self._dispatch_namespace(cmd_type, action, command)
+        if result is not None:
+            return result
 
         handler = self._get_handler(cmd_type)
         if handler:
