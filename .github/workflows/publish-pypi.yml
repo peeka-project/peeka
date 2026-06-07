@@ -26,11 +26,11 @@ jobs:
       
       - name: Install dependencies
         run: |
-          pip install -e ".[dev]" || pip install -e .
-          pip install pytest pytest-timeout pytest-asyncio
+          pip install -e .
+          pip install pytest pytest-timeout pytest-asyncio ruff
       
       - name: Run unit tests
-        run: pytest tests/ -v --tb=short -m "not e2e and not container and not tui" --timeout=30 --ignore=tests/tui --ignore=tests/test_tui.py --ignore=tests/test_theme.py
+        run: scripts/release_check.sh
   
   publish:
     name: Build and Publish to PyPI
