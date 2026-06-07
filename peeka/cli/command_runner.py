@@ -12,6 +12,7 @@ def run_command(
     build_command: Callable,
     render_success: Callable,
     *,
+    render_error: Optional[Callable] = None,
     error_message: str = "Command failed",
     error_exit_codes: Optional[Dict[str, int]] = None,
 ) -> int:
@@ -25,8 +26,9 @@ def run_command(
         command_name: Command name used in error output.
         build_command: Callable(args) -> Dict — builds the command dict to send.
         render_success: Callable(args, response) -> None — renders success output.
-        error_message: Fallback error message when the response provides none.
-        error_exit_codes: Optional mapping of error_code string to exit integer.
+    error_message: Fallback error message when the response provides none.
+    render_error: Optional callback to render failure output.
+    error_exit_codes: Optional mapping of error_code string to exit integer.
 
     Returns:
         0 on success, 1 or a mapped exit code on failure.
@@ -48,7 +50,10 @@ def run_command(
 
     error_code = response.get("error_code")
     message = response.get("message", error_message)
-    OutputFormatter.error(command_name, error=message, error_code=error_code)
+    if render_error is not None:
+        render_error(args, response, message, error_code)
+    else:
+        OutputFormatter.error(command_name, error=message, error_code=error_code)
     if error_exit_codes and error_code:
         return error_exit_codes.get(error_code, 1)
     return 1
