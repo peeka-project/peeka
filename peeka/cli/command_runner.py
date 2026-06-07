@@ -36,7 +36,11 @@ def run_command(
         0 on success, 1 or a mapped exit code on failure.
     """
     target_id = getattr(args, "target", None)
-    client = _connect_streaming_agent(command_name, target_id)
+    client = _connect_streaming_agent(
+        command_name,
+        target_id,
+        require_unambiguous_default=hasattr(args, "target"),
+    )
     if client is None:
         return 1
 

@@ -46,11 +46,15 @@ def _build_run_command(
     if parser_builder is None:
         return None
 
+    parts = command_parts
+    if parts and parts[0] == command_type:
+        parts = parts[1:]
+
     if command_type in ("watch", "trace", "stack"):
-        if len(command_parts) < 2:
+        if not parts:
             return None
-        command["pattern"] = command_parts[1]
-        remaining = command_parts[2:]
+        command["pattern"] = parts[0]
+        remaining = parts[1:]
         parser_builder(parser)
 
         parsed = parser.parse_args(remaining)
@@ -58,17 +62,17 @@ def _build_run_command(
         return command
 
     elif command_type == "monitor":
-        if not command_parts:
+        if not parts:
             return None
-        command["pattern"] = command_parts[0]
-        remaining = command_parts[1:]
+        command["pattern"] = parts[0]
+        remaining = parts[1:]
         parser_builder(parser)
         parsed = parser.parse_args(remaining)
         command.update(vars(parsed))
         return command
 
     elif command_type == "top":
-        remaining = command_parts
+        remaining = parts
         parser_builder(parser)
         parsed = parser.parse_args(remaining)
         command["interval"] = parsed.interval
