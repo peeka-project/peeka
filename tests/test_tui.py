@@ -70,7 +70,7 @@ class TestProcessSelectorScreen:
 
             column_labels = [col.label.plain for col in table.columns.values()]
 
-            assert "Target ID" in column_labels
+            assert "Name" in column_labels
 
             assert "State" in column_labels
 
@@ -110,7 +110,10 @@ class TestProcessSelectorScreen:
 
             filter_input = app.screen.query_one("#filter", Input)
 
-            assert filter_input.placeholder == "Filter by Target ID, PID, or State..."
+            assert (
+                filter_input.placeholder
+                == "Filter by Name, Command, PID, or State..."
+            )
 
 
 

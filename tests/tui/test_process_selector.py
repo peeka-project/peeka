@@ -1,11 +1,15 @@
 """Tests for process_selector TUI component using discover_targets."""
 
+from typing import List
+from typing import Optional
+
 import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import DataTable
 
-from peeka.tui.screens.process_selector import ProcessSelectorScreen
+from peeka.core.processes import PythonProcess
 from peeka.core.targets import TargetAgent
+from peeka.tui.screens.process_selector import ProcessSelectorScreen
 
 
 class MockProcessApp(App[None]):
@@ -68,11 +72,29 @@ def mock_targets():
     ]
 
 
+def patch_discovery(
+    monkeypatch: pytest.MonkeyPatch,
+    targets: List[TargetAgent],
+    processes: Optional[List[PythonProcess]] = None,
+) -> None:
+    """Patch process selector discovery sources."""
+    if processes is None:
+        processes = []
+    monkeypatch.setattr(
+        "peeka.tui.screens.process_selector.discover_targets",
+        lambda: targets,
+    )
+    monkeypatch.setattr(
+        "peeka.tui.screens.process_selector.discover_python_processes",
+        lambda: processes,
+    )
+
+
 @pytest.mark.asyncio
 @pytest.mark.tui
 async def test_process_selector_uses_discover_targets(monkeypatch, mock_targets):
     """Verify process selector populates table from discover_targets."""
-    monkeypatch.setattr("peeka.tui.screens.process_selector.discover_targets", lambda: mock_targets)
+    patch_discovery(monkeypatch, mock_targets)
     
     app = MockProcessApp()
     async with app.run_test(size=(140, 24)) as pilot:
@@ -95,7 +117,7 @@ async def test_process_selector_uses_discover_targets(monkeypatch, mock_targets)
 @pytest.mark.tui
 async def test_process_selector_layout_140x24(monkeypatch, mock_targets):
     """Verify wide layout geometry requirements per DoD."""
-    monkeypatch.setattr("peeka.tui.screens.process_selector.discover_targets", lambda: mock_targets)
+    patch_discovery(monkeypatch, mock_targets)
 
     app = MockProcessApp()
     async with app.run_test(size=(140, 24)) as pilot:
@@ -116,7 +138,7 @@ async def test_process_selector_layout_140x24(monkeypatch, mock_targets):
 @pytest.mark.tui
 async def test_process_selector_layout_80x24(monkeypatch, mock_targets):
     """Verify narrow layout geometry requirements per DoD."""
-    monkeypatch.setattr("peeka.tui.screens.process_selector.discover_targets", lambda: mock_targets)
+    patch_discovery(monkeypatch, mock_targets)
 
     app = MockProcessApp()
     async with app.run_test(size=(80, 24)) as pilot:
@@ -132,7 +154,7 @@ async def test_process_selector_layout_80x24(monkeypatch, mock_targets):
 @pytest.mark.tui
 async def test_stale_row_disabled(monkeypatch, mock_targets):
     """Verify stale rows are shown but are disabled/unselectable."""
-    monkeypatch.setattr("peeka.tui.screens.process_selector.discover_targets", lambda: mock_targets)
+    patch_discovery(monkeypatch, mock_targets)
 
     # Mock the attach action to verify it doesn't get called
     attach_called = False
@@ -184,6 +206,10 @@ async def test_refresh_keybinding_r(monkeypatch, mock_targets):
         return mock_targets
         
     monkeypatch.setattr("peeka.tui.screens.process_selector.discover_targets", mock_discover)
+    monkeypatch.setattr(
+        "peeka.tui.screens.process_selector.discover_python_processes",
+        lambda: [],
+    )
 
     app = MockProcessApp()
     async with app.run_test(size=(140, 24)) as pilot:
@@ -195,6 +221,49 @@ async def test_refresh_keybinding_r(monkeypatch, mock_targets):
         await pilot.pause()
         
         assert call_count == 2  # Called again on refresh
+
+
+@pytest.mark.asyncio
+@pytest.mark.tui
+async def test_process_selector_lists_attachable_python_process(monkeypatch):
+    """Verify unattached Python processes are selectable from the TUI."""
+    process = PythonProcess(
+        pid=3140,
+        name="target.py",
+        command="python3.14 /app/target.py",
+        executable="/opt/python/bin/python3.14",
+        python_version="3.14",
+        created_at=1000.0,
+    )
+    patch_discovery(monkeypatch, [], [process])
+
+    attach_calls = []
+
+    def mock_attach(pid):
+        attach_calls.append(pid)
+
+    app = MockProcessApp()
+    async with app.run_test(size=(140, 24)) as pilot:
+        await pilot.pause()
+
+        app.screen_instance._attach_to_process = mock_attach
+
+        table = app.screen.query_one("#process-table", DataTable)
+        assert len(table.rows) == 1
+
+        row = table.get_row("process_3140")
+        assert "target.py" in str(row[0])
+        assert "3140" in str(row[1])
+        assert "attachable" in str(row[2])
+        assert "3.14" in str(row[3])
+        assert "/app/target.py" in str(row[4])
+
+        table.focus()
+        table.move_cursor(row=0)
+        await pilot.press("enter")
+        await pilot.pause()
+
+    assert attach_calls == [3140]
 
 
 def test_no_glob_calls():
