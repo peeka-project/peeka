@@ -9,10 +9,12 @@ from peeka.core.output import OutputFormatter
 def run_command(
     args: Any,
     command_name: str,
-    build_command: Callable,
-    render_success: Callable,
+    build_command: Callable[[Any], Dict[str, Any]],
+    render_success: Callable[[Any, Dict[str, Any]], None],
     *,
-    render_error: Optional[Callable] = None,
+    render_error: Optional[
+        Callable[[Any, Dict[str, Any], str, Optional[str]], None]
+    ] = None,
     error_message: str = "Command failed",
     error_exit_codes: Optional[Dict[str, int]] = None,
 ) -> int:
