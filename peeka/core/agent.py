@@ -172,6 +172,14 @@ class _ObservationQueue(deque):  # pyright: ignore[reportMissingTypeArgument]
         """Append an item without blocking, dropping the oldest item when full."""
         self.append(item)
 
+    def get_nowait(self) -> Any:
+        """Pop the oldest item without blocking."""
+        return self.popleft()
+
+    def empty(self) -> bool:
+        """Return True when the queue has no pending observations."""
+        return len(self) == 0
+
 
 def _write_session_log(
     session_id: str, level: str, message: str, details: Optional[str] = None
@@ -294,6 +302,8 @@ class PeekaAgent(
         self._observation_queue_lock = _rpl.allocate_lock()
         self._observation_sequence = 0
         self._observation_flush_event = _rpl.create_event()
+        self._flush_thread_running = True
+        self._flush_thread_id: Optional[int] = None
         self._mutation_lock: threading.RLock = threading.RLock()
 
         self._client_counter = 0
@@ -318,6 +328,7 @@ class PeekaAgent(
         self._recent_errors: List[Dict[str, Any]] = []
         self._error_ring_lock = _rpl.allocate_lock()
         self._last_seen_at = _time.time()
+        self._start_flush_thread()
 
     # ------------------------------------------------------------------ #
     #  Lazy command handler loading                                      #
@@ -590,6 +601,8 @@ class PeekaAgent(
                     "slow_evicted_count": 0,
                     "evicted_count": 0,
                 }
+                if self._flush_thread_id is not None:
+                    self._observation_queue_flushers[conn] = self._flush_thread_id
             return queue
 
     def _enqueue_observation(self, conn: socket.socket, item: Any) -> None:
@@ -634,6 +647,103 @@ class PeekaAgent(
             self._client_connection_kinds.pop(conn, None)
             self._client_write_locks.pop(conn, None)
             return len(self._client_connections)
+
+    def _start_flush_thread(self) -> None:
+        """Start the observation queue flush worker on a native thread."""
+        if self._flush_thread_id is not None:
+            return
+        self._flush_thread_running = True
+        self._flush_thread_id = _rpl.start_thread(
+            self._flush_loop,
+            name="peeka-observation-flusher",
+        )
+
+    def _flush_loop(self) -> None:
+        """Flush queued observations to stream sockets until the agent stops."""
+        while self._flush_thread_running:
+            try:
+                self._observation_flush_event.wait(timeout=0.05)
+                self._observation_flush_event.clear()
+                self._flush_all_connections()
+            except Exception:
+                self._emit_log(
+                    "ERROR",
+                    "[peeka Agent] Observation flush loop error",
+                    traceback.format_exc(),
+                )
+
+    def _flush_all_connections(self) -> None:
+        """Drain pending observation batches for all stream connections."""
+        dead_connections = []
+        with self._observation_queue_lock:
+            conn_list = list(self._observation_queues.keys())
+
+        for conn in conn_list:
+            if not self._flush_connection(conn):
+                dead_connections.append(conn)
+
+        for conn in dead_connections:
+            self._unregister_client_connection(conn)
+            with self._observation_queue_lock:
+                self._observation_queues.pop(conn, None)
+                self._observation_queue_stats.pop(conn, None)
+                self._observation_queue_flushers.pop(conn, None)
+
+    def _encode_observation_frame(self, observation: Any) -> Optional[bytes]:
+        """Encode one queued observation as an OBS frame."""
+        if isinstance(observation, bytes):
+            if observation.startswith(b"OBS:"):
+                return observation
+            return None
+        try:
+            payload = json.dumps(observation).encode("utf-8")
+        except (TypeError, ValueError):
+            return None
+        return b"OBS:" + len(payload).to_bytes(4, "big") + payload
+
+    def _flush_connection(self, conn: socket.socket) -> bool:
+        """Flush a bounded batch for one connection; return False if dead."""
+        batch = []
+        with self._observation_queue_lock:
+            queue = self._observation_queues.get(conn)
+            if queue is None:
+                return True
+            while queue and len(batch) < 64:
+                batch.append(queue.popleft())
+
+        if not batch:
+            return True
+
+        frames = bytearray()
+        encoded_count = 0
+        for observation in batch:
+            frame = self._encode_observation_frame(observation)
+            if frame is None:
+                continue
+            if len(frames) + len(frame) > 256 * 1024:
+                break
+            frames.extend(frame)
+            encoded_count += 1
+
+        if not frames:
+            return True
+
+        if not self._send_frame_to_connection(conn, bytes(frames)):
+            return False
+
+        with self._observation_queue_lock:
+            stats = self._observation_queue_stats.get(conn)
+            if stats is not None:
+                stats["delivered"] += encoded_count
+        return True
+
+    def _signal_observation_queue_drain(self) -> None:
+        """Signal the flush worker to stop and wake any pending wait."""
+        self._flush_thread_running = False
+        try:
+            self._observation_flush_event.set()
+        except Exception:
+            pass
 
     def _snapshot_client_connections(
         self, kind: Optional[str] = None
@@ -823,6 +933,7 @@ class PeekaAgent(
 
     def stop(self) -> None:
         self.running = False
+        self._signal_observation_queue_drain()
         self.injector.uninject_all()
 
         if self.server:
