@@ -728,7 +728,8 @@ class PeekaAgent(
         if not frames:
             return True
 
-        if not self._send_frame_to_connection(conn, bytes(frames)):
+        if not self._send_observation_frames_with_timeout(conn, bytes(frames)):
+            self._record_slow_client_eviction(conn)
             return False
 
         with self._observation_queue_lock:
@@ -736,6 +737,46 @@ class PeekaAgent(
             if stats is not None:
                 stats["delivered"] += encoded_count
         return True
+
+    def _record_slow_client_eviction(self, conn: socket.socket) -> None:
+        """Increment slow-client eviction counters for a stream connection."""
+        with self._observation_queue_lock:
+            stats = self._observation_queue_stats.get(conn)
+            if stats is not None:
+                stats["slow_evicted_count"] = stats.get("slow_evicted_count", 0) + 1
+                stats["evicted_count"] = stats.get("evicted_count", 0) + 1
+
+    def _send_observation_frames_with_timeout(
+        self, conn: socket.socket, frames: bytes, timeout: float = 0.1
+    ) -> bool:
+        """Send observation frames with a bounded per-connection timeout."""
+        try:
+            conn.settimeout(timeout)
+        except Exception:
+            pass
+
+        done = _rpl.create_event()
+        result = {"success": False}
+
+        def send_frames() -> None:
+            try:
+                result["success"] = self._send_frame_to_connection(conn, frames)
+            finally:
+                try:
+                    done.set()
+                except Exception:
+                    pass
+
+        try:
+            _rpl.start_thread(send_frames, name="peeka-observation-send")
+            if not done.wait(timeout=timeout):
+                return False
+            return bool(result["success"])
+        finally:
+            try:
+                conn.settimeout(None)
+            except Exception:
+                pass
 
     def _signal_observation_queue_drain(self) -> None:
         """Signal the flush worker to stop and wake any pending wait."""
@@ -889,8 +930,10 @@ class PeekaAgent(
         observation["seq"] = seq
         self.observer.add_observation(observation)
 
+        frame = self._encode_observation_frame(observation)
+        queued_observation = frame if frame is not None else observation
         for conn in self._snapshot_client_connections(kind="stream"):
-            self._enqueue_observation(conn, observation)
+            self._enqueue_observation(conn, queued_observation)
 
         if self._observation_flush_event is not None:
             try:
@@ -934,6 +977,26 @@ class PeekaAgent(
     def stop(self) -> None:
         self.running = False
         self._signal_observation_queue_drain()
+
+        drain_deadline = _time.monotonic() + 0.3
+        while _time.monotonic() < drain_deadline:
+            with self._observation_queue_lock:
+                total_queued = sum(len(queue) for queue in self._observation_queues.values())
+            if total_queued == 0:
+                break
+            _time.sleep(0.01)
+
+        with self._observation_queue_lock:
+            for conn, queue in list(self._observation_queues.items()):
+                remaining = len(queue)
+                if remaining <= 0:
+                    continue
+                stats = self._observation_queue_stats.get(conn)
+                if stats is not None:
+                    stats["drain_dropped"] = stats.get("drain_dropped", 0) + remaining
+                    stats["drain_dropped_count"] = stats.get("drain_dropped_count", 0) + remaining
+                queue.clear()
+
         self.injector.uninject_all()
 
         if self.server:
