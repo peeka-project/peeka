@@ -4,6 +4,8 @@ Agent Code - Runs inside target process
 This code is injected into the target process and handles command execution
 """
 
+from collections import deque
+
 import json
 import socket
 import sys
@@ -11,7 +13,7 @@ import threading
 import time as _time
 import traceback
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, cast
+from typing import Any, Deque, Dict, List, Optional, Tuple, cast
 
 from peeka.core import probes as probes_module
 from peeka.core.agent_control.clients import AgentClientControlMixin
@@ -158,6 +160,19 @@ def _response_message(response: Dict[str, Any], fallback: str) -> str:
     return fallback
 
 
+class _ObservationQueue(deque):  # pyright: ignore[reportMissingTypeArgument]
+    """Bounded FIFO queue for observations destined to one stream client."""
+
+    @property
+    def maxsize(self) -> Optional[int]:
+        """Return the configured capacity using queue.Queue-compatible naming."""
+        return self.maxlen
+
+    def put_nowait(self, item: Any) -> None:
+        """Append an item without blocking, dropping the oldest item when full."""
+        self.append(item)
+
+
 def _write_session_log(
     session_id: str, level: str, message: str, details: Optional[str] = None
 ) -> None:
@@ -273,11 +288,17 @@ class PeekaAgent(
         self._client_connection_kinds: Dict[socket.socket, str] = {}
         self._client_write_locks: Dict[socket.socket, Any] = {}
         self._connections_lock = _rpl.allocate_lock()
+        self._observation_queues: Dict[Any, Deque[Any]] = {}
+        self._observation_queue_stats: Dict[Any, Dict[str, int]] = {}
+        self._observation_queue_flushers: Dict[Any, Any] = {}
+        self._observation_queue_lock = _rpl.allocate_lock()
+        self._observation_sequence = 0
+        self._observation_flush_event = _rpl.create_event()
         self._mutation_lock: threading.RLock = threading.RLock()
 
         self._client_counter = 0
         self.observer = ObservationManager()
-        self.injector = DecoratorInjector(self)
+        self.injector = DecoratorInjector(self)  # pyright: ignore[reportArgumentType]
         self.probe_registry: ProbeRegistry = probes_module.probe_registry
         self._probe_contexts: Dict[str, ProbeContext] = {}
         self._probe_context_types: Dict[str, str] = {}
@@ -540,13 +561,40 @@ class PeekaAgent(
             self._client_connections.append(conn)
             self._client_connection_kinds[conn] = kind
             self._client_write_locks[conn] = _rpl.allocate_lock()
-            return len(self._client_connections)
+            connection_count = len(self._client_connections)
+        if kind == "stream":
+            self._get_or_create_connection_queue(conn)
+        return connection_count
+
+    def _get_or_create_connection_queue(self, conn: socket.socket) -> Deque[Any]:
+        """Return the bounded observation queue for a stream connection.
+
+        Args:
+            conn: Client connection that receives observation frames.
+
+        Returns:
+            The per-connection FIFO observation queue.
+        """
+        with self._observation_queue_lock:
+            queue = self._observation_queues.get(conn)
+            if queue is None:
+                queue = _ObservationQueue(maxlen=1024)
+                self._observation_queues[conn] = queue
+                self._observation_queue_stats[conn] = {
+                    "enqueued": 0,
+                    "delivered": 0,
+                    "dropped": 0,
+                    "drain_dropped": 0,
+                }
+            return queue
 
     def _set_client_connection_kind(self, conn: socket.socket, kind: str) -> None:
         """Update the broadcast kind for a live client connection."""
         with self._connections_lock:
             if conn in self._client_connections:
                 self._client_connection_kinds[conn] = kind
+        if kind == "stream":
+            self._get_or_create_connection_queue(conn)
 
     def _unregister_client_connection(self, conn: socket.socket) -> int:
         """Forget a client connection and its write lock."""
