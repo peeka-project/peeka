@@ -40,11 +40,11 @@ class ObservationManager:
         Args:
             buffer_size: Maximum observations to buffer (default: 10000)
         """
-        self._buffer: deque = deque(maxlen=buffer_size)
+        self._buffer: deque[Any] = deque(maxlen=buffer_size)
         self._watches: Dict[str, Dict[str, Any]] = {}
         self._subscribers: List[Callable[[Dict[str, Any]], None]] = []
-        self._lock = _rpl.allocate_lock()
-        self._stats_lock = _rpl.allocate_lock()
+        self._lock = _rpl.allocate_lock()  # DOMAIN: native_thread
+        self._stats_lock = _rpl.allocate_lock()  # DOMAIN: native_thread
 
     def register_watch(
             self, watch_id: str, pattern: str, config: Optional[Dict[str, Any]] = None

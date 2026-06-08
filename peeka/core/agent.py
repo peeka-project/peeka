@@ -295,7 +295,7 @@ class PeekaAgent(
         self._client_connections: List[socket.socket] = []
         self._client_connection_kinds: Dict[socket.socket, str] = {}
         self._client_write_locks: Dict[socket.socket, Any] = {}
-        self._connections_lock = _rpl.allocate_lock()
+        self._connections_lock = _rpl.allocate_lock()  # DOMAIN: native_thread
         self._observation_queues: Dict[Any, Deque[Any]] = {}
         self._observation_queue_stats: Dict[Any, Dict[str, int]] = {}
         self._observation_queue_flushers: Dict[Any, Any] = {}
@@ -304,7 +304,7 @@ class PeekaAgent(
         self._observation_flush_event = _rpl.create_event()
         self._flush_thread_running = True
         self._flush_thread_id: Optional[int] = None
-        self._mutation_lock: threading.RLock = threading.RLock()
+        self._mutation_lock: threading.RLock = threading.RLock()  # DOMAIN: mixed (command orchestration)
 
         self._client_counter = 0
         self.observer = ObservationManager()
@@ -312,7 +312,7 @@ class PeekaAgent(
         self.probe_registry: ProbeRegistry = probes_module.probe_registry
         self._probe_contexts: Dict[str, ProbeContext] = {}
         self._probe_context_types: Dict[str, str] = {}
-        self._probe_context_lock = _rpl.allocate_lock()
+        self._probe_context_lock = _rpl.allocate_lock()  # DOMAIN: mixed (probe lifecycle)
 
         self._notify_port = notify_port
         
@@ -326,7 +326,7 @@ class PeekaAgent(
         
         # Error ring buffer for target.status (last 5 errors)
         self._recent_errors: List[Dict[str, Any]] = []
-        self._error_ring_lock = _rpl.allocate_lock()
+        self._error_ring_lock = _rpl.allocate_lock()  # DOMAIN: native_thread
         self._last_seen_at = _time.time()
         self._start_flush_thread()
 

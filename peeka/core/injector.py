@@ -6,6 +6,8 @@ observation logic into target functions at runtime, enabling function call
 monitoring without modifying the original source code.
 """
 
+# pyright: reportImportCycles=false
+
 import inspect
 import logging
 import uuid
@@ -56,7 +58,7 @@ class DecoratorInjector(
         """
         self.agent = agent
         self.instrumented: Dict[str, Dict[str, Any]] = {}
-        self._lock = _rpl.allocate_lock()
+        self._lock = _rpl.allocate_lock()  # DOMAIN: native_thread (hot path, never gevent lock)
 
     def inject(self, pattern: str, watch_config: Dict[str, Any]) -> str:
         """
