@@ -584,9 +584,39 @@ class PeekaAgent(
                     "enqueued": 0,
                     "delivered": 0,
                     "dropped": 0,
+                    "dropped_count": 0,
                     "drain_dropped": 0,
+                    "drain_dropped_count": 0,
+                    "slow_evicted_count": 0,
+                    "evicted_count": 0,
                 }
             return queue
+
+    def _enqueue_observation(self, conn: socket.socket, item: Any) -> None:
+        """Enqueue an observation for a stream connection and track overflow."""
+        with self._observation_queue_lock:
+            queue = self._observation_queues.get(conn)
+            if queue is None:
+                queue = _ObservationQueue(maxlen=1024)
+                self._observation_queues[conn] = queue
+                self._observation_queue_stats[conn] = {
+                    "enqueued": 0,
+                    "delivered": 0,
+                    "dropped": 0,
+                    "dropped_count": 0,
+                    "drain_dropped": 0,
+                    "drain_dropped_count": 0,
+                    "slow_evicted_count": 0,
+                    "evicted_count": 0,
+                }
+
+            stats = self._observation_queue_stats[conn]
+            if queue.maxlen is not None and len(queue) == queue.maxlen:
+                stats["dropped"] += 1
+                stats["dropped_count"] += 1
+
+            queue.append(item)
+            stats["enqueued"] += 1
 
     def _set_client_connection_kind(self, conn: socket.socket, kind: str) -> None:
         """Update the broadcast kind for a live client connection."""
@@ -750,6 +780,7 @@ class PeekaAgent(
 
         dead_connections = []
         for conn in self._snapshot_client_connections(kind="stream"):
+            self._enqueue_observation(conn, message)
             if not self._send_frame_to_connection(conn, message):
                 dead_connections.append(conn)
 
