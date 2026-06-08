@@ -242,6 +242,23 @@ class InjectorTraceMixin:
             # The original call_tree is preserved unchanged for the return/raise below.
             sanitized_root = _sanitize_call_tree_node(call_tree[0]) if call_tree else None
 
+            runtime_meta = None
+            if effective_backend != force_backend and effective_backend == BACKEND_WRAPPER_ONLY:
+                runtime_meta = {
+                    "trace": {
+                        "startup_backend": force_backend if force_backend else "auto",
+                        "effective_backend": effective_backend,
+                        "downgraded": True,
+                        "downgrade_reason": "gevent_patched_runtime",
+                        "gevent_patched_now": True,
+                    }
+                }
+                with injector._lock:
+                    info = injector.instrumented.get(watch_id)
+                    if info:
+                        info["runtime_meta"] = runtime_meta
+                        info.setdefault("config", {})["runtime_meta"] = runtime_meta
+
             # Send observation
             observation = {
                 "watch_id": watch_id,
@@ -255,6 +272,8 @@ class InjectorTraceMixin:
                 "thread_id": threading.get_ident(),
                 "thread_name": threading.current_thread().name,
             }
+            if runtime_meta is not None:
+                observation["runtime_meta"] = runtime_meta
 
             if not injector._record_probe_event(config, observation):
                 if call_tree:

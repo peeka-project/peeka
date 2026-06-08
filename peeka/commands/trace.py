@@ -8,7 +8,7 @@ from typing import Any, ClassVar, Dict, TYPE_CHECKING
 
 from peeka.commands.base import BaseCommand
 from peeka.core.probes import ProbeContext
-from peeka.core.runtime.compat import get_policy, policy_meta
+from peeka.core.runtime.compat import BACKEND_WRAPPER_ONLY, get_policy, policy_meta
 from peeka.core.runtime.gevent_probe import probe
 
 if TYPE_CHECKING:
@@ -43,6 +43,25 @@ class TraceCommand(BaseCommand):
     def __init__(self, agent: "PeekaAgent"):
         super().__init__()
         self.agent = agent
+
+    def _runtime_meta_for_downgrade(self, startup_backend: str) -> Dict[str, Any]:
+        """Build trace runtime downgrade metadata.
+
+        Args:
+            startup_backend: Backend selected at trace startup.
+
+        Returns:
+            Runtime metadata payload for downgraded trace execution.
+        """
+        return {
+            "trace": {
+                "startup_backend": startup_backend,
+                "effective_backend": BACKEND_WRAPPER_ONLY,
+                "downgraded": True,
+                "downgrade_reason": "gevent_patched_runtime",
+                "gevent_patched_now": True,
+            }
+        }
 
     def _supports_probe_instrumentation(self) -> bool:
         return hasattr(self.agent, "probe_registry") and hasattr(self.agent, "track_probe_context")
@@ -103,14 +122,16 @@ class TraceCommand(BaseCommand):
             if probe_context is not None:
                 self.agent.track_probe_context(watch_id, probe_context, "trace")
             self.agent.observer.register_watch(watch_id, pattern, response_config)
-
-            return {
+            result = {
                 "status": "success",
                 "watch_id": watch_id,
                 "pattern": pattern,
                 "config": response_config,
                 "meta": meta,
             }
+            if policy.backend == BACKEND_WRAPPER_ONLY:
+                result["runtime_meta"] = self._runtime_meta_for_downgrade(policy.backend)
+            return result
 
         except ValueError as e:
             if probe_context is not None:
@@ -152,7 +173,14 @@ class TraceCommand(BaseCommand):
             watch_info = self.agent.injector.get_watch_info(watch_id)
             stats = self.agent.observer.get_watch_stats(watch_id)
             if watch_info:
-                return {"status": "success", "watch": watch_info, "stats": stats}
+                result = {"status": "success", "watch": watch_info, "stats": stats}
+                runtime_meta = watch_info.get("runtime_meta") or watch_info.get(
+                    "config", {}
+                ).get("runtime_meta")
+                if runtime_meta is not None:
+                    result["runtime_meta"] = runtime_meta
+                    result["meta"] = {"runtime_meta": runtime_meta}
+                return result
             return {"status": "error", "error": f"Watch not found: {watch_id}"}
 
         watches = self.agent.injector.list_watches()
