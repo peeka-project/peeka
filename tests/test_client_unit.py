@@ -525,6 +525,37 @@ class TestStreamingAgentClientExtractObservation:
         assert result3 is None
 
 
+class TestOBSParserBatching:
+    """Test batched OBS frame parsing over a stream socket."""
+
+    def test_stream_observations_handles_multiple_frames_in_one_recv(self):
+        """A single socket read should yield every complete OBS frame in the buffer."""
+        client_sock, server_sock = socket.socketpair()
+        client = StreamingAgentClient("/fake/path")
+        client._sock = cast(Any, client_sock)
+
+        try:
+            obs1 = json.dumps({"type": "observation", "seq": 1}).encode()
+            obs2 = json.dumps({"type": "observation", "seq": 2}).encode()
+            obs3 = json.dumps({"type": "observation", "seq": 3}).encode()
+
+            frame1 = b"OBS:" + len(obs1).to_bytes(4, "big") + obs1
+            frame2 = b"OBS:" + len(obs2).to_bytes(4, "big") + obs2
+            frame3 = b"OBS:" + len(obs3).to_bytes(4, "big") + obs3
+
+            server_sock.sendall(frame1 + frame2 + frame3)
+            server_sock.close()
+
+            observations = list(client.stream_observations())
+
+            assert [obs["seq"] for obs in observations] == [1, 2, 3]
+            assert all(obs["type"] == "observation" for obs in observations)
+            assert client._buffer == b""
+        finally:
+            client.disconnect()
+            server_sock.close()
+
+
 class TestStreamingAgentClientContextManager:
     """Test context manager protocol."""
 
