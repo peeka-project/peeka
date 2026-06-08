@@ -930,10 +930,10 @@ class PeekaAgent(
         observation["seq"] = seq
         self.observer.add_observation(observation)
 
-        frame = self._encode_observation_frame(observation)
-        queued_observation = frame if frame is not None else observation
+        # Enqueue raw observation dict (no JSON encoding here).
+        # JSON encoding and frame building happen in the flush thread.
         for conn in self._snapshot_client_connections(kind="stream"):
-            self._enqueue_observation(conn, queued_observation)
+            self._enqueue_observation(conn, observation)
 
         if self._observation_flush_event is not None:
             try:
