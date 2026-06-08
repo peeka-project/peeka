@@ -773,19 +773,20 @@ class PeekaAgent(
     def _send_observation(self, observation: Dict[str, Any]) -> None:
         """Called by injector when a watched function is invoked."""
         observation["type"] = "observation"
+        with self._observation_queue_lock:
+            self._observation_sequence += 1
+            seq = self._observation_sequence
+        observation["seq"] = seq
         self.observer.add_observation(observation)
 
-        obs_json = json.dumps(observation).encode("utf-8")
-        message = b"OBS:" + len(obs_json).to_bytes(4, "big") + obs_json
-
-        dead_connections = []
         for conn in self._snapshot_client_connections(kind="stream"):
-            self._enqueue_observation(conn, message)
-            if not self._send_frame_to_connection(conn, message):
-                dead_connections.append(conn)
+            self._enqueue_observation(conn, observation)
 
-        for conn in dead_connections:
-            self._unregister_client_connection(conn)
+        if self._observation_flush_event is not None:
+            try:
+                self._observation_flush_event.set()
+            except Exception:
+                pass
 
     def _send_log(self, level: str, message: str) -> None:
         """Send a log message from Agent to all connected host clients."""
