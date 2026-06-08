@@ -372,20 +372,15 @@ class TestObservationQueueOverflow:
             queue = queues[server_sock]
 
             for index in range(OBSERVATION_QUEUE_CAPACITY):
-                payload = json.dumps(
-                    {"type": "observation", "event_id": f"old_{index}"}
-                ).encode("utf-8")
-                queue.put_nowait(b"OBS:" + len(payload).to_bytes(4, "big") + payload)
+                queue.append({"type": "observation", "event_id": f"old_{index}"})
 
             agent._send_observation({"event_id": "newest", "probe_id": "prb_queue"})
 
             delivered_event_ids = []
-            while not queue.empty():
-                frame = queue.get_nowait()
-                assert frame.startswith(b"OBS:")
-                payload_length = int.from_bytes(frame[4:8], "big")
-                payload = frame[8 : 8 + payload_length]
-                delivered_event_ids.append(json.loads(payload.decode("utf-8"))["event_id"])
+            while queue:
+                item = queue.popleft()
+                assert isinstance(item, dict)
+                delivered_event_ids.append(item["event_id"])
 
             assert "newest" in delivered_event_ids
             assert "old_0" not in delivered_event_ids
