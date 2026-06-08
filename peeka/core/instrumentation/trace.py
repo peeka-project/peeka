@@ -5,7 +5,7 @@ import sys
 import threading
 import time
 from functools import wraps
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Optional
 
 from peeka.core.runtime.compat import (
     BACKEND_SETTRACE,
@@ -15,6 +15,74 @@ from peeka.core.runtime.compat import (
 from peeka.core.safeeval.simpleeval import BASIC_ALLOWED_ATTRS, SimpleEval
 
 logger = logging.getLogger(__name__)
+
+
+_GEVENT_PATCHED_CACHE: Optional[bool] = None
+
+
+def _is_gevent_patched_now() -> bool:  # pyright: ignore[reportUnusedFunction]
+    """Return True when gevent has monkey-patched socket or threading.
+
+    Uses module-level cache with monotonic state: once patched, gevent never
+    un-patches, so we cache True permanently. Returns False quickly when
+    gevent.monkey is not present in sys.modules at all.
+
+    Does NOT call gevent_probe.probe() to avoid coupling with top/patch-status
+    commands and to preserve the single-direction cache semantic.
+
+    Args: None
+
+    Returns:
+        True if gevent.monkey has patched socket or threading, False otherwise.
+    """
+    global _GEVENT_PATCHED_CACHE
+    if _GEVENT_PATCHED_CACHE:
+        return True
+    monkey = sys.modules.get("gevent.monkey")
+    if monkey is None:
+        return False
+    is_patched = getattr(monkey, "is_module_patched", None)
+    if not callable(is_patched):
+        return False
+    try:
+        patched = bool(is_patched("socket")) or bool(is_patched("threading"))
+    except Exception:
+        return False
+    if patched:
+        _GEVENT_PATCHED_CACHE = True  # pyright: ignore[reportConstantRedefinition]
+    return patched
+
+
+def _sanitize_call_tree_node(node: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a sanitized copy of a call-tree root node for use in observations.
+
+    Strips internal fields that must not leave the wrapper:
+    - ``_result``: raw return value (may be non-serialisable or very large)
+    - ``_exception``: raw exception object (not JSON-serialisable)
+    - ``_code``: code object reference from sys.monitoring backend
+
+    The ``_exception`` field is converted to a serialisable
+    ``{"type": ..., "message": ...}`` dict stored under ``exception``.
+
+    Only the root node is processed.  Children never contain these fields,
+    so recursion is intentionally absent.
+
+    Args:
+        node: A single call-tree node dict as returned by a trace backend.
+
+    Returns:
+        A shallow copy of the node with internal fields removed/converted.
+    """
+    sanitized = dict(node)
+    sanitized.pop("_result", None)
+    sanitized.pop("_code", None)
+    exc = sanitized.pop("_exception", None)
+    if exc is not None:
+        sanitized["exception"] = {
+            "type": type(exc).__name__,
+            "message": str(exc),
+        }
+    return sanitized
 
 
 class InjectorTraceMixin:
@@ -65,7 +133,7 @@ class InjectorTraceMixin:
                 raise ValueError(f"Condition validation failed: {e}")
 
         # Reference to self for use in wrapper
-        injector = self
+        injector: Any = self
 
         # Check if sys.monitoring is available (Python 3.12+).
         if force_backend == BACKEND_SETTRACE:
@@ -160,6 +228,11 @@ class InjectorTraceMixin:
                     info["count"] += 1
                     current_count = info["count"]
 
+            # Sanitize call_tree root node before building observation
+            # (strips _result / _exception / _code that must not be serialised).
+            # The original call_tree is preserved unchanged for the return/raise below.
+            sanitized_root = _sanitize_call_tree_node(call_tree[0]) if call_tree else None
+
             # Send observation
             observation = {
                 "watch_id": watch_id,
@@ -167,7 +240,7 @@ class InjectorTraceMixin:
                 "timestamp": time.time(),
                 "location": "AtExit",
                 "func_name": f"{func.__module__}.{func.__qualname__}",
-                "call_tree": call_tree,
+                "call_tree": [sanitized_root] if sanitized_root is not None else [],
                 "total_duration_ms": round(total_duration, 3),
                 "node_count": injector._count_nodes(call_tree),
                 "thread_id": threading.get_ident(),
