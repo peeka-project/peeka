@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 _GEVENT_PATCHED_CACHE: Optional[bool] = None
 
 
-def _is_gevent_patched_now() -> bool:  # pyright: ignore[reportUnusedFunction]
+def _is_gevent_patched_now() -> bool:
     """Return True when gevent has monkey-patched socket or threading.
 
     Uses module-level cache with monotonic state while gevent.monkey remains

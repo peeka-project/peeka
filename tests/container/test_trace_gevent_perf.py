@@ -105,7 +105,7 @@ class TestTraceGeventPerf:
             exec_in_container(
                 container,
                 (
-                    f"python -m peeka.cli.main trace 'index.handler' -n -1"
+                    "python -m peeka.cli.main trace 'index.handler' -n -1"
                     " >/tmp/trace_out.log 2>&1 &"
                 ),
                 timeout=5,
@@ -168,7 +168,7 @@ class TestTraceGeventPerf:
                         f"_result still in observation: {list(node.keys())}"
                     )
                     assert "_exception" not in node, (
-                        f"_exception still in observation"
+                        "_exception still in observation"
                     )
                 obs_json = json.dumps(obs)
                 assert len(obs_json.encode()) < 10 * 1024, (
