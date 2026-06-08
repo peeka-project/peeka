@@ -23,9 +23,9 @@ _GEVENT_PATCHED_CACHE: Optional[bool] = None
 def _is_gevent_patched_now() -> bool:  # pyright: ignore[reportUnusedFunction]
     """Return True when gevent has monkey-patched socket or threading.
 
-    Uses module-level cache with monotonic state: once patched, gevent never
-    un-patches, so we cache True permanently. Returns False quickly when
-    gevent.monkey is not present in sys.modules at all.
+    Uses module-level cache with monotonic state while gevent.monkey remains
+    loaded: once patched, gevent never un-patches, so we cache True. Returns
+    False quickly when gevent.monkey is not present in sys.modules at all.
 
     Does NOT call gevent_probe.probe() to avoid coupling with top/patch-status
     commands and to preserve the single-direction cache semantic.
@@ -37,6 +37,9 @@ def _is_gevent_patched_now() -> bool:  # pyright: ignore[reportUnusedFunction]
     """
     global _GEVENT_PATCHED_CACHE
     if _GEVENT_PATCHED_CACHE:
+        if "gevent.monkey" not in sys.modules:
+            _GEVENT_PATCHED_CACHE = None  # pyright: ignore[reportConstantRedefinition]
+            return False
         return True
     monkey = sys.modules.get("gevent.monkey")
     if monkey is None:
@@ -185,7 +188,13 @@ class InjectorTraceMixin:
             call_tree = []
             call_stack = []
 
-            if force_backend == BACKEND_WRAPPER_ONLY:
+            # Runtime gevent check: if gevent was lazy-loaded after injection,
+            # force downgrade to wrapper_only to avoid sys.settrace conflicts.
+            effective_backend = force_backend
+            if effective_backend != BACKEND_WRAPPER_ONLY and _is_gevent_patched_now():
+                effective_backend = BACKEND_WRAPPER_ONLY
+
+            if effective_backend == BACKEND_WRAPPER_ONLY:
                 call_tree = injector._trace_with_wrapper_only(func, args, kwargs)
             elif use_monitoring:
                 # Use sys.monitoring for Python 3.12+
