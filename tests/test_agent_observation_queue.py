@@ -7,6 +7,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from peeka.core import agent as agent_module
 from peeka.core.agent import PeekaAgent
 
 
@@ -106,6 +107,22 @@ def _slow_evicted_count(stats: Any) -> int:
     return value
 
 
+def _split_obs_frames(frames: bytes) -> List[bytes]:
+    offset = 0
+    parsed: List[bytes] = []
+    while offset < len(frames):
+        assert frames[offset : offset + 4] == b"OBS:"
+        payload_length = int.from_bytes(frames[offset + 4 : offset + 8], "big")
+        frame_end = offset + 8 + payload_length
+        parsed.append(frames[offset:frame_end])
+        offset = frame_end
+    return parsed
+
+
+def _make_raw_obs_frame(payload_size: int) -> bytes:
+    return b"OBS:" + payload_size.to_bytes(4, "big") + (b"x" * payload_size)
+
+
 def _make_obs_frame(event_id: str) -> bytes:
     payload = json.dumps(
         {"type": "observation", "event_id": event_id, "probe_id": "prb_queue"}
@@ -143,6 +160,17 @@ class _BlockingForwardingConnection:
         self.sock.close()
 
 
+class _FailingBindSocket:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def bind(self, path: str) -> None:
+        raise OSError("bind failed")
+
+    def close(self) -> None:
+        self.closed = True
+
+
 class _BlockingObservationConnection:
     def __init__(self, entered_event: threading.Event, release_event: threading.Event):
         self.entered_event = entered_event
@@ -169,6 +197,31 @@ class TestObservationQueueDataStructures:
             queues = _observation_queues(agent)
             assert server_sock in queues
             assert queues[server_sock].maxsize == OBSERVATION_QUEUE_CAPACITY
+        finally:
+            agent._unregister_client_connection(server_sock)
+            server_sock.close()
+            client_sock.close()
+
+    def test_unregister_stream_connection_removes_queue_state(self) -> None:
+        agent = _make_agent()
+        server_sock, client_sock = socket.socketpair()
+
+        try:
+            agent._register_client_connection(server_sock, kind="stream")
+            queues = _observation_queues(agent)
+            stats = _observation_queue_stats(agent)
+            flushers = getattr(agent, "_observation_queue_flushers")
+
+            assert server_sock in queues
+            assert server_sock in stats
+            assert server_sock in flushers
+
+            connection_count = agent._unregister_client_connection(server_sock)
+
+            assert connection_count == 0
+            assert server_sock not in queues
+            assert server_sock not in stats
+            assert server_sock not in flushers
         finally:
             agent._unregister_client_connection(server_sock)
             server_sock.close()
@@ -237,6 +290,122 @@ class TestObservationQueueFlusher:
             observation = _recv_obs(client_sock)
             assert observation["type"] == "observation"
             assert observation["event_id"] == "evt_flush"
+        finally:
+            agent._unregister_client_connection(server_sock)
+            server_sock.close()
+            client_sock.close()
+
+    def test_flush_keeps_items_beyond_batch_count_limit(self) -> None:
+        agent = _make_agent()
+        server_sock, client_sock = socket.socketpair()
+        sent_frames: List[bytes] = []
+
+        def capture_send(conn: socket.socket, frames: bytes, timeout: float = 0.1) -> bool:
+            sent_frames.append(frames)
+            return True
+
+        agent._send_observation_frames_with_timeout = capture_send  # type: ignore[method-assign]
+
+        try:
+            queue = agent._get_or_create_connection_queue(server_sock)
+            for index in range(65):
+                queue.append(_make_obs_frame(f"evt_batch_{index}"))
+
+            assert agent._flush_connection(server_sock) is True
+
+            assert len(sent_frames) == 1
+            assert len(_split_obs_frames(sent_frames[0])) == 64
+            assert len(queue) == 1
+            assert queue[0] == _make_obs_frame("evt_batch_64")
+            assert _observation_queue_stats(agent)[server_sock]["delivered"] == 64
+        finally:
+            agent._unregister_client_connection(server_sock)
+            server_sock.close()
+            client_sock.close()
+
+    def test_flush_keeps_item_that_exceeds_batch_bytes_limit(self) -> None:
+        agent = _make_agent()
+        server_sock, client_sock = socket.socketpair()
+        sent_frames: List[bytes] = []
+
+        def capture_send(conn: socket.socket, frames: bytes, timeout: float = 0.1) -> bool:
+            sent_frames.append(frames)
+            return True
+
+        agent._send_observation_frames_with_timeout = capture_send  # type: ignore[method-assign]
+
+        try:
+            first = _make_raw_obs_frame(100_000)
+            second = _make_raw_obs_frame(100_000)
+            third = _make_raw_obs_frame(100_000)
+            queue = agent._get_or_create_connection_queue(server_sock)
+            queue.extend([first, second, third])
+
+            assert agent._flush_connection(server_sock) is True
+
+            assert len(sent_frames) == 1
+            assert len(_split_obs_frames(sent_frames[0])) == 2
+            assert list(queue) == [third]
+            assert _observation_queue_stats(agent)[server_sock]["delivered"] == 2
+            assert _dropped_count(_observation_queue_stats(agent)[server_sock]) == 0
+        finally:
+            agent._unregister_client_connection(server_sock)
+            server_sock.close()
+            client_sock.close()
+
+    def test_flush_drops_single_oversize_observation_and_continues(self) -> None:
+        agent = _make_agent()
+        server_sock, client_sock = socket.socketpair()
+        sent_frames: List[bytes] = []
+
+        def capture_send(conn: socket.socket, frames: bytes, timeout: float = 0.1) -> bool:
+            sent_frames.append(frames)
+            return True
+
+        agent._send_observation_frames_with_timeout = capture_send  # type: ignore[method-assign]
+
+        try:
+            queue = agent._get_or_create_connection_queue(server_sock)
+            queue.append(_make_raw_obs_frame((256 * 1024) + 1))
+            queue.append(_make_obs_frame("evt_after_oversize"))
+
+            assert agent._flush_connection(server_sock) is True
+
+            stats = _observation_queue_stats(agent)[server_sock]
+            assert len(_split_obs_frames(sent_frames[0])) == 1
+            assert len(queue) == 0
+            assert _dropped_count(stats) == 1
+            assert stats["oversize_dropped_count"] == 1
+            assert stats["delivered"] == 1
+        finally:
+            agent._unregister_client_connection(server_sock)
+            server_sock.close()
+            client_sock.close()
+
+    def test_flush_drops_unencodable_observation_and_continues(self) -> None:
+        agent = _make_agent()
+        server_sock, client_sock = socket.socketpair()
+        sent_frames: List[bytes] = []
+
+        def capture_send(conn: socket.socket, frames: bytes, timeout: float = 0.1) -> bool:
+            sent_frames.append(frames)
+            return True
+
+        agent._send_observation_frames_with_timeout = capture_send  # type: ignore[method-assign]
+
+        try:
+            queue = agent._get_or_create_connection_queue(server_sock)
+            queue.append(object())
+            queue.append(_make_obs_frame("evt_after_bad_encode"))
+
+            assert agent._flush_connection(server_sock) is True
+
+            stats = _observation_queue_stats(agent)[server_sock]
+            assert len(_split_obs_frames(sent_frames[0])) == 1
+            assert len(queue) == 0
+            assert _dropped_count(stats) == 1
+            assert stats["encode_dropped_count"] == 1
+            assert stats["delivered"] == 1
         finally:
             agent._unregister_client_connection(server_sock)
             server_sock.close()
@@ -392,6 +561,21 @@ class TestObservationQueueOverflow:
 
 @pytest.mark.unit
 class TestObservationQueueLifecycle:
+
+    def test_start_failure_does_not_leave_flush_thread_running(self, monkeypatch) -> None:
+        agent = _make_agent()
+        failing_socket = _FailingBindSocket()
+
+        def create_failing_socket(family: str, kind: str) -> _FailingBindSocket:
+            return failing_socket
+
+        monkeypatch.setattr(agent_module._rpl, "create_socket", create_failing_socket)
+
+        assert agent.start() is False
+        assert agent._flush_thread_running is False
+        assert agent._flush_thread_id is None
+        assert failing_socket.closed is True
+
     def test_stop_drains_within_bound(self) -> None:
         agent = _make_agent()
         server_sock, client_sock = socket.socketpair()

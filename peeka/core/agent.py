@@ -302,7 +302,7 @@ class PeekaAgent(
         self._observation_queue_lock = _rpl.allocate_lock()
         self._observation_sequence = 0
         self._observation_flush_event = _rpl.create_event()
-        self._flush_thread_running = True
+        self._flush_thread_running = False
         self._flush_thread_id: Optional[int] = None
         self._mutation_lock: threading.RLock = threading.RLock()  # DOMAIN: mixed (command orchestration)
 
@@ -328,7 +328,6 @@ class PeekaAgent(
         self._recent_errors: List[Dict[str, Any]] = []
         self._error_ring_lock = _rpl.allocate_lock()  # DOMAIN: native_thread
         self._last_seen_at = _time.time()
-        self._start_flush_thread()
 
     # ------------------------------------------------------------------ #
     #  Lazy command handler loading                                      #
@@ -531,10 +530,12 @@ class PeekaAgent(
             # Eagerly load all command handlers now that the socket is
             # ready.  This runs on the agent thread (not GIL-blocking).
             self._register_handlers()
+            self._start_flush_thread()
             return True
 
         except Exception as e:
             self.running = False
+            self._signal_observation_queue_drain()
             if self.server:
                 try:
                     self.server.close()
@@ -575,7 +576,24 @@ class PeekaAgent(
             connection_count = len(self._client_connections)
         if kind == "stream":
             self._get_or_create_connection_queue(conn)
+            self._start_flush_thread()
         return connection_count
+
+    @staticmethod
+    def _new_observation_queue_stats() -> Dict[str, int]:
+        """Return a fresh stats dictionary for one observation queue."""
+        return {
+            "enqueued": 0,
+            "delivered": 0,
+            "dropped": 0,
+            "dropped_count": 0,
+            "encode_dropped_count": 0,
+            "oversize_dropped_count": 0,
+            "drain_dropped": 0,
+            "drain_dropped_count": 0,
+            "slow_evicted_count": 0,
+            "evicted_count": 0,
+        }
 
     def _get_or_create_connection_queue(self, conn: socket.socket) -> Deque[Any]:
         """Return the bounded observation queue for a stream connection.
@@ -591,16 +609,7 @@ class PeekaAgent(
             if queue is None:
                 queue = _ObservationQueue(maxlen=1024)
                 self._observation_queues[conn] = queue
-                self._observation_queue_stats[conn] = {
-                    "enqueued": 0,
-                    "delivered": 0,
-                    "dropped": 0,
-                    "dropped_count": 0,
-                    "drain_dropped": 0,
-                    "drain_dropped_count": 0,
-                    "slow_evicted_count": 0,
-                    "evicted_count": 0,
-                }
+                self._observation_queue_stats[conn] = self._new_observation_queue_stats()
                 if self._flush_thread_id is not None:
                     self._observation_queue_flushers[conn] = self._flush_thread_id
             return queue
@@ -612,16 +621,9 @@ class PeekaAgent(
             if queue is None:
                 queue = _ObservationQueue(maxlen=1024)
                 self._observation_queues[conn] = queue
-                self._observation_queue_stats[conn] = {
-                    "enqueued": 0,
-                    "delivered": 0,
-                    "dropped": 0,
-                    "dropped_count": 0,
-                    "drain_dropped": 0,
-                    "drain_dropped_count": 0,
-                    "slow_evicted_count": 0,
-                    "evicted_count": 0,
-                }
+                self._observation_queue_stats[conn] = self._new_observation_queue_stats()
+                if self._flush_thread_id is not None:
+                    self._observation_queue_flushers[conn] = self._flush_thread_id
 
             stats = self._observation_queue_stats[conn]
             if queue.maxlen is not None and len(queue) == queue.maxlen:
@@ -638,25 +640,35 @@ class PeekaAgent(
                 self._client_connection_kinds[conn] = kind
         if kind == "stream":
             self._get_or_create_connection_queue(conn)
+            self._start_flush_thread()
 
     def _unregister_client_connection(self, conn: socket.socket) -> int:
-        """Forget a client connection and its write lock."""
+        """Forget a client connection, write lock, and observation queue."""
         with self._connections_lock:
             if conn in self._client_connections:
                 self._client_connections.remove(conn)
             self._client_connection_kinds.pop(conn, None)
             self._client_write_locks.pop(conn, None)
-            return len(self._client_connections)
+            connection_count = len(self._client_connections)
+        with self._observation_queue_lock:
+            self._observation_queues.pop(conn, None)
+            self._observation_queue_stats.pop(conn, None)
+            self._observation_queue_flushers.pop(conn, None)
+        return connection_count
 
     def _start_flush_thread(self) -> None:
         """Start the observation queue flush worker on a native thread."""
         if self._flush_thread_id is not None:
             return
         self._flush_thread_running = True
-        self._flush_thread_id = _rpl.start_thread(
+        thread_id = _rpl.start_thread(
             self._flush_loop,
             name="peeka-observation-flusher",
         )
+        self._flush_thread_id = thread_id
+        with self._observation_queue_lock:
+            for conn in self._observation_queues:
+                self._observation_queue_flushers[conn] = thread_id
 
     def _flush_loop(self) -> None:
         """Flush queued observations to stream sockets until the agent stops."""
@@ -684,10 +696,6 @@ class PeekaAgent(
 
         for conn in dead_connections:
             self._unregister_client_connection(conn)
-            with self._observation_queue_lock:
-                self._observation_queues.pop(conn, None)
-                self._observation_queue_stats.pop(conn, None)
-                self._observation_queue_flushers.pop(conn, None)
 
     def _encode_observation_frame(self, observation: Any) -> Optional[bytes]:
         """Encode one queued observation as an OBS frame."""
@@ -703,27 +711,60 @@ class PeekaAgent(
 
     def _flush_connection(self, conn: socket.socket) -> bool:
         """Flush a bounded batch for one connection; return False if dead."""
-        batch = []
-        with self._observation_queue_lock:
-            queue = self._observation_queues.get(conn)
-            if queue is None:
-                return True
-            while queue and len(batch) < 64:
-                batch.append(queue.popleft())
-
-        if not batch:
-            return True
-
+        max_batch_count = 64
+        max_batch_bytes = 256 * 1024
         frames = bytearray()
         encoded_count = 0
-        for observation in batch:
+        dropped_count = 0
+        encode_dropped_count = 0
+        oversize_dropped_count = 0
+        processed_count = 0
+
+        while processed_count < max_batch_count:
+            with self._observation_queue_lock:
+                queue = self._observation_queues.get(conn)
+                if queue is None:
+                    break
+                if not queue:
+                    break
+                observation = queue.popleft()
+
             frame = self._encode_observation_frame(observation)
             if frame is None:
+                dropped_count += 1
+                encode_dropped_count += 1
+                processed_count += 1
                 continue
-            if len(frames) + len(frame) > 256 * 1024:
+
+            if len(frame) > max_batch_bytes:
+                dropped_count += 1
+                oversize_dropped_count += 1
+                processed_count += 1
+                continue
+
+            if len(frames) + len(frame) > max_batch_bytes:
+                with self._observation_queue_lock:
+                    queue = self._observation_queues.get(conn)
+                    if queue is not None:
+                        queue.appendleft(observation)
                 break
+
             frames.extend(frame)
             encoded_count += 1
+            processed_count += 1
+
+        if dropped_count:
+            with self._observation_queue_lock:
+                stats = self._observation_queue_stats.get(conn)
+                if stats is not None:
+                    stats["dropped"] += dropped_count
+                    stats["dropped_count"] += dropped_count
+                    stats["encode_dropped_count"] = (
+                        stats.get("encode_dropped_count", 0) + encode_dropped_count
+                    )
+                    stats["oversize_dropped_count"] = (
+                        stats.get("oversize_dropped_count", 0) + oversize_dropped_count
+                    )
 
         if not frames:
             return True
