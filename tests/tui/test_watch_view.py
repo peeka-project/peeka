@@ -1,12 +1,13 @@
 """Tests for WatchView - streaming data flow and error handling."""
 
 import pytest
-from textual.widgets import DataTable
+from textual.widgets import DataTable, Static
 
 from peeka.tui.app import PeekaApp
 from peeka.tui.screens.main import MainScreen
 from peeka.tui.views.watch import WatchView
 from peeka.tui.widgets.autocomplete_input import AutoCompleteInput
+from tests.tui.conftest import make_patch_status_response
 
 
 class TestWatchView:
@@ -345,13 +346,11 @@ class TestWatchView:
     async def test_watch_runtime_banner_shows_gevent_state(self, mock_client_factory):
         client = mock_client_factory(
             responses={
-                "patch-status": {
-                    "status": "success",
-                    "gevent_state": "patched",
-                    "backend": "wrapper_only",
-                    "downgraded": True,
-                    "degraded_reason": "gevent detected",
-                }
+                "patch-status": make_patch_status_response(
+                    backend="wrapper_only",
+                    downgraded=True,
+                    degraded_reason="gevent detected",
+                )
             }
         )
         client.connect()
@@ -370,7 +369,6 @@ class TestWatchView:
             
             await pilot.pause()
 
-            from textual.widgets import Static
             banner = watch_view.query_one("#watch-runtime-banner", Static)
             text = str(banner.render())
             assert "patched" in text

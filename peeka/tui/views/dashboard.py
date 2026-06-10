@@ -24,6 +24,7 @@ from textual.widgets import Button, DataTable, RichLog, Static
 from textual.worker import Worker, get_current_worker
 
 from peeka.tui.activity import make_activity_reporter, make_client_info
+from peeka.tui.runtime_status import summarize_patch_status
 from peeka.tui.views.dashboard_activity import DashboardActivityMixin
 
 if TYPE_CHECKING:
@@ -692,11 +693,12 @@ class DashboardView(DashboardActivityMixin, Container):
 
         patch_status = data.get("patch_status")
         if patch_status:
-            gevent_state = patch_status.get("gevent_state", "none")
-            backend = patch_status.get("backend", "unknown")
-            downgraded = patch_status.get("downgraded", False)
-            degraded_reason = patch_status.get("degraded_reason")
-            
+            summary = summarize_patch_status(patch_status)
+            gevent_state = summary["gevent_state"]
+            backend = summary["backend"]
+            downgraded = summary["downgraded"]
+            degraded_reason = summary.get("degraded_reason")
+
             downgraded_str = "yes" if downgraded else "no"
             if downgraded and degraded_reason:
                 downgraded_str += f" ({degraded_reason})"

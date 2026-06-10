@@ -69,7 +69,11 @@ def _emit_watch_started(
     target_info = response.get("target")
     if target_info:
         start_data["target"] = target_info
-    OutputFormatter.event("watch_started", data=start_data)
+    OutputFormatter.event(
+        "watch_started",
+        data=start_data,
+        meta=response.get("runtime_meta"),
+    )
 
 
 def cmd_watch(args) -> int:

@@ -63,6 +63,44 @@ DEFAULT_RESPONSES = {
 }
 
 
+def make_patch_status_response(
+    gevent_status: str = "active",
+    backend: Optional[str] = None,
+    downgraded: bool = False,
+    degraded_reason: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Return a patch-status response with the real command envelope shape."""
+    if gevent_status == "not_imported":
+        gevent: Any = "not_imported"
+    else:
+        gevent = {
+            "status": gevent_status,
+            "patched_modules": ["socket", "threading"],
+        }
+
+    payload: Dict[str, Any] = {
+        "schema_version": "1",
+        "pid": 12345,
+        "timestamp": 1714972801.0,
+        "monkey_patch": {
+            "gevent": gevent,
+            "eventlet": "not_imported",
+        },
+        "stdlib_origin": {},
+        "asyncio_loop": {},
+        "thread_model": {},
+        "rpl_integrity": {"ok": True},
+    }
+    if backend is not None:
+        payload["backend"] = backend
+    if downgraded:
+        payload["downgraded"] = True
+    if degraded_reason is not None:
+        payload["degraded_reason"] = degraded_reason
+
+    return {"status": "success", "data": payload}
+
+
 class MockStreamingAgentClient:
     """Mock implementation of StreamingAgentClient for TUI testing."""
 

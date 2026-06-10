@@ -27,6 +27,27 @@ PROJECT_ROOT = Path(__file__).parents[2]
 STYLE_PATH = PROJECT_ROOT / "peeka" / "tui" / "styles" / "peeka.tcss"
 
 
+def _right_edge(widget) -> int:
+    """Return the widget's rightmost rendered column."""
+    return widget.region.x + widget.region.width
+
+
+def _assert_inside_width(widget, width: int) -> None:
+    """Assert a widget is visible and contained in the app width."""
+    assert widget.region.width > 0
+    assert widget.region.x >= 0
+    assert _right_edge(widget) <= width
+
+
+def _assert_control_bar_usable(width: int, inputs, actions) -> None:
+    """Assert a compact command bar keeps inputs usable and actions in bounds."""
+    for widget, min_width in inputs:
+        assert widget.region.width >= min_width
+        _assert_inside_width(widget, width)
+    for widget in actions:
+        _assert_inside_width(widget, width)
+
+
 class TestPanelStyles:
     """Verify panel focus is expressed by borders, not body fills."""
 
@@ -497,6 +518,100 @@ class TestWatchViewStyles:
 
             controls = app.screen.query_one("#watch-controls", Horizontal)
             assert "compact-control" in controls.classes
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_watch_controls_remain_usable_at_80_columns(self):
+        """Watch inputs keep usable widths in a narrow terminal."""
+        app = PeekaApp()
+        async with app.run_test(size=(80, 24)) as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            main_screen.action_switch_tab("watch")
+            await pilot.pause()
+
+            top_controls = app.screen.query_one("#watch-top-controls", Container)
+            pattern = app.screen.query_one("#watch-pattern", AutoCompleteInput)
+            condition = app.screen.query_one("#watch-condition", Input)
+            condition_controls = app.screen.query_one(
+                "#watch-condition-controls", Horizontal
+            )
+            actions = app.screen.query_one("#watch-action-controls", Horizontal)
+            watch_btn = app.screen.query_one("#watch-btn", Button)
+            stop_btn = app.screen.query_one("#stop-btn", Button)
+            banner = app.screen.query_one("#watch-runtime-banner", Static)
+
+            assert "watch-top-wide" not in top_controls.classes
+            assert condition_controls.region.y > top_controls.region.y
+            assert actions.region.y > condition_controls.region.y
+            assert banner.parent is not top_controls
+            _assert_inside_width(top_controls, 80)
+            _assert_control_bar_usable(
+                80,
+                inputs=((pattern, 30), (condition, 20)),
+                actions=(watch_btn, stop_btn),
+            )
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_watch_controls_share_one_row_on_wide_terminals(self):
+        """Watch controls use one row with actions on the right when space allows."""
+        app = PeekaApp()
+        async with app.run_test(size=(140, 24)) as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            main_screen.action_switch_tab("watch")
+            await pilot.pause()
+
+            top_controls = app.screen.query_one("#watch-top-controls", Container)
+            controls = app.screen.query_one("#watch-controls", Horizontal)
+            condition_controls = app.screen.query_one(
+                "#watch-condition-controls", Horizontal
+            )
+            actions = app.screen.query_one("#watch-action-controls", Horizontal)
+            pattern = app.screen.query_one("#watch-pattern", AutoCompleteInput)
+            condition = app.screen.query_one("#watch-condition", Input)
+            stop_btn = app.screen.query_one("#stop-btn", Button)
+            banner = app.screen.query_one("#watch-runtime-banner", Static)
+
+            assert "watch-top-wide" in top_controls.classes
+            assert controls.region.y == condition_controls.region.y == actions.region.y
+            assert _right_edge(controls) <= condition_controls.region.x
+            assert _right_edge(condition_controls) <= actions.region.x
+            assert banner.parent is not controls
+            _assert_control_bar_usable(
+                140,
+                inputs=((pattern, 30), (condition, 20)),
+                actions=(stop_btn,),
+            )
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_watch_view_exports_svg_screenshot_smoke(self):
+        """Textual can export a non-empty SVG screenshot for visual artifacts."""
+        app = PeekaApp()
+        async with app.run_test(size=(80, 24)) as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            main_screen.action_switch_tab("watch")
+            await pilot.pause()
+
+            svg = app.export_screenshot(title="watch layout smoke", simplify=True)
+            assert svg.lstrip().startswith("<svg")
+            assert "</svg>" in svg
+            assert len(svg) > 1000
 
     @pytest.mark.asyncio
     @pytest.mark.tui
