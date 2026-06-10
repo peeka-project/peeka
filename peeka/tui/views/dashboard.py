@@ -418,6 +418,15 @@ class DashboardView(DashboardActivityMixin, Container):
             elif thread_result.get("status") == "error":
                 self._log.debug("thread(list) failed: %s", thread_result.get("error"))
 
+            # Patch status
+            patch_result = self._send_dashboard_command(
+                {"type": "patch-status"}
+            )
+            if patch_result.get("status") == "success":
+                data["patch_status"] = patch_result
+            elif patch_result.get("status") == "error":
+                self._log.debug("patch-status failed: %s", patch_result.get("error"))
+
             if self._active:
                 self.app.call_from_thread(self._update_dashboard_ui, data)
             return data
@@ -680,6 +689,23 @@ class DashboardView(DashboardActivityMixin, Container):
             f"  processors           {os.cpu_count() or '-'}",
             f"  uptime               {uptime_str}",
         ]
+
+        patch_status = data.get("patch_status")
+        if patch_status:
+            gevent_state = patch_status.get("gevent_state", "none")
+            backend = patch_status.get("backend", "unknown")
+            downgraded = patch_status.get("downgraded", False)
+            degraded_reason = patch_status.get("degraded_reason")
+            
+            downgraded_str = "yes" if downgraded else "no"
+            if downgraded and degraded_reason:
+                downgraded_str += f" ({degraded_reason})"
+
+            lines.extend([
+                f"  Gevent               {gevent_state}",
+                f"  Backend              {backend}",
+                f"  Downgraded           {downgraded_str}",
+            ])
 
         self.query_one("#dash-runtime-info", Static).update("\n".join(lines))
 
