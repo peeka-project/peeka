@@ -620,3 +620,98 @@ class TestTraceView:
             row_data = table.get_row_at(0)
             # Count should be 2 after two observations
             assert "2" in str(row_data)
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_trace_runtime_meta_display(self, mock_client_factory):
+        """Verify runtime_meta is displayed in the trace stats panel."""
+        client = mock_client_factory(
+            responses={
+                "trace": {
+                    "status": "success",
+                    "watch_id": "trace_001",
+                }
+            }
+        )
+        client.connect()
+
+        # Test with runtime_meta
+        stream_client_with_meta = mock_client_factory(
+            observations=[
+                {
+                    "watch_id": "trace_001",
+                    "func_name": "calculator.compute",
+                    "call_tree": [],
+                    "total_duration_ms": 25.5,
+                    "node_count": 2,
+                    "count": 1,
+                    "runtime_meta": {
+                        "backend": "wrapper_only",
+                        "gevent_state": "patched",
+                    }
+                }
+            ]
+        )
+        stream_client_with_meta.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(client)
+            trace_view._stream_client = stream_client_with_meta
+
+            pattern_input = trace_view.query_one("#trace-pattern", AutoCompleteInput)
+            pattern_input.value = "calculator.compute"
+
+            await trace_view._start_trace()
+            await pilot.pause()
+            await pilot.pause()
+
+            stats = trace_view.query_one("#trace-stats", Static)
+            stats_text = str(stats.render())
+            assert "Backend: wrapper_only" in stats_text
+            assert "Gevent: patched" in stats_text
+
+        # Test without runtime_meta
+        stream_client_no_meta = mock_client_factory(
+            observations=[
+                {
+                    "watch_id": "trace_001",
+                    "func_name": "calculator.compute",
+                    "call_tree": [],
+                    "total_duration_ms": 25.5,
+                    "node_count": 2,
+                    "count": 1,
+                }
+            ]
+        )
+        stream_client_no_meta.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(client)
+            trace_view._stream_client = stream_client_no_meta
+
+            pattern_input = trace_view.query_one("#trace-pattern", AutoCompleteInput)
+            pattern_input.value = "calculator.compute"
+
+            await trace_view._start_trace()
+            await pilot.pause()
+            await pilot.pause()
+
+            stats = trace_view.query_one("#trace-stats", Static)
+            stats_text = str(stats.render())
+            assert "Backend: profiler (full)" in stats_text
