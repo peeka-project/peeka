@@ -17,6 +17,9 @@ except ImportError:  # pragma: no cover - resource is unavailable on Windows
     resource = None
 
 from peeka.core.runtime import primitives as _rpl
+from peeka.core.runtime import gevent_probe
+from peeka.core.runtime.compat import TRACE_GEVENT_REASON
+from peeka.core.runtime.gevent_probe import GeventState
 from peeka.core.safeeval.simpleeval import BASIC_ALLOWED_ATTRS
 from peeka.core.safeeval.simpleeval import SimpleEval
 
@@ -24,6 +27,20 @@ if TYPE_CHECKING:
     from peeka.core.injector import DecoratorInjector
 
 logger = logging.getLogger(__name__)
+
+
+def build_runtime_meta() -> Optional[Dict[str, Any]]:
+    """Build watch runtime metadata for gevent-patched runtimes."""
+    gevent_state = gevent_probe.probe()
+    if gevent_state in (GeventState.NONE, GeventState.IMPORTED):
+        return None
+
+    return {
+        "gevent_state": gevent_state.value,
+        "backend": "wrapper_only",
+        "greenlet_blind": False,
+        "degraded_reason": TRACE_GEVENT_REASON,
+    }
 
 
 def _format_func_name(func: Callable[..., Any]) -> str:
@@ -265,6 +282,9 @@ class CallObserver:
             "thread_id": threading.get_ident(),
             "thread_name": threading.current_thread().name,
         }
+
+        runtime_meta = build_runtime_meta()
+        observation["runtime_meta"] = runtime_meta
 
         stack_depth = factory.config.get("stack_depth")
         if stack_depth is not None and location == "AtEnter":

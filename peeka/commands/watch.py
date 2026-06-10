@@ -8,6 +8,7 @@ from typing import Any, ClassVar, Dict, TYPE_CHECKING
 
 from peeka.commands.base import BaseCommand
 from peeka.core.probes import ProbeContext
+from peeka.core.instrumentation.watch import build_runtime_meta
 
 if TYPE_CHECKING:
     from peeka.core.agent import PeekaAgent
@@ -106,6 +107,7 @@ class WatchCommand(BaseCommand):
                 "watch_id": watch_id,
                 "pattern": pattern,
                 "config": response_config,
+                "runtime_meta": build_runtime_meta(),
                 "target": {
                     "is_coroutine_function": watch_info.get(
                         "is_coroutine_function", False
