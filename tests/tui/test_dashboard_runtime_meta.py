@@ -10,7 +10,7 @@ from peeka.tui.app import PeekaApp
 from peeka.core.client import StreamingAgentClient
 from peeka.tui.screens.main import MainScreen
 from peeka.tui.views.dashboard import DashboardView
-from tests.tui.conftest import MockStreamingAgentClient
+from tests.tui.conftest import MockStreamingAgentClient, make_patch_status_response
 
 
 def _runtime_text(app: PeekaApp) -> str:
@@ -31,13 +31,7 @@ class TestDashboardRuntimeMeta:
         """Dashboard runtime info should show gevent patched status."""
         client: MockStreamingAgentClient = mock_client_factory(
             responses={
-                "patch-status": {
-                    "status": "success",
-                    "gevent_state": "patched",
-                    "backend": "wrapper_only",
-                    "downgraded": False,
-                    "degraded_reason": None,
-                }
+                "patch-status": make_patch_status_response()
             }
         )
         _ = client.connect()
@@ -68,13 +62,7 @@ class TestDashboardRuntimeMeta:
         """Dashboard runtime info should show gevent backend mode."""
         client: MockStreamingAgentClient = mock_client_factory(
             responses={
-                "patch-status": {
-                    "status": "success",
-                    "gevent_state": "patched",
-                    "backend": "wrapper_only",
-                    "downgraded": False,
-                    "degraded_reason": None,
-                }
+                "patch-status": make_patch_status_response(backend="wrapper_only")
             }
         )
         _ = client.connect()
@@ -105,13 +93,14 @@ class TestDashboardRuntimeMeta:
         """Dashboard runtime info should show gevent downgrade reason."""
         client: MockStreamingAgentClient = mock_client_factory(
             responses={
-                "patch-status": {
-                    "status": "success",
-                    "gevent_state": "patched",
-                    "backend": "wrapper_only",
-                    "downgraded": True,
-                    "degraded_reason": "sys.settrace under gevent can violate frame stack invariants",
-                }
+                "patch-status": make_patch_status_response(
+                    backend="wrapper_only",
+                    downgraded=True,
+                    degraded_reason=(
+                        "sys.settrace under gevent can violate frame stack "
+                        "invariants"
+                    ),
+                )
             }
         )
         _ = client.connect()
@@ -142,13 +131,7 @@ class TestDashboardRuntimeMeta:
         """Dashboard runtime info should keep a non-zero region at common widths."""
         client: MockStreamingAgentClient = mock_client_factory(
             responses={
-                "patch-status": {
-                    "status": "success",
-                    "gevent_state": "patched",
-                    "backend": "wrapper_only",
-                    "downgraded": False,
-                    "degraded_reason": None,
-                }
+                "patch-status": make_patch_status_response()
             }
         )
         _ = client.connect()

@@ -9,21 +9,24 @@ from collections import deque
 from typing import TYPE_CHECKING, Any, Deque, Dict, Optional
 
 from rich.text import Text
+from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Vertical, Horizontal
-from textual.widgets import Static, DataTable, Input, Button, Tree
+from textual.containers import Container, Horizontal, Vertical
+from textual.widgets import Button, DataTable, Input, Static, Tree
 from textual.widgets.tree import TreeNode
 from textual.worker import get_current_worker
 
 from peeka.tui.activity import make_activity_reporter, make_client_info
 from peeka.tui.completion import CompletionSource
+from peeka.tui.runtime_status import has_runtime_signal, summarize_patch_status
 from peeka.tui.widgets.autocomplete_input import AutoCompleteInput
 
 if TYPE_CHECKING:
     from peeka.core.client import StreamingAgentClient
 
 
+_WIDE_WATCH_CONTROLS_MIN_WIDTH = 120
 
 
 def _short_repr(value: Any, max_len: int = 35) -> str:
@@ -158,20 +161,22 @@ class WatchView(Container):
             self._log.debug("Failed to fetch runtime meta: %s", e)
 
     def _update_runtime_banner(self, data: dict) -> None:
-        gevent_state = data.get("gevent_state")
-        backend = data.get("backend")
-        if not gevent_state and not backend:
+        summary = summarize_patch_status(data)
+        if not has_runtime_signal(summary):
             return
-            
+
+        gevent_state = summary["gevent_state"]
+        backend = summary["backend"]
         text = f"Gevent: {gevent_state or 'none'}  Backend: {backend or 'unknown'}"
-        downgraded = data.get("downgraded")
+        downgraded = summary["downgraded"]
         if downgraded:
-            reason = data.get("degraded_reason", "")
+            reason = summary.get("degraded_reason", "")
             text += f" (downgraded: {reason})" if reason else " (downgraded)"
-            
+
         try:
             banner = self.query_one("#watch-runtime-banner", Static)
             banner.update(text)
+            banner.add_class("runtime-visible")
         except Exception:
             pass
 
@@ -220,24 +225,35 @@ class WatchView(Container):
 
     def compose(self) -> ComposeResult:
         yield Container(
-            Horizontal(
-                Static("Pattern:", classes="input-label"),
-                AutoCompleteInput(
-                    placeholder="module.Class.method",
-                    completions_callback=self._get_pattern_completions,
-                    id="watch-pattern",
+            Container(
+                Horizontal(
+                    Static("Pattern:", classes="input-label"),
+                    AutoCompleteInput(
+                        placeholder="module.Class.method",
+                        completions_callback=self._get_pattern_completions,
+                        id="watch-pattern",
+                    ),
+                    id="watch-controls",
+                    classes="compact-control",
                 ),
-                Static("Condition:", classes="input-label"),
-                Input(
-                    placeholder="condition (optional)",
-                    id="watch-condition",
+                Horizontal(
+                    Static("Condition:", classes="input-label"),
+                    Input(
+                        placeholder="condition (optional)",
+                        id="watch-condition",
+                    ),
+                    id="watch-condition-controls",
+                    classes="compact-control",
                 ),
-                Button("Watch", id="watch-btn", variant="success", flat=True),
-                Button("Stop", id="stop-btn", variant="error", flat=True),
-                Static("", id="watch-runtime-banner"),
-                id="watch-controls",
-                classes="compact-control",
+                Horizontal(
+                    Button("Watch", id="watch-btn", variant="success", flat=True),
+                    Button("Stop", id="stop-btn", variant="error", flat=True),
+                    id="watch-action-controls",
+                    classes="compact-control",
+                ),
+                id="watch-top-controls",
             ),
+            Static("", id="watch-runtime-banner"),
             Horizontal(
                 Vertical(
                     DataTable(id="watch-table"),
@@ -302,6 +318,28 @@ class WatchView(Container):
         detail = self.query_one("#observation-detail", Tree)
         detail.border_title = "Detail"
         detail.show_root = False
+        self._update_top_controls_layout()
+
+    def on_resize(self, event: events.Resize) -> None:
+        """Keep Watch controls compact on narrow terminals."""
+        self._update_top_controls_layout(event.size.width)
+
+    def _update_top_controls_layout(self, width: Optional[int] = None) -> None:
+        """Use one watch control row on wide terminals and stacked narrow controls.
+
+        Args:
+            width: Current app width, or None to read it from the app.
+        """
+        try:
+            top_controls = self.query_one("#watch-top-controls", Container)
+        except Exception:
+            return
+
+        current_width = width or self.app.size.width
+        if current_width >= _WIDE_WATCH_CONTROLS_MIN_WIDTH:
+            top_controls.add_class("watch-top-wide")
+        else:
+            top_controls.remove_class("watch-top-wide")
 
     def on_unmount(self) -> None:
         """Cancel all workers and disconnect stream client when view is unmounted."""

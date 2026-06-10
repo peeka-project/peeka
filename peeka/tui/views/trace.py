@@ -351,8 +351,17 @@ class TraceView(Container):
         )
 
         runtime_meta = observation.get("runtime_meta")
-        if runtime_meta is not None:
-            stats_text += f"\nBackend: {runtime_meta.get('backend', 'unknown')}  Gevent: {runtime_meta.get('gevent_state', 'unknown')}"
+        if isinstance(runtime_meta, dict):
+            trace_meta = runtime_meta.get("trace")
+            if isinstance(trace_meta, dict):
+                backend = trace_meta.get("effective_backend", "unknown")
+                gevent_state = (
+                    "patched" if trace_meta.get("gevent_patched_now") else "none"
+                )
+            else:
+                backend = runtime_meta.get("backend", "unknown")
+                gevent_state = runtime_meta.get("gevent_state", "unknown")
+            stats_text += f"\nBackend: {backend}  Gevent: {gevent_state}"
         else:
             stats_text += "\nBackend: profiler (full)"
 

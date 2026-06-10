@@ -382,6 +382,8 @@ Input {
     ============================================================================ */
 
 #watch-controls,
+#watch-condition-controls,
+#watch-action-controls,
 #trace-controls,
 #trace-options-controls,
 #trace-action-controls,
@@ -396,6 +398,7 @@ Input {
 
 #watch-controls Input,
 #watch-controls AutoCompleteInput,
+#watch-condition-controls Input,
 #trace-controls Input,
 #trace-controls AutoCompleteInput,
 #trace-options-controls Input,
@@ -417,7 +420,7 @@ Input {
     width: 1fr;
 }
 
-#watch-controls Button,
+#watch-action-controls Button,
 #trace-controls Button,
 #trace-options-controls Button,
 #trace-action-controls Button,
@@ -443,6 +446,48 @@ Input {
     max-width: 14;
     border: none;
     padding: 0 1;
+}
+
+#watch-top-controls {
+    width: 1fr;
+    height: 3;
+    layout: vertical;
+    margin-bottom: 1;
+}
+
+#watch-top-controls #watch-controls,
+#watch-top-controls #watch-condition-controls,
+#watch-top-controls #watch-action-controls {
+    margin-bottom: 0;
+}
+
+#watch-top-controls.watch-top-wide {
+    height: 1;
+    layout: horizontal;
+}
+
+#watch-top-controls.watch-top-wide #watch-controls {
+    width: 1fr;
+}
+
+#watch-top-controls.watch-top-wide #watch-condition-controls {
+    width: 1fr;
+}
+
+#watch-top-controls.watch-top-wide #watch-action-controls {
+    width: auto;
+}
+
+#watch-runtime-banner {
+    display: none;
+    width: 1fr;
+    height: 1;
+    margin-bottom: 1;
+    color: $text-muted;
+}
+
+#watch-runtime-banner.runtime-visible {
+    display: block;
 }
 
 #trace-top-controls {

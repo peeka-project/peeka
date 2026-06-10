@@ -646,9 +646,12 @@ class TestTraceView:
                     "node_count": 2,
                     "count": 1,
                     "runtime_meta": {
-                        "backend": "wrapper_only",
-                        "gevent_state": "patched",
-                    }
+                        "trace": {
+                            "downgraded": True,
+                            "effective_backend": "wrapper_only",
+                            "gevent_patched_now": True,
+                        }
+                    },
                 }
             ]
         )
