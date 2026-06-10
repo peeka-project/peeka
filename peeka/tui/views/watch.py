@@ -145,6 +145,35 @@ class WatchView(Container):
         self._socket_path = client.socket_path
         self._completion_source = CompletionSource(client)
         # Defer stream client creation to first use (lazy connection)
+        self.run_worker(self._fetch_runtime_meta, thread=True, exclusive=True)
+
+    def _fetch_runtime_meta(self) -> None:
+        if not self._client:
+            return
+        try:
+            result = self._client.send_command({"type": "patch-status"})
+            if result.get("status") == "success":
+                self.app.call_from_thread(self._update_runtime_banner, result)
+        except Exception as e:
+            self._log.debug("Failed to fetch runtime meta: %s", e)
+
+    def _update_runtime_banner(self, data: dict) -> None:
+        gevent_state = data.get("gevent_state")
+        backend = data.get("backend")
+        if not gevent_state and not backend:
+            return
+            
+        text = f"Gevent: {gevent_state or 'none'}  Backend: {backend or 'unknown'}"
+        downgraded = data.get("downgraded")
+        if downgraded:
+            reason = data.get("degraded_reason", "")
+            text += f" (downgraded: {reason})" if reason else " (downgraded)"
+            
+        try:
+            banner = self.query_one("#watch-runtime-banner", Static)
+            banner.update(text)
+        except Exception:
+            pass
 
     def _connect_own_stream_client(self) -> None:
         """Create a dedicated StreamingAgentClient for streaming observations."""
@@ -205,6 +234,7 @@ class WatchView(Container):
                 ),
                 Button("Watch", id="watch-btn", variant="success", flat=True),
                 Button("Stop", id="stop-btn", variant="error", flat=True),
+                Static("", id="watch-runtime-banner"),
                 id="watch-controls",
                 classes="compact-control",
             ),

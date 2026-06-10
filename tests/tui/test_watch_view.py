@@ -338,3 +338,40 @@ class TestWatchView:
             # Verify no watch entry in table
             table = watch_view.query_one("#watch-table", DataTable)
             assert table.row_count == 0
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_watch_runtime_banner_shows_gevent_state(self, mock_client_factory):
+        client = mock_client_factory(
+            responses={
+                "patch-status": {
+                    "status": "success",
+                    "gevent_state": "patched",
+                    "backend": "wrapper_only",
+                    "downgraded": True,
+                    "degraded_reason": "gevent detected",
+                }
+            }
+        )
+        client.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            watch_view = app.screen.query_one("WatchView", WatchView)
+            watch_view.set_client(client)
+            await pilot.pause()
+            
+            await pilot.pause()
+
+            from textual.widgets import Static
+            banner = watch_view.query_one("#watch-runtime-banner", Static)
+            text = str(banner.render())
+            assert "patched" in text
+            assert "wrapper_only" in text
+            assert "downgraded: gevent detected" in text
