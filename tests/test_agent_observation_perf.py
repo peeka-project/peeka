@@ -20,7 +20,12 @@ import pytest
 from peeka.core.agent import PeekaAgent
 
 
-PERF_THRESHOLDS: Dict[str, Any] = {}
+PERF_THRESHOLDS: Dict[str, Any] = {
+    "enqueue_throughput_obs_per_sec": 344_000,  # 50% of ~688k baseline
+    "flush_latency_64_ms": 1.78,                # 2x of ~0.89ms baseline
+    "memory_peak_50k_kb": 348.0,                # 1.5x of ~232KB baseline
+    "fast_client_ms_under_slow": 0.80,          # 2x of ~0.40ms baseline
+}
 
 _baseline: Dict[str, Any] = {}
 
@@ -86,6 +91,8 @@ def write_baseline_json() -> Any:  # type: ignore[misc]
 
 @pytest.mark.unit
 class TestObservationQueuePerfBaseline:
+    @pytest.mark.perf
+    @pytest.mark.slow
     def test_enqueue_throughput_baseline(self) -> None:
         agent = _make_agent()
         server_sock, client_sock = socket.socketpair()
@@ -107,11 +114,17 @@ class TestObservationQueuePerfBaseline:
 
             assert elapsed > 0
             _baseline["enqueue_throughput_obs_per_sec"] = throughput
+            assert throughput >= PERF_THRESHOLDS["enqueue_throughput_obs_per_sec"], (
+                f"Throughput {throughput:.0f} obs/s < threshold "
+                f"{PERF_THRESHOLDS['enqueue_throughput_obs_per_sec']} obs/s"
+            )
         finally:
             agent._unregister_client_connection(server_sock)
             server_sock.close()
             client_sock.close()
 
+    @pytest.mark.perf
+    @pytest.mark.slow
     def test_flush_latency_baseline(self) -> None:
         agent = _make_agent()
         server_sock, client_sock = socket.socketpair()
@@ -134,11 +147,17 @@ class TestObservationQueuePerfBaseline:
 
             assert elapsed > 0
             _baseline["flush_latency_64_ms"] = elapsed * 1000
+            assert elapsed * 1000 <= PERF_THRESHOLDS["flush_latency_64_ms"], (
+                f"Flush latency {elapsed * 1000:.2f}ms > threshold "
+                f"{PERF_THRESHOLDS['flush_latency_64_ms']}ms"
+            )
         finally:
             agent._unregister_client_connection(server_sock)
             server_sock.close()
             client_sock.close()
 
+    @pytest.mark.perf
+    @pytest.mark.slow
     def test_memory_growth_baseline(self) -> None:
         """Measure peak memory during 50_000 enqueues with overflow dropping.
 
@@ -166,6 +185,10 @@ class TestObservationQueuePerfBaseline:
 
             assert peak > 0
             _baseline["memory_peak_50k_kb"] = peak_kb
+            assert peak_kb <= PERF_THRESHOLDS["memory_peak_50k_kb"], (
+                f"Memory peak {peak_kb:.1f}KB > threshold "
+                f"{PERF_THRESHOLDS['memory_peak_50k_kb']}KB"
+            )
         finally:
             agent._unregister_client_connection(server_sock)
             server_sock.close()
@@ -202,6 +225,8 @@ class TestObservationQueuePerfBaseline:
             server_sock.close()
             client_sock.close()
 
+    @pytest.mark.perf
+    @pytest.mark.slow
     def test_slow_client_does_not_block_fast_client_latency(self) -> None:
         agent = _make_agent()
         fast_server, fast_client = socket.socketpair()
@@ -226,6 +251,10 @@ class TestObservationQueuePerfBaseline:
 
             assert elapsed > 0
             _baseline["fast_client_ms_under_slow"] = elapsed * 1000
+            assert elapsed * 1000 <= PERF_THRESHOLDS["fast_client_ms_under_slow"], (
+                f"Fast client latency {elapsed * 1000:.2f}ms > threshold "
+                f"{PERF_THRESHOLDS['fast_client_ms_under_slow']}ms"
+            )
         finally:
             agent._unregister_client_connection(fast_server)
             agent._unregister_client_connection(slow_server)
