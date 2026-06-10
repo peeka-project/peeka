@@ -349,6 +349,13 @@ class TraceView(Container):
             f"Node Count: {node_count}\n"
             f"Function: [yellow]{func_name}[/yellow]"
         )
+
+        runtime_meta = observation.get("runtime_meta")
+        if runtime_meta is not None:
+            stats_text += f"\nBackend: {runtime_meta.get('backend', 'unknown')}  Gevent: {runtime_meta.get('gevent_state', 'unknown')}"
+        else:
+            stats_text += "\nBackend: profiler (full)"
+
         stats.update(stats_text)
 
     async def _start_trace(self) -> None:
