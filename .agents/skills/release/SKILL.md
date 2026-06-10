@@ -228,7 +228,7 @@ fi
 Before changing versions or creating tags, run the repository release gate:
 
 ```bash
-scripts/release_check.sh
+bash scripts/release_check.sh
 ```
 
 This script is the single source of truth for the release test gate. It runs the same non-container, non-e2e, non-TUI unit-test set as `.github/workflows/publish-pypi.yml`, plus `ruff check peeka/`.
@@ -542,7 +542,7 @@ gh api "repos/${repo_full_name}/git/ref/tags/v0.2.0" --jq .object.sha
 
 The tag push automatically triggers `.github/workflows/publish-pypi.yml` which:
 
-1. **test** job: Runs `scripts/release_check.sh`
+1. **test** job: Runs `bash scripts/release_check.sh`
 2. **publish** job: Builds wheel and publishes to PyPI via Trusted Publisher (OIDC)
 3. **release** job: Creates the initial GitHub Release
 
@@ -808,7 +808,7 @@ https://github.com/<owner>/<repo>/actions/workflows/publish-pypi.yml
 Common issues:
 - Build failures: Check pyproject.toml dependencies
 - PyPI errors: Verify Trusted Publisher config at https://pypi.org/manage/account/publishing/
-- Test failures: Run `scripts/release_check.sh` locally first
+- Test failures: Run `bash scripts/release_check.sh` locally first
 
 ### 5. Fix and Retry
 After fixing the issue, restart from Phase 1.
@@ -878,7 +878,7 @@ $ /release minor
 ✓ Working directory clean
 ✓ On master branch
 ✓ Version files in sync
-✓ scripts/release_check.sh passed
+✓ bash scripts/release_check.sh passed
 
 # === Phase 2: Pre-release Postmortem Check ===
 Analyzing 23 commits from v0.1.0 to HEAD...

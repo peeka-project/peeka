@@ -30,7 +30,7 @@ jobs:
           pip install pytest pytest-timeout pytest-asyncio ruff
       
       - name: Run unit tests
-        run: scripts/release_check.sh
+        run: bash scripts/release_check.sh
   
   publish:
     name: Build and Publish to PyPI
