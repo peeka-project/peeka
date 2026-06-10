@@ -332,8 +332,9 @@ class TestWatchView:
             await watch_view._start_watch()
             await pilot.pause()
 
-            # Verify no commands were sent
-            assert len(client.commands_received) == 0
+            # Verify no watch/start commands were sent (patch-status from banner fetch is ok)
+            watch_commands = [c for c in client.commands_received if c.get("type") != "patch-status"]
+            assert len(watch_commands) == 0
 
             # Verify no watch entry in table
             table = watch_view.query_one("#watch-table", DataTable)
