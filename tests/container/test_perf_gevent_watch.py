@@ -1,5 +1,7 @@
 """Container E2E perf baseline test for watch throughput under gevent."""
 
+# pyright: reportUnknownVariableType=false, reportUnknownParameterType=false, reportUnknownArgumentType=false, reportAny=false, reportImplicitStringConcatenation=false, reportUnusedCallResult=false
+
 import json
 import time
 
@@ -21,7 +23,7 @@ def _json_lines(output: str):
             continue
 
 
-def _start_gevent_target(container) -> str:
+def _start_gevent_target(container: object) -> str:
     command = """
 python /app/examples/gevent_attach_target.py --interval 0.01 --duration 0 >/tmp/gevent_perf_target.log 2>&1 &
 echo $! > /tmp/gevent_perf_target.pid
@@ -46,7 +48,7 @@ cat /tmp/gevent_perf_target.pid
     return pid
 
 
-def _attach(container, pid: str) -> None:
+def _attach(container: object, pid: str) -> None:
     exit_code, output = exec_in_container(
         container, f"python -m peeka.cli.main attach {pid}", timeout=30
     )
@@ -58,9 +60,9 @@ class TestPerfGeventWatch:
         "container_fixture", ["gdb_container", "py314_container"]
     )
     def test_watch_throughput_gevent_baseline(
-        self, container_fixture, request
+        self, container_fixture: str, request: pytest.FixtureRequest
     ):
-        container = request.getfixturevalue(container_fixture)
+        container: object = request.getfixturevalue(container_fixture)
         pid = _start_gevent_target(container)
 
         try:
