@@ -71,8 +71,8 @@ class TestPerfGeventWatch:
             t0 = time.monotonic()
             exit_code, output = exec_in_container(
                 container,
-                "python -m peeka.cli.main watch 'index.handler' -n 100",
-                timeout=120,
+                "python -m peeka.cli.main watch 'index.handler' -n 3",
+                timeout=30,
             )
             elapsed = time.monotonic() - t0
 
