@@ -54,8 +54,13 @@ def _attach(container, pid: str) -> None:
 
 
 class TestPerfGeventWatch:
-    def test_watch_throughput_gevent_baseline(self, gdb_container):
-        container = gdb_container
+    @pytest.mark.parametrize(
+        "container_fixture", ["gdb_container", "py314_container"]
+    )
+    def test_watch_throughput_gevent_baseline(
+        self, container_fixture, request
+    ):
+        container = request.getfixturevalue(container_fixture)
         pid = _start_gevent_target(container)
 
         try:
