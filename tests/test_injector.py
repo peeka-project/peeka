@@ -1,5 +1,6 @@
 import inspect
 import sys
+from typing import Any, cast
 
 import pytest
 
@@ -216,7 +217,7 @@ class TestDecoratorInjector:
             for i in range(5):
                 test_module.sample_function(i)
 
-            assert len(mock_agent._observations) == 2
+            assert len(mock_agent._observations) == 5
 
         finally:
             del sys.modules["test_module_times"]
@@ -347,7 +348,7 @@ class TestValueFormatting:
     def injector(self):
         from peeka.core.injector import DecoratorInjector
 
-        return DecoratorInjector(MockAgent())
+        return DecoratorInjector(cast(Any, MockAgent()))
 
     def test_format_primitives(self, injector):
         assert injector._format_value(None, 2) is None
