@@ -172,6 +172,67 @@ class TestWatchView:
 
     @pytest.mark.asyncio
     @pytest.mark.tui
+    async def test_unlimited_watch_stream_does_not_stop_at_small_count(
+        self, mock_client_factory
+    ):
+        """TUI times=-1 watch keeps processing observations beyond small limits."""
+        observation_count = 25
+        observations = [
+            {
+                "watch_id": "w1",
+                "func_name": "module.func",
+                "params": [i],
+                "kwargs": {},
+                "returnObj": i * 2,
+                "cost": 0.1,
+                "success": True,
+                "count": i + 1,
+            }
+            for i in range(observation_count)
+        ]
+        client = mock_client_factory(
+            responses={"watch": {"status": "success", "watch_id": "w1"}},
+        )
+        stream_client = mock_client_factory(observations=observations)
+        client.connect()
+        stream_client.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            watch_view = app.screen.query_one("WatchView", WatchView)
+            watch_view.set_client(client)
+            watch_view._stream_client = stream_client
+
+            pattern_input = watch_view.query_one("#watch-pattern", AutoCompleteInput)
+            pattern_input.value = "module.func"
+
+            await watch_view._start_watch()
+            worker = watch_view._active_watches["w1"]["worker"]
+            assert worker is not None
+            await worker.wait()
+            await pilot.pause()
+
+            watch_cmds = [
+                cmd for cmd in client.commands_received if cmd.get("type") == "watch"
+            ]
+            assert watch_cmds[0]["times"] == -1
+            assert watch_view._active_watches["w1"]["count"] == observation_count
+
+            obs_table = watch_view.query_one("#observations-table", DataTable)
+            assert obs_table.row_count == observation_count
+
+            watch_table = watch_view.query_one("#watch-table", DataTable)
+            row = watch_table.get_row("w1")
+            assert str(observation_count) in [str(cell) for cell in row]
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
     async def test_watch_error_response(self, mock_client_factory):
         """Mock send_command returns error for watch command, verify error notification."""
         client = mock_client_factory(
