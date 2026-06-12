@@ -23,7 +23,7 @@ def _add_watch_arguments(
         "--times",
         type=int,
         default=-1,
-        help="Number of times to capture (-1 for infinite)",
+        help="Print N observations then stop (-1 for infinite)",
     )
     parser.add_argument(
         "-b", "--before", action="store_true", help="Observe before function execution"
