@@ -810,7 +810,8 @@ class PeekaAgent(
         except Exception:
             pass
 
-        done = _rpl.create_event()
+        done = _rpl.allocate_lock()
+        done.acquire()
         result = {"success": False}
 
         def send_frames() -> None:
@@ -818,13 +819,13 @@ class PeekaAgent(
                 result["success"] = self._send_frame_to_connection(conn, frames)
             finally:
                 try:
-                    done.set()
+                    done.release()
                 except Exception:
                     pass
 
         try:
             _rpl.start_thread(send_frames, name="peeka-observation-send")
-            if not done.wait(timeout=timeout):
+            if not done.acquire(blocking=True, timeout=timeout):
                 return False
             return bool(result["success"])
         finally:
