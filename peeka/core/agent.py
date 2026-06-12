@@ -382,7 +382,7 @@ class PeekaAgent(
         try:
             return self._get_client_registry().get(str(client_session_id)) is not None
         except Exception:
-            return True
+            return True  # Fail-open: registry lookup error must not trigger orphan cleanup.
 
     def cleanup_orphan_watches(self, now: Optional[float] = None) -> int:
         """Sweep abandoned watch probes after owner-loss grace expires."""
