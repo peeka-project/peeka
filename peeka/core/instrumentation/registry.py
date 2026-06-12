@@ -130,7 +130,7 @@ class InjectorRegistryMixin:
                     try:
                         is_live = bool(liveness_hook(session_id))
                     except Exception:
-                        is_live = False
+                        is_live = True  # Fail-open: hook error must not trigger orphan cleanup.
 
                 if is_live:
                     info.pop("_orphan_start", None)
@@ -297,7 +297,7 @@ class InjectorRegistryMixin:
             and info.get("watch_group_key") == group_key
         ]
 
-    def _restore_watch_wrapper(self, watch_id: str, info: Dict[str, Any]) -> None:
+    def _restore_watch_wrapper(self, _watch_id: str, info: Dict[str, Any]) -> None:
         """Restore a watch wrapper only when its shared group permits it."""
         group_key = info["watch_group_key"]
         remaining = self._active_watch_infos_in_group(group_key)
