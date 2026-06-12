@@ -309,6 +309,7 @@ class PeekaAgent(
         self._client_counter = 0
         self.observer = ObservationManager()
         self.injector = DecoratorInjector(self)  # pyright: ignore[reportArgumentType]
+        self.watch_orphan_grace_seconds = 3600.0
         self.probe_registry: ProbeRegistry = probes_module.probe_registry
         self._probe_contexts: Dict[str, ProbeContext] = {}
         self._probe_context_types: Dict[str, str] = {}
@@ -373,6 +374,19 @@ class PeekaAgent(
             self._recent_errors.append(error_entry)
             if len(self._recent_errors) > 5:
                 self._recent_errors.pop(0)
+
+    def is_client_session_live(self, client_session_id: Optional[str]) -> bool:
+        """Return True when a client session is still registered as live."""
+        if client_session_id in (None, ""):
+            return False
+        try:
+            return self._get_client_registry().get(str(client_session_id)) is not None
+        except Exception:
+            return True
+
+    def cleanup_orphan_watches(self, now: Optional[float] = None) -> int:
+        """Sweep abandoned watch probes after owner-loss grace expires."""
+        return self.injector.cleanup_orphan_watches(now=now)
     
 
 

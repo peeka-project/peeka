@@ -2,6 +2,7 @@
 
 import fnmatch
 import logging
+import time as _time
 import uuid
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
@@ -11,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 class InjectorRegistryMixin:
+    agent: Any = None
     instrumented: Dict[str, Dict[str, Any]] = {}
     _lock: Any = None
 
@@ -94,6 +96,62 @@ class InjectorRegistryMixin:
 
             self.instrumented.clear()
             return count
+
+    def cleanup_orphan_watches(self, now: Optional[float] = None) -> int:
+        """Remove watch probes whose owner session stayed dead past grace.
+
+        Args:
+            now: Optional monotonic timestamp for deterministic tests.
+
+        Returns:
+            Number of orphaned watch probes removed.
+        """
+        if now is None:
+            now = _time.monotonic()
+
+        to_remove = []
+        with self._lock:
+            for watch_id, info in list(self.instrumented.items()):
+                if not watch_id.startswith("watch_"):
+                    continue
+
+                grace = info.get("config", {}).get("watch_orphan_grace_seconds")
+                if grace is None:
+                    grace = getattr(self.agent, "watch_orphan_grace_seconds", 3600.0)
+                try:
+                    grace_seconds = float(grace)
+                except (TypeError, ValueError):
+                    grace_seconds = 3600.0
+
+                session_id = info.get("client_session_id")
+                is_live = False
+                liveness_hook = getattr(self.agent, "is_client_session_live", None)
+                if callable(liveness_hook):
+                    try:
+                        is_live = bool(liveness_hook(session_id))
+                    except Exception:
+                        is_live = False
+
+                if is_live:
+                    info.pop("_orphan_start", None)
+                    continue
+
+                orphan_start = info.get("_orphan_start")
+                if orphan_start is None:
+                    info["_orphan_start"] = now
+                    orphan_start = now
+
+                if now - float(orphan_start) >= grace_seconds:
+                    to_remove.append(watch_id)
+
+        removed_count = 0
+        for watch_id in to_remove:
+            try:
+                self.uninject(watch_id)
+                removed_count += 1
+            except ValueError:
+                continue
+        return removed_count
 
     def get_watch_info(self, watch_id: str) -> Optional[Dict[str, Any]]:
         """

@@ -10,6 +10,7 @@ monitoring without modifying the original source code.
 
 import inspect
 import logging
+import time as _time
 import uuid
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple
 
@@ -59,6 +60,8 @@ class DecoratorInjector(
         self.agent = agent
         self.instrumented: Dict[str, Dict[str, Any]] = {}
         self._lock = _rpl.allocate_lock()  # DOMAIN: native_thread (hot path, never gevent lock)
+        if not hasattr(agent, "cleanup_orphan_watches"):
+            setattr(agent, "cleanup_orphan_watches", self.cleanup_orphan_watches)
 
     def inject(self, pattern: str, watch_config: Dict[str, Any]) -> str:
         """
@@ -119,6 +122,11 @@ class DecoratorInjector(
                 "aliases": alias_bindings,
                 "client_session_id": watch_config.get("client_session_id"),
             }
+
+            session_id = info.get("client_session_id")
+            liveness_hook = getattr(self.agent, "is_client_session_live", None)
+            if callable(liveness_hook) and not liveness_hook(session_id):
+                info["_orphan_start"] = _time.monotonic()
 
             if "stack_depth" not in watch_config:
                 shared_group = self._get_watch_wrapper_group(target_func)

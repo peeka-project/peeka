@@ -79,6 +79,7 @@ class WatchCommand(BaseCommand):
             "success": params.get("success", False),
             "finish": params.get("finish", True),
             "client_session_id": params.get("client_session_id"),
+            "watch_orphan_grace_seconds": params.get("watch_orphan_grace_seconds"),
         }
         response_config = dict(watch_config)
 
