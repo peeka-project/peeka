@@ -81,12 +81,6 @@ class TestWatchOwnerCleanup:
             injector.uninject_all()
             _ = sys.modules.pop(module_name, None)
 
-    @pytest.mark.xfail(
-        reason=(
-            "Current stacked wrappers restore watch A's original function and drop "
-            "watch B when A is stopped first."
-        )
-    )
     def test_same_function_multi_watch_stop_a_then_b_keeps_b_active(
         self, injector, mock_agent: MockAgent
     ) -> None:
@@ -190,6 +184,82 @@ class TestWatchOwnerCleanup:
             Path(ready_path).unlink(missing_ok=True)
             _ = sys.modules.pop("test_tui_watch_owner_module", None)
 
-    @pytest.mark.skip(reason="Owner-aware cleanup is implemented in T6.")
     def test_disconnect_of_connection_a_does_not_remove_connection_b_watch(self) -> None:
-        pass
+        session_id = "test_two_watch_owner_cleanup"
+        socket_path = f"/tmp/peeka_{session_id}.sock"
+        ready_path = f"/tmp/peeka_{session_id}.ready"
+        agent: Optional["PeekaAgent"] = None
+
+        Path(socket_path).unlink(missing_ok=True)
+        Path(ready_path).unlink(missing_ok=True)
+
+        def owned_function(value: int) -> int:
+            return value * 3
+
+        test_module = ModuleType("test_two_watch_owner_module")
+        setattr(test_module, "owned_function", owned_function)
+        sys.modules["test_two_watch_owner_module"] = test_module
+
+        try:
+            from peeka.core.agent import PeekaAgent
+            from peeka.core.client import AgentClient
+
+            agent = PeekaAgent(session_id, attached_pid=None)
+            agent.start()
+            for _ in range(50):
+                if Path(ready_path).exists():
+                    break
+                time.sleep(0.1)
+            assert Path(ready_path).exists()
+
+            client_a = AgentClient(
+                socket_path,
+                timeout=2.0,
+                client_info={"id": "connection-a", "kind": "cli", "source": "test"},
+            )
+            response_a = client_a.send_command(
+                {
+                    "type": "watch",
+                    "action": "start",
+                    "pattern": "test_two_watch_owner_module.owned_function",
+                    "client_session_id": "owner-a",
+                    "depth": 2,
+                    "times": -1,
+                    "finish": True,
+                }
+            )
+            assert response_a["status"] == "success"
+
+            client_b = AgentClient(
+                socket_path,
+                timeout=2.0,
+                client_info={"id": "connection-b", "kind": "cli", "source": "test"},
+            )
+            response_b = client_b.send_command(
+                {
+                    "type": "watch",
+                    "action": "start",
+                    "pattern": "test_two_watch_owner_module.owned_function",
+                    "client_session_id": "owner-b",
+                    "depth": 2,
+                    "times": -1,
+                    "finish": True,
+                }
+            )
+            assert response_b["status"] == "success"
+
+            watch_a = response_a["watch_id"]
+            watch_b = response_b["watch_id"]
+
+            time.sleep(0.1)
+            assert watch_a in agent.injector.instrumented
+            assert watch_b in agent.injector.instrumented
+            assert agent.injector.instrumented[watch_a]["client_session_id"] == "owner-a"
+            assert agent.injector.instrumented[watch_b]["client_session_id"] == "owner-b"
+            assert test_module.owned_function(4) == 12
+        finally:
+            if agent:
+                agent.stop()
+            Path(socket_path).unlink(missing_ok=True)
+            Path(ready_path).unlink(missing_ok=True)
+            _ = sys.modules.pop("test_two_watch_owner_module", None)

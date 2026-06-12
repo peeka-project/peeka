@@ -11,7 +11,7 @@ monitoring without modifying the original source code.
 import inspect
 import logging
 import uuid
-from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple
 
 from peeka.core.instrumentation.formatting import InjectorFormattingMixin
 from peeka.core.instrumentation.registry import InjectorRegistryMixin
@@ -106,7 +106,7 @@ class DecoratorInjector(
 
         with self._lock:
             # Store original function info for restoration
-            self.instrumented[watch_id] = {
+            info = {
                 "pattern": pattern,
                 "original": target_func,
                 "wrapper": wrapper,
@@ -117,13 +117,49 @@ class DecoratorInjector(
                 "times_limit": watch_config.get("times", -1),
                 "is_coroutine_function": is_coroutine_function,
                 "aliases": alias_bindings,
+                "client_session_id": watch_config.get("client_session_id"),
             }
+
+            if "stack_depth" not in watch_config:
+                shared_group = self._get_watch_wrapper_group(target_func)
+                if shared_group is None:
+                    group_key: Tuple[int, str] = (id(parent_obj), str(attr_name))
+                    root_original = target_func
+                    previous_wrapper = None
+                else:
+                    group_key = shared_group.get(
+                        "watch_group_key", (id(parent_obj), str(attr_name))
+                    )
+                    root_original = shared_group.get(
+                        "root_original", shared_group["original"]
+                    )
+                    previous_wrapper = target_func
+                info.update(
+                    {
+                        "root_original": root_original,
+                        "previous_wrapper": previous_wrapper,
+                        "watch_group_key": group_key,
+                    }
+                )
+
+            self.instrumented[watch_id] = info
 
             # Replace the function
             self._replace_function(parent_obj, attr_name, wrapper)
             self._replace_aliases(alias_bindings, wrapper)
 
         return watch_id
+
+    def _get_watch_wrapper_group(
+        self, target_func: Callable[..., Any]
+    ) -> Optional[Dict[str, Any]]:
+        """Return active watch info when target_func is already a watch wrapper."""
+        for watch_id, info in self.instrumented.items():
+            if not watch_id.startswith("watch_"):
+                continue
+            if info.get("wrapper") is target_func:
+                return info
+        return None
 
     def inject_trace(
         self,

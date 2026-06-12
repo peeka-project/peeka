@@ -3,7 +3,7 @@
 import fnmatch
 import logging
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
 from peeka.core.probes import ProbeContext
 
@@ -11,6 +11,15 @@ logger = logging.getLogger(__name__)
 
 
 class InjectorRegistryMixin:
+    instrumented: Dict[str, Dict[str, Any]] = {}
+    _lock: Any = None
+
+    if TYPE_CHECKING:
+        def _replace_function(
+            self, parent: Any, attr_name: str, new_func: Callable[..., Any]
+        ) -> None: ...
+
+        def _restore_aliases(self, info: Dict[str, Any]) -> None: ...
 
     def uninject(self, watch_id: str) -> Dict[str, Any]:
         """
@@ -31,9 +40,12 @@ class InjectorRegistryMixin:
 
             info = self.instrumented.pop(watch_id)
 
-            # Restore original function
-            self._replace_function(info["parent"], info["attr_name"], info["original"])
-            self._restore_aliases(info)
+            if watch_id.startswith("watch_") and "watch_group_key" in info:
+                self._restore_watch_wrapper(watch_id, info)
+            else:
+                # Restore original function
+                self._replace_function(info["parent"], info["attr_name"], info["original"])
+                self._restore_aliases(info)
 
             return {
                 "watch_id": watch_id,
@@ -50,9 +62,27 @@ class InjectorRegistryMixin:
         """
         with self._lock:
             count = len(self.instrumented)
+            restored_watch_groups = set()
 
             for watch_id, info in list(self.instrumented.items()):
                 try:
+                    if watch_id.startswith("watch_") and "watch_group_key" in info:
+                        group_key = info["watch_group_key"]
+                        if group_key in restored_watch_groups:
+                            continue
+                        self._replace_function(
+                            info["parent"],
+                            info["attr_name"],
+                            info.get("root_original", info["original"]),
+                        )
+                        self._restore_watch_aliases(
+                            info,
+                            info.get("root_original", info["original"]),
+                            force=True,
+                        )
+                        restored_watch_groups.add(group_key)
+                        continue
+
                     self._replace_function(
                         info["parent"], info["attr_name"], info["original"]
                     )
@@ -84,6 +114,7 @@ class InjectorRegistryMixin:
                     "count": info["count"],
                     "times_limit": info["times_limit"],
                     "config": info["config"],
+                    "client_session_id": info.get("client_session_id"),
                     "is_coroutine_function": info.get(
                         "is_coroutine_function", False
                     ),
@@ -108,6 +139,7 @@ class InjectorRegistryMixin:
                     "pattern": info["pattern"],
                     "count": info["count"],
                     "times_limit": info["times_limit"],
+                    "client_session_id": info.get("client_session_id"),
                     "alias_count": len(info.get("aliases", [])),
                 }
                 for wid, info in self.instrumented.items()
@@ -168,6 +200,7 @@ class InjectorRegistryMixin:
                         "pattern": info.get("pattern", "unknown"),
                         "command": info.get("config", {}).get("command", "watch"),
                         "count": info.get("count", 0),
+                        "client_session_id": info.get("client_session_id"),
                         "alias_count": len(info.get("aliases", [])),
                     }
                 )
@@ -194,6 +227,56 @@ class InjectorRegistryMixin:
     def _generate_watch_id(self) -> str:
         """Generate unique watch ID."""
         return f"watch_{uuid.uuid4().hex[:8]}"
+
+    def _active_watch_infos_in_group(
+        self, group_key: Tuple[int, str]
+    ) -> List[Dict[str, Any]]:
+        """Return active watch infos that share one wrapped function slot."""
+        return [
+            info
+            for active_id, info in self.instrumented.items()
+            if active_id.startswith("watch_")
+            and info.get("watch_group_key") == group_key
+        ]
+
+    def _restore_watch_wrapper(self, watch_id: str, info: Dict[str, Any]) -> None:
+        """Restore a watch wrapper only when its shared group permits it."""
+        group_key = info["watch_group_key"]
+        remaining = self._active_watch_infos_in_group(group_key)
+        current = getattr(info["parent"], info["attr_name"], None)
+
+        if remaining:
+            if current is info.get("wrapper"):
+                replacement = info.get("previous_wrapper") or remaining[-1]["wrapper"]
+                self._replace_function(info["parent"], info["attr_name"], replacement)
+                self._restore_watch_aliases(info, replacement)
+            return
+
+        replacement = info.get("root_original", info["original"])
+        if current is info.get("wrapper"):
+            self._replace_function(info["parent"], info["attr_name"], replacement)
+            self._restore_watch_aliases(info, replacement)
+
+    def _restore_watch_aliases(
+        self,
+        info: Dict[str, Any],
+        replacement: Callable[..., Any],
+        force: bool = False,
+    ) -> None:
+        """Restore aliases for a shared watch wrapper group."""
+        wrapper = info.get("wrapper")
+        for alias in info.get("aliases", []):
+            try:
+                parent = alias["parent"]
+                attr_name = alias["attr_name"]
+                if force or getattr(parent, attr_name, None) is wrapper:
+                    setattr(parent, attr_name, replacement)
+            except Exception:
+                logger.debug(
+                    "Best-effort watch alias restoration failed for %s",
+                    alias.get("label", "<unknown>"),
+                    exc_info=True,
+                )
 
     def _record_probe_event(
         self,
