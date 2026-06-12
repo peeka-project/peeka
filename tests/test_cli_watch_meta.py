@@ -82,7 +82,7 @@ def test_counted_limit_stops_after_n_emitted_observations() -> None:
     assert predicate(args, {"count": 3}) is True
 
 
-def test_watch_times_help_current_wording_mentions_capture() -> None:
+def test_watch_times_help_current_wording_mentions_print_observations() -> None:
     result = subprocess.run(
         [sys.executable, "-m", "peeka.cli.main", "watch", "--help"],
         capture_output=True,
@@ -92,11 +92,11 @@ def test_watch_times_help_current_wording_mentions_capture() -> None:
     assert result.returncode == 0
     help_text = result.stdout.lower()
     assert "-n, --times" in result.stdout
-    assert "number of times to capture" in help_text
+    assert "observations" in help_text
+    assert "print" in help_text or "emit" in help_text
 
 
-@pytest.mark.xfail(reason="T8 updates watch -n help text to mention printing/emitting observations")
-def test_watch_times_help_future_wording_mentions_observations() -> None:
+def test_watch_times_help_does_not_say_capture() -> None:
     result = subprocess.run(
         [sys.executable, "-m", "peeka.cli.main", "watch", "--help"],
         capture_output=True,
@@ -105,5 +105,5 @@ def test_watch_times_help_future_wording_mentions_observations() -> None:
 
     assert result.returncode == 0
     help_text = result.stdout.lower()
-    assert "observations" in help_text
-    assert "print" in help_text or "emit" in help_text
+    # Old wording was "number of times to capture"; it must be gone after T8.
+    assert "number of times to capture" not in help_text
