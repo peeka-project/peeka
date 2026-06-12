@@ -78,6 +78,7 @@ class WatchCommand(BaseCommand):
             "exception": params.get("exception", False),
             "success": params.get("success", False),
             "finish": params.get("finish", True),
+            "client_session_id": params.get("client_session_id"),
         }
         response_config = dict(watch_config)
 
