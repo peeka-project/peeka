@@ -14,6 +14,7 @@ from tests.container.conftest import cleanup_peeka_files_in_container, exec_in_c
 pytestmark = [pytest.mark.container, pytest.mark.slow, pytest.mark.gevent]
 
 _EVIDENCE_DIR = ".sisyphus/evidence/py314-gevent-streaming"
+_EVIDENCE_DIR_FIX = ".sisyphus/evidence/py314-gevent-watch-limit-fix"
 _TARGET_LOG = "/tmp/gevent_watch_investigation.log"
 _TARGET_PID = "/tmp/gevent_watch_investigation.pid"
 
@@ -147,6 +148,46 @@ def _run_watch_and_write_evidence(
         cleanup_peeka_files_in_container(container)
 
 
+def _extract_probe_id(records: List[Dict[str, Any]]) -> Optional[str]:
+    for record in records:
+        probe_id = record.get("probe_id")
+        if probe_id:
+            return str(probe_id)
+    return None
+
+
+def _try_query_internal_count(
+    container: object, probe_id: Optional[str]
+) -> Optional[int]:
+    if not probe_id:
+        return None
+    exit_code, output = exec_in_container(
+        container,
+        f"python -m peeka.cli.main probe inspect --probe {probe_id} --format json",
+        timeout=10,
+    )
+    if exit_code != 0:
+        return None
+    for record in _json_lines(output):
+        for field in ("count", "observation_count", "total_count"):
+            val = record.get(field)
+            if val is not None:
+                try:
+                    return int(val)
+                except (ValueError, TypeError):
+                    pass
+        data = record.get("data", {})
+        if isinstance(data, dict):
+            for field in ("count", "observation_count", "total_count"):
+                val = data.get(field)
+                if val is not None:
+                    try:
+                        return int(val)
+                    except (ValueError, TypeError):
+                        pass
+    return None
+
+
 class TestPy314WatchInvestigation:
     def test_harness_small_n3(self, py314_container: object):
         result = _run_watch_and_write_evidence(
@@ -169,3 +210,133 @@ class TestPy314WatchInvestigation:
         assert os.path.exists(result["evidence_path"]), "Evidence file was not written"
         assert result["evidence"]["observation_count"] >= 0
         assert result["evidence"]["raw_lines"] is not None
+
+
+class TestWatchLimitFixRegression:
+    def test_watch_no_stall_py314_gevent_n100(self, py314_container: object):
+        n = 100
+        os.makedirs(_EVIDENCE_DIR_FIX, exist_ok=True)
+        pid = _start_gevent_target(py314_container, interval=0.01)
+        try:
+            _attach(py314_container, pid)
+
+            started = time.monotonic()
+            exit_code, output = exec_in_container(
+                py314_container,
+                f"python -m peeka.cli.main watch 'index.handler' -n {n}",
+                timeout=60,
+            )
+            elapsed_s = time.monotonic() - started
+
+            records = list(_json_lines(output))
+            observations = [r for r in records if r.get("type") == "observation"]
+            cli_printed_count = len(observations)
+            probe_id = _extract_probe_id(observations)
+            internal_count = _try_query_internal_count(py314_container, probe_id)
+
+            watch_started = next(
+                (r for r in records if r.get("event") == "watch_started"), None
+            )
+            gevent_state: Optional[str] = None
+            if watch_started:
+                meta = watch_started.get("meta", {})
+                gevent_state = meta.get("gevent_state")
+
+            evidence: Dict[str, Any] = {
+                "test": "test_watch_no_stall_py314_gevent_n100",
+                "n": n,
+                "exit_code": exit_code,
+                "timed_out": exit_code == 124,
+                "duration": elapsed_s,
+                "cli_printed_count": cli_printed_count,
+                "internal_count": internal_count,
+                "gevent_state": gevent_state,
+                "probe_id": probe_id,
+                "raw_lines_first_5": output.strip().splitlines()[:5],
+            }
+            evidence_path = os.path.join(_EVIDENCE_DIR_FIX, "task-9-py314-no-stall.log")
+            with open(evidence_path, "w", encoding="utf-8") as fh:
+                json.dump(evidence, fh, indent=2, sort_keys=True)
+                fh.write("\n")
+
+            assert exit_code == 0, (
+                f"watch -n {n} timed out or failed (exit_code={exit_code}). "
+                f"cli_printed_count={cli_printed_count}, elapsed={elapsed_s:.1f}s. "
+                "Stall bug present: wrapper silenced itself before CLI received N obs."
+            )
+            assert cli_printed_count == n, (
+                f"Expected {n} observations, got {cli_printed_count}. "
+                f"exit_code={exit_code}, elapsed={elapsed_s:.1f}s, "
+                f"internal_count={internal_count}."
+            )
+        finally:
+            exec_in_container(
+                py314_container,
+                (
+                    f"kill {pid} 2>/dev/null; "
+                    "pkill -9 -f gevent_attach_target.py 2>/dev/null; "
+                    f"rm -f {_TARGET_LOG} {_TARGET_PID}; true"
+                ),
+                timeout=10,
+            )
+            cleanup_peeka_files_in_container(py314_container)
+
+    def test_watch_n_counts_printed_not_agent(self, py314_container: object):
+        n = 100
+        os.makedirs(_EVIDENCE_DIR_FIX, exist_ok=True)
+        pid = _start_gevent_target(py314_container, interval=0.01)
+        try:
+            _attach(py314_container, pid)
+
+            started = time.monotonic()
+            exit_code, output = exec_in_container(
+                py314_container,
+                f"python -m peeka.cli.main watch 'index.handler' -n {n}",
+                timeout=60,
+            )
+            elapsed_s = time.monotonic() - started
+
+            records = list(_json_lines(output))
+            observations = [r for r in records if r.get("type") == "observation"]
+            cli_printed_count = len(observations)
+            probe_id = _extract_probe_id(observations)
+            internal_count = _try_query_internal_count(py314_container, probe_id)
+
+            evidence: Dict[str, Any] = {
+                "test": "test_watch_n_counts_printed_not_agent",
+                "n": n,
+                "exit_code": exit_code,
+                "timed_out": exit_code == 124,
+                "duration": elapsed_s,
+                "cli_printed_count": cli_printed_count,
+                "internal_count": internal_count,
+                "count_assertion": cli_printed_count == n,
+                "count_mismatch": cli_printed_count != n,
+                "probe_id": probe_id,
+            }
+            evidence_path = os.path.join(_EVIDENCE_DIR_FIX, "task-9-count-assertion.json")
+            with open(evidence_path, "w", encoding="utf-8") as fh:
+                json.dump(evidence, fh, indent=2, sort_keys=True)
+                fh.write("\n")
+
+            assert exit_code == 0, (
+                f"Watch timed out (exit_code={exit_code}), "
+                f"cli_printed_count={cli_printed_count}."
+            )
+            assert cli_printed_count == n, (
+                f"CLI must print exactly {n} observations (the -n value), "
+                f"got {cli_printed_count}. "
+                f"internal_count={internal_count}. "
+                "CLI counted_limit must control stop, not agent internal gate."
+            )
+        finally:
+            exec_in_container(
+                py314_container,
+                (
+                    f"kill {pid} 2>/dev/null; "
+                    "pkill -9 -f gevent_attach_target.py 2>/dev/null; "
+                    f"rm -f {_TARGET_LOG} {_TARGET_PID}; true"
+                ),
+                timeout=10,
+            )
+            cleanup_peeka_files_in_container(py314_container)
