@@ -131,7 +131,7 @@ def cmd_trace(args) -> int:
             "watch_id": stream_id,
         },
         emit_started=_emit_trace_started,
-        limit_reached=observation_count_limit,
+        limit_reached=counted_limit("times"),
         allow_explicit_client=True,
     )
 

@@ -1,9 +1,12 @@
+import argparse
+import json
 import sys
 import time
 from types import ModuleType
 
 import pytest
 
+from peeka.cli.handlers import observe as observe_cli
 from peeka.core.runtime.compat import BACKEND_WRAPPER_ONLY
 
 
@@ -35,6 +38,86 @@ class MockObserver:
 
     def get_all_stats(self):
         return {}
+
+
+class MockTraceStreamingClient:
+    def __init__(self, socket_path, observations):
+        self.socket_path = socket_path
+        self.observations = observations
+        self.commands_sent = []
+        self.connected = False
+
+    def connect(self):
+        self.connected = True
+        return {"status": "success"}
+
+    def send_command(self, command):
+        self.commands_sent.append(command)
+        if command.get("type") == "trace" and command.get("action") == "start":
+            return {"status": "success", "watch_id": "trace_cli_123"}
+        return {"status": "success"}
+
+    def stream_observations(self):
+        return iter(self.observations)
+
+    def disconnect(self):
+        self.connected = False
+
+
+class MockClientSessionContext:
+    def __enter__(self):
+        return "trace_cli_session"
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        return False
+
+
+def _trace_cli_args(times):
+    return argparse.Namespace(
+        pattern="module.fn",
+        depth=3,
+        times=times,
+        condition_express=None,
+        skip_builtin=True,
+        min_duration=0,
+        client=None,
+    )
+
+
+def test_trace_times_limit_cli_emits_exact_n_observations_from_local_count(
+    monkeypatch, capsys
+):
+    observations = [
+        {"watch_id": "trace_cli_123", "count": 5, "call_tree": []},
+        {"watch_id": "trace_cli_123", "count": 6, "call_tree": []},
+        {"watch_id": "trace_cli_123", "count": 7, "call_tree": []},
+    ]
+    streaming_clients = []
+
+    def build_streaming_client(socket_path):
+        client = MockTraceStreamingClient(socket_path, observations)
+        streaming_clients.append(client)
+        return client
+
+    monkeypatch.setattr(
+        observe_cli, "_check_agent_attached", lambda: ("/tmp/peeka_trace.sock", 1234)
+    )
+    monkeypatch.setattr(observe_cli, "StreamingAgentClient", build_streaming_client)
+    monkeypatch.setattr(observe_cli, "ephemeral_client", lambda target_id: MockClientSessionContext())
+
+    assert observe_cli.cmd_trace(_trace_cli_args(times=2)) == 0
+
+    records = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    emitted_observations = [
+        record for record in records if record.get("watch_id") == "trace_cli_123"
+    ]
+
+    assert len(emitted_observations) == 2
+    assert [record["count"] for record in emitted_observations] == [5, 6]
+    assert streaming_clients[0].commands_sent[-2:] == [
+        {"type": "trace", "action": "stop", "watch_id": "trace_cli_123"},
+        {"type": "reset", "action": "reset", "pattern": "module.fn"},
+    ]
 
 
 class TestTraceCommand:
