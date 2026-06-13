@@ -89,7 +89,7 @@ class MonitorCommand(BaseCommand):
         if target_info is None:
             return {"status": "error", "error": f"Cannot find target: {pattern}"}
 
-        target_func, parent_obj, attr_name = target_info
+        target_func, parent_obj, attr_name = target_info  # pyright: ignore[reportGeneralTypeIssues]
 
         # Generate watch ID for monitor
         watch_id = f"monitor_{uuid.uuid4().hex[:8]}"
@@ -284,13 +284,19 @@ class MonitorCommand(BaseCommand):
             if timer_thread:
                 timer_thread.join(timeout=2)
 
-            # Restore original function
+            for active_monitor in self._monitors.values():
+                if active_monitor.get("original") is monitor_info["wrapper"]:
+                    active_monitor["original"] = monitor_info["original"]
+
+            # Restore original function only if the callable slot still owns this wrapper.
             try:
-                self._replace_function(
-                    monitor_info["parent"],
-                    monitor_info["attr_name"],
-                    monitor_info["original"],
-                )
+                current = getattr(monitor_info["parent"], monitor_info["attr_name"])
+                if current is monitor_info["wrapper"]:
+                    self._replace_function(
+                        monitor_info["parent"],
+                        monitor_info["attr_name"],
+                        monitor_info["original"],
+                    )
             except Exception:
                 pass
 

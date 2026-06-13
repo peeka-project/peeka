@@ -1,9 +1,13 @@
 """Tests for monitor command - statistics collection."""
 
-import pytest
 import sys
-import time
 import threading
+import time
+from types import ModuleType
+from typing import Callable, cast
+
+import pytest
+
 from peeka.commands.monitor import MonitorCommand
 
 
@@ -57,6 +61,99 @@ def test_module():
 
 class TestMonitorCommand:
     """Test monitor command - statistics collection."""
+
+    def _exercise_same_function_multi_monitor_lifecycle(
+        self, monitor_cmd, module_name, stop_first
+    ):
+        def monitored_function(value):
+            return value + 10
+
+        true_original_function = monitored_function
+        test_module = ModuleType(module_name)
+        setattr(test_module, "monitored_function", monitored_function)
+        sys.modules[module_name] = test_module
+
+        monitor_a = None
+        monitor_b = None
+        try:
+            result_a = monitor_cmd.execute(
+                {
+                    "action": "start",
+                    "pattern": f"{module_name}.monitored_function",
+                    "cycle": 60,
+                }
+            )
+            assert result_a["status"] == "success"
+            monitor_a = result_a["watch_id"]
+
+            result_b = monitor_cmd.execute(
+                {
+                    "action": "start",
+                    "pattern": f"{module_name}.monitored_function",
+                    "cycle": 60,
+                }
+            )
+            assert result_b["status"] == "success"
+            monitor_b = result_b["watch_id"]
+
+            monitored = cast(
+                Callable[[int], int], getattr(test_module, "monitored_function")
+            )
+            assert monitored(1) == 11
+            assert monitor_cmd.manager.get_stats(monitor_a)["total"] == 1
+            assert monitor_cmd.manager.get_stats(monitor_b)["total"] == 1
+
+            if stop_first == "a":
+                stopped_first = monitor_a
+                remaining_monitor = monitor_b
+                final_monitor = monitor_b
+            else:
+                stopped_first = monitor_b
+                remaining_monitor = monitor_a
+                final_monitor = monitor_a
+
+            stop_result = monitor_cmd.execute(
+                {"action": "stop", "watch_id": stopped_first}
+            )
+            assert stop_result["status"] == "success"
+
+            monitored = cast(
+                Callable[[int], int], getattr(test_module, "monitored_function")
+            )
+            assert monitored(2) == 12
+            assert monitor_cmd.manager.get_stats(remaining_monitor)["total"] == 2
+
+            final_result = monitor_cmd.execute(
+                {"action": "stop", "watch_id": final_monitor}
+            )
+            assert final_result["status"] == "success"
+            assert final_result["final_stats"]["total"] == 2
+
+            monitored = cast(
+                Callable[[int], int], getattr(test_module, "monitored_function")
+            )
+            assert monitored(3) == 13
+            assert getattr(test_module, "monitored_function") is true_original_function
+        finally:
+            for watch_id in (monitor_a, monitor_b):
+                if watch_id in monitor_cmd._monitors:
+                    monitor_cmd.execute({"action": "stop", "watch_id": watch_id})
+            setattr(test_module, "monitored_function", true_original_function)
+            del sys.modules[module_name]
+
+    def test_same_function_multi_monitor_lifecycle_stop_a_then_b_keeps_b_active(
+        self, monitor_cmd
+    ):
+        self._exercise_same_function_multi_monitor_lifecycle(
+            monitor_cmd, "test_monitor_multi_monitor_ab", "a"
+        )
+
+    def test_same_function_multi_monitor_lifecycle_stop_b_then_a_keeps_a_active(
+        self, monitor_cmd
+    ):
+        self._exercise_same_function_multi_monitor_lifecycle(
+            monitor_cmd, "test_monitor_multi_monitor_ba", "b"
+        )
 
     def test_monitor_start_collects_statistics(self, monitor_cmd, test_module):
         """Monitor should collect call statistics."""
@@ -303,8 +400,8 @@ class TestMonitorCommand:
                 return None
 
         agent = MockAgent()
-        agent.injector = RedirectingInjector()
-        monitor_cmd = MonitorCommand(agent)
+        agent.injector = RedirectingInjector()  # pyright: ignore[reportAttributeAccessIssue]
+        monitor_cmd = MonitorCommand(agent)  # pyright: ignore[reportArgumentType]
 
         result = monitor_cmd.execute(
             {
