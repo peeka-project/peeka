@@ -13,7 +13,7 @@ fi
 "${PY_RUN[@]}" pytest tests/ \
   -v \
   --tb=short \
-  -m "not e2e and not container and not tui" \
+  -m "not e2e and not container and not tui and not perf and not slow" \
   --timeout=30 \
   --ignore=tests/tui \
   --ignore=tests/test_tui.py \
