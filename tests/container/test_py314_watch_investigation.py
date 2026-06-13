@@ -15,6 +15,7 @@ pytestmark = [pytest.mark.container, pytest.mark.slow, pytest.mark.gevent]
 
 _EVIDENCE_DIR = ".sisyphus/evidence/py314-gevent-streaming"
 _EVIDENCE_DIR_FIX = ".sisyphus/evidence/py314-gevent-watch-limit-fix"
+_EVIDENCE_DIR_BASE = ".sisyphus/evidence"
 _TARGET_LOG = "/tmp/gevent_watch_investigation.log"
 _TARGET_PID = "/tmp/gevent_watch_investigation.pid"
 
@@ -328,6 +329,65 @@ class TestWatchLimitFixRegression:
                 f"got {cli_printed_count}. "
                 f"internal_count={internal_count}. "
                 "CLI counted_limit must control stop, not agent internal gate."
+            )
+        finally:
+            exec_in_container(
+                py314_container,
+                (
+                    f"kill {pid} 2>/dev/null; "
+                    "pkill -9 -f gevent_attach_target.py 2>/dev/null; "
+                    f"rm -f {_TARGET_LOG} {_TARGET_PID}; true"
+                ),
+                timeout=10,
+            )
+            cleanup_peeka_files_in_container(py314_container)
+
+    def test_watch_n1_terminates_py314_gevent(self, py314_container: object):
+        n = 1
+        os.makedirs(_EVIDENCE_DIR_FIX, exist_ok=True)
+        pid = _start_gevent_target(py314_container, interval=0.01)
+        try:
+            _attach(py314_container, pid)
+
+            started = time.monotonic()
+            exit_code, output = exec_in_container(
+                py314_container,
+                f"python -m peeka.cli.main watch 'index.handler' -n {n}",
+                timeout=60,
+            )
+            elapsed_s = time.monotonic() - started
+
+            records = list(_json_lines(output))
+            observations = [r for r in records if r.get("type") == "observation"]
+            cli_printed_count = len(observations)
+            probe_id = _extract_probe_id(observations)
+
+            evidence: Dict[str, Any] = {
+                "test": "test_watch_n1_terminates_py314_gevent",
+                "n": n,
+                "exit_code": exit_code,
+                "timed_out": exit_code == 124,
+                "duration": elapsed_s,
+                "cli_printed_count": cli_printed_count,
+                "probe_id": probe_id,
+                "raw_lines_first_5": output.strip().splitlines()[:5],
+            }
+            evidence_path = os.path.join(_EVIDENCE_DIR_FIX, "task-5-py314-n1-terminates.json")
+            with open(evidence_path, "w", encoding="utf-8") as fh:
+                json.dump(evidence, fh, indent=2, sort_keys=True)
+                fh.write("\n")
+
+            assert exit_code == 0, (
+                f"watch -n {n} timed out or failed (exit_code={exit_code}). "
+                f"cli_printed_count={cli_printed_count}, elapsed={elapsed_s:.1f}s."
+            )
+            assert cli_printed_count == n, (
+                f"Expected exactly {n} observation, got {cli_printed_count}. "
+                f"exit_code={exit_code}, elapsed={elapsed_s:.1f}s."
+            )
+            assert elapsed_s < 60, (
+                f"watch -n {n} took too long: {elapsed_s:.1f}s. "
+                "Should terminate near-instantly after 1 observation."
             )
         finally:
             exec_in_container(
