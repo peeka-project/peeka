@@ -1,15 +1,19 @@
 """Release-gate regression tests."""
 
+# pyright: reportImplicitOverride=false
+
+from __future__ import annotations
+
 import ast
+import re
 from pathlib import Path
-from typing import List
 
 
 class _UvSubprocessVisitor(ast.NodeVisitor):
     """Find subprocess calls that hard-code uv as the executable."""
 
     def __init__(self) -> None:
-        self.lines = []
+        self.lines: list[int] = []
 
     def visit_Call(self, node: ast.Call) -> None:
         if self._is_subprocess_call(node) and self._first_arg_is_uv(node):
@@ -37,8 +41,8 @@ class _UvSubprocessVisitor(ast.NodeVisitor):
         return isinstance(first, ast.Constant) and first.value == "uv"
 
 
-def _find_uv_subprocess_calls(root: Path) -> List[str]:
-    offenders = []
+def _find_uv_subprocess_calls(root: Path) -> list[str]:
+    offenders: list[str] = []
     for path in sorted(root.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         visitor = _UvSubprocessVisitor()
@@ -53,3 +57,17 @@ def test_tests_do_not_hardcode_uv_subprocess_commands() -> None:
     offenders = _find_uv_subprocess_calls(Path(__file__).resolve().parent)
 
     assert offenders == []
+
+
+def test_release_check_excludes_perf_and_slow_markers() -> None:
+    """Release gate must exclude perf and slow tests from pytest collection."""
+    script_path = Path(__file__).resolve().parents[1] / "scripts" / "release_check.sh"
+    script_text = script_path.read_text(encoding="utf-8")
+
+    match = re.search(r'-m\s+"([^"]+)"', script_text)
+    assert match is not None, "release_check.sh must pass a pytest -m marker expression"
+
+    marker_expr = match.group(1)
+
+    assert "not perf" in marker_expr
+    assert "not slow" in marker_expr
