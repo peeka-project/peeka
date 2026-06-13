@@ -17,6 +17,40 @@ pytestmark = [pytest.mark.container]
 class TestContainerTrace:
     """Test trace command operations in containerized environments."""
 
+    def test_trace_times_limit_exact_n_py314(self, py314_target):
+        """Verify py314 trace -n emits exactly the requested observation count."""
+        container = py314_target["container"]
+        pid = py314_target["pid"]
+
+        exit_code, attach_output = exec_in_container(
+            container, f"python -m peeka.cli.main attach {pid}", timeout=30
+        )
+        assert exit_code == 0, f"Attach failed:\n{attach_output}"
+
+        exit_code, trace_output = exec_in_container(
+            container,
+            'python -m peeka.cli.main trace "__main__.Calculator.add" -n 2',
+            timeout=30,
+        )
+        assert exit_code == 0, f"Trace command failed:\n{trace_output}"
+
+        observations = []
+        for line in trace_output.strip().splitlines():
+            line = line.strip()
+            if not line.startswith("{"):
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if record.get("type") == "observation":
+                observations.append(record)
+
+        assert len(observations) == 2, (
+            f"Expected exactly 2 trace observations, got {len(observations)}:\n"
+            f"{trace_output}"
+        )
+
     def test_trace_basic(self, container_target):
         """Verify basic trace command captures call tree."""
         container = container_target["container"]
@@ -41,8 +75,8 @@ class TestContainerTrace:
         )
 
         # Parse JSONL and verify structure
-        lines = [l for l in trace_output.strip().split("\n") if l.strip()]
-        json_lines = [l for l in lines if l.startswith("{")]
+        lines = [line for line in trace_output.strip().split("\n") if line.strip()]
+        json_lines = [line for line in lines if line.startswith("{")]
 
         has_trace_started = False
         has_observation_with_call_tree = False
@@ -89,7 +123,7 @@ class TestContainerTrace:
         assert exit_code == 0, f"Trace command failed:\n{trace_output}"
 
         # Parse observations and verify depth constraint
-        lines = [l for l in trace_output.strip().split("\n") if l.strip()]
+        lines = [line for line in trace_output.strip().split("\n") if line.strip()]
 
         for line in lines:
             if line.startswith("{"):
@@ -128,7 +162,7 @@ class TestContainerTrace:
         assert exit_code == 0, f"Trace command failed:\n{trace_output}"
 
         # Count observations in output
-        lines = [l for l in trace_output.strip().split("\n") if l.strip()]
+        lines = [line for line in trace_output.strip().split("\n") if line.strip()]
         observation_count = 0
 
         for line in lines:
@@ -164,7 +198,7 @@ class TestContainerTrace:
         )
 
         # Parse observations and verify call tree structure
-        lines = [l for l in trace_output.strip().split("\n") if l.strip()]
+        lines = [line for line in trace_output.strip().split("\n") if line.strip()]
 
         for line in lines:
             if line.startswith("{"):
@@ -247,7 +281,7 @@ class TestContainerTrace:
         assert exit_code == 0, f"Trace command failed:\n{trace_output}"
 
         # Parse observations and verify no builtin functions in call tree
-        lines = [l for l in trace_output.strip().split("\n") if l.strip()]
+        lines = [line for line in trace_output.strip().split("\n") if line.strip()]
 
         for line in lines:
             if line.startswith("{"):
@@ -292,7 +326,7 @@ class TestContainerTrace:
         assert exit_code == 0, f"Trace command failed:\n{trace_output}"
 
         # Verify observations present with call_tree
-        lines = [l for l in trace_output.strip().split("\n") if l.strip()]
+        lines = [line for line in trace_output.strip().split("\n") if line.strip()]
         has_observation = False
 
         for line in lines:
@@ -362,7 +396,7 @@ class TestContainerTrace:
         )
 
         # Parse all JSON lines
-        lines = [l for l in trace_output.strip().split("\n") if l.strip()]
+        lines = [line for line in trace_output.strip().split("\n") if line.strip()]
         json_valid_count = 0
 
         for line in lines:
@@ -401,7 +435,7 @@ class TestContainerTrace:
         )
 
         # Parse observations
-        lines = [l for l in trace_output.strip().split("\n") if l.strip()]
+        lines = [line for line in trace_output.strip().split("\n") if line.strip()]
 
         for line in lines:
             if line.startswith("{"):
@@ -457,7 +491,7 @@ class TestContainerTrace:
         )
 
         # Parse observations
-        lines = [l for l in trace_output.strip().split("\n") if l.strip()]
+        lines = [line for line in trace_output.strip().split("\n") if line.strip()]
 
         for line in lines:
             if line.startswith("{"):
