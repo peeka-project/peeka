@@ -288,6 +288,23 @@ class MonitorCommand(BaseCommand):
                 if active_monitor.get("original") is monitor_info["wrapper"]:
                     active_monitor["original"] = monitor_info["original"]
 
+            active_injector_wrappers = set()
+            injector = getattr(self.agent, "injector", None)
+            instrumented = getattr(injector, "instrumented", {})
+            if isinstance(instrumented, dict):
+                for active_probe in instrumented.values():
+                    active_injector_wrappers.add(active_probe.get("wrapper"))
+                    for key in ("original", "previous_wrapper", "root_original"):
+                        if active_probe.get(key) is monitor_info["wrapper"]:
+                            active_probe[key] = monitor_info["original"]
+
+            replacement = monitor_info["original"]
+            while replacement not in active_injector_wrappers:
+                next_replacement = getattr(replacement, "__wrapped__", None)
+                if next_replacement is None or next_replacement is replacement:
+                    break
+                replacement = next_replacement
+
             # Restore original function only if the callable slot still owns this wrapper.
             try:
                 current = getattr(monitor_info["parent"], monitor_info["attr_name"])
@@ -295,7 +312,7 @@ class MonitorCommand(BaseCommand):
                     self._replace_function(
                         monitor_info["parent"],
                         monitor_info["attr_name"],
-                        monitor_info["original"],
+                        replacement,
                     )
             except Exception:
                 pass

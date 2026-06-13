@@ -4,11 +4,12 @@ import sys
 import threading
 import time
 from types import ModuleType
-from typing import Callable, cast
+from typing import Any, Callable, cast
 
 import pytest
 
 from peeka.commands.monitor import MonitorCommand
+from peeka.core.runtime.compat import BACKEND_WRAPPER_ONLY
 
 
 class MockAgent:
@@ -17,6 +18,7 @@ class MockAgent:
     def __init__(self):
         self._observations = []
         self._lock = threading.Lock()
+        self.injector: Any = None
 
     def _send_observation(self, obs):
         with self._lock:
@@ -61,6 +63,150 @@ def test_module():
 
 class TestMonitorCommand:
     """Test monitor command - statistics collection."""
+
+    def _make_mixed_monitor_target(self, module_name):
+        def monitored_function(value):
+            return value + 10
+
+        test_module = ModuleType(module_name)
+        setattr(test_module, "monitored_function", monitored_function)
+        sys.modules[module_name] = test_module
+        return test_module, monitored_function
+
+    def _call_monitored(self, test_module, value):
+        monitored = cast(
+            Callable[[int], int], getattr(test_module, "monitored_function")
+        )
+        return monitored(value)
+
+    def _build_mixed_probe_tools(self):
+        from peeka.core.injector import DecoratorInjector
+
+        agent = MockAgent()
+        injector = DecoratorInjector(agent)  # pyright: ignore[reportArgumentType]
+        agent.injector = injector
+        monitor_cmd = MonitorCommand(agent)  # pyright: ignore[reportArgumentType]
+        return agent, injector, monitor_cmd
+
+    def _start_monitor(self, monitor_cmd, pattern):
+        result = monitor_cmd.execute(
+            {"action": "start", "pattern": pattern, "cycle": 60}
+        )
+        assert result["status"] == "success"
+        return cast(str, result["watch_id"])
+
+    def _assert_monitor_total(self, monitor_cmd, monitor_id, total):
+        assert monitor_id is not None
+        stats = monitor_cmd.manager.get_stats(monitor_id)
+        assert stats is not None
+        assert stats["total"] == total
+
+    def _start_injector_probe(self, injector, pattern, probe_kind):
+        if probe_kind == "watch":
+            return injector.inject(pattern, {"depth": 2, "times": -1})
+        return injector.inject_trace(
+            pattern,
+            {"trace_depth": 2, "times": -1},
+            force_backend=BACKEND_WRAPPER_ONLY,
+        )
+
+    def _exercise_injector_probe_then_monitor_lifecycle(self, probe_kind):
+        agent, injector, monitor_cmd = self._build_mixed_probe_tools()
+        module_name = f"test_{probe_kind}_monitor_lifecycle_probe_first"
+        test_module, true_original_function = self._make_mixed_monitor_target(
+            module_name
+        )
+        pattern = f"{module_name}.monitored_function"
+        probe_id = None
+        monitor_id = None
+
+        try:
+            probe_id = self._start_injector_probe(injector, pattern, probe_kind)
+            monitor_id = self._start_monitor(monitor_cmd, pattern)
+
+            assert self._call_monitored(test_module, 1) == 11
+            assert [obs["watch_id"] for obs in agent._observations] == [probe_id]
+            self._assert_monitor_total(monitor_cmd, monitor_id, 1)
+
+            agent._observations.clear()
+            injector.uninject(probe_id)
+            probe_id = None
+
+            assert self._call_monitored(test_module, 2) == 12
+            assert agent._observations == []
+            self._assert_monitor_total(monitor_cmd, monitor_id, 2)
+
+            result = monitor_cmd.execute({"action": "stop", "watch_id": monitor_id})
+            assert result["status"] == "success"
+            assert result["final_stats"]["total"] == 2
+            monitor_id = None
+
+            assert self._call_monitored(test_module, 3) == 13
+            assert agent._observations == []
+            assert getattr(test_module, "monitored_function") is true_original_function
+        finally:
+            if probe_id in injector.instrumented:
+                injector.uninject(probe_id)
+            if monitor_id in monitor_cmd._monitors:
+                monitor_cmd.execute({"action": "stop", "watch_id": monitor_id})
+            injector.uninject_all()
+            setattr(test_module, "monitored_function", true_original_function)
+            del sys.modules[module_name]
+
+    def _exercise_monitor_then_injector_probe_lifecycle(self, probe_kind):
+        agent, injector, monitor_cmd = self._build_mixed_probe_tools()
+        module_name = f"test_{probe_kind}_monitor_lifecycle_monitor_first"
+        test_module, true_original_function = self._make_mixed_monitor_target(
+            module_name
+        )
+        pattern = f"{module_name}.monitored_function"
+        monitor_id = None
+        probe_id = None
+
+        try:
+            monitor_id = self._start_monitor(monitor_cmd, pattern)
+            probe_id = self._start_injector_probe(injector, pattern, probe_kind)
+
+            assert self._call_monitored(test_module, 1) == 11
+            self._assert_monitor_total(monitor_cmd, monitor_id, 1)
+            assert [obs["watch_id"] for obs in agent._observations] == [probe_id]
+
+            agent._observations.clear()
+            result = monitor_cmd.execute({"action": "stop", "watch_id": monitor_id})
+            assert result["status"] == "success"
+            assert result["final_stats"]["total"] == 1
+            monitor_id = None
+
+            assert self._call_monitored(test_module, 2) == 12
+            assert [obs["watch_id"] for obs in agent._observations] == [probe_id]
+
+            agent._observations.clear()
+            injector.uninject(probe_id)
+            probe_id = None
+
+            assert self._call_monitored(test_module, 3) == 13
+            assert agent._observations == []
+            assert getattr(test_module, "monitored_function") is true_original_function
+        finally:
+            if probe_id in injector.instrumented:
+                injector.uninject(probe_id)
+            if monitor_id in monitor_cmd._monitors:
+                monitor_cmd.execute({"action": "stop", "watch_id": monitor_id})
+            injector.uninject_all()
+            setattr(test_module, "monitored_function", true_original_function)
+            del sys.modules[module_name]
+
+    def test_watch_monitor_lifecycle_watch_stops_first_keeps_monitor_active(self):
+        self._exercise_injector_probe_then_monitor_lifecycle("watch")
+
+    def test_watch_monitor_lifecycle_monitor_stops_first_keeps_watch_active(self):
+        self._exercise_monitor_then_injector_probe_lifecycle("watch")
+
+    def test_trace_monitor_lifecycle_trace_stops_first_keeps_monitor_active(self):
+        self._exercise_injector_probe_then_monitor_lifecycle("trace")
+
+    def test_trace_monitor_lifecycle_monitor_stops_first_keeps_trace_active(self):
+        self._exercise_monitor_then_injector_probe_lifecycle("trace")
 
     def _exercise_same_function_multi_monitor_lifecycle(
         self, monitor_cmd, module_name, stop_first
