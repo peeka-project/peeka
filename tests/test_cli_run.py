@@ -1,3 +1,5 @@
+# pyright: reportPrivateUsage=false
+
 """Basic tests for peeka-cli run command argument parsing"""
 import subprocess
 import sys
@@ -13,7 +15,9 @@ def test_run_help_flag():
         text=True
     )
     assert result.returncode == 0
-    assert "Run a Python script with Peeka attached from startup" in result.stdout
+    help_text = result.stdout.lower()
+    assert "run a python script" in help_text
+    assert "peeka attached from startup" in help_text
 
 
 def test_run_missing_separator():

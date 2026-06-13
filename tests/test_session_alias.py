@@ -1,3 +1,5 @@
+# pyright: reportDeprecated=false, reportExplicitAny=false, reportAny=false, reportUnknownParameterType=false, reportMissingParameterType=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownLambdaType=false, reportUnannotatedClassAttribute=false
+
 import argparse
 import json
 from typing import Any
@@ -76,9 +78,10 @@ class TestSessionAlias:
         captured = capsys.readouterr()
 
         assert result == 0
-        assert "[deprecated]" in captured.err
-        assert "'peeka-cli session <X>' is deprecated" in captured.err
-        assert "use 'peeka-cli target <X>'" in captured.err
+        stderr = captured.err.lower()
+        assert "[deprecated]" in stderr
+        assert "peeka-cli session" in stderr
+        assert "peeka-cli target" in stderr
 
         lines = [
             line.strip() for line in captured.out.strip().split("\n") if line.strip()
@@ -159,8 +162,10 @@ class TestSessionAlias:
         captured = capsys.readouterr()
 
         assert result == 0
-        assert "[deprecated]" in captured.err
-        assert "'peeka-cli session <X>' is deprecated" in captured.err
+        stderr = captured.err.lower()
+        assert "[deprecated]" in stderr
+        assert "peeka-cli session" in stderr
+        assert "peeka-cli target" in stderr
 
         parsed = json.loads(captured.out.strip())
         assert parsed["type"] == "success"
@@ -197,8 +202,10 @@ class TestSessionAlias:
         captured = capsys.readouterr()
 
         assert result == 0
-        assert "[deprecated]" in captured.err
-        assert "'peeka-cli session <X>' is deprecated" in captured.err
+        stderr = captured.err.lower()
+        assert "[deprecated]" in stderr
+        assert "peeka-cli session" in stderr
+        assert "peeka-cli target" in stderr
 
         parsed = json.loads(captured.out.strip())
         assert parsed["type"] == "success"

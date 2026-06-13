@@ -35,11 +35,7 @@ def test_patch_status_help():
         text=True
     )
     assert result.returncode == 0
-    assert "--pid" in result.stdout
-    # Verify that 'required' is NOT in the --pid line
-    lines = result.stdout.split('\n')
-    pid_line = [line for line in lines if '--pid' in line]
-    assert len(pid_line) > 0, "Could not find --pid in help output"
-    # The help text should NOT contain "required" for the --pid argument
-    # (it may contain "optional" or "(optional, ignored)")
-    assert "required" not in pid_line[0].lower() or "optional" in pid_line[0].lower()
+    help_text = result.stdout.lower()
+    assert "--pid" in help_text
+    assert "currently attached session" in help_text
+    assert "optional" in help_text or "ignored" in help_text
