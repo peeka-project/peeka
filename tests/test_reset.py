@@ -10,6 +10,9 @@ class MockAgent:
 
     def __init__(self):
         self._observations = []
+        from peeka.core.observer import ObservationManager
+
+        self.observer = ObservationManager()
 
     def _send_observation(self, observation):
         self._observations.append(observation)
@@ -168,8 +171,8 @@ class TestResetCommand:
         sys.modules["test_no_match"] = test_module
 
         try:
-            watch_id_1 = injector.inject("test_no_match.func1", {"depth": 2})
-            watch_id_2 = injector.inject("test_no_match.func2", {"depth": 2})
+            injector.inject("test_no_match.func1", {"depth": 2})
+            injector.inject("test_no_match.func2", {"depth": 2})
 
             assert len(injector.instrumented) == 2
 
@@ -263,7 +266,7 @@ class TestResetCommand:
             from peeka.core.injector import DecoratorInjector
 
             injector = DecoratorInjector(mock_agent)
-            watch_id = injector.inject("test_cmd_reset.func1", {"depth": 2})
+            injector.inject("test_cmd_reset.func1", {"depth": 2})
 
             reset_cmd.agent.injector = injector
 
@@ -328,7 +331,7 @@ class TestResetCommand:
 
             injector = DecoratorInjector(mock_agent)
             watch_id_1 = injector.inject("mod1_cmd.func1", {"depth": 2})
-            watch_id_2 = injector.inject("mod2_cmd.func2", {"depth": 2})
+            injector.inject("mod2_cmd.func2", {"depth": 2})
 
             reset_cmd.agent.injector = injector
 
@@ -469,8 +472,8 @@ class TestResetCommand:
         sys.modules["test_isolation_mod"] = mod1
 
         try:
-            watch_id_1 = injector1.inject("test_isolation_mod.func", {"depth": 2})
-            watch_id_2 = injector2.inject("test_isolation_mod.func", {"depth": 2})
+            injector1.inject("test_isolation_mod.func", {"depth": 2})
+            injector2.inject("test_isolation_mod.func", {"depth": 2})
 
             response1 = injector1.reset()
             assert response1["count"] == 1
@@ -482,3 +485,43 @@ class TestResetCommand:
 
         finally:
             del sys.modules["test_isolation_mod"]
+
+    def test_reset_preserves_stream_observers_after_restore(self, mock_agent):
+        """Reset restores functions but leaves stream observer registrations intact."""
+        from peeka.commands.reset import ResetCommand
+        from peeka.core.injector import DecoratorInjector
+
+        def func():
+            return "original"
+
+        test_module = type(sys)("test_reset_stream_observer")
+        test_module.func = func
+        sys.modules["test_reset_stream_observer"] = test_module
+
+        try:
+            injector = DecoratorInjector(mock_agent)
+            mock_agent.injector = injector
+            watch_id = injector.inject(
+                "test_reset_stream_observer.func",
+                {"depth": 2, "command": "watch"},
+            )
+            mock_agent.observer.register_watch(
+                watch_id,
+                "test_reset_stream_observer.func",
+                {"command": "watch"},
+            )
+
+            assert test_module.func is not func
+            assert mock_agent.observer.get_all_stats()["active_watches"] == 1
+
+            response = ResetCommand(mock_agent).execute({"action": "reset"})
+
+            assert response["status"] == "success"
+            assert response["count"] == 1
+            assert test_module.func is func
+            assert injector.instrumented == {}
+            assert mock_agent.observer.get_all_stats()["active_watches"] == 1
+            assert mock_agent.observer.get_watch_stats(watch_id) is not None
+
+        finally:
+            del sys.modules["test_reset_stream_observer"]

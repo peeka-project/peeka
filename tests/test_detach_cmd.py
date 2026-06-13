@@ -2,10 +2,32 @@
 Tests for peeka.commands.detach.DetachCommand
 """
 
-import pytest
-from unittest.mock import MagicMock, PropertyMock
+import sys
+from typing import Any, cast
+from unittest.mock import MagicMock
 
 from peeka.commands.detach import DetachCommand
+
+
+class LocalDetachAgent:
+    """Small agent double that exercises real injector and observer cleanup."""
+
+    def __init__(self):
+        from peeka.core.injector import DecoratorInjector
+        from peeka.core.observer import ObservationManager
+
+        self.attached_pid: int = 12345
+        self.observer = ObservationManager()
+        self.injector = DecoratorInjector(cast(Any, self))
+        self.stop_calls: int = 0
+
+    def _send_observation(self, observation: Any) -> None:
+        _ = observation
+        pass
+
+    def stop(self) -> None:
+        self.stop_calls += 1
+        _ = self.injector.uninject_all()
 
 
 class TestDetachCommand:
@@ -112,3 +134,72 @@ class TestDetachCommand:
         cmd = DetachCommand(mock_agent)
 
         assert cmd.agent is mock_agent
+
+    def test_detach_clears_observers_and_uninjects(self):
+        """Detach clears stream registrations and restores injected functions."""
+
+        def func():
+            return "original"
+
+        test_module = type(sys)("test_detach_stream_observer")
+        test_module.func = func
+        sys.modules["test_detach_stream_observer"] = test_module
+
+        try:
+            agent = LocalDetachAgent()
+            watch_id = agent.injector.inject(
+                "test_detach_stream_observer.func",
+                {"depth": 2, "command": "watch"},
+            )
+            agent.observer.register_watch(
+                watch_id,
+                "test_detach_stream_observer.func",
+                {"command": "watch"},
+            )
+
+            assert test_module.func is not func
+            assert agent.observer.get_all_stats()["active_watches"] == 1
+
+            result = DetachCommand(cast(Any, agent)).execute({})
+
+            assert result["status"] == "success"
+            assert test_module.func is func
+            assert agent.injector.instrumented == {}
+            assert agent.observer.get_all_stats()["active_watches"] == 0
+            assert agent.observer.get_watch_stats(watch_id) is None
+            assert agent.stop_calls == 1
+
+        finally:
+            del sys.modules["test_detach_stream_observer"]
+
+    def test_double_uninject_is_idempotent(self):
+        """Detach uninjects first; a later agent stop can uninject again safely."""
+
+        def func():
+            return "original"
+
+        test_module = type(sys)("test_detach_double_uninject")
+        test_module.func = func
+        sys.modules["test_detach_double_uninject"] = test_module
+
+        try:
+            agent = LocalDetachAgent()
+            _ = agent.injector.inject(
+                "test_detach_double_uninject.func",
+                {"depth": 2, "command": "watch"},
+            )
+
+            result = DetachCommand(cast(Any, agent)).execute({})
+            second_count = agent.injector.uninject_all()
+
+            assert result["status"] == "success"
+            assert second_count == 0
+            assert test_module.func is func
+            assert agent.injector.instrumented == {}
+
+            agent.stop()
+            assert agent.stop_calls == 2
+            assert test_module.func is func
+
+        finally:
+            del sys.modules["test_detach_double_uninject"]
