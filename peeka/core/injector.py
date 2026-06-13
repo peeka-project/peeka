@@ -129,14 +129,14 @@ class DecoratorInjector(
                 info["_orphan_start"] = _time.monotonic()
 
             if "stack_depth" not in watch_config:
-                shared_group = self._get_watch_wrapper_group(target_func)
+                shared_group = self._get_active_wrapper_info(target_func)
                 if shared_group is None:
                     group_key: Tuple[int, str] = (id(parent_obj), str(attr_name))
                     root_original = target_func
                     previous_wrapper = None
                 else:
                     group_key = shared_group.get(
-                        "watch_group_key", (id(parent_obj), str(attr_name))
+                        "wrapper_group_key", (id(parent_obj), str(attr_name))
                     )
                     root_original = shared_group.get(
                         "root_original", shared_group["original"]
@@ -146,6 +146,7 @@ class DecoratorInjector(
                     {
                         "root_original": root_original,
                         "previous_wrapper": previous_wrapper,
+                        "wrapper_group_key": group_key,
                         "watch_group_key": group_key,
                     }
                 )
@@ -165,6 +166,15 @@ class DecoratorInjector(
         for watch_id, info in self.instrumented.items():
             if not watch_id.startswith("watch_"):
                 continue
+            if info.get("wrapper") is target_func:
+                return info
+        return None
+
+    def _get_active_wrapper_info(
+        self, target_func: Callable[..., Any]
+    ) -> Optional[Dict[str, Any]]:
+        """Return active probe info when target_func is already a probe wrapper."""
+        for info in self.instrumented.values():
             if info.get("wrapper") is target_func:
                 return info
         return None
@@ -218,6 +228,20 @@ class DecoratorInjector(
         }
 
         with self._lock:
+            shared_group = self._get_active_wrapper_info(target_func)
+            if shared_group is None:
+                group_key = (id(parent_obj), str(attr_name))
+                root_original = target_func
+                previous_wrapper = None
+            else:
+                group_key = shared_group.get(
+                    "wrapper_group_key", (id(parent_obj), str(attr_name))
+                )
+                root_original = shared_group.get(
+                    "root_original", shared_group["original"]
+                )
+                previous_wrapper = target_func
+
             # Store original function info for restoration
             self.instrumented[watch_id] = {
                 "pattern": pattern,
@@ -228,6 +252,9 @@ class DecoratorInjector(
                 "config": stored_config,
                 "count": 0,
                 "times_limit": trace_config.get("times", -1),
+                "root_original": root_original,
+                "previous_wrapper": previous_wrapper,
+                "wrapper_group_key": group_key,
             }
 
             # Replace the function

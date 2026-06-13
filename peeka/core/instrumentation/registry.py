@@ -42,8 +42,8 @@ class InjectorRegistryMixin:
 
             info = self.instrumented.pop(watch_id)
 
-            if watch_id.startswith("watch_") and "watch_group_key" in info:
-                self._restore_watch_wrapper(watch_id, info)
+            if "wrapper_group_key" in info:
+                self._restore_wrapper_stack(info)
             else:
                 # Restore original function
                 self._replace_function(info["parent"], info["attr_name"], info["original"])
@@ -64,13 +64,13 @@ class InjectorRegistryMixin:
         """
         with self._lock:
             count = len(self.instrumented)
-            restored_watch_groups = set()
+            restored_wrapper_groups = set()
 
             for watch_id, info in list(self.instrumented.items()):
                 try:
-                    if watch_id.startswith("watch_") and "watch_group_key" in info:
-                        group_key = info["watch_group_key"]
-                        if group_key in restored_watch_groups:
+                    if "wrapper_group_key" in info:
+                        group_key = info["wrapper_group_key"]
+                        if group_key in restored_wrapper_groups:
                             continue
                         self._replace_function(
                             info["parent"],
@@ -82,7 +82,7 @@ class InjectorRegistryMixin:
                             info.get("root_original", info["original"]),
                             force=True,
                         )
-                        restored_watch_groups.add(group_key)
+                        restored_wrapper_groups.add(group_key)
                         continue
 
                     self._replace_function(
@@ -286,26 +286,29 @@ class InjectorRegistryMixin:
         """Generate unique watch ID."""
         return f"watch_{uuid.uuid4().hex[:8]}"
 
-    def _active_watch_infos_in_group(
+    def _active_probe_infos_in_group(
         self, group_key: Tuple[int, str]
     ) -> List[Dict[str, Any]]:
-        """Return active watch infos that share one wrapped function slot."""
+        """Return active probe infos that share one wrapped function slot."""
         return [
             info
-            for active_id, info in self.instrumented.items()
-            if active_id.startswith("watch_")
-            and info.get("watch_group_key") == group_key
+            for info in self.instrumented.values()
+            if info.get("wrapper_group_key") == group_key
         ]
 
     def _restore_watch_wrapper(self, _watch_id: str, info: Dict[str, Any]) -> None:
         """Restore a watch wrapper only when its shared group permits it."""
-        group_key = info["watch_group_key"]
-        remaining = self._active_watch_infos_in_group(group_key)
+        self._restore_wrapper_stack(info)
+
+    def _restore_wrapper_stack(self, info: Dict[str, Any]) -> None:
+        """Restore a probe wrapper only when its shared group permits it."""
+        group_key = info["wrapper_group_key"]
+        remaining = self._active_probe_infos_in_group(group_key)
         current = getattr(info["parent"], info["attr_name"], None)
 
         if remaining:
             if current is info.get("wrapper"):
-                replacement = self._live_previous_watch_wrapper(info, remaining)
+                replacement = self._live_previous_probe_wrapper(info, remaining)
                 self._replace_function(info["parent"], info["attr_name"], replacement)
                 self._restore_watch_aliases(info, replacement)
             return
@@ -315,12 +318,12 @@ class InjectorRegistryMixin:
             self._replace_function(info["parent"], info["attr_name"], replacement)
             self._restore_watch_aliases(info, replacement)
 
-    def _live_previous_watch_wrapper(
+    def _live_previous_probe_wrapper(
         self,
         removed_info: Dict[str, Any],
         remaining: List[Dict[str, Any]],
     ) -> Callable[..., Any]:
-        """Return the nearest still-registered wrapper below a removed watch."""
+        """Return the nearest still-registered wrapper below a removed probe."""
         live_wrappers = {active_info["wrapper"] for active_info in remaining}
         candidate = getattr(removed_info.get("wrapper"), "__wrapped__", None)
 
@@ -333,7 +336,7 @@ class InjectorRegistryMixin:
                 break
             candidate = next_candidate
 
-        return remaining[-1]["wrapper"]
+        return removed_info.get("root_original", removed_info["original"])
 
     def _restore_watch_aliases(
         self,

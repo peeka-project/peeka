@@ -1,7 +1,10 @@
 import sys
 import time
+from types import ModuleType
 
 import pytest
+
+from peeka.core.runtime.compat import BACKEND_WRAPPER_ONLY
 
 
 class MockAgent:
@@ -123,7 +126,7 @@ class TestTraceCommand:
 
         try:
             # Trace with depth 2 (should capture root + 2 levels)
-            watch_id = injector.inject_trace(
+            _ = injector.inject_trace(
                 "test_trace_depth.root_function", {"trace_depth": 2, "times": 1}
             )
 
@@ -154,7 +157,7 @@ class TestTraceCommand:
 
         try:
             # Only trace if cost > 0.5ms
-            watch_id = injector.inject_trace(
+            _ = injector.inject_trace(
                 "test_trace_condition.sample_function",
                 {"trace_depth": 2, "condition_express": "cost > 0.5"},
             )
@@ -222,7 +225,7 @@ class TestTraceCommand:
         sys.modules["test_trace_builtin"] = test_module
 
         try:
-            watch_id = injector.inject_trace(
+            _ = injector.inject_trace(
                 "test_trace_builtin.sample_function",
                 {"trace_depth": 3, "skip_builtin": True},
             )
@@ -251,7 +254,7 @@ class TestTraceCommand:
         sys.modules["test_trace_times"] = test_module
 
         try:
-            watch_id = injector.inject_trace(
+            _ = injector.inject_trace(
                 "test_trace_times.sample_function", {"trace_depth": 2, "times": 2}
             )
 
@@ -263,6 +266,185 @@ class TestTraceCommand:
 
         finally:
             del sys.modules["test_trace_times"]
+
+    def test_trace_trace_same_function_independent_stop(self, injector, mock_agent):
+        """Stopping one same-function trace keeps the other trace active."""
+
+        def stacked_function(value):
+            return value + 10
+
+        test_module = ModuleType("test_trace_trace_stacking")
+        setattr(test_module, "stacked_function", stacked_function)
+        sys.modules["test_trace_trace_stacking"] = test_module
+
+        try:
+            trace_a = injector.inject_trace(
+                "test_trace_trace_stacking.stacked_function",
+                {"trace_depth": 2, "times": -1},
+                force_backend=BACKEND_WRAPPER_ONLY,
+            )
+            trace_b = injector.inject_trace(
+                "test_trace_trace_stacking.stacked_function",
+                {"trace_depth": 2, "times": -1},
+                force_backend=BACKEND_WRAPPER_ONLY,
+            )
+
+            assert test_module.stacked_function(1) == 11
+            assert {obs["watch_id"] for obs in mock_agent._observations} == {
+                trace_a,
+                trace_b,
+            }
+
+            mock_agent._observations.clear()
+            injector.uninject(trace_a)
+
+            assert trace_a not in injector.instrumented
+            assert trace_b in injector.instrumented
+            assert test_module.stacked_function(2) == 12
+            assert [obs["watch_id"] for obs in mock_agent._observations] == [trace_b]
+
+            mock_agent._observations.clear()
+            injector.uninject(trace_b)
+            assert test_module.stacked_function(3) == 13
+            assert mock_agent._observations == []
+            assert test_module.stacked_function is stacked_function
+        finally:
+            injector.uninject_all()
+            del sys.modules["test_trace_trace_stacking"]
+
+    def test_watch_then_trace_same_function_independent_stop(self, injector, mock_agent):
+        """Stopping a trace layered over a watch leaves the watch active."""
+
+        def mixed_function(value):
+            return value * 2
+
+        test_module = ModuleType("test_watch_then_trace_lifecycle")
+        setattr(test_module, "mixed_function", mixed_function)
+        sys.modules["test_watch_then_trace_lifecycle"] = test_module
+
+        try:
+            watch_id = injector.inject(
+                "test_watch_then_trace_lifecycle.mixed_function",
+                {"depth": 2, "times": -1},
+            )
+            trace_id = injector.inject_trace(
+                "test_watch_then_trace_lifecycle.mixed_function",
+                {"trace_depth": 2, "times": -1},
+                force_backend=BACKEND_WRAPPER_ONLY,
+            )
+
+            assert test_module.mixed_function(4) == 8
+            assert {obs["watch_id"] for obs in mock_agent._observations} == {
+                watch_id,
+                trace_id,
+            }
+
+            mock_agent._observations.clear()
+            injector.uninject(trace_id)
+
+            assert trace_id not in injector.instrumented
+            assert watch_id in injector.instrumented
+            assert test_module.mixed_function(5) == 10
+            assert [obs["watch_id"] for obs in mock_agent._observations] == [watch_id]
+
+            mock_agent._observations.clear()
+            injector.uninject(watch_id)
+            assert test_module.mixed_function(6) == 12
+            assert mock_agent._observations == []
+            assert test_module.mixed_function is mixed_function
+        finally:
+            injector.uninject_all()
+            del sys.modules["test_watch_then_trace_lifecycle"]
+
+    def test_trace_then_watch_same_function_independent_stop(self, injector, mock_agent):
+        """Stopping a watch layered over a trace leaves the trace active."""
+
+        def mixed_function(value):
+            return value - 1
+
+        test_module = ModuleType("test_trace_then_watch_lifecycle")
+        setattr(test_module, "mixed_function", mixed_function)
+        sys.modules["test_trace_then_watch_lifecycle"] = test_module
+
+        try:
+            trace_id = injector.inject_trace(
+                "test_trace_then_watch_lifecycle.mixed_function",
+                {"trace_depth": 2, "times": -1},
+                force_backend=BACKEND_WRAPPER_ONLY,
+            )
+            watch_id = injector.inject(
+                "test_trace_then_watch_lifecycle.mixed_function",
+                {"depth": 2, "times": -1},
+            )
+
+            assert test_module.mixed_function(7) == 6
+            assert {obs["watch_id"] for obs in mock_agent._observations} == {
+                trace_id,
+                watch_id,
+            }
+
+            mock_agent._observations.clear()
+            injector.uninject(watch_id)
+
+            assert watch_id not in injector.instrumented
+            assert trace_id in injector.instrumented
+            assert test_module.mixed_function(8) == 7
+            assert [obs["watch_id"] for obs in mock_agent._observations] == [trace_id]
+
+            mock_agent._observations.clear()
+            injector.uninject(trace_id)
+            assert test_module.mixed_function(9) == 8
+            assert mock_agent._observations == []
+            assert test_module.mixed_function is mixed_function
+        finally:
+            injector.uninject_all()
+            del sys.modules["test_trace_then_watch_lifecycle"]
+
+    def test_stop_middle_mixed_probe_keeps_remaining_probe_emitting(
+        self, injector, mock_agent
+    ):
+        """Stopping the lower mixed probe does not orphan the active upper probe."""
+
+        def mixed_function(value):
+            return value * value
+
+        test_module = ModuleType("test_mixed_stop_middle_lifecycle")
+        setattr(test_module, "mixed_function", mixed_function)
+        sys.modules["test_mixed_stop_middle_lifecycle"] = test_module
+
+        try:
+            trace_id = injector.inject_trace(
+                "test_mixed_stop_middle_lifecycle.mixed_function",
+                {"trace_depth": 2, "times": -1},
+                force_backend=BACKEND_WRAPPER_ONLY,
+            )
+            watch_id = injector.inject(
+                "test_mixed_stop_middle_lifecycle.mixed_function",
+                {"depth": 2, "times": -1},
+            )
+
+            assert test_module.mixed_function(3) == 9
+            assert {obs["watch_id"] for obs in mock_agent._observations} == {
+                trace_id,
+                watch_id,
+            }
+
+            mock_agent._observations.clear()
+            injector.uninject(trace_id)
+
+            assert trace_id not in injector.instrumented
+            assert watch_id in injector.instrumented
+            assert test_module.mixed_function(4) == 16
+            assert [obs["watch_id"] for obs in mock_agent._observations] == [watch_id]
+
+            mock_agent._observations.clear()
+            injector.uninject(watch_id)
+            assert test_module.mixed_function(5) == 25
+            assert mock_agent._observations == []
+            assert test_module.mixed_function is mixed_function
+        finally:
+            injector.uninject_all()
+            del sys.modules["test_mixed_stop_middle_lifecycle"]
 
 
 class TestTraceIntegration:
@@ -301,7 +483,7 @@ class TestTraceIntegration:
         sys.modules["test_trace_nested"] = test_module
 
         try:
-            watch_id = injector.inject_trace(
+            _ = injector.inject_trace(
                 "test_trace_nested.process", {"trace_depth": 5, "skip_builtin": True}
             )
 
@@ -338,7 +520,7 @@ class TestTraceIntegration:
         sys.modules["test_trace_exception"] = test_module
 
         try:
-            watch_id = injector.inject_trace(
+            _ = injector.inject_trace(
                 "test_trace_exception.failing_function", {"trace_depth": 2}
             )
 
