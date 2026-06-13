@@ -111,3 +111,61 @@ class TestTraceGeventDataPlane:
                 timeout=10,
             )
             cleanup_peeka_files_in_container(container)
+
+
+class TestTraceGeventPy314DataPlane:
+    """Trace command gevent metadata tests on Python 3.14 (PEP 768 attach)."""
+
+    def test_trace_wrapper_only_backend_py314_gevent(self, py314_container):
+        """Trace degrades to wrapper_only under gevent on Python 3.14 (PEP 768)."""
+        container = py314_container
+        pid = _start_gevent_target(container)
+
+        try:
+            _attach(container, pid)
+
+            exit_code, output = exec_in_container(
+                container,
+                "python -m peeka.cli.main trace 'index.handler' -n 1",
+                timeout=20,
+            )
+            assert exit_code == 0, f"Trace command failed:\n{output}"
+
+            records = list(_json_lines(output))
+            trace_started = next(
+                (
+                    record
+                    for record in records
+                    if record.get("event") == "trace_started"
+                ),
+                None,
+            )
+            assert trace_started is not None, f"No trace_started event:\n{output}"
+            meta = trace_started.get("meta")
+            assert isinstance(meta, dict), f"Missing trace meta:\n{trace_started}"
+            assert meta["gevent_state"] in ("patched", "active_hub")
+            assert meta["backend"] == "wrapper_only"
+            assert meta["greenlet_blind"] is False
+            assert isinstance(meta["degraded_reason"], str)
+
+            observations = [
+                record for record in records if record.get("type") == "observation"
+            ]
+            assert observations, f"No trace observations:\n{output}"
+
+            exit_code, status_output = exec_in_container(
+                container, "python -m peeka.cli.main patch-status", timeout=10
+            )
+            assert exit_code == 0, f"Agent did not respond after trace:\n{status_output}"
+
+        finally:
+            exec_in_container(
+                container,
+                (
+                    f"kill {pid} 2>/dev/null; "
+                    "pkill -9 -f gevent_attach_target.py 2>/dev/null; "
+                    "rm -f /tmp/gevent_target.*; true"
+                ),
+                timeout=10,
+            )
+            cleanup_peeka_files_in_container(container)

@@ -117,3 +117,66 @@ class TestTopGeventDataPlane:
                 timeout=10,
             )
             cleanup_peeka_files_in_container(container)
+
+
+class TestTopGeventPy314DataPlane:
+    """Top command gevent metadata tests on Python 3.14 (PEP 768 attach)."""
+
+    def test_top_greenlet_aware_metadata_py314_gevent(self, py314_container):
+        """Top uses greenlet-aware sampling metadata under gevent on Python 3.14 (PEP 768)."""
+        container = py314_container
+        pid = _start_gevent_target(container)
+
+        try:
+            _attach(container, pid)
+
+            exit_code, output = exec_in_container(
+                container,
+                "python -m peeka.cli.main top --cycles 1 --interval 0.01",
+                timeout=20,
+            )
+            assert exit_code == 0, f"Top command failed:\n{output}"
+
+            records = list(_json_lines(output))
+            top_started = next(
+                (
+                    record
+                    for record in records
+                    if record.get("event") == "top_started"
+                ),
+                None,
+            )
+            assert top_started is not None, f"No top_started event:\n{output}"
+            meta = top_started.get("meta")
+            assert isinstance(meta, dict), f"Missing top meta:\n{top_started}"
+            assert meta["gevent_state"] in ("patched", "active_hub")
+            assert meta["backend"] == "greenlet_aware_sampling"
+            assert meta["greenlet_blind"] is True
+
+            observations = [
+                record for record in records if record.get("type") == "observation"
+            ]
+            assert observations, f"No top observations:\n{output}"
+            assert any(
+                record.get("meta", {}).get("greenlet_blind") is True
+                and record.get("meta", {}).get("backend")
+                == "greenlet_aware_sampling"
+                for record in observations
+            ), f"No greenlet-aware observation meta:\n{output}"
+
+            exit_code, status_output = exec_in_container(
+                container, "python -m peeka.cli.main patch-status", timeout=10
+            )
+            assert exit_code == 0, f"Agent did not respond after top:\n{status_output}"
+
+        finally:
+            exec_in_container(
+                container,
+                (
+                    f"kill {pid} 2>/dev/null; "
+                    "pkill -9 -f gevent_attach_target.py 2>/dev/null; "
+                    "rm -f /tmp/gevent_target.*; true"
+                ),
+                timeout=10,
+            )
+            cleanup_peeka_files_in_container(container)
