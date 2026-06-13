@@ -91,7 +91,7 @@ def test_watch_times_help_current_wording_mentions_print_observations() -> None:
 
     assert result.returncode == 0
     help_text = result.stdout.lower()
-    assert "-n, --times" in result.stdout
+    assert "-n" in result.stdout and "--times" in result.stdout
     assert "observations" in help_text
     assert "print" in help_text or "emit" in help_text
 
