@@ -400,3 +400,132 @@ class TestWatchLimitFixRegression:
                 timeout=10,
             )
             cleanup_peeka_files_in_container(py314_container)
+
+
+class TestStreamingDisconnectLifecycle:
+    def test_streaming_watch_disconnect_py314_gevent(self, py314_container: object) -> None:
+        os.makedirs(_EVIDENCE_DIR_BASE, exist_ok=True)
+        evidence_path = os.path.join(
+            _EVIDENCE_DIR_BASE, "task-7-py314-stream-disconnect.log"
+        )
+
+        pid: Optional[str] = None
+        wait_output = ""
+        got_observation = False
+        evidence: Dict[str, Any] = {
+            "test": "test_streaming_watch_disconnect_py314_gevent",
+            "got_initial_observation": False,
+            "kill_exit_code": None,
+            "kill_elapsed_s": None,
+            "follow_up_exit_code": None,
+            "follow_up_observation_count": None,
+            "agent_healthy_after_disconnect": False,
+        }
+
+        try:
+            pid = _start_gevent_target(py314_container, interval=0.01)
+            evidence["target_pid"] = pid
+            _attach(py314_container, pid)
+
+            start_bg_exit, start_bg_out = exec_in_container(
+                py314_container,
+                (
+                    "python -m peeka.cli.main watch 'index.handler' -n 100 "
+                    "> /tmp/watch_disconnect_test.log 2>&1 & echo $!"
+                ),
+                timeout=10,
+            )
+            assert start_bg_exit == 0, (
+                f"Failed to launch background watch: {start_bg_out}"
+            )
+            watch_pid = start_bg_out.strip().splitlines()[-1].strip()
+            assert watch_pid.isdigit(), (
+                f"Expected numeric PID from background watch, got: {watch_pid!r}"
+            )
+            evidence["watch_pid"] = watch_pid
+
+            _, wait_output = exec_in_container(
+                py314_container,
+                """for i in $(seq 1 100); do
+    if grep -q '"type": "observation"' /tmp/watch_disconnect_test.log 2>/dev/null; then
+        echo OBSERVATION_RECEIVED
+        break
+    fi
+    sleep 0.1
+done""",
+                timeout=15,
+            )
+            got_observation = "OBSERVATION_RECEIVED" in wait_output
+            evidence["got_initial_observation"] = got_observation
+
+            kill_start = time.monotonic()
+            kill_exit, kill_output = exec_in_container(
+                py314_container,
+                f"""kill {watch_pid} 2>/dev/null || true
+ELAPSED=0
+while kill -0 {watch_pid} 2>/dev/null && [ $ELAPSED -lt 100 ]; do
+    sleep 0.1
+    ELAPSED=$((ELAPSED + 1))
+done
+if kill -0 {watch_pid} 2>/dev/null; then
+    echo STALL
+    exit 1
+fi
+echo KILLED_OK""",
+                timeout=15,
+            )
+            kill_elapsed = time.monotonic() - kill_start
+            evidence["kill_exit_code"] = kill_exit
+            evidence["kill_output"] = kill_output.strip()[:300]
+            evidence["kill_elapsed_s"] = round(kill_elapsed, 2)
+
+            assert "STALL" not in kill_output, (
+                "Watch subprocess did not exit within 10 s after SIGTERM — "
+                "agent may be blocking on a dead-client socket. "
+                f"kill_output={kill_output!r}"
+            )
+            assert kill_exit == 0, (
+                f"Kill script returned {kill_exit}: {kill_output!r}"
+            )
+
+            fu_exit, fu_output = exec_in_container(
+                py314_container,
+                "python -m peeka.cli.main watch 'index.handler' -n 2",
+                timeout=30,
+            )
+            fu_records = list(_json_lines(fu_output))
+            fu_observations = [r for r in fu_records if r.get("type") == "observation"]
+            evidence["follow_up_exit_code"] = fu_exit
+            evidence["follow_up_observation_count"] = len(fu_observations)
+            evidence["agent_healthy_after_disconnect"] = (
+                fu_exit == 0 and len(fu_observations) >= 1
+            )
+
+        finally:
+            if pid:
+                exec_in_container(
+                    py314_container,
+                    (
+                        f"kill {pid} 2>/dev/null; "
+                        "pkill -9 -f gevent_attach_target.py 2>/dev/null; "
+                        "rm -f /tmp/watch_disconnect_test.log "
+                        f"{_TARGET_LOG} {_TARGET_PID}; true"
+                    ),
+                    timeout=10,
+                )
+            cleanup_peeka_files_in_container(py314_container)
+            with open(evidence_path, "w", encoding="utf-8") as fh:
+                json.dump(evidence, fh, indent=2, sort_keys=True)
+                fh.write("\n")
+
+        assert got_observation, (
+            "Stream produced no observations before disconnect — "
+            "cannot validate disconnect lifecycle. "
+            f"wait_output={wait_output!r}"
+        )
+        assert evidence["agent_healthy_after_disconnect"], (
+            "Agent unhealthy after client disconnect: "
+            f"follow_up_exit={evidence['follow_up_exit_code']}, "
+            f"follow_up_observations={evidence['follow_up_observation_count']}. "
+            f"Evidence: {evidence_path}"
+        )
