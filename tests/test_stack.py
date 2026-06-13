@@ -338,3 +338,108 @@ class TestStackCommand:
         # Exit observations should not have stack (or be empty)
         for obs in exit_observations:
             assert "stack" not in obs or len(obs["stack"]) == 0
+
+
+class TestStackWrapperGroupLifecycle:
+    """T2: stack probes must participate in shared wrapper-group lifecycle."""
+
+    @pytest.fixture
+    def target_module(self):
+        mod = type(sys)("test_stack_wg_module")
+
+        def fn(x):
+            return x * 3
+
+        mod.fn = fn
+        sys.modules["test_stack_wg_module"] = mod
+        yield mod, fn
+        sys.modules.pop("test_stack_wg_module", None)
+
+    def test_stack_probe_gets_wrapper_group_key_despite_stack_depth(self, target_module):
+        """Stack probe injected with stack_depth must receive wrapper_group_key metadata."""
+        from peeka.core.injector import DecoratorInjector
+
+        class _Agent:
+            def __init__(self):
+                self._observations = []
+
+            def _send_observation(self, obs):
+                self._observations.append(obs)
+
+        agent = _Agent()
+        injector = DecoratorInjector(agent)  # pyright: ignore[reportArgumentType]
+
+        watch_id = injector.inject(
+            "test_stack_wg_module.fn",
+            {"depth": 2, "before": True, "stack_depth": 5},
+        )
+        info = injector.instrumented.get(watch_id, {})
+        assert "wrapper_group_key" in info, (
+            f"stack probe must have wrapper_group_key but instrumented[{watch_id}]={info}"
+        )
+        assert "root_original" in info
+        injector.uninject(watch_id)
+
+    def test_stack_watch_mixed_stop_stack_first_restores_original(self, target_module):
+        """Stop stack before watch: callable must stay as watch wrapper, not be lost."""
+        from peeka.core.injector import DecoratorInjector
+
+        class _Agent:
+            def __init__(self):
+                self._observations = []
+
+            def _send_observation(self, obs):
+                self._observations.append(obs)
+
+        mod, original_fn = target_module
+
+        agent = _Agent()
+        injector = DecoratorInjector(agent)  # pyright: ignore[reportArgumentType]
+
+        watch_id = injector.inject("test_stack_wg_module.fn", {"depth": 2})
+        stack_id = injector.inject(
+            "test_stack_wg_module.fn",
+            {"depth": 2, "before": True, "stack_depth": 5},
+        )
+
+        injector.uninject(stack_id)
+        assert mod.fn is not original_fn, (
+            "watch wrapper must still be active after stack is stopped"
+        )
+
+        injector.uninject(watch_id)
+        assert mod.fn is original_fn, (
+            "original function must be restored after both probes stopped"
+        )
+
+    def test_stack_watch_mixed_stop_watch_first_restores_original(self, target_module):
+        """Stop watch before stack: callable must stay as stack wrapper, not be lost."""
+        from peeka.core.injector import DecoratorInjector
+
+        class _Agent:
+            def __init__(self):
+                self._observations = []
+
+            def _send_observation(self, obs):
+                self._observations.append(obs)
+
+        mod, original_fn = target_module
+
+        agent = _Agent()
+        injector = DecoratorInjector(agent)  # pyright: ignore[reportArgumentType]
+
+        watch_id = injector.inject("test_stack_wg_module.fn", {"depth": 2})
+        stack_id = injector.inject(
+            "test_stack_wg_module.fn",
+            {"depth": 2, "before": True, "stack_depth": 5},
+        )
+
+        injector.uninject(watch_id)
+        assert mod.fn is not original_fn, (
+            "stack wrapper must still be active after watch is stopped"
+        )
+
+        injector.uninject(stack_id)
+        assert mod.fn is original_fn, (
+            "original function must be restored after both probes stopped"
+        )

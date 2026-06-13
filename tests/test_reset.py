@@ -525,3 +525,106 @@ class TestResetCommand:
 
         finally:
             del sys.modules["test_reset_stream_observer"]
+
+
+class TestResetMonitorInteraction:
+    """T3: reset must stop and restore active monitor wrappers."""
+
+    @pytest.fixture
+    def mod_and_fn(self):
+        def target(x):
+            return x + 5
+
+        mod = type(sys)("test_reset_monitor_mod")
+        mod.target = target
+        sys.modules["test_reset_monitor_mod"] = mod
+        yield mod, target
+        sys.modules.pop("test_reset_monitor_mod", None)
+
+    def _make_agent_with_monitor(self, mod, fn_name):
+        from peeka.commands.monitor import MonitorCommand
+        from peeka.core.injector import DecoratorInjector
+        from peeka.commands.reset import ResetCommand
+        from peeka.core.observer import ObservationManager
+
+        class _Agent:
+            def __init__(self):
+                self._observations = []
+                self.observer = ObservationManager()
+
+            def _send_observation(self, obs):
+                self._observations.append(obs)
+
+        agent = _Agent()
+        injector = DecoratorInjector(agent)  # pyright: ignore[reportArgumentType]
+        agent.injector = injector  # type: ignore[attr-defined]
+        monitor_cmd = MonitorCommand(agent)  # pyright: ignore[reportArgumentType]
+        agent.monitor_cmd = monitor_cmd  # type: ignore[attr-defined]
+        reset_cmd = ResetCommand(agent)  # pyright: ignore[reportArgumentType]
+        return agent, injector, monitor_cmd, reset_cmd
+
+    def test_reset_monitor_all_stops_monitor_and_restores_callable(self, mod_and_fn):
+        """reset-all must stop active monitor, restore callable, and clear monitor state."""
+        mod, original_fn = mod_and_fn
+        agent, injector, monitor_cmd, reset_cmd = self._make_agent_with_monitor(
+            mod, "target"
+        )
+
+        start = monitor_cmd.execute(
+            {"action": "start", "pattern": "test_reset_monitor_mod.target", "cycle": 60}
+        )
+        assert start["status"] == "success"
+        watch_id = start["watch_id"]
+        assert mod.target is not original_fn, "monitor should wrap the callable"
+
+        reset_cmd.agent.monitor_cmd = monitor_cmd  # type: ignore[attr-defined]
+        response = reset_cmd.execute({"action": "reset"})
+
+        assert response["status"] == "success"
+        assert mod.target is original_fn, (
+            "reset must restore callable to original after stopping monitor"
+        )
+        assert watch_id not in monitor_cmd._monitors, (
+            "reset must remove monitor from _monitors"
+        )
+
+    def test_reset_monitor_pattern_stops_matching_monitor_only(self, mod_and_fn):
+        """reset pattern must stop only monitors whose pattern matches."""
+        mod, original_fn = mod_and_fn
+
+        def other_fn(x):
+            return x * 2
+
+        mod2 = type(sys)("test_reset_monitor_mod2")
+        mod2.other_fn = other_fn
+        sys.modules["test_reset_monitor_mod2"] = mod2
+
+        try:
+            agent, injector, monitor_cmd, reset_cmd = self._make_agent_with_monitor(
+                mod, "target"
+            )
+
+            start1 = monitor_cmd.execute(
+                {"action": "start", "pattern": "test_reset_monitor_mod.target", "cycle": 60}
+            )
+            start2 = monitor_cmd.execute(
+                {"action": "start", "pattern": "test_reset_monitor_mod2.other_fn", "cycle": 60}
+            )
+            assert start1["status"] == "success"
+            assert start2["status"] == "success"
+            wid1 = start1["watch_id"]
+            wid2 = start2["watch_id"]
+
+            reset_cmd.agent.monitor_cmd = monitor_cmd  # type: ignore[attr-defined]
+            response = reset_cmd.execute(
+                {"action": "reset", "pattern": "test_reset_monitor_mod.target"}
+            )
+
+            assert response["status"] == "success"
+            assert mod.target is original_fn, "matched monitor callable must be restored"
+            assert wid1 not in monitor_cmd._monitors, "matched monitor must be removed"
+            assert wid2 in monitor_cmd._monitors, "unmatched monitor must remain active"
+
+            monitor_cmd.execute({"action": "stop", "watch_id": wid2})
+        finally:
+            sys.modules.pop("test_reset_monitor_mod2", None)

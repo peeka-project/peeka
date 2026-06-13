@@ -91,10 +91,14 @@ class MonitorCommand(BaseCommand):
 
         target_func, parent_obj, attr_name = target_info  # pyright: ignore[reportGeneralTypeIssues]
 
-        # Generate watch ID for monitor
+        alias_bindings = []
+        injector = getattr(self.agent, "injector", None)
+        find_aliases = getattr(injector, "_find_module_aliases", None)
+        if callable(find_aliases):
+            alias_bindings = find_aliases(target_func, parent_obj, attr_name)
+
         watch_id = f"monitor_{uuid.uuid4().hex[:8]}"
 
-        # Create lightweight wrapper that only records stats
         wrapper = self._create_monitor_wrapper(target_func, watch_id)
 
         # Start monitoring
@@ -108,6 +112,7 @@ class MonitorCommand(BaseCommand):
                 "wrapper": wrapper,
                 "parent": parent_obj,
                 "attr_name": attr_name,
+                "aliases": alias_bindings,
                 "cycle": cycle,
                 "cycles": cycles,
                 "cycle_count": 0,
@@ -117,8 +122,12 @@ class MonitorCommand(BaseCommand):
                 "timer_thread": None,
             }
 
-            # Replace the function
             self._replace_function(parent_obj, attr_name, wrapper)  # type: ignore[arg-type]
+            for alias in alias_bindings:
+                try:
+                    setattr(alias["parent"], alias["attr_name"], wrapper)
+                except Exception:
+                    pass
 
             # Start periodic output timer
             stop_event = threading.Event()
@@ -136,6 +145,7 @@ class MonitorCommand(BaseCommand):
         return {
             "status": "success",
             "watch_id": watch_id,
+            "monitor_id": watch_id,
             "pattern": pattern,
             "cycle": cycle,
             "cycles": cycles,
@@ -204,6 +214,7 @@ class MonitorCommand(BaseCommand):
                         stats["call_count"] = stats.get("total", 0)
                         stats["cycle"] = cycle_count
                         stats["watch_id"] = watch_id
+                        stats["monitor_id"] = watch_id
 
                         event = probe.record_event(stats)
                         if event is not None:
@@ -243,6 +254,7 @@ class MonitorCommand(BaseCommand):
                 stats["call_count"] = stats.get("total", 0)
                 stats["cycle"] = cycle_count
                 stats["watch_id"] = watch_id
+                stats["monitor_id"] = watch_id
 
                 try:
                     self.agent._send_observation(stats)
@@ -263,7 +275,7 @@ class MonitorCommand(BaseCommand):
 
     def _stop_monitor(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Stop monitoring and return final statistics."""
-        watch_id = params.get("watch_id")
+        watch_id = params.get("monitor_id") or params.get("watch_id")
 
         if not watch_id:
             return {"status": "error", "error": "Missing watch_id"}
@@ -305,7 +317,6 @@ class MonitorCommand(BaseCommand):
                     break
                 replacement = next_replacement
 
-            # Restore original function only if the callable slot still owns this wrapper.
             try:
                 current = getattr(monitor_info["parent"], monitor_info["attr_name"])
                 if current is monitor_info["wrapper"]:
@@ -316,6 +327,13 @@ class MonitorCommand(BaseCommand):
                     )
             except Exception:
                 pass
+
+            for alias in monitor_info.get("aliases", []):
+                try:
+                    if getattr(alias["parent"], alias["attr_name"], None) is monitor_info["wrapper"]:
+                        setattr(alias["parent"], alias["attr_name"], monitor_info["original"])
+                except Exception:
+                    pass
 
         # Get final statistics
         final_stats = self.manager.stop_monitor(watch_id)
@@ -330,7 +348,7 @@ class MonitorCommand(BaseCommand):
 
     def _get_status(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Get list of active monitors."""
-        watch_id = params.get("watch_id")
+        watch_id = params.get("monitor_id") or params.get("watch_id")
 
         if watch_id:
             with self._lock:
@@ -346,6 +364,7 @@ class MonitorCommand(BaseCommand):
                 return {
                     "status": "success",
                     "watch_id": watch_id,
+                    "monitor_id": watch_id,
                     "pattern": monitor["pattern"],
                     "cycle": monitor["cycle"],
                     "cycles": monitor["cycles"],

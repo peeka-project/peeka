@@ -581,3 +581,114 @@ class TestMonitorCommand:
 
         assert result["status"] == "error"
         assert "error" in result
+
+    def test_monitor_start_exposes_canonical_monitor_id(self, monitor_cmd, test_module):
+        """Monitor start must include canonical monitor_id in response."""
+        result = monitor_cmd.execute(
+            {"action": "start", "pattern": "test_monitor_module.fast_function", "cycle": 60}
+        )
+        assert result["status"] == "success"
+        assert "monitor_id" in result, "monitor_id must be present in start response"
+        assert result["monitor_id"] == result["watch_id"]
+        monitor_cmd.execute({"action": "stop", "watch_id": result["watch_id"]})
+
+    def test_monitor_stop_accepts_monitor_id_canonical(self, monitor_cmd, test_module):
+        """Monitor stop must accept canonical monitor_id parameter."""
+        start = monitor_cmd.execute(
+            {"action": "start", "pattern": "test_monitor_module.fast_function", "cycle": 60}
+        )
+        assert start["status"] == "success"
+        watch_id = start["watch_id"]
+        result = monitor_cmd.execute({"action": "stop", "monitor_id": watch_id})
+        assert result["status"] == "success", (
+            f"stop with monitor_id should succeed, got: {result}"
+        )
+
+    def test_monitor_stop_legacy_watch_id_still_works(self, monitor_cmd, test_module):
+        """Monitor stop must still accept legacy watch_id parameter."""
+        start = monitor_cmd.execute(
+            {"action": "start", "pattern": "test_monitor_module.fast_function", "cycle": 60}
+        )
+        assert start["status"] == "success"
+        watch_id = start["watch_id"]
+        result = monitor_cmd.execute({"action": "stop", "watch_id": watch_id})
+        assert result["status"] == "success"
+
+    def test_monitor_status_single_exposes_monitor_id(self, monitor_cmd, test_module):
+        """Monitor status for single monitor must include monitor_id in response."""
+        start = monitor_cmd.execute(
+            {"action": "start", "pattern": "test_monitor_module.fast_function", "cycle": 60}
+        )
+        watch_id = start["watch_id"]
+        result = monitor_cmd.execute({"action": "status", "watch_id": watch_id})
+        assert result["status"] == "success"
+        assert "monitor_id" in result, "status response must include monitor_id"
+        assert result["monitor_id"] == watch_id
+        monitor_cmd.execute({"action": "stop", "watch_id": watch_id})
+
+    def test_monitor_observation_includes_monitor_id(self, monitor_cmd, test_module):
+        """Observations emitted by monitor must include monitor_id alongside watch_id."""
+        result = monitor_cmd.execute(
+            {
+                "action": "start",
+                "pattern": "test_monitor_module.fast_function",
+                "cycle": 0.05,
+                "cycles": 1,
+            }
+        )
+        watch_id = result["watch_id"]
+        test_module.fast_function(1)
+        time.sleep(0.2)
+        observations = [obs for obs in monitor_cmd.agent._observations if "cycle" in obs]
+        assert observations, "expected at least one cycle observation"
+        obs = observations[0]
+        assert "monitor_id" in obs, "observation must include monitor_id"
+        assert obs["monitor_id"] == obs["watch_id"]
+        monitor_cmd.execute({"action": "stop", "watch_id": watch_id})
+
+    def test_monitor_stop_restores_alias_bindings(self, test_module):
+        """Monitor stop must restore alias bindings that were patched at start."""
+        import sys as _sys
+
+        def target_fn(x):
+            return x + 1
+
+        mod_primary = type(_sys)("test_monitor_alias_primary")
+        mod_primary.target_fn = target_fn
+        mod_alias = type(_sys)("test_monitor_alias_secondary")
+        mod_alias.target_fn = target_fn
+        _sys.modules["test_monitor_alias_primary"] = mod_primary
+        _sys.modules["test_monitor_alias_secondary"] = mod_alias
+
+        agent = MockAgent()
+        from peeka.core.injector import DecoratorInjector
+        injector = DecoratorInjector(agent)  # pyright: ignore[reportArgumentType]
+        agent.injector = injector
+        monitor_cmd = MonitorCommand(agent)  # pyright: ignore[reportArgumentType]
+
+        try:
+            result = monitor_cmd.execute(
+                {
+                    "action": "start",
+                    "pattern": "test_monitor_alias_primary.target_fn",
+                    "cycle": 60,
+                }
+            )
+            assert result["status"] == "success"
+            watch_id = result["watch_id"]
+            wrapper = mod_primary.target_fn
+
+            mod_alias.target_fn = wrapper
+
+            stop_result = monitor_cmd.execute({"action": "stop", "watch_id": watch_id})
+            assert stop_result["status"] == "success"
+
+            assert mod_primary.target_fn is target_fn, (
+                "primary slot must be restored to original after monitor stop"
+            )
+            assert mod_alias.target_fn is target_fn, (
+                "alias slot must be restored to original after monitor stop"
+            )
+        finally:
+            for mod_name in ("test_monitor_alias_primary", "test_monitor_alias_secondary"):
+                _sys.modules.pop(mod_name, None)

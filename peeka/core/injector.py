@@ -128,28 +128,27 @@ class DecoratorInjector(
             if callable(liveness_hook) and not liveness_hook(session_id):
                 info["_orphan_start"] = _time.monotonic()
 
-            if "stack_depth" not in watch_config:
-                shared_group = self._get_active_wrapper_info(target_func)
-                if shared_group is None:
-                    group_key: Tuple[int, str] = (id(parent_obj), str(attr_name))
-                    root_original = target_func
-                    previous_wrapper = None
-                else:
-                    group_key = shared_group.get(
-                        "wrapper_group_key", (id(parent_obj), str(attr_name))
-                    )
-                    root_original = shared_group.get(
-                        "root_original", shared_group["original"]
-                    )
-                    previous_wrapper = target_func
-                info.update(
-                    {
-                        "root_original": root_original,
-                        "previous_wrapper": previous_wrapper,
-                        "wrapper_group_key": group_key,
-                        "watch_group_key": group_key,
-                    }
+            shared_group = self._get_active_wrapper_info(target_func)
+            if shared_group is None:
+                group_key: Tuple[int, str] = (id(parent_obj), str(attr_name))
+                root_original = target_func
+                previous_wrapper = None
+            else:
+                group_key = shared_group.get(
+                    "wrapper_group_key", (id(parent_obj), str(attr_name))
                 )
+                root_original = shared_group.get(
+                    "root_original", shared_group["original"]
+                )
+                previous_wrapper = target_func
+            info.update(
+                {
+                    "root_original": root_original,
+                    "previous_wrapper": previous_wrapper,
+                    "wrapper_group_key": group_key,
+                    "watch_group_key": group_key,
+                }
+            )
 
             self.instrumented[watch_id] = info
 

@@ -54,7 +54,20 @@ class ResetCommand(BaseCommand):
 
     def _reset(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Reset enhancements, optionally filtered by pattern."""
-        pattern = params.get("pattern")  # None = reset all
+        import fnmatch
+
+        pattern = params.get("pattern")
+
+        monitor_cmd = getattr(self.agent, "monitor_cmd", None)
+        if monitor_cmd is not None:
+            monitors_to_stop = []
+            with monitor_cmd._lock:
+                for wid, info in list(monitor_cmd._monitors.items()):
+                    if pattern is None or fnmatch.fnmatch(info.get("pattern", ""), pattern):
+                        monitors_to_stop.append(wid)
+            for wid in monitors_to_stop:
+                monitor_cmd.execute({"action": "stop", "watch_id": wid})
+
         return self.agent.injector.reset(pattern)
 
     def _list_enhanced(self, params: Dict[str, Any]) -> Dict[str, Any]:
