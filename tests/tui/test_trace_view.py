@@ -623,6 +623,70 @@ class TestTraceView:
 
     @pytest.mark.asyncio
     @pytest.mark.tui
+    async def test_wrapper_only_observation_runtime_meta_renders_backend(
+        self, mock_client_factory
+    ):
+        """Wrapper-only trace observations should drive the backend display."""
+        client = mock_client_factory(
+            responses={
+                "trace": {
+                    "status": "success",
+                    "watch_id": "trace_001",
+                }
+            }
+        )
+        client.connect()
+
+        stream_client = mock_client_factory(
+            observations=[
+                {
+                    "watch_id": "trace_001",
+                    "func_name": "calculator.compute",
+                    "call_tree": [],
+                    "total_duration_ms": 25.5,
+                    "node_count": 1,
+                    "count": 1,
+                    "runtime_meta": {
+                        "trace": {
+                            "startup_backend": "wrapper_only",
+                            "effective_backend": "wrapper_only",
+                            "downgraded": True,
+                            "downgrade_reason": "gevent_patched_runtime",
+                            "gevent_patched_now": True,
+                        }
+                    },
+                }
+            ]
+        )
+        stream_client.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(client)
+            trace_view._stream_client = stream_client
+
+            pattern_input = trace_view.query_one("#trace-pattern", AutoCompleteInput)
+            pattern_input.value = "calculator.compute"
+
+            await trace_view._start_trace()
+            await pilot.pause()
+            await pilot.pause()
+
+            stats = trace_view.query_one("#trace-stats", Static)
+            stats_text = str(stats.render())
+            assert "Backend: wrapper_only" in stats_text
+            assert "Gevent: patched" in stats_text
+            assert "Backend: profiler (full)" not in stats_text
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
     async def test_trace_runtime_meta_display(self, mock_client_factory):
         """Verify runtime_meta is displayed in the trace stats panel."""
         client = mock_client_factory(
@@ -679,6 +743,7 @@ class TestTraceView:
             stats = trace_view.query_one("#trace-stats", Static)
             stats_text = str(stats.render())
             assert "Backend: wrapper_only" in stats_text
+            assert "Backend: profiler (full)" not in stats_text
             assert "Gevent: patched" in stats_text
 
         # Test without runtime_meta

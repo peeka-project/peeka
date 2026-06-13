@@ -160,6 +160,35 @@ class TestTraceRuntimeMeta:
         assert result["runtime_meta"]["trace"]["effective_backend"] == "wrapper_only"
         assert result["runtime_meta"]["trace"]["gevent_patched_now"] is True
 
+    def test_observation_runtime_meta_present_when_prepatched_at_startup(self, monkeypatch):
+        """Pre-patched gevent startup should still emit trace observation runtime meta."""
+        monkeypatch.setattr("peeka.commands.trace.probe", lambda: GeventState.PATCHED)
+        fake_monkey = types.ModuleType("gevent.monkey")
+
+        def is_module_patched(_name):
+            return True
+
+        setattr(fake_monkey, "is_module_patched", is_module_patched)
+        monkeypatch.setitem(sys.modules, "gevent.monkey", fake_monkey)
+
+        agent = MockAgent()
+        agent.injector = DecoratorInjector(agent)
+        agent.observer = FakeObserver()
+        module = _install_trace_module(monkeypatch, "trace_runtime_meta_prepatched")
+        command = TraceCommand(agent)
+
+        result = command.execute(
+            {"action": "start", "pattern": "trace_runtime_meta_prepatched.root"}
+        )
+
+        assert result["status"] == "success"
+        assert result["runtime_meta"]["trace"]["effective_backend"] == "wrapper_only"
+
+        assert module.root() == "outer"
+        observation = agent._observations[0]
+
+        assert observation["runtime_meta"]["trace"]["effective_backend"] == "wrapper_only"
+
     def test_observation_runtime_meta_schema(self, monkeypatch):
         """Runtime trace metadata should expose the full schema on downgrade."""
         agent = MockAgent()
