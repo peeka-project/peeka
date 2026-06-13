@@ -111,6 +111,23 @@ class TestHotPathLockDomains:
 
         assert get_field_domain("agent._connections_lock") == DOMAIN_NATIVE
 
+    def test_observation_queue_lock_is_native_thread_lock(self):
+        from peeka.core.agent import PeekaAgent
+        from peeka.core.runtime.primitives import _NATIVE_ALLOCATE_LOCK
+        from peeka.core.runtime.lock_factory import DOMAIN_NATIVE, get_field_domain
+
+        agent = PeekaAgent("native-lock-observation-queue-test")
+        native_lock_type = type(_NATIVE_ALLOCATE_LOCK())
+
+        assert get_field_domain("agent._observation_queue_lock") == DOMAIN_NATIVE
+        assert isinstance(agent._observation_queue_lock, native_lock_type)
+        _assert_native_lock(cast(LockLike, agent._observation_queue_lock))
+
+    def test_observation_queue_lock_domain_declared(self):
+        from peeka.core.runtime.lock_factory import DOMAIN_NATIVE, get_field_domain
+
+        assert get_field_domain("agent._observation_queue_lock") == DOMAIN_NATIVE
+
     def test_observer_lock_domain_declared(self):
         from peeka.core.runtime.lock_factory import DOMAIN_NATIVE, get_field_domain
 

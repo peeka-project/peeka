@@ -274,6 +274,40 @@ class TestObservationQueueStats:
 
 @pytest.mark.unit
 class TestObservationQueueFlusher:
+    def test_send_frame_returns_false_on_socket_error(self) -> None:
+        agent = _make_agent()
+        server_sock, client_sock = socket.socketpair()
+
+        try:
+            agent._register_client_connection(server_sock, kind="stream")
+            client_sock.close()
+
+            assert agent._send_frame_to_connection(server_sock, b"OBS:broken") is False
+        finally:
+            agent._unregister_client_connection(server_sock)
+            server_sock.close()
+
+    def test_flush_connection_increments_eviction_stats_on_send_failure(self) -> None:
+        agent = _make_agent()
+        server_sock, client_sock = socket.socketpair()
+
+        try:
+            agent._register_client_connection(server_sock, kind="stream")
+            queue = _observation_queues(agent)[server_sock]
+            queue.append(_make_obs_frame("evt_broken_pipe"))
+            client_sock.close()
+
+            assert agent._flush_connection(server_sock) is False
+
+            stats = _observation_queue_stats(agent)[server_sock]
+            assert _slow_evicted_count(stats) >= 1
+            assert queue.empty()
+            # TODO(v0.1.19): immediate eviction on send failure.
+            assert server_sock in _observation_queues(agent)
+        finally:
+            agent._unregister_client_connection(server_sock)
+            server_sock.close()
+
     def test_flusher_delivers_frames_as_OBS_format(self) -> None:
         agent = _make_agent()
         server_sock, client_sock = socket.socketpair()
@@ -594,6 +628,28 @@ class TestObservationQueueLifecycle:
             assert elapsed <= STOP_DRAIN_BOUND_SECONDS
             queues = _observation_queues(agent)
             assert all(queue.empty() for queue in queues.values())
+        finally:
+            agent._unregister_client_connection(server_sock)
+            server_sock.close()
+            client_sock.close()
+
+    def test_stop_drains_pending_observations_within_timeout(self) -> None:
+        agent = _make_agent()
+        server_sock, client_sock = socket.socketpair()
+
+        try:
+            agent._register_client_connection(server_sock, kind="stream")
+            queue = _observation_queues(agent)[server_sock]
+            for index in range(3):
+                queue.append(_make_obs_frame(f"evt_stop_boundary_{index}"))
+
+            started_at = time.monotonic()
+            agent.stop()
+            elapsed = time.monotonic() - started_at
+
+            assert elapsed <= STOP_DRAIN_BOUND_SECONDS
+            assert queue.empty()
+            assert all(queue.empty() for queue in _observation_queues(agent).values())
         finally:
             agent._unregister_client_connection(server_sock)
             server_sock.close()
