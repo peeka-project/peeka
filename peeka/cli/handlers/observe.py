@@ -100,7 +100,7 @@ def _trace_command(args: Any, client_session_id: str) -> Dict[str, Any]:
         "client_session_id": client_session_id,
         "pattern": args.pattern,
         "depth": args.depth,
-        "times": args.times,
+        "times": -1,
         "condition_express": args.condition_express,
         "skip_builtin": args.skip_builtin,
         "min_duration": args.min_duration,
@@ -142,7 +142,7 @@ def _stack_command(args: Any, client_session_id: str) -> Dict[str, Any]:
         "client_session_id": client_session_id,
         "pattern": args.pattern,
         "depth": args.depth,
-        "times": args.times,
+        "times": -1,
         "condition_express": args.condition_express,
     }
 

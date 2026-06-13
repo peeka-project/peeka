@@ -120,6 +120,35 @@ def test_trace_times_limit_cli_emits_exact_n_observations_from_local_count(
     ]
 
 
+def test_trace_cli_disables_agent_times_gate(monkeypatch, capsys):
+    """CLI trace start must send times=-1 so agent never stops production early."""
+    streaming_clients = []
+
+    def build_streaming_client(socket_path):
+        client = MockTraceStreamingClient(socket_path, [])
+        streaming_clients.append(client)
+        return client
+
+    monkeypatch.setattr(
+        observe_cli, "_check_agent_attached", lambda: ("/tmp/peeka_trace.sock", 1234)
+    )
+    monkeypatch.setattr(observe_cli, "StreamingAgentClient", build_streaming_client)
+    monkeypatch.setattr(observe_cli, "ephemeral_client", lambda target_id: MockClientSessionContext())
+
+    observe_cli.cmd_trace(_trace_cli_args(times=2))
+
+    start_commands = [
+        cmd for cmd in streaming_clients[0].commands_sent
+        if cmd.get("type") == "trace" and cmd.get("action") == "start"
+    ]
+    assert start_commands, "expected trace start command"
+    agent_times = start_commands[0].get("times")
+    assert agent_times == -1, (
+        f"CLI trace must send times=-1 to agent (got {agent_times!r}); "
+        "agent-side times gating must not limit production for CLI trace -n"
+    )
+
+
 class TestTraceCommand:
     @pytest.fixture
     def mock_agent(self):
