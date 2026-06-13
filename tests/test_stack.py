@@ -1,9 +1,13 @@
 """Tests for stack command - call trace capture."""
 
-import pytest
+import argparse
+import json
 import sys
 import threading
-from unittest.mock import patch
+
+import pytest
+
+from peeka.cli.handlers import observe as observe_cli
 from peeka.commands.stack import StackCommand
 from peeka.core.injector import DecoratorInjector
 from peeka.core.observer import ObservationManager
@@ -16,12 +20,91 @@ class MockAgent:
         self._observations = []
         self._lock = threading.Lock()
         self.observer = ObservationManager()
-        self.injector = DecoratorInjector(self)
+        self.injector = DecoratorInjector(self)  # pyright: ignore[reportArgumentType]
 
     def _send_observation(self, obs):
         with self._lock:
             self._observations.append(obs)
         self.observer.add_observation(obs)
+
+
+class MockStackStreamingClient:
+    def __init__(self, socket_path, observations):
+        self.socket_path = socket_path
+        self.observations = observations
+        self.commands_sent = []
+        self.connected = False
+
+    def connect(self):
+        self.connected = True
+        return {"status": "success"}
+
+    def send_command(self, command):
+        self.commands_sent.append(command)
+        if command.get("type") == "stack" and command.get("action") == "start":
+            return {"status": "success", "stack_id": "stack_cli_123"}
+        return {"status": "success"}
+
+    def stream_observations(self):
+        return iter(self.observations)
+
+    def disconnect(self):
+        self.connected = False
+
+
+class MockClientSessionContext:
+    def __enter__(self):
+        return "stack_cli_session"
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        return False
+
+
+def _stack_cli_args(times):
+    return argparse.Namespace(
+        pattern="module.fn",
+        depth=3,
+        times=times,
+        condition_express=None,
+    )
+
+
+def test_stack_times_limit_cli_emits_exact_n_observations_from_local_count(
+    monkeypatch, capsys
+):
+    observations = [
+        {"stack_id": "stack_cli_123", "count": 5, "stack": []},
+        {"stack_id": "stack_cli_123", "count": 6, "stack": []},
+        {"stack_id": "stack_cli_123", "count": 7, "stack": []},
+    ]
+    streaming_clients = []
+
+    def build_streaming_client(socket_path):
+        client = MockStackStreamingClient(socket_path, observations)
+        streaming_clients.append(client)
+        return client
+
+    monkeypatch.setattr(
+        observe_cli, "_check_agent_attached", lambda: ("/tmp/peeka_stack.sock", 1234)
+    )
+    monkeypatch.setattr(observe_cli, "StreamingAgentClient", build_streaming_client)
+    monkeypatch.setattr(
+        observe_cli, "ephemeral_client", lambda target_id: MockClientSessionContext()
+    )
+
+    assert observe_cli.cmd_stack(_stack_cli_args(times=2)) == 0
+
+    records = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    emitted_observations = [
+        record for record in records if record.get("stack_id") == "stack_cli_123"
+    ]
+
+    assert len(emitted_observations) == 2
+    assert [record["count"] for record in emitted_observations] == [5, 6]
+    assert streaming_clients[0].commands_sent[-2:] == [
+        {"type": "stack", "action": "stop", "stack_id": "stack_cli_123"},
+        {"type": "reset", "action": "reset", "pattern": "module.fn"},
+    ]
 
 
 @pytest.fixture

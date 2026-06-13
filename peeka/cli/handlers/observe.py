@@ -7,7 +7,6 @@ from peeka.cli.connection import _socket_path_to_target_id
 from peeka.cli.sessions import _check_agent_attached
 from peeka.cli.streaming import LimitPredicate
 from peeka.cli.streaming import counted_limit
-from peeka.cli.streaming import observation_count_limit
 from peeka.cli.streaming import run_streaming_command
 from peeka.core.client import StreamingAgentClient
 from peeka.core.output import OutputFormatter
@@ -169,7 +168,7 @@ def cmd_stack(args) -> int:
             "stack_id": stream_id,
         },
         emit_started=_emit_stack_started,
-        limit_reached=observation_count_limit,
+        limit_reached=counted_limit("times"),
         exception_status=0,
     )
 
