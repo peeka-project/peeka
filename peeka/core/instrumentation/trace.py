@@ -243,7 +243,10 @@ class InjectorTraceMixin:
             sanitized_root = _sanitize_call_tree_node(call_tree[0]) if call_tree else None
 
             runtime_meta = None
-            if effective_backend != force_backend and effective_backend == BACKEND_WRAPPER_ONLY:
+            gevent_patched_now = (
+                effective_backend == BACKEND_WRAPPER_ONLY and _is_gevent_patched_now()
+            )
+            if gevent_patched_now:
                 runtime_meta = {
                     "trace": {
                         "startup_backend": force_backend if force_backend else "auto",
