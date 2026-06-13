@@ -81,6 +81,71 @@ class TestWatchOwnerCleanup:
             injector.uninject_all()
             _ = sys.modules.pop(module_name, None)
 
+    def _exercise_three_same_function_stop_order(
+        self,
+        injector,
+        mock_agent: MockAgent,
+        module_name: str,
+    ) -> None:
+        def watched_function(value: int) -> int:
+            return value * 10
+
+        original_function = watched_function
+        test_module = ModuleType(module_name)
+        setattr(test_module, "watched_function", watched_function)
+        sys.modules[module_name] = test_module
+
+        try:
+            watch_a = injector.inject(
+                f"{module_name}.watched_function", {"depth": 2, "times": -1}
+            )
+            watch_b = injector.inject(
+                f"{module_name}.watched_function", {"depth": 2, "times": -1}
+            )
+            watch_c = injector.inject(
+                f"{module_name}.watched_function", {"depth": 2, "times": -1}
+            )
+
+            wrapper_a = injector.instrumented[watch_a]["wrapper"]
+            wrapper_b = injector.instrumented[watch_b]["wrapper"]
+            wrapper_c = injector.instrumented[watch_c]["wrapper"]
+
+            assert test_module.watched_function is wrapper_c
+            assert test_module.watched_function.__wrapped__ is wrapper_b
+            assert wrapper_b.__wrapped__ is wrapper_a
+            assert wrapper_a.__wrapped__ is original_function
+
+            assert test_module.watched_function(1) == 10
+            assert {obs["watch_id"] for obs in mock_agent._observations} == {
+                watch_a,
+                watch_b,
+                watch_c,
+            }
+
+            mock_agent._observations.clear()
+            injector.uninject(watch_b)
+
+            assert len(injector.list_watches()) == 2
+            assert test_module.watched_function is wrapper_c
+            assert test_module.watched_function.__wrapped__ is wrapper_b
+
+            mock_agent._observations.clear()
+            injector.uninject(watch_c)
+
+            assert len(injector.list_watches()) == 1
+            assert test_module.watched_function is wrapper_a
+            assert test_module.watched_function.__wrapped__ is original_function
+
+            mock_agent._observations.clear()
+            injector.uninject(watch_a)
+
+            assert len(injector.list_watches()) == 0
+            assert test_module.watched_function is original_function
+            assert not hasattr(test_module.watched_function, "__wrapped__")
+        finally:
+            injector.uninject_all()
+            _ = sys.modules.pop(module_name, None)
+
     def test_same_function_multi_watch_stop_a_then_b_keeps_b_active(
         self, injector, mock_agent: MockAgent
     ) -> None:
@@ -93,6 +158,13 @@ class TestWatchOwnerCleanup:
     ) -> None:
         self._exercise_same_function_stop_order(
             injector, mock_agent, "test_watch_owner_cleanup_ba", "b"
+        )
+
+    def test_three_same_function_watches_stop_middle_then_newest_then_oldest_restores_original(
+        self, injector, mock_agent: MockAgent
+    ) -> None:
+        self._exercise_three_same_function_stop_order(
+            injector, mock_agent, "test_watch_owner_cleanup_abc"
         )
 
     def test_tui_short_rpc_close_keeps_watch_for_long_stream(self) -> None:

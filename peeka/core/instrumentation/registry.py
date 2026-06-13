@@ -305,7 +305,7 @@ class InjectorRegistryMixin:
 
         if remaining:
             if current is info.get("wrapper"):
-                replacement = info.get("previous_wrapper") or remaining[-1]["wrapper"]
+                replacement = self._live_previous_watch_wrapper(info, remaining)
                 self._replace_function(info["parent"], info["attr_name"], replacement)
                 self._restore_watch_aliases(info, replacement)
             return
@@ -314,6 +314,26 @@ class InjectorRegistryMixin:
         if current is info.get("wrapper"):
             self._replace_function(info["parent"], info["attr_name"], replacement)
             self._restore_watch_aliases(info, replacement)
+
+    def _live_previous_watch_wrapper(
+        self,
+        removed_info: Dict[str, Any],
+        remaining: List[Dict[str, Any]],
+    ) -> Callable[..., Any]:
+        """Return the nearest still-registered wrapper below a removed watch."""
+        live_wrappers = {active_info["wrapper"] for active_info in remaining}
+        candidate = getattr(removed_info.get("wrapper"), "__wrapped__", None)
+
+        while candidate is not None:
+            if candidate in live_wrappers:
+                return candidate
+
+            next_candidate = getattr(candidate, "__wrapped__", None)
+            if next_candidate is candidate:
+                break
+            candidate = next_candidate
+
+        return remaining[-1]["wrapper"]
 
     def _restore_watch_aliases(
         self,
