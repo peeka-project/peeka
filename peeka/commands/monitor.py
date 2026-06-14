@@ -410,15 +410,6 @@ class MonitorCommand(BaseCommand):
                 Tuple[Any, Any, Any], injector_resolve(pattern)
             )
             if target_info is not None:
-                target_func, parent_obj, attr_name = target_info
-                try:
-                    current_target = getattr(parent_obj, attr_name)
-                except Exception:
-                    current_target = target_func
-
-                if callable(current_target) and current_target is not target_func:
-                    return current_target, parent_obj, attr_name
-
                 return target_info
 
         import importlib
