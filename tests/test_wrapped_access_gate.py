@@ -16,6 +16,7 @@ PEEKA_SOURCE_ROOT = PROJECT_ROOT / "peeka"
 ALLOWED_WRAPPED_ACCESS_FILES = {
     "peeka/core/instrumentation/registry.py": "_live_previous_probe_wrapper uses __wrapped__ to walk live Peeka wrappers",
     "peeka/core/instrumentation/watch.py": "inspect.unwrap is used only for classification",
+    "peeka/commands/monitor.py": "_nearest_lower_live_wrapper uses __wrapped__ to walk live Peeka wrappers below a monitor wrapper",
 }
 
 WRAPPED_ACCESS_PATTERNS = (
