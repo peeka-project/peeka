@@ -628,3 +628,62 @@ class TestResetMonitorInteraction:
             monitor_cmd.execute({"action": "stop", "watch_id": wid2})
         finally:
             sys.modules.pop("test_reset_monitor_mod2", None)
+
+
+    def test_reset_resolves_monitor_via_command_handlers(self, mod_and_fn):
+        """Regression: reset must find the monitor handler through real agent command_handlers.
+
+        Real PeekaAgent stores handlers in self.command_handlers and exposes
+        _get_handler(); it never has agent.monitor_cmd. Current ResetCommand
+        only checks getattr(self.agent, 'monitor_cmd', None), so on a real
+        agent monitor wrappers are never cleaned up.
+        """
+        from peeka.commands.monitor import MonitorCommand
+        from peeka.core.injector import DecoratorInjector
+        from peeka.commands.reset import ResetCommand
+        from peeka.core.observer import ObservationManager
+
+        mod, original_fn = mod_and_fn
+
+        class _RealishAgent:
+            def __init__(self):
+                self._observations = []
+                self.observer = ObservationManager()
+                self.command_handlers = {}
+
+            def _send_observation(self, obs):
+                self._observations.append(obs)
+
+            def _get_handler(self, cmd_type):
+                handler = self.command_handlers.get(cmd_type)
+                if handler is not None:
+                    return handler
+                if cmd_type == "monitor":
+                    handler = MonitorCommand(self)
+                    self.command_handlers[cmd_type] = handler
+                    return handler
+                return None
+
+        agent = _RealishAgent()
+        injector = DecoratorInjector(agent)
+        agent.injector = injector
+        monitor_cmd = agent._get_handler("monitor")
+        reset_cmd = ResetCommand(agent)
+
+        start = monitor_cmd.execute(
+            {"action": "start", "pattern": "test_reset_monitor_mod.target", "cycle": 60}
+        )
+        assert start["status"] == "success"
+        watch_id = start["watch_id"]
+        assert mod.target is not original_fn
+
+        response = reset_cmd.execute({"action": "reset"})
+        assert response["status"] == "success"
+
+        assert mod.target is original_fn, (
+            "reset must restore the callable — monitor handler must be resolved "
+            "via command_handlers/_get_handler, not just agent.monitor_cmd"
+        )
+        assert watch_id not in monitor_cmd._monitors, (
+            "reset must remove the monitor from _monitors via real handler lookup"
+        )

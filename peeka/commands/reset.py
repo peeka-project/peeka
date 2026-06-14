@@ -59,6 +59,12 @@ class ResetCommand(BaseCommand):
         pattern = params.get("pattern")
 
         monitor_cmd = getattr(self.agent, "monitor_cmd", None)
+        if monitor_cmd is None:
+            get_handler = getattr(self.agent, "_get_handler", None)
+            if callable(get_handler):
+                monitor_cmd = get_handler("monitor")
+            if monitor_cmd is None:
+                monitor_cmd = getattr(self.agent, "command_handlers", {}).get("monitor")
         if monitor_cmd is not None:
             monitors_to_stop = []
             with monitor_cmd._lock:
