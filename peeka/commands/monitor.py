@@ -103,6 +103,7 @@ class MonitorCommand(BaseCommand):
         watch_id = f"monitor_{uuid.uuid4().hex[:8]}"
 
         wrapper = self._create_monitor_wrapper(target_func, watch_id)
+        owned_root_original = self._known_peeka_root_for_wrapper(target_func)
 
         # Start monitoring
         self.manager.start_monitor(watch_id)
@@ -112,6 +113,7 @@ class MonitorCommand(BaseCommand):
             self._monitors[watch_id] = {
                 "pattern": pattern,
                 "original": target_func,
+                "owned_root_original": owned_root_original,
                 "wrapper": wrapper,
                 "parent": parent_obj,
                 "attr_name": attr_name,
@@ -172,6 +174,19 @@ class MonitorCommand(BaseCommand):
                 raise
 
         return wrapper
+
+    def _known_peeka_root_for_wrapper(self, target_func: Any) -> Any:
+        """Return root original when target_func is a live Peeka injector wrapper."""
+        injector = getattr(self.agent, "injector", None)
+        instrumented = getattr(injector, "instrumented", {})
+        if not isinstance(instrumented, dict):
+            return None
+
+        for active_probe in instrumented.values():
+            if active_probe.get("wrapper") is target_func:
+                return active_probe.get("root_original", active_probe.get("original"))
+
+        return None
 
     def _periodic_output_loop(
         self, watch_id: str, cycle: int, cycles: int, stop_event: threading.Event
@@ -304,29 +319,29 @@ class MonitorCommand(BaseCommand):
                 if active_monitor.get("original") is monitor_info["wrapper"]:
                     active_monitor["original"] = monitor_info["original"]
 
-            active_injector_wrappers = set()
             injector = getattr(self.agent, "injector", None)
             instrumented = getattr(injector, "instrumented", {})
             if isinstance(instrumented, dict):
                 for active_probe in instrumented.values():
-                    active_injector_wrappers.add(active_probe.get("wrapper"))
                     for key in ("original", "previous_wrapper", "root_original"):
                         if active_probe.get(key) is monitor_info["wrapper"]:
                             active_probe[key] = monitor_info["original"]
 
             active_monitor_wrappers = set()
-            for wid, active_monitor in self._monitors.items():
-                if wid != watch_id:
-                    active_monitor_wrappers.add(active_monitor.get("wrapper"))
+            for active_monitor in self._monitors.values():
+                active_monitor_wrappers.add(active_monitor.get("wrapper"))
+
+            active_injector_wrappers = set()
+            if isinstance(instrumented, dict):
+                for active_probe in instrumented.values():
+                    active_injector_wrappers.add(active_probe.get("wrapper"))
 
             all_live_wrappers = active_injector_wrappers | active_monitor_wrappers
 
             replacement = monitor_info["original"]
-            while replacement not in all_live_wrappers:
-                next_replacement = getattr(replacement, "__wrapped__", None)
-                if next_replacement is None or next_replacement is replacement:
-                    break
-                replacement = next_replacement
+            owned_root_original = monitor_info.get("owned_root_original")
+            if replacement not in all_live_wrappers and owned_root_original is not None:
+                replacement = owned_root_original
 
             try:
                 current = getattr(monitor_info["parent"], monitor_info["attr_name"])
