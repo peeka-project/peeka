@@ -1,5 +1,6 @@
 """Tests for monitor command - statistics collection."""
 
+import asyncio
 import functools
 import inspect
 import sys
@@ -1008,6 +1009,91 @@ class TestMonitorUserDecoratorPreservation:
             assert module.fn(6) == 30
             assert outer_calls == [("outer", 6)]
             assert inner_calls == [("inner", 6)]
+        finally:
+            self._cleanup_module(module_name)
+
+    def test_async_user_decorator_preserved_after_monitor_stop(self):
+        """Monitor stop must preserve async user decorators and awaitability."""
+        agent, monitor_cmd = self._build_monitor_cmd()
+        module_name = "test_monitor_user_decorator_async"
+        decorator_calls = []
+
+        def async_decorator(fn):
+            @functools.wraps(fn)
+            async def wrapper(value):
+                decorator_calls.append(("async", value))
+                return await fn(value)
+
+            return wrapper
+
+        async def raw_fn(value):
+            return value * 4
+
+        decorated_fn = async_decorator(raw_fn)
+        module = self._register_module(module_name, decorated_fn)
+
+        try:
+            start = monitor_cmd.execute(
+                {"action": "start", "pattern": f"{module_name}.fn", "cycle": 60}
+            )
+            assert start["status"] == "success"
+            watch_id = start["watch_id"]
+
+            try:
+                assert asyncio.run(module.fn(3)) == 12
+            finally:
+                monitor_cmd.execute({"action": "stop", "watch_id": watch_id})
+
+            assert module.fn is decorated_fn
+            assert module.fn is not raw_fn
+
+            decorator_calls.clear()
+            assert asyncio.run(module.fn(5)) == 20
+            assert decorator_calls == [("async", 5)]
+        finally:
+            self._cleanup_module(module_name)
+
+    def test_alias_restore_preserves_user_decorator(self):
+        """Monitor stop must restore aliases to the decorated callable."""
+        agent, monitor_cmd = self._build_monitor_cmd()
+        module_name = "test_monitor_user_decorator_alias"
+        decorator_calls = []
+
+        def custom_decorator(fn):
+            @functools.wraps(fn)
+            def wrapper(value):
+                decorator_calls.append(value)
+                return fn(value)
+
+            return wrapper
+
+        def raw_fn(value):
+            return value + 1
+
+        decorated_fn = custom_decorator(raw_fn)
+        module = self._register_module(module_name, decorated_fn)
+        setattr(module, "alias_fn", module.fn)
+
+        try:
+            start = monitor_cmd.execute(
+                {"action": "start", "pattern": f"{module_name}.fn", "cycle": 60}
+            )
+            assert start["status"] == "success"
+            watch_id = start["watch_id"]
+
+            try:
+                assert module.fn(3) == 4
+            finally:
+                monitor_cmd.execute({"action": "stop", "watch_id": watch_id})
+
+            assert module.fn is decorated_fn
+            assert module.alias_fn is decorated_fn
+            assert module.fn is not raw_fn
+            assert module.alias_fn is not raw_fn
+
+            decorator_calls.clear()
+            assert module.alias_fn(4) == 5
+            assert decorator_calls == [4]
         finally:
             self._cleanup_module(module_name)
 
