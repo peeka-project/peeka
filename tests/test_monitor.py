@@ -592,6 +592,27 @@ class TestMonitorCommand:
         assert result["monitor_id"] == result["watch_id"]
         monitor_cmd.execute({"action": "stop", "watch_id": result["watch_id"]})
 
+    def test_monitor_wrapper_exposes_wrapped_metadata(self, monitor_cmd, test_module):
+        """Monitor wrapper must preserve wrapped-function metadata for restore logic."""
+        original_fn = test_module.fast_function
+
+        result = monitor_cmd.execute(
+            {"action": "start", "pattern": "test_monitor_module.fast_function", "cycle": 60}
+        )
+        assert result["status"] == "success"
+        watch_id = result["watch_id"]
+
+        try:
+            wrapper = test_module.fast_function
+            assert wrapper is not original_fn
+            assert hasattr(wrapper, "__wrapped__")
+            assert wrapper.__wrapped__ is original_fn
+            assert wrapper.__name__ == original_fn.__name__
+        finally:
+            monitor_cmd.execute({"action": "stop", "watch_id": watch_id})
+
+        assert test_module.fast_function is original_fn
+
     def test_monitor_stop_accepts_monitor_id_canonical(self, monitor_cmd, test_module):
         """Monitor stop must accept canonical monitor_id parameter."""
         start = monitor_cmd.execute(
