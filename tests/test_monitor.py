@@ -347,8 +347,9 @@ class TestMonitorCommand:
 
             assert hasattr(
                 wrapped_any, "__wrapped__"
-            ), "expected monitor wrapper chain metadata before T4"
-            assert wrapped_any.__wrapped__ is monitor_b_wrapper
+            ), "expected monitor wrapper metadata from @wraps"
+            assert wrapped is monitor_b_wrapper
+            assert wrapped_any.__wrapped__ is monitor_a_wrapper
             assert monitor_b_wrapper.__wrapped__ is monitor_a_wrapper
             assert monitor_a_wrapper.__wrapped__ is true_original_function
             assert inspect.unwrap(wrapped) is true_original_function
