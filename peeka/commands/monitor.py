@@ -5,9 +5,10 @@ This command tracks performance metrics (call count, success/fail rate,
 response time statistics) for injected functions with periodic output.
 """
 
+from functools import wraps
 import threading
 import uuid
-from typing import Any, ClassVar, Dict, TYPE_CHECKING
+from typing import Any, ClassVar, Dict, List, TYPE_CHECKING, Tuple, cast
 
 from peeka.commands.base import BaseCommand
 from peeka.core.monitor import MonitorManager
@@ -91,11 +92,13 @@ class MonitorCommand(BaseCommand):
 
         target_func, parent_obj, attr_name = target_info  # pyright: ignore[reportGeneralTypeIssues]
 
-        alias_bindings = []
+        alias_bindings: List[Dict[str, Any]] = []
         injector = getattr(self.agent, "injector", None)
         find_aliases = getattr(injector, "_find_module_aliases", None)
         if callable(find_aliases):
-            alias_bindings = find_aliases(target_func, parent_obj, attr_name)
+            alias_bindings = cast(
+                List[Dict[str, Any]], find_aliases(target_func, parent_obj, attr_name)
+            )
 
         watch_id = f"monitor_{uuid.uuid4().hex[:8]}"
 
@@ -155,6 +158,7 @@ class MonitorCommand(BaseCommand):
         """Create lightweight wrapper that only records statistics."""
         manager = self.manager
 
+        @wraps(func)
         def wrapper(*args, **kwargs):
             start_time = _rpl.perf_counter()
             try:
@@ -402,8 +406,19 @@ class MonitorCommand(BaseCommand):
         injector = getattr(self.agent, "injector", None)
         injector_resolve = getattr(injector, "_resolve_target", None)
         if callable(injector_resolve):
-            target_info = injector_resolve(pattern)
+            target_info = cast(
+                Tuple[Any, Any, Any], injector_resolve(pattern)
+            )
             if target_info is not None:
+                target_func, parent_obj, attr_name = target_info
+                try:
+                    current_target = getattr(parent_obj, attr_name)
+                except Exception:
+                    current_target = target_func
+
+                if callable(current_target) and current_target is not target_func:
+                    return current_target, parent_obj, attr_name
+
                 return target_info
 
         import importlib
