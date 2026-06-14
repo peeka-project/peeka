@@ -644,6 +644,42 @@ class TestResetMonitorInteraction:
         assert injected_watch_id not in injector.instrumented
         assert monitor_cmd.manager.get_stats(watch_id) is None
 
+    def test_reset_preserves_user_decorator_after_monitor_stop(self, mod_and_fn):
+        """reset must restore the user decorator object, not the raw function."""
+        from functools import wraps
+
+        mod, raw_fn = mod_and_fn
+        calls = []
+
+        def record_calls(fn):
+            @wraps(fn)
+            def wrapper(*args, **kwargs):
+                calls.append((args, kwargs))
+                return fn(*args, **kwargs)
+
+            return wrapper
+
+        decorated_fn = record_calls(raw_fn)
+        mod.target = decorated_fn
+
+        agent, injector, monitor_cmd, reset_cmd = self._make_agent_with_monitor(
+            mod, "target"
+        )
+
+        start = monitor_cmd.execute(
+            {"action": "start", "pattern": "test_reset_monitor_mod.target", "cycle": 60}
+        )
+        assert start["status"] == "success"
+        assert mod.target is not decorated_fn
+
+        response = reset_cmd.execute({"action": "reset"})
+
+        assert response["status"] == "success"
+        assert mod.target is decorated_fn
+        assert mod.target is not raw_fn
+        assert mod.target(7) == 12
+        assert calls == [((7,), {})]
+
     def test_reset_monitor_pattern_stops_matching_monitor_only(self, mod_and_fn):
         """reset pattern must stop only monitors whose pattern matches."""
         mod, original_fn = mod_and_fn
