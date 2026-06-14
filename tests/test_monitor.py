@@ -385,6 +385,106 @@ class TestMonitorCommand:
             setattr(test_module, "monitored_function", true_original_function)
             del sys.modules[module_name]
 
+    @pytest.mark.root_metadata
+    def test_outer_monitor_restores_root_after_inner_monitor_and_lower_probe_stop(
+        self, monitor_cmd
+    ):
+        agent, injector, monitor_cmd = self._build_mixed_probe_tools()
+        module_name = "test_monitor_root_metadata_propagation_regression"
+        test_module, true_original_function = self._make_mixed_monitor_target(
+            module_name
+        )
+        pattern = f"{module_name}.monitored_function"
+        probe_id = None
+        monitor_a_id = None
+        monitor_b_id = None
+
+        try:
+            probe_id = self._start_injector_probe(injector, pattern, "watch")
+            monitor_a_id = self._start_monitor(monitor_cmd, pattern)
+            monitor_b_id = self._start_monitor(monitor_cmd, pattern)
+
+            watch_wrapper = cast(Any, injector.instrumented[probe_id]["wrapper"])
+            monitor_a_wrapper = cast(Any, monitor_cmd._monitors[monitor_a_id]["wrapper"])
+            monitor_b_wrapper = cast(Any, monitor_cmd._monitors[monitor_b_id]["wrapper"])
+
+            assert getattr(test_module, "monitored_function") is monitor_b_wrapper
+            assert monitor_b_wrapper is not monitor_a_wrapper
+            assert monitor_a_wrapper is not watch_wrapper
+
+            stop_a_result = monitor_cmd.execute({"action": "stop", "watch_id": monitor_a_id})
+            assert stop_a_result["status"] == "success"
+
+            injector.uninject(probe_id)
+            probe_id = None
+
+            stop_b_result = monitor_cmd.execute({"action": "stop", "watch_id": monitor_b_id})
+            assert stop_b_result["status"] == "success"
+
+            final_slot = getattr(test_module, "monitored_function")
+            assert final_slot is true_original_function
+            assert final_slot is not watch_wrapper
+            assert final_slot is not monitor_a_wrapper
+        finally:
+            if probe_id in injector.instrumented:
+                injector.uninject(probe_id)
+            for watch_id in (monitor_a_id, monitor_b_id):
+                if watch_id in monitor_cmd._monitors:
+                    monitor_cmd.execute({"action": "stop", "watch_id": watch_id})
+            setattr(test_module, "monitored_function", true_original_function)
+            del sys.modules[module_name]
+
+    def test_monitor_stop_after_middle_probe_stop_keeps_lower_live_wrapper_active(self):
+        agent, injector, monitor_cmd = self._build_mixed_probe_tools()
+        module_name = "test_monitor_stacked_lower_live_wrapper_active"
+        test_module, true_original_function = self._make_mixed_monitor_target(
+            module_name
+        )
+        pattern = f"{module_name}.monitored_function"
+
+        watch_a_id = None
+        watch_b_id = None
+        monitor_id = None
+
+        try:
+            watch_a_id = self._start_injector_probe(injector, pattern, "watch")
+            watch_a_wrapper = getattr(test_module, "monitored_function")
+            assert watch_a_wrapper is not true_original_function
+
+            watch_b_id = self._start_injector_probe(injector, pattern, "trace")
+            watch_b_wrapper = getattr(test_module, "monitored_function")
+            assert watch_b_wrapper is not watch_a_wrapper
+
+            monitor_id = self._start_monitor(monitor_cmd, pattern)
+            monitor_wrapper = getattr(test_module, "monitored_function")
+            assert monitor_wrapper is not watch_b_wrapper
+
+            assert self._call_monitored(test_module, 1) == 11
+            assert [obs["watch_id"] for obs in agent._observations] == [watch_a_id, watch_b_id]
+
+            agent._observations.clear()
+            injector.uninject(watch_b_id)
+            watch_b_id = None
+
+            stop_result = monitor_cmd.execute({"action": "stop", "watch_id": monitor_id})
+            assert stop_result["status"] == "success"
+            monitor_id = None
+
+            assert getattr(test_module, "monitored_function") is watch_a_wrapper
+            assert getattr(test_module, "monitored_function") is not true_original_function
+
+            assert self._call_monitored(test_module, 2) == 12
+            assert [obs["watch_id"] for obs in agent._observations] == [watch_a_id]
+        finally:
+            for probe_id in (watch_a_id, watch_b_id):
+                if probe_id in injector.instrumented:
+                    injector.uninject(probe_id)
+            if monitor_id in monitor_cmd._monitors:
+                monitor_cmd.execute({"action": "stop", "watch_id": monitor_id})
+            injector.uninject_all()
+            setattr(test_module, "monitored_function", true_original_function)
+            del sys.modules[module_name]
+
     def test_monitor_start_collects_statistics(self, monitor_cmd, test_module):
         """Monitor should collect call statistics."""
         params = {
