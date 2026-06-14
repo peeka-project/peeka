@@ -331,7 +331,7 @@ class MonitorCommand(BaseCommand):
             for alias in monitor_info.get("aliases", []):
                 try:
                     if getattr(alias["parent"], alias["attr_name"], None) is monitor_info["wrapper"]:
-                        setattr(alias["parent"], alias["attr_name"], monitor_info["original"])
+                        setattr(alias["parent"], alias["attr_name"], replacement)
                 except Exception:
                     pass
 

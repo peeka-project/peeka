@@ -692,3 +692,71 @@ class TestMonitorCommand:
         finally:
             for mod_name in ("test_monitor_alias_primary", "test_monitor_alias_secondary"):
                 _sys.modules.pop(mod_name, None)
+
+    def test_monitor_alias_restore_uses_computed_replacement(self, test_module):
+        """Regression: alias restore must use the same computed replacement as canonical.
+
+        Scenario: a watch probe is injected first, then a monitor wraps the watch
+        wrapper. The watch probe is uninjected (gone from instrumented) before monitor
+        stops. canonical restore walks __wrapped__ to reach target_fn (the inner
+        original). Alias restore still uses monitor_info['original'] = watch_wrapper
+        (the now-removed injector wrapper). This leaves canonical and alias pointing
+        to different objects.
+        """
+        import sys as _sys
+
+        def target_fn(x):
+            return x + 1
+
+        mod_primary = type(_sys)("test_monitor_alias_replacement_primary")
+        mod_primary.target_fn = target_fn
+        mod_alias = type(_sys)("test_monitor_alias_replacement_alias")
+        mod_alias.target_fn = target_fn
+        _sys.modules["test_monitor_alias_replacement_primary"] = mod_primary
+        _sys.modules["test_monitor_alias_replacement_alias"] = mod_alias
+
+        agent = MockAgent()
+        from peeka.core.injector import DecoratorInjector
+        injector = DecoratorInjector(agent)
+        agent.injector = injector
+        monitor_cmd = MonitorCommand(agent)
+
+        try:
+            watch_probe_id = injector.inject(
+                "test_monitor_alias_replacement_primary.target_fn",
+                {"depth": 1, "times": -1},
+            )
+            watch_wrapper = mod_primary.target_fn
+            assert watch_wrapper is not target_fn
+            assert getattr(watch_wrapper, "__wrapped__", None) is target_fn
+
+            result = monitor_cmd.execute(
+                {
+                    "action": "start",
+                    "pattern": "test_monitor_alias_replacement_primary.target_fn",
+                    "cycle": 60,
+                }
+            )
+            assert result["status"] == "success"
+            watch_id = result["watch_id"]
+            monitor_wrapper = mod_primary.target_fn
+            assert monitor_wrapper is not watch_wrapper
+
+            mod_alias.target_fn = monitor_wrapper
+
+            injector.uninject(watch_probe_id)
+
+            stop_result = monitor_cmd.execute({"action": "stop", "watch_id": watch_id})
+            assert stop_result["status"] == "success"
+
+            canonical_fn = mod_primary.target_fn
+            alias_fn = mod_alias.target_fn
+
+            assert canonical_fn is alias_fn, (
+                "canonical and alias slots must point to the same object after monitor stop; "
+                f"got canonical={canonical_fn!r}, alias={alias_fn!r}. "
+                "Alias restore must use the same computed replacement as canonical restore."
+            )
+        finally:
+            for mod_name in ("test_monitor_alias_replacement_primary", "test_monitor_alias_replacement_alias"):
+                _sys.modules.pop(mod_name, None)
