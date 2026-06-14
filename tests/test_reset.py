@@ -1,6 +1,7 @@
 """Tests for reset command - restore enhanced methods to original state."""
 
 import sys
+from typing import Any
 
 import pytest
 
@@ -548,18 +549,23 @@ class TestResetMonitorInteraction:
         from peeka.core.observer import ObservationManager
 
         class _Agent:
+            injector: Any
+            monitor_cmd: Any
+
             def __init__(self):
                 self._observations = []
                 self.observer = ObservationManager()
+                self.injector = None
+                self.monitor_cmd = None
 
             def _send_observation(self, obs):
                 self._observations.append(obs)
 
         agent = _Agent()
         injector = DecoratorInjector(agent)  # pyright: ignore[reportArgumentType]
-        agent.injector = injector  # type: ignore[attr-defined]
+        agent.injector = injector
         monitor_cmd = MonitorCommand(agent)  # pyright: ignore[reportArgumentType]
-        agent.monitor_cmd = monitor_cmd  # type: ignore[attr-defined]
+        agent.monitor_cmd = monitor_cmd
         reset_cmd = ResetCommand(agent)  # pyright: ignore[reportArgumentType]
         return agent, injector, monitor_cmd, reset_cmd
 
@@ -577,7 +583,7 @@ class TestResetMonitorInteraction:
         watch_id = start["watch_id"]
         assert mod.target is not original_fn, "monitor should wrap the callable"
 
-        reset_cmd.agent.monitor_cmd = monitor_cmd  # type: ignore[attr-defined]
+        setattr(reset_cmd.agent, "monitor_cmd", monitor_cmd)
         response = reset_cmd.execute({"action": "reset"})
 
         assert response["status"] == "success"
@@ -587,6 +593,56 @@ class TestResetMonitorInteraction:
         assert watch_id not in monitor_cmd._monitors, (
             "reset must remove monitor from _monitors"
         )
+
+    def test_reset_stops_monitor_first_watch_second(self, mod_and_fn):
+        """reset must stop the monitor before restoring the watch wrapper."""
+        mod, original_fn = mod_and_fn
+        agent, injector, monitor_cmd, reset_cmd = self._make_agent_with_monitor(
+            mod, "target"
+        )
+        call_order = []
+
+        original_monitor_execute = monitor_cmd.execute
+        original_injector_reset = injector.reset
+
+        def recording_monitor_execute(params):
+            if params.get("action") == "stop":
+                call_order.append("monitor")
+            return original_monitor_execute(params)
+
+        def recording_injector_reset(pattern=None):
+            call_order.append("watch")
+            return original_injector_reset(pattern)
+
+        monitor_cmd.execute = recording_monitor_execute  # type: ignore[assignment]
+        injector.reset = recording_injector_reset  # type: ignore[assignment]
+
+        start = original_monitor_execute(
+            {"action": "start", "pattern": "test_reset_monitor_mod.target", "cycle": 60}
+        )
+        assert start["status"] == "success"
+        watch_id = start["watch_id"]
+
+        injected_watch_id = injector.inject(
+            "test_reset_monitor_mod.target", {"depth": 2}
+        )
+
+        assert mod.target is not original_fn, "watch wrapper should sit above monitor"
+        assert mod.target(1) == 6
+        stats = monitor_cmd.manager.get_stats(watch_id)
+        assert stats is not None
+        assert stats["total"] == 1
+        assert watch_id in monitor_cmd._monitors
+        assert injected_watch_id in injector.instrumented
+
+        response = reset_cmd.execute({"action": "reset"})
+
+        assert response["status"] == "success"
+        assert call_order == ["monitor", "watch"]
+        assert mod.target is original_fn
+        assert watch_id not in monitor_cmd._monitors
+        assert injected_watch_id not in injector.instrumented
+        assert monitor_cmd.manager.get_stats(watch_id) is None
 
     def test_reset_monitor_pattern_stops_matching_monitor_only(self, mod_and_fn):
         """reset pattern must stop only monitors whose pattern matches."""
@@ -615,7 +671,7 @@ class TestResetMonitorInteraction:
             wid1 = start1["watch_id"]
             wid2 = start2["watch_id"]
 
-            reset_cmd.agent.monitor_cmd = monitor_cmd  # type: ignore[attr-defined]
+            setattr(reset_cmd.agent, "monitor_cmd", monitor_cmd)
             response = reset_cmd.execute(
                 {"action": "reset", "pattern": "test_reset_monitor_mod.target"}
             )
@@ -646,10 +702,15 @@ class TestResetMonitorInteraction:
         mod, original_fn = mod_and_fn
 
         class _RealishAgent:
+            injector: Any
+            monitor_cmd: Any
+
             def __init__(self):
                 self._observations = []
                 self.observer = ObservationManager()
                 self.command_handlers = {}
+                self.injector = None
+                self.monitor_cmd = None
 
             def _send_observation(self, obs):
                 self._observations.append(obs)
@@ -659,16 +720,17 @@ class TestResetMonitorInteraction:
                 if handler is not None:
                     return handler
                 if cmd_type == "monitor":
-                    handler = MonitorCommand(self)
+                    handler = MonitorCommand(self)  # pyright: ignore[reportArgumentType]
                     self.command_handlers[cmd_type] = handler
                     return handler
                 return None
 
         agent = _RealishAgent()
-        injector = DecoratorInjector(agent)
+        injector = DecoratorInjector(agent)  # pyright: ignore[reportArgumentType]
         agent.injector = injector
         monitor_cmd = agent._get_handler("monitor")
-        reset_cmd = ResetCommand(agent)
+        assert monitor_cmd is not None
+        reset_cmd = ResetCommand(agent)  # pyright: ignore[reportArgumentType]
 
         start = monitor_cmd.execute(
             {"action": "start", "pattern": "test_reset_monitor_mod.target", "cycle": 60}

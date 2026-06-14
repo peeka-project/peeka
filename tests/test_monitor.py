@@ -325,6 +325,63 @@ class TestMonitorCommand:
             monitor_cmd, "test_monitor_multi_monitor_ba", "b"
         )
 
+    def test_same_function_multi_monitor_wrapped_chain(self, monitor_cmd):
+        module_name = "test_monitor_multi_monitor_wrapped_chain"
+        test_module, true_original_function = self._make_mixed_monitor_target(
+            module_name
+        )
+        pattern = f"{module_name}.monitored_function"
+        monitor_a_id = None
+        monitor_b_id = None
+
+        try:
+            monitor_a_id = self._start_monitor(monitor_cmd, pattern)
+            monitor_b_id = self._start_monitor(monitor_cmd, pattern)
+
+            wrapped = cast(
+                Callable[[int], int], getattr(test_module, "monitored_function")
+            )
+            wrapped_any = cast(Any, wrapped)
+            monitor_a_wrapper = cast(Any, monitor_cmd._monitors[monitor_a_id]["wrapper"])
+            monitor_b_wrapper = cast(Any, monitor_cmd._monitors[monitor_b_id]["wrapper"])
+
+            assert hasattr(
+                wrapped_any, "__wrapped__"
+            ), "expected monitor wrapper chain metadata before T4"
+            assert wrapped_any.__wrapped__ is monitor_b_wrapper
+            assert monitor_b_wrapper.__wrapped__ is monitor_a_wrapper
+            assert monitor_a_wrapper.__wrapped__ is true_original_function
+            assert inspect.unwrap(wrapped) is true_original_function
+
+            assert self._call_monitored(test_module, 1) == 11
+            self._assert_monitor_total(monitor_cmd, monitor_a_id, 1)
+            self._assert_monitor_total(monitor_cmd, monitor_b_id, 1)
+
+            stop_a = monitor_cmd.execute({"action": "stop", "watch_id": monitor_a_id})
+            assert stop_a["status"] == "success"
+            assert monitor_a_id not in monitor_cmd._monitors
+            assert monitor_b_id in monitor_cmd._monitors
+
+            wrapped = cast(
+                Callable[[int], int], getattr(test_module, "monitored_function")
+            )
+            assert wrapped is monitor_cmd._monitors[monitor_b_id]["wrapper"]
+
+            assert self._call_monitored(test_module, 2) == 12
+            self._assert_monitor_total(monitor_cmd, monitor_b_id, 2)
+            assert monitor_cmd.manager.get_stats(monitor_a_id) is None
+
+            stop_b = monitor_cmd.execute({"action": "stop", "watch_id": monitor_b_id})
+            assert stop_b["status"] == "success"
+            assert getattr(test_module, "monitored_function") is true_original_function
+            assert self._call_monitored(test_module, 3) == 13
+        finally:
+            for watch_id in (monitor_a_id, monitor_b_id):
+                if watch_id in monitor_cmd._monitors:
+                    monitor_cmd.execute({"action": "stop", "watch_id": watch_id})
+            setattr(test_module, "monitored_function", true_original_function)
+            del sys.modules[module_name]
+
     def test_monitor_start_collects_statistics(self, monitor_cmd, test_module):
         """Monitor should collect call statistics."""
         params = {
