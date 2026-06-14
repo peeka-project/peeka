@@ -149,6 +149,48 @@ def test_trace_cli_disables_agent_times_gate(monkeypatch, capsys):
     )
 
 
+def test_trace_cli_filtered_count_ignores_unrelated_frames(monkeypatch, capsys):
+    """Regression: trace -n must count only frames for the active trace stream.
+
+    Currently counted_limit() increments on EVERY yielded dict, so an unrelated
+    observation (different watch_id) or LOG frame can trigger early cleanup.
+    After Task 6 implementation this test must pass; before implementation it
+    must fail because the 2nd observation (unrelated) triggers the limit.
+    """
+    active_id = "trace_cli_123"
+    unrelated_obs = {"watch_id": "watch_other_999", "count": 1, "data": "unrelated"}
+    log_frame = {"type": "log", "level": "INFO", "msg": "background log"}
+    active_obs_1 = {"watch_id": active_id, "count": 5, "call_tree": []}
+    active_obs_2 = {"watch_id": active_id, "count": 6, "call_tree": []}
+
+    observations = [unrelated_obs, log_frame, active_obs_1, active_obs_2]
+
+    streaming_clients = []
+
+    def build_streaming_client(socket_path):
+        client = MockTraceStreamingClient(socket_path, observations)
+        streaming_clients.append(client)
+        return client
+
+    monkeypatch.setattr(
+        observe_cli, "_check_agent_attached", lambda: ("/tmp/peeka_trace.sock", 1234)
+    )
+    monkeypatch.setattr(observe_cli, "StreamingAgentClient", build_streaming_client)
+    monkeypatch.setattr(
+        observe_cli, "ephemeral_client", lambda target_id: MockClientSessionContext()
+    )
+
+    assert observe_cli.cmd_trace(_trace_cli_args(times=2)) == 0
+
+    records = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    active_records = [r for r in records if r.get("watch_id") == active_id]
+    assert len(active_records) == 2, (
+        f"Expected 2 active trace records, got {len(active_records)}; "
+        "unrelated frames must not count toward the local -n limit"
+    )
+    assert [r["count"] for r in active_records] == [5, 6]
+
+
 class TestTraceCommand:
     @pytest.fixture
     def mock_agent(self):

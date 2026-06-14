@@ -32,6 +32,37 @@ def counted_limit(attr_name: str) -> LimitPredicate:
     return reached
 
 
+def stream_counted_limit(attr_name: str, stream_id_key: str) -> "Tuple[LimitPredicate, Callable[[Optional[str]], None]]":
+    """Return a (predicate, set_stream_id) pair for stream-filtered local counting.
+
+    The predicate only increments when observation[stream_id_key] matches the
+    active stream id. Call set_stream_id(stream_id) from emit_started before
+    the streaming loop begins.
+
+    If set_stream_id is never called or the stream id key is absent from an
+    observation, the observation is not counted toward the limit.
+    """
+    emitted = {"count": 0}
+    holder: Dict[str, Optional[str]] = {"stream_id": None}
+
+    def set_stream_id(stream_id: Optional[str]) -> None:
+        holder["stream_id"] = stream_id
+
+    def reached(args: Any, observation: Dict[str, Any]) -> bool:
+        limit = int(getattr(args, attr_name, -1))
+        if limit <= 0:
+            return False
+        expected = holder["stream_id"]
+        if expected is None:
+            return False
+        if observation.get(stream_id_key) != expected:
+            return False
+        emitted["count"] += 1
+        return emitted["count"] >= limit
+
+    return reached, set_stream_id
+
+
 def observation_count_limit(args: Any, observation: Dict[str, Any]) -> bool:
     """Stop when the agent-reported observation count reaches args.times."""
     times = int(getattr(args, "times", -1))
