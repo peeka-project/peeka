@@ -1,5 +1,6 @@
 """Tests for monitor command - statistics collection."""
 
+import inspect
 import sys
 import threading
 import time
@@ -153,7 +154,17 @@ class TestMonitorCommand:
             setattr(test_module, "monitored_function", true_original_function)
             del sys.modules[module_name]
 
-    def _exercise_monitor_then_injector_probe_lifecycle(self, probe_kind):
+    def _assert_monitor_chain_boundary(self, test_module, original_code):
+        wrapped = getattr(test_module, "monitored_function")
+        unwrapped = inspect.unwrap(
+            wrapped, stop=lambda f: not hasattr(f, "__wrapped__")
+        )
+        assert unwrapped is wrapped
+        assert wrapped.__code__ is not original_code
+
+    def _exercise_monitor_then_injector_probe_lifecycle(
+        self, probe_kind, assert_chain=False
+    ):
         agent, injector, monitor_cmd = self._build_mixed_probe_tools()
         module_name = f"test_{probe_kind}_monitor_lifecycle_monitor_first"
         test_module, true_original_function = self._make_mixed_monitor_target(
@@ -162,9 +173,12 @@ class TestMonitorCommand:
         pattern = f"{module_name}.monitored_function"
         monitor_id = None
         probe_id = None
+        original_code = true_original_function.__code__
 
         try:
             monitor_id = self._start_monitor(monitor_cmd, pattern)
+            if assert_chain:
+                self._assert_monitor_chain_boundary(test_module, original_code)
             probe_id = self._start_injector_probe(injector, pattern, probe_kind)
 
             assert self._call_monitored(test_module, 1) == 11
@@ -207,6 +221,16 @@ class TestMonitorCommand:
 
     def test_trace_monitor_lifecycle_monitor_stops_first_keeps_trace_active(self):
         self._exercise_monitor_then_injector_probe_lifecycle("trace")
+
+    def test_monitor_first_watch_layering(self):
+        self._exercise_monitor_then_injector_probe_lifecycle(
+            "watch", assert_chain=True
+        )
+
+    def test_monitor_first_trace_layering(self):
+        self._exercise_monitor_then_injector_probe_lifecycle(
+            "trace", assert_chain=True
+        )
 
     def _exercise_same_function_multi_monitor_lifecycle(
         self, monitor_cmd, module_name, stop_first
@@ -738,9 +762,9 @@ class TestMonitorCommand:
 
         agent = MockAgent()
         from peeka.core.injector import DecoratorInjector
-        injector = DecoratorInjector(agent)
+        injector = DecoratorInjector(agent)  # pyright: ignore[reportArgumentType]
         agent.injector = injector
-        monitor_cmd = MonitorCommand(agent)
+        monitor_cmd = MonitorCommand(agent)  # pyright: ignore[reportArgumentType]
 
         try:
             watch_probe_id = injector.inject(
