@@ -350,6 +350,13 @@ class MonitorCommand(BaseCommand):
                         active_monitor["owned_root_original"] = monitor_info.get(
                             "owned_root_original"
                         )
+                elif active_monitor.get("owned_root_original") is monitor_info[
+                    "wrapper"
+                ]:
+                    active_monitor["owned_root_original"] = (
+                        monitor_info.get("owned_root_original")
+                        or monitor_info["original"]
+                    )
 
             injector = getattr(self.agent, "injector", None)
             instrumented = getattr(injector, "instrumented", {})
@@ -362,7 +369,13 @@ class MonitorCommand(BaseCommand):
                                 and monitor_info["original"] is active_probe.get("wrapper")
                             ):
                                 continue
-                            active_probe[key] = monitor_info["original"]
+                            if key == "root_original":
+                                active_probe[key] = (
+                                    monitor_info.get("owned_root_original")
+                                    or monitor_info["original"]
+                                )
+                            else:
+                                active_probe[key] = monitor_info["original"]
 
             active_monitor_wrappers = set()
             for active_monitor in self._monitors.values():
