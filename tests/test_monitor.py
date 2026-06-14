@@ -156,10 +156,10 @@ class TestMonitorCommand:
 
     def _assert_monitor_chain_boundary(self, test_module, original_code):
         wrapped = getattr(test_module, "monitored_function")
-        unwrapped = inspect.unwrap(
-            wrapped, stop=lambda f: not hasattr(f, "__wrapped__")
-        )
-        assert unwrapped is wrapped
+        wrapped_any = cast(Any, wrapped)
+        assert hasattr(wrapped_any, "__wrapped__")
+        unwrapped = inspect.unwrap(wrapped)
+        assert unwrapped.__code__ is original_code
         assert wrapped.__code__ is not original_code
 
     def _exercise_monitor_then_injector_probe_lifecycle(

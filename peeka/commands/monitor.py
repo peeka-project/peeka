@@ -314,8 +314,15 @@ class MonitorCommand(BaseCommand):
                         if active_probe.get(key) is monitor_info["wrapper"]:
                             active_probe[key] = monitor_info["original"]
 
+            active_monitor_wrappers = set()
+            for wid, active_monitor in self._monitors.items():
+                if wid != watch_id:
+                    active_monitor_wrappers.add(active_monitor.get("wrapper"))
+
+            all_live_wrappers = active_injector_wrappers | active_monitor_wrappers
+
             replacement = monitor_info["original"]
-            while replacement not in active_injector_wrappers:
+            while replacement not in all_live_wrappers:
                 next_replacement = getattr(replacement, "__wrapped__", None)
                 if next_replacement is None or next_replacement is replacement:
                     break
