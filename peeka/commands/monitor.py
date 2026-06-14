@@ -8,7 +8,7 @@ response time statistics) for injected functions with periodic output.
 from functools import wraps
 import threading
 import uuid
-from typing import Any, ClassVar, Dict, List, TYPE_CHECKING, Tuple, cast
+from typing import Any, ClassVar, Dict, List, Set, TYPE_CHECKING, Tuple, cast
 
 from peeka.commands.base import BaseCommand
 from peeka.core.monitor import MonitorManager
@@ -186,6 +186,34 @@ class MonitorCommand(BaseCommand):
             if active_probe.get("wrapper") is target_func:
                 return active_probe.get("root_original", active_probe.get("original"))
 
+        for active_monitor in self._monitors.values():
+            if active_monitor.get("wrapper") is target_func:
+                return active_monitor.get(
+                    "owned_root_original",
+                    active_monitor.get("original"),
+                )
+
+        return None
+
+    def _nearest_lower_live_wrapper(
+        self, monitor_wrapper: Any, all_live_wrappers: Set[Any]
+    ) -> Any:
+        """Return the nearest still-live Peeka wrapper below monitor_wrapper, or None."""
+        candidate = getattr(monitor_wrapper, "__wrapped__", None)
+        visited: Set[int] = set()
+        for _ in range(32):
+            if candidate is None:
+                return None
+            candidate_id = id(candidate)
+            if candidate_id in visited:
+                return None
+            visited.add(candidate_id)
+            if candidate in all_live_wrappers:
+                return candidate
+            next_candidate = getattr(candidate, "__wrapped__", None)
+            if next_candidate is candidate:
+                return None
+            candidate = next_candidate
         return None
 
     def _periodic_output_loop(
@@ -318,6 +346,10 @@ class MonitorCommand(BaseCommand):
             for active_monitor in self._monitors.values():
                 if active_monitor.get("original") is monitor_info["wrapper"]:
                     active_monitor["original"] = monitor_info["original"]
+                    if active_monitor.get("owned_root_original") is None:
+                        active_monitor["owned_root_original"] = monitor_info.get(
+                            "owned_root_original"
+                        )
 
             injector = getattr(self.agent, "injector", None)
             instrumented = getattr(injector, "instrumented", {})
@@ -325,6 +357,11 @@ class MonitorCommand(BaseCommand):
                 for active_probe in instrumented.values():
                     for key in ("original", "previous_wrapper", "root_original"):
                         if active_probe.get(key) is monitor_info["wrapper"]:
+                            if (
+                                key == "root_original"
+                                and monitor_info["original"] is active_probe.get("wrapper")
+                            ):
+                                continue
                             active_probe[key] = monitor_info["original"]
 
             active_monitor_wrappers = set()
@@ -338,10 +375,16 @@ class MonitorCommand(BaseCommand):
 
             all_live_wrappers = active_injector_wrappers | active_monitor_wrappers
 
-            replacement = monitor_info["original"]
-            owned_root_original = monitor_info.get("owned_root_original")
-            if replacement not in all_live_wrappers and owned_root_original is not None:
-                replacement = owned_root_original
+            lower_live = self._nearest_lower_live_wrapper(
+                monitor_info["wrapper"], all_live_wrappers
+            )
+            if lower_live is not None:
+                replacement = lower_live
+            else:
+                replacement = monitor_info["original"]
+                owned_root_original = monitor_info.get("owned_root_original")
+                if replacement not in all_live_wrappers and owned_root_original is not None:
+                    replacement = owned_root_original
 
             try:
                 current = getattr(monitor_info["parent"], monitor_info["attr_name"])
