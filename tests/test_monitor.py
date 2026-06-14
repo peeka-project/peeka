@@ -385,6 +385,88 @@ class TestMonitorCommand:
             setattr(test_module, "monitored_function", true_original_function)
             del sys.modules[module_name]
 
+    def test_injector_root_original_not_downgraded_on_monitor_stop(self):
+        agent, injector, monitor_cmd = self._build_mixed_probe_tools()
+        module_name = "test_monitor_root_original_not_downgraded"
+        test_module, true_original_function = self._make_mixed_monitor_target(
+            module_name
+        )
+        pattern = f"{module_name}.monitored_function"
+
+        watch_id = None
+        monitor_a_id = None
+        trace_id = None
+
+        try:
+            watch_id = self._start_injector_probe(injector, pattern, "watch")
+            watch_wrapper = cast(Any, injector.instrumented[watch_id]["wrapper"])
+
+            monitor_a_id = self._start_monitor(monitor_cmd, pattern)
+
+            trace_id = self._start_injector_probe(injector, pattern, "trace")
+
+            stop_result = monitor_cmd.execute({"action": "stop", "watch_id": monitor_a_id})
+            assert stop_result["status"] == "success"
+            monitor_a_id = None
+
+            assert injector.instrumented[trace_id]["root_original"] is true_original_function
+            assert injector.instrumented[trace_id]["root_original"] is not watch_wrapper
+
+            trace_wrapper = cast(Any, injector.instrumented[trace_id]["wrapper"])
+            assert self._call_monitored(test_module, 1) == 11
+            assert trace_wrapper is getattr(test_module, "monitored_function")
+        finally:
+            if trace_id in injector.instrumented:
+                injector.uninject(trace_id)
+            if watch_id in injector.instrumented:
+                injector.uninject(watch_id)
+            if monitor_a_id in monitor_cmd._monitors:
+                monitor_cmd.execute({"action": "stop", "watch_id": monitor_a_id})
+            injector.uninject_all()
+            setattr(test_module, "monitored_function", true_original_function)
+            assert getattr(test_module, "monitored_function") is true_original_function
+            del sys.modules[module_name]
+
+    def test_active_monitor_owned_root_original_not_stale_after_peer_stop(self):
+        agent, injector, monitor_cmd = self._build_mixed_probe_tools()
+        module_name = "test_monitor_owned_root_original_not_stale"
+        test_module, true_original_function = self._make_mixed_monitor_target(
+            module_name
+        )
+        pattern = f"{module_name}.monitored_function"
+
+        monitor_a_id = None
+        watch_id = None
+        monitor_b_id = None
+
+        try:
+            monitor_a_id = self._start_monitor(monitor_cmd, pattern)
+            monitor_a_wrapper = cast(Any, monitor_cmd._monitors[monitor_a_id]["wrapper"])
+
+            watch_id = self._start_injector_probe(injector, pattern, "watch")
+
+            monitor_b_id = self._start_monitor(monitor_cmd, pattern)
+
+            stop_result = monitor_cmd.execute({"action": "stop", "watch_id": monitor_a_id})
+            assert stop_result["status"] == "success"
+            monitor_a_id = None
+
+            assert monitor_cmd._monitors[monitor_b_id]["owned_root_original"] is true_original_function
+            assert monitor_cmd._monitors[monitor_b_id]["owned_root_original"] is not monitor_a_wrapper
+
+            assert self._call_monitored(test_module, 1) == 11
+        finally:
+            if watch_id in injector.instrumented:
+                injector.uninject(watch_id)
+            if monitor_b_id in monitor_cmd._monitors:
+                monitor_cmd.execute({"action": "stop", "watch_id": monitor_b_id})
+            if monitor_a_id in monitor_cmd._monitors:
+                monitor_cmd.execute({"action": "stop", "watch_id": monitor_a_id})
+            injector.uninject_all()
+            setattr(test_module, "monitored_function", true_original_function)
+            assert getattr(test_module, "monitored_function") is true_original_function
+            del sys.modules[module_name]
+
     @pytest.mark.root_metadata
     def test_outer_monitor_restores_root_after_inner_monitor_and_lower_probe_stop(
         self, monitor_cmd
