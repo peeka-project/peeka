@@ -1,5 +1,6 @@
 """Tests for monitor command - statistics collection."""
 
+import functools
 import inspect
 import sys
 import threading
@@ -863,3 +864,191 @@ class TestMonitorCommand:
         finally:
             for mod_name in ("test_monitor_alias_replacement_primary", "test_monitor_alias_replacement_alias"):
                 _sys.modules.pop(mod_name, None)
+
+
+class TestMonitorUserDecoratorPreservation:
+    """Regression tests for preserving user decorators around monitor stop."""
+
+    def _build_monitor_cmd(self):
+        agent = MockAgent()
+        monitor_cmd = MonitorCommand(agent)  # pyright: ignore[reportArgumentType]
+        return agent, monitor_cmd
+
+    def _register_module(self, module_name, fn):
+        module = ModuleType(module_name)
+        setattr(module, "fn", fn)
+        sys.modules[module_name] = module
+        return module
+
+    def _cleanup_module(self, module_name):
+        sys.modules.pop(module_name, None)
+
+    def test_lru_cache_preserved_after_monitor_stop(self):
+        """Monitor stop must preserve functools.lru_cache wrapper identity."""
+        agent, monitor_cmd = self._build_monitor_cmd()
+        module_name = "test_monitor_user_decorator_lru_cache"
+        raw_calls = []
+
+        def raw_fn(value):
+            raw_calls.append(value)
+            return value * 2
+
+        decorated_fn = functools.lru_cache(maxsize=None)(raw_fn)
+        module = self._register_module(module_name, decorated_fn)
+
+        try:
+            start = monitor_cmd.execute(
+                {"action": "start", "pattern": f"{module_name}.fn", "cycle": 60}
+            )
+            assert start["status"] == "success"
+            watch_id = start["watch_id"]
+
+            try:
+                assert module.fn(7) == 14
+            finally:
+                monitor_cmd.execute({"action": "stop", "watch_id": watch_id})
+
+            assert module.fn is decorated_fn
+            assert module.fn is not raw_fn
+
+            before_hits = decorated_fn.cache_info().hits
+            assert module.fn(7) == 14
+            assert decorated_fn.cache_info().hits == before_hits + 1
+            assert raw_calls == [7]
+        finally:
+            self._cleanup_module(module_name)
+
+    def test_custom_decorator_preserved_after_monitor_stop(self):
+        """Monitor stop must preserve a custom wrapped decorator."""
+        agent, monitor_cmd = self._build_monitor_cmd()
+        module_name = "test_monitor_user_decorator_custom"
+        decorator_calls = []
+
+        def custom_decorator(fn):
+            @functools.wraps(fn)
+            def wrapper(value):
+                decorator_calls.append(("custom", value))
+                return fn(value)
+
+            return wrapper
+
+        def raw_fn(value):
+            return value + 3
+
+        decorated_fn = custom_decorator(raw_fn)
+        module = self._register_module(module_name, decorated_fn)
+
+        try:
+            start = monitor_cmd.execute(
+                {"action": "start", "pattern": f"{module_name}.fn", "cycle": 60}
+            )
+            assert start["status"] == "success"
+            watch_id = start["watch_id"]
+
+            try:
+                assert module.fn(4) == 7
+            finally:
+                monitor_cmd.execute({"action": "stop", "watch_id": watch_id})
+
+            assert module.fn is decorated_fn
+            assert module.fn is not raw_fn
+
+            decorator_calls.clear()
+            assert module.fn(5) == 8
+            assert decorator_calls == [("custom", 5)]
+        finally:
+            self._cleanup_module(module_name)
+
+    def test_stacked_user_decorators_preserved_after_monitor_stop(self):
+        """Monitor stop must preserve stacked user decorators."""
+        agent, monitor_cmd = self._build_monitor_cmd()
+        module_name = "test_monitor_user_decorator_stacked"
+        outer_calls = []
+        inner_calls = []
+
+        def outer_decorator(fn):
+            @functools.wraps(fn)
+            def wrapper(value):
+                outer_calls.append(("outer", value))
+                return fn(value)
+
+            return wrapper
+
+        def inner_decorator(fn):
+            @functools.wraps(fn)
+            def wrapper(value):
+                inner_calls.append(("inner", value))
+                return fn(value)
+
+            return wrapper
+
+        def raw_fn(value):
+            return value * 5
+
+        decorated_fn = outer_decorator(inner_decorator(raw_fn))
+        module = self._register_module(module_name, decorated_fn)
+
+        try:
+            start = monitor_cmd.execute(
+                {"action": "start", "pattern": f"{module_name}.fn", "cycle": 60}
+            )
+            assert start["status"] == "success"
+            watch_id = start["watch_id"]
+
+            try:
+                assert module.fn(2) == 10
+            finally:
+                monitor_cmd.execute({"action": "stop", "watch_id": watch_id})
+
+            assert module.fn is decorated_fn
+            assert module.fn is not raw_fn
+
+            outer_calls.clear()
+            inner_calls.clear()
+            assert module.fn(6) == 30
+            assert outer_calls == [("outer", 6)]
+            assert inner_calls == [("inner", 6)]
+        finally:
+            self._cleanup_module(module_name)
+
+    def test_peeka_monitors_stacked_still_restore_correctly(self):
+        """Two stacked monitors should leave the remaining one active after stop."""
+        agent, monitor_cmd = self._build_monitor_cmd()
+        module_name = "test_monitor_user_decorator_peeka_stack"
+
+        def raw_fn(value):
+            return value + 1
+
+        module = self._register_module(module_name, raw_fn)
+
+        try:
+            first = monitor_cmd.execute(
+                {"action": "start", "pattern": f"{module_name}.fn", "cycle": 0.05}
+            )
+            second = monitor_cmd.execute(
+                {"action": "start", "pattern": f"{module_name}.fn", "cycle": 0.05}
+            )
+            assert first["status"] == "success"
+            assert second["status"] == "success"
+            first_id = first["watch_id"]
+            second_id = second["watch_id"]
+
+            try:
+                assert module.fn(1) == 2
+                time.sleep(0.2)
+                assert {obs["watch_id"] for obs in agent._observations} >= {
+                    first_id,
+                    second_id,
+                }
+
+                agent._observations.clear()
+                monitor_cmd.execute({"action": "stop", "watch_id": first_id})
+
+                assert module.fn(2) == 3
+                time.sleep(0.2)
+                assert any(obs["watch_id"] == second_id for obs in agent._observations)
+                assert all(obs["watch_id"] != first_id for obs in agent._observations)
+            finally:
+                monitor_cmd.execute({"action": "stop", "watch_id": second_id})
+        finally:
+            self._cleanup_module(module_name)
