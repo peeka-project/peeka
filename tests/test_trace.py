@@ -1,4 +1,5 @@
 import argparse
+import functools
 import json
 import sys
 import time
@@ -465,6 +466,52 @@ class TestTraceCommand:
         finally:
             injector.uninject_all()
             del sys.modules["test_trace_trace_stacking"]
+
+    def test_trace_uninject_restores_user_decorated_callable_boundary(
+        self, injector, mock_agent
+    ):
+        """Trace uninject restores the pre-Peeka decorated callable boundary."""
+
+        def user_decorator(func):
+            @functools.wraps(func)
+            def wrapper(value):
+                return func(value) + 1
+
+            return wrapper
+
+        @user_decorator
+        def traced_function(value):
+            return value * 10
+
+        decorated_function = traced_function
+        raw_function = getattr(traced_function, "__wrapped__")
+
+        test_module = ModuleType("test_trace_user_decorator_boundary")
+        setattr(test_module, "traced_function", decorated_function)
+        sys.modules["test_trace_user_decorator_boundary"] = test_module
+
+        try:
+            trace_id = injector.inject_trace(
+                "test_trace_user_decorator_boundary.traced_function",
+                {"trace_depth": 2, "times": -1},
+                force_backend=BACKEND_WRAPPER_ONLY,
+            )
+
+            assert test_module.traced_function is not decorated_function
+            assert test_module.traced_function(2) == 21
+            assert [obs["watch_id"] for obs in mock_agent._observations] == [trace_id]
+
+            mock_agent._observations.clear()
+            injector.uninject(trace_id)
+
+            assert test_module.traced_function is decorated_function
+            assert test_module.traced_function is not raw_function
+            assert getattr(test_module.traced_function, "__wrapped__") is raw_function
+            assert test_module.traced_function(3) == 31
+            assert mock_agent._observations == []
+        finally:
+            injector.uninject_all()
+            del sys.modules["test_trace_user_decorator_boundary"]
 
     def test_watch_then_trace_same_function_independent_stop(self, injector, mock_agent):
         """Stopping a trace layered over a watch leaves the watch active."""

@@ -1,3 +1,4 @@
+import functools
 import sys
 import threading
 import time
@@ -166,6 +167,49 @@ class TestWatchOwnerCleanup:
         self._exercise_three_same_function_stop_order(
             injector, mock_agent, "test_watch_owner_cleanup_abc"
         )
+
+    def test_watch_uninject_restores_user_decorated_callable_boundary(
+        self, injector, mock_agent: MockAgent
+    ) -> None:
+        def user_decorator(func):
+            @functools.wraps(func)
+            def wrapper(value: int) -> int:
+                return func(value) + 1
+
+            return wrapper
+
+        @user_decorator
+        def watched_function(value: int) -> int:
+            return value * 10
+
+        decorated_function = watched_function
+        raw_function = getattr(watched_function, "__wrapped__")
+
+        test_module = ModuleType("test_watch_user_decorator_boundary")
+        setattr(test_module, "watched_function", decorated_function)
+        sys.modules["test_watch_user_decorator_boundary"] = test_module
+
+        try:
+            watch_id = injector.inject(
+                "test_watch_user_decorator_boundary.watched_function",
+                {"depth": 2, "times": -1},
+            )
+
+            assert test_module.watched_function is not decorated_function
+            assert test_module.watched_function(2) == 21
+            assert [obs["watch_id"] for obs in mock_agent._observations] == [watch_id]
+
+            mock_agent._observations.clear()
+            injector.uninject(watch_id)
+
+            assert test_module.watched_function is decorated_function
+            assert test_module.watched_function is not raw_function
+            assert getattr(test_module.watched_function, "__wrapped__") is raw_function
+            assert test_module.watched_function(3) == 31
+            assert mock_agent._observations == []
+        finally:
+            injector.uninject_all()
+            _ = sys.modules.pop("test_watch_user_decorator_boundary", None)
 
     def test_tui_short_rpc_close_keeps_watch_for_long_stream(self) -> None:
         session_id = "test_tui_watch_owner_cleanup"
