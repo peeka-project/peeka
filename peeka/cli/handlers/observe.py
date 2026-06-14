@@ -8,6 +8,7 @@ from peeka.cli.sessions import _check_agent_attached
 from peeka.cli.streaming import LimitPredicate
 from peeka.cli.streaming import counted_limit
 from peeka.cli.streaming import run_streaming_command
+from peeka.cli.streaming import stream_counted_limit
 from peeka.core.client import StreamingAgentClient
 from peeka.core.output import OutputFormatter
 
@@ -118,6 +119,14 @@ def _emit_trace_started(
 
 
 def cmd_trace(args) -> int:
+    limit_predicate, set_trace_id = stream_counted_limit("times", "watch_id")
+
+    def _emit_trace_started_with_id(
+        args: Any, response: Dict[str, Any], stream_id: Optional[str]
+    ) -> None:
+        set_trace_id(stream_id)
+        _emit_trace_started(args, response, stream_id)
+
     return _run_streaming_command(
         args,
         command_name="trace",
@@ -129,8 +138,8 @@ def cmd_trace(args) -> int:
             "action": "stop",
             "watch_id": stream_id,
         },
-        emit_started=_emit_trace_started,
-        limit_reached=counted_limit("times"),
+        emit_started=_emit_trace_started_with_id,
+        limit_reached=limit_predicate,
         allow_explicit_client=True,
     )
 
@@ -156,19 +165,27 @@ def _emit_stack_started(
 
 
 def cmd_stack(args) -> int:
+    limit_predicate, set_stack_id = stream_counted_limit("times", "watch_id")
+
+    def _emit_stack_started_with_id(
+        args: Any, response: Dict[str, Any], stream_id: Optional[str]
+    ) -> None:
+        set_stack_id(stream_id)
+        _emit_stack_started(args, response, stream_id)
+
     return _run_streaming_command(
         args,
         command_name="stack",
         start_error="Stack start failed",
         command_builder=_stack_command,
-        response_id_key="stack_id",
+        response_id_key="watch_id",
         stop_command_builder=lambda stream_id: {
             "type": "stack",
             "action": "stop",
-            "stack_id": stream_id,
+            "watch_id": stream_id,
         },
-        emit_started=_emit_stack_started,
-        limit_reached=counted_limit("times"),
+        emit_started=_emit_stack_started_with_id,
+        limit_reached=limit_predicate,
         exception_status=0,
     )
 

@@ -42,7 +42,7 @@ class MockStackStreamingClient:
     def send_command(self, command):
         self.commands_sent.append(command)
         if command.get("type") == "stack" and command.get("action") == "start":
-            return {"status": "success", "stack_id": "stack_cli_123"}
+            return {"status": "success", "watch_id": "stack_cli_123"}
         return {"status": "success"}
 
     def stream_observations(self):
@@ -73,9 +73,9 @@ def test_stack_times_limit_cli_emits_exact_n_observations_from_local_count(
     monkeypatch, capsys
 ):
     observations = [
-        {"stack_id": "stack_cli_123", "count": 5, "stack": []},
-        {"stack_id": "stack_cli_123", "count": 6, "stack": []},
-        {"stack_id": "stack_cli_123", "count": 7, "stack": []},
+        {"watch_id": "stack_cli_123", "count": 5, "stack": []},
+        {"watch_id": "stack_cli_123", "count": 6, "stack": []},
+        {"watch_id": "stack_cli_123", "count": 7, "stack": []},
     ]
     streaming_clients = []
 
@@ -96,13 +96,13 @@ def test_stack_times_limit_cli_emits_exact_n_observations_from_local_count(
 
     records = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     emitted_observations = [
-        record for record in records if record.get("stack_id") == "stack_cli_123"
+        record for record in records if record.get("watch_id") == "stack_cli_123"
     ]
 
     assert len(emitted_observations) == 2
     assert [record["count"] for record in emitted_observations] == [5, 6]
     assert streaming_clients[0].commands_sent[-2:] == [
-        {"type": "stack", "action": "stop", "stack_id": "stack_cli_123"},
+        {"type": "stack", "action": "stop", "watch_id": "stack_cli_123"},
         {"type": "reset", "action": "reset", "pattern": "module.fn"},
     ]
 
@@ -135,6 +135,69 @@ def test_stack_cli_disables_agent_times_gate(monkeypatch, capsys):
     assert agent_times == -1, (
         f"CLI stack must send times=-1 to agent (got {agent_times!r}); "
         "agent-side times gating must not limit production for CLI stack -n"
+    )
+
+
+def test_stack_cli_cleanup_uses_watch_id(monkeypatch, capsys):
+    """Regression: stack CLI cleanup must send stop with watch_id, not stack_id.
+
+    StackCommand._start_stack() returns {'watch_id': ...}; the CLI must use
+    that key for response_id_key so stream_id is truthy and cleanup fires.
+    """
+    class MockStackWatchIdClient:
+        def __init__(self, socket_path):
+            self.socket_path = socket_path
+            self.commands_sent = []
+            self.connected = False
+
+        def connect(self):
+            self.connected = True
+            return {"status": "success"}
+
+        def send_command(self, command):
+            self.commands_sent.append(command)
+            if command.get("type") == "stack" and command.get("action") == "start":
+                # Return ONLY watch_id — no stack_id, mirroring real StackCommand
+                return {"status": "success", "watch_id": "real_watch_001"}
+            return {"status": "success"}
+
+        def stream_observations(self):
+            return iter([])
+
+        def disconnect(self):
+            self.connected = False
+
+    streaming_clients = []
+
+    def build_client(socket_path):
+        client = MockStackWatchIdClient(socket_path)
+        streaming_clients.append(client)
+        return client
+
+    monkeypatch.setattr(
+        observe_cli, "_check_agent_attached", lambda: ("/tmp/peeka_stack.sock", 1234)
+    )
+    monkeypatch.setattr(observe_cli, "StreamingAgentClient", build_client)
+    monkeypatch.setattr(
+        observe_cli, "ephemeral_client", lambda target_id: MockClientSessionContext()
+    )
+
+    result = observe_cli.cmd_stack(_stack_cli_args(times=1))
+    assert result == 0
+
+    sent = streaming_clients[0].commands_sent
+    stop_commands = [c for c in sent if c.get("action") == "stop"]
+    assert stop_commands, (
+        "cleanup must send a stop command; if none sent, stream_id was None "
+        "(CLI extracted wrong response key)"
+    )
+    stop_cmd = stop_commands[0]
+    # The stop command MUST use watch_id, not stack_id
+    assert stop_cmd.get("watch_id") == "real_watch_001", (
+        f"stop command must use watch_id='real_watch_001', got: {stop_cmd!r}"
+    )
+    assert "stack_id" not in stop_cmd, (
+        f"stop command must NOT have stack_id key, got: {stop_cmd!r}"
     )
 
 
