@@ -4,7 +4,7 @@ import threading
 import time
 from pathlib import Path
 from types import ModuleType
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, cast
 
 import pytest
 
@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from peeka.core.agent import PeekaAgent
 
 
-def _assert_no_inactive_peeka_wrappers(func: Any, live_wrappers: set) -> None:
+def _assert_no_inactive_peeka_wrappers(func: Any, live_wrappers: Set[Any]) -> None:
     inner = getattr(func, "__wrapped__", None)
     if inner is None:
         return
@@ -142,7 +142,7 @@ class TestWatchOwnerCleanup:
 
             assert len(injector.list_watches()) == 2
             assert test_module.watched_function is wrapper_c
-            assert test_module.watched_function.__wrapped__ is wrapper_b
+            assert test_module.watched_function.__wrapped__ is wrapper_a
 
             mock_agent._observations.clear()
             injector.uninject(watch_c)
@@ -425,7 +425,7 @@ class TestStopOrderMatrix:
             pattern, {"trace_depth": 2, "times": -1}, force_backend=BACKEND_WRAPPER_ONLY
         )
 
-    def _live_inj_wrappers(self, injector) -> set:
+    def _live_inj_wrappers(self, injector) -> Set[Any]:
         return {info["wrapper"] for info in injector.instrumented.values()}
 
     def _assert_final_stop(self, mod, original, injector, mock_agent) -> None:

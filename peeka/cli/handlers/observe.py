@@ -23,7 +23,6 @@ def _run_streaming_command(
     emit_started,
     limit_reached: LimitPredicate,
     allow_explicit_client: bool = False,
-    reset_pattern: bool = True,
     exception_status: int = 1,
 ) -> int:
     return run_streaming_command(
@@ -41,7 +40,6 @@ def _run_streaming_command(
         target_id_resolver=_socket_path_to_target_id,
         output_formatter=OutputFormatter,
         allow_explicit_client=allow_explicit_client,
-        reset_pattern=reset_pattern,
         exception_status=exception_status,
     )
 
@@ -77,6 +75,14 @@ def _emit_watch_started(
 
 
 def cmd_watch(args) -> int:
+    limit_predicate, set_watch_id = stream_counted_limit("times", "watch_id")
+
+    def _emit_watch_started_with_id(
+        args: Any, response: Dict[str, Any], stream_id: Optional[str]
+    ) -> None:
+        set_watch_id(stream_id)
+        _emit_watch_started(args, response, stream_id)
+
     return _run_streaming_command(
         args,
         command_name="watch",
@@ -88,8 +94,8 @@ def cmd_watch(args) -> int:
             "action": "stop",
             "watch_id": stream_id,
         },
-        emit_started=_emit_watch_started,
-        limit_reached=counted_limit("times"),
+        emit_started=_emit_watch_started_with_id,
+        limit_reached=limit_predicate,
         allow_explicit_client=True,
     )
 
@@ -261,5 +267,4 @@ def cmd_top(args) -> int:
         stop_command_builder=lambda stream_id: {"type": "top", "action": "stop"},
         emit_started=_emit_top_started,
         limit_reached=counted_limit("cycles"),
-        reset_pattern=False,
     )

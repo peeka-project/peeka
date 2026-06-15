@@ -91,8 +91,8 @@ class DecoratorInjector(
             raise ValueError(f"Cannot find target: {pattern}")
 
         target_func, parent_obj, attr_name = target_info
-        is_coroutine_function = inspect.iscoroutinefunction(target_func)
         alias_bindings = self._find_module_aliases(target_func, parent_obj, attr_name)
+        is_coroutine_function = inspect.iscoroutinefunction(target_func)
 
         # Generate watch ID
         watch_id = self._generate_watch_id()
@@ -210,6 +210,7 @@ class DecoratorInjector(
             raise ValueError(f"Cannot find target: {pattern}")
 
         target_func, parent_obj, attr_name = target_info
+        alias_bindings = self._find_module_aliases(target_func, parent_obj, attr_name)
 
         # Generate watch ID
         watch_id = f"trace_{uuid.uuid4().hex[:8]}"
@@ -252,12 +253,14 @@ class DecoratorInjector(
                 "count": 0,
                 "times_limit": trace_config.get("times", -1),
                 "root_original": root_original,
+                "aliases": alias_bindings,
                 "previous_wrapper": previous_wrapper,
                 "wrapper_group_key": group_key,
             }
 
             # Replace the function
             self._replace_function(parent_obj, attr_name, wrapper)
+            self._replace_aliases(alias_bindings, wrapper)
 
         return watch_id
 

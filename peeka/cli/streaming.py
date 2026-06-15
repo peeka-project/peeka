@@ -87,9 +87,7 @@ def _client_session_context(
 def _cleanup_stream(
     client: Optional[Any],
     stream_id: Optional[str],
-    pattern: Optional[str],
     stop_command_builder: StopCommandBuilder,
-    reset_pattern: bool,
 ) -> None:
     if client is None:
         return
@@ -99,10 +97,6 @@ def _cleanup_stream(
             stop_command = stop_command_builder(stream_id)
             if stop_command:
                 client.send_command(stop_command)
-            if reset_pattern and pattern:
-                client.send_command(
-                    {"type": "reset", "action": "reset", "pattern": pattern}
-                )
     except Exception:
         pass
     finally:
@@ -125,7 +119,6 @@ def run_streaming_command(
     target_id_resolver: TargetIdResolver,
     output_formatter: Any = OutputFormatter,
     allow_explicit_client: bool = False,
-    reset_pattern: bool = True,
     exception_status: int = 1,
 ) -> int:
     """Run a start/stream/cleanup CLI command against the attached agent."""
@@ -137,15 +130,12 @@ def run_streaming_command(
 
     streaming_client: Optional[Any] = None
     stream_id: Optional[str] = None
-    pattern = getattr(args, "pattern", None)
 
     def cleanup(signum=None, frame=None):
         _cleanup_stream(
             streaming_client,
             stream_id,
-            pattern,
             stop_command_builder,
-            reset_pattern,
         )
         if signum is not None:
             sys.exit(130)
@@ -154,6 +144,7 @@ def run_streaming_command(
     signal.signal(signal.SIGTERM, cleanup)
 
     streaming_client = client_factory(socket_path)
+    assert streaming_client is not None
     connect_result = streaming_client.connect()
     if connect_result.get("status") != "success":
         output_formatter.error(
@@ -169,13 +160,14 @@ def run_streaming_command(
             ephemeral_client_factory,
             target_id_resolver,
         ) as client_session_id:
+            client = streaming_client
             command = command_builder(args, client_session_id)
-            response = streaming_client.send_command(command)
+            response = client.send_command(command)
             if response.get("status") != "success":
                 output_formatter.error(
                     command_name, error=response.get("error", start_error)
                 )
-                streaming_client.disconnect()
+                client.disconnect()
                 streaming_client = None
                 return 1
 
@@ -184,7 +176,7 @@ def run_streaming_command(
             sys.stdout.flush()
 
             try:
-                for observation in streaming_client.stream_observations():
+                for observation in client.stream_observations():
                     print(json.dumps(observation))
                     sys.stdout.flush()
                     if limit_reached(args, observation):

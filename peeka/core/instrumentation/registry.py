@@ -305,36 +305,65 @@ class InjectorRegistryMixin:
         group_key = info["wrapper_group_key"]
         remaining = self._active_probe_infos_in_group(group_key)
         current = getattr(info["parent"], info["attr_name"], None)
+        removed_wrapper = info.get("wrapper")
 
         if remaining:
-            if current is info.get("wrapper"):
+            if current is removed_wrapper:
                 replacement = self._live_previous_probe_wrapper(info, remaining)
                 self._replace_function(info["parent"], info["attr_name"], replacement)
                 self._restore_watch_aliases(info, replacement)
+            self._relink_wrapped_chain(removed_wrapper, info, remaining)
             return
 
         replacement = info.get("root_original", info["original"])
-        if current is info.get("wrapper"):
+        if current is removed_wrapper:
             self._replace_function(info["parent"], info["attr_name"], replacement)
             self._restore_watch_aliases(info, replacement)
+        self._relink_wrapped_chain(removed_wrapper, info, [])
+
+    def _relink_wrapped_chain(
+        self,
+        removed_wrapper: Any,
+        removed_info: Dict[str, Any],
+        remaining: List[Dict[str, Any]],
+    ) -> None:
+        """Sever stale __wrapped__ links on live wrappers pointing at removed_wrapper."""
+        if removed_wrapper is None:
+            return
+
+        root = removed_info.get("root_original", removed_info["original"])
+        new_target = self._live_previous_probe_wrapper(removed_info, remaining)
+        if new_target is removed_wrapper:
+            new_target = root
+
+        for active_info in remaining:
+            active_wrapper = active_info["wrapper"]
+            if getattr(active_wrapper, "__wrapped__", None) is removed_wrapper:
+                try:
+                    active_wrapper.__wrapped__ = new_target
+                except (AttributeError, TypeError):
+                    pass
 
     def _live_previous_probe_wrapper(
         self,
         removed_info: Dict[str, Any],
         remaining: List[Dict[str, Any]],
     ) -> Callable[..., Any]:
-        """Return the nearest still-registered wrapper below a removed probe."""
+        """Return the nearest still-registered Peeka wrapper below a removed probe."""
         live_wrappers = {active_info["wrapper"] for active_info in remaining}
         candidate = getattr(removed_info.get("wrapper"), "__wrapped__", None)
+        visited = set()
 
-        while candidate is not None:
+        for _ in range(32):
+            if candidate is None:
+                break
+            candidate_id = id(candidate)
+            if candidate_id in visited:
+                break
+            visited.add(candidate_id)
             if candidate in live_wrappers:
                 return candidate
-
-            next_candidate = getattr(candidate, "__wrapped__", None)
-            if next_candidate is candidate:
-                break
-            candidate = next_candidate
+            break
 
         return removed_info.get("root_original", removed_info["original"])
 

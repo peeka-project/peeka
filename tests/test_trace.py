@@ -115,10 +115,11 @@ def test_trace_times_limit_cli_emits_exact_n_observations_from_local_count(
 
     assert len(emitted_observations) == 2
     assert [record["count"] for record in emitted_observations] == [5, 6]
-    assert streaming_clients[0].commands_sent[-2:] == [
-        {"type": "trace", "action": "stop", "watch_id": "trace_cli_123"},
-        {"type": "reset", "action": "reset", "pattern": "module.fn"},
-    ]
+    assert streaming_clients[0].commands_sent[-1] == {
+        "type": "trace",
+        "action": "stop",
+        "watch_id": "trace_cli_123",
+    }
 
 
 def test_trace_cli_disables_agent_times_gate(monkeypatch, capsys):

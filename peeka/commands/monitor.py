@@ -216,6 +216,40 @@ class MonitorCommand(BaseCommand):
             candidate = next_candidate
         return None
 
+    def _retarget_wrapper_func(
+        self, wrapper: Any, old_target: Any, new_target: Any
+    ) -> None:
+        """Retarget a live Peeka wrapper that directly called a removed wrapper."""
+        if getattr(wrapper, "__wrapped__", None) is old_target:
+            try:
+                wrapper.__wrapped__ = new_target
+            except Exception:
+                pass
+
+        closure = getattr(wrapper, "__closure__", None)
+        code = getattr(wrapper, "__code__", None)
+        if closure is None or code is None:
+            return
+
+        for name, cell in zip(code.co_freevars, closure):
+            try:
+                cell_value = cell.cell_contents
+            except ValueError:
+                continue
+
+            if name == "func" and cell_value is old_target:
+                try:
+                    cell.cell_contents = new_target
+                except Exception:
+                    pass
+            elif name == "self":
+                factory_func = getattr(cell_value, "func", None)
+                if factory_func is old_target:
+                    try:
+                        cell_value.func = new_target
+                    except Exception:
+                        pass
+
     def _periodic_output_loop(
         self, watch_id: str, cycle: int, cycles: int, stop_event: threading.Event
     ) -> None:
@@ -343,39 +377,8 @@ class MonitorCommand(BaseCommand):
             if timer_thread:
                 timer_thread.join(timeout=2)
 
-            for active_monitor in self._monitors.values():
-                if active_monitor.get("original") is monitor_info["wrapper"]:
-                    active_monitor["original"] = monitor_info["original"]
-                    if active_monitor.get("owned_root_original") is None:
-                        active_monitor["owned_root_original"] = monitor_info.get(
-                            "owned_root_original"
-                        )
-                elif active_monitor.get("owned_root_original") is monitor_info[
-                    "wrapper"
-                ]:
-                    active_monitor["owned_root_original"] = (
-                        monitor_info.get("owned_root_original")
-                        or monitor_info["original"]
-                    )
-
             injector = getattr(self.agent, "injector", None)
             instrumented = getattr(injector, "instrumented", {})
-            if isinstance(instrumented, dict):
-                for active_probe in instrumented.values():
-                    for key in ("original", "previous_wrapper", "root_original"):
-                        if active_probe.get(key) is monitor_info["wrapper"]:
-                            if (
-                                key == "root_original"
-                                and monitor_info["original"] is active_probe.get("wrapper")
-                            ):
-                                continue
-                            if key == "root_original":
-                                active_probe[key] = (
-                                    monitor_info.get("owned_root_original")
-                                    or monitor_info["original"]
-                                )
-                            else:
-                                active_probe[key] = monitor_info["original"]
 
             active_monitor_wrappers = set()
             for active_monitor in self._monitors.values():
@@ -394,10 +397,60 @@ class MonitorCommand(BaseCommand):
             if lower_live is not None:
                 replacement = lower_live
             else:
-                replacement = monitor_info["original"]
-                owned_root_original = monitor_info.get("owned_root_original")
-                if replacement not in all_live_wrappers and owned_root_original is not None:
-                    replacement = owned_root_original
+                original = monitor_info["original"]
+                if original in all_live_wrappers:
+                    replacement = original
+                else:
+                    owned_root_original = monitor_info.get("owned_root_original")
+                    if (
+                        owned_root_original is not None
+                        and owned_root_original not in all_live_wrappers
+                    ):
+                        replacement = owned_root_original
+                    else:
+                        replacement = original
+
+            for active_monitor in self._monitors.values():
+                if active_monitor.get("original") is monitor_info["wrapper"]:
+                    self._retarget_wrapper_func(
+                        active_monitor.get("wrapper"),
+                        monitor_info["wrapper"],
+                        replacement,
+                    )
+                    active_monitor["original"] = replacement
+                    if active_monitor.get("owned_root_original") is None:
+                        active_monitor["owned_root_original"] = monitor_info.get(
+                            "owned_root_original"
+                        )
+                elif active_monitor.get("owned_root_original") is monitor_info[
+                    "wrapper"
+                ]:
+                    active_monitor["owned_root_original"] = (
+                        monitor_info.get("owned_root_original")
+                        or monitor_info["original"]
+                    )
+
+            if isinstance(instrumented, dict):
+                for active_probe in instrumented.values():
+                    for key in ("original", "previous_wrapper", "root_original"):
+                        if active_probe.get(key) is monitor_info["wrapper"]:
+                            if (
+                                key == "root_original"
+                                and monitor_info["original"] is active_probe.get("wrapper")
+                            ):
+                                continue
+                            if key == "root_original":
+                                active_probe[key] = (
+                                    monitor_info.get("owned_root_original")
+                                    or replacement
+                                )
+                            else:
+                                self._retarget_wrapper_func(
+                                    active_probe.get("wrapper"),
+                                    monitor_info["wrapper"],
+                                    replacement,
+                                )
+                                active_probe[key] = replacement
 
             try:
                 current = getattr(monitor_info["parent"], monitor_info["attr_name"])
