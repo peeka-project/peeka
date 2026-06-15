@@ -15,6 +15,20 @@ from peeka.commands.monitor import MonitorCommand
 from peeka.core.runtime.compat import BACKEND_WRAPPER_ONLY
 
 
+def _assert_no_inactive_peeka_wrappers(func: Any, live_wrappers: set) -> None:
+    inner = getattr(func, "__wrapped__", None)
+    if inner is None:
+        return
+    if inner in live_wrappers:
+        return
+    stale_next = getattr(inner, "__wrapped__", None)
+    assert stale_next is None, (
+        f"Inactive Peeka wrapper at depth 1: {func!r}.__wrapped__ = "
+        f"{inner!r} (not live, but has __wrapped__ = {stale_next!r}). "
+        f"Live wrappers: {live_wrappers}"
+    )
+
+
 class MockAgent:
     """Mock agent for testing commands without full PeekaAgent setup."""
 
@@ -1320,3 +1334,830 @@ class TestMonitorUserDecoratorPreservation:
                 monitor_cmd.execute({"action": "stop", "watch_id": second_id})
         finally:
             self._cleanup_module(module_name)
+
+    def test_monitor_start_stop_restores_decorated_callable(self):
+        """Regression: monitor stop must restore decorated wrapper identity, not raw inner."""
+        agent, monitor_cmd = self._build_monitor_cmd()
+        module_name = "test_monitor_start_stop_restores_decorated_callable"
+        call_log = []
+
+        def log_calls(fn):
+            @functools.wraps(fn)
+            def wrapper(*args, **kwargs):
+                call_log.append(args)
+                return fn(*args, **kwargs)
+
+            return wrapper
+
+        def raw_fn(value):
+            return value * 3
+
+        decorated_fn = log_calls(raw_fn)
+        module = self._register_module(module_name, decorated_fn)
+        watch_id = None
+
+        try:
+            start = monitor_cmd.execute(
+                {"action": "start", "pattern": f"{module_name}.fn", "cycle": 60}
+            )
+            assert start["status"] == "success"
+            watch_id = start["watch_id"]
+
+            assert module.fn(2) == 6
+            monitor_cmd.execute({"action": "stop", "watch_id": watch_id})
+            watch_id = None
+
+            assert getattr(module, "fn") is decorated_fn, (
+                "monitor stop must restore decorated wrapper, not bypass it"
+            )
+            assert getattr(module, "fn") is not raw_fn, (
+                "raw inner function must not be exposed as canonical after monitor stop"
+            )
+            call_log.clear()
+            assert module.fn(4) == 12
+            assert call_log == [(4,)], "decorator behavior must be intact after monitor stop"
+        finally:
+            if watch_id is not None and watch_id in monitor_cmd._monitors:
+                monitor_cmd.execute({"action": "stop", "watch_id": watch_id})
+            self._cleanup_module(module_name)
+
+    def test_watch_trace_mixed_with_decorated_callable(self):
+        """Regression: after watch+trace both stop on user-decorated callable, decorated wrapper must be canonical."""
+        from peeka.core.injector import DecoratorInjector
+
+        module_name = "test_watch_trace_mixed_with_decorated_callable"
+        call_log = []
+
+        def tracking_decorator(fn):
+            @functools.wraps(fn)
+            def wrapper(*args, **kwargs):
+                call_log.append(("tracked",) + args)
+                return fn(*args, **kwargs)
+
+            return wrapper
+
+        def raw_fn(value):
+            return value + 7
+
+        decorated_fn = tracking_decorator(raw_fn)
+        module = ModuleType(module_name)
+        setattr(module, "fn", decorated_fn)
+        sys.modules[module_name] = module
+
+        agent = MockAgent()
+        injector = DecoratorInjector(agent)  # pyright: ignore[reportArgumentType]
+        agent.injector = injector
+        watch_id = None
+        trace_id = None
+
+        try:
+            pattern = f"{module_name}.fn"
+            watch_id = injector.inject(pattern, {"depth": 2, "times": -1})
+            trace_id = injector.inject_trace(
+                pattern,
+                {"trace_depth": 2, "times": -1},
+                force_backend=BACKEND_WRAPPER_ONLY,
+            )
+
+            injector.uninject(watch_id)
+            watch_id = None
+
+            trace_wrapper = injector.instrumented[trace_id]["wrapper"]
+            assert getattr(module, "fn") is trace_wrapper, (
+                "canonical must route through active trace wrapper after watch stop"
+            )
+
+            injector.uninject(trace_id)
+            trace_id = None
+
+            assert getattr(module, "fn") is decorated_fn, (
+                "trace stop must restore decorated wrapper, not bypass it"
+            )
+            assert getattr(module, "fn") is not raw_fn, (
+                "raw inner function must not be exposed as canonical after all probes stop"
+            )
+            call_log.clear()
+            assert module.fn(3) == 10
+            assert call_log == [("tracked", 3)], (
+                "decorator behavior must be intact after all probes stop"
+            )
+        finally:
+            if watch_id is not None and watch_id in injector.instrumented:
+                injector.uninject(watch_id)
+            if trace_id is not None and trace_id in injector.instrumented:
+                injector.uninject(trace_id)
+            injector.uninject_all()
+            setattr(module, "fn", decorated_fn)
+            sys.modules.pop(module_name, None)
+
+    def test_reset_with_decorated_callable_restores_decorated(self):
+        """Regression: ResetCommand must restore decorated callable, not inner raw function."""
+        from peeka.commands.reset import ResetCommand
+        from peeka.core.injector import DecoratorInjector
+
+        module_name = "test_reset_with_decorated_callable_restores_decorated"
+        call_log = []
+
+        def audit_decorator(fn):
+            @functools.wraps(fn)
+            def wrapper(*args, **kwargs):
+                call_log.append(("audit",) + args)
+                return fn(*args, **kwargs)
+
+            return wrapper
+
+        def raw_fn(value):
+            return value * 2
+
+        decorated_fn = audit_decorator(raw_fn)
+        module = self._register_module(module_name, decorated_fn)
+
+        agent = MockAgent()
+        injector = DecoratorInjector(agent)  # pyright: ignore[reportArgumentType]
+        agent.injector = injector
+        monitor_cmd = MonitorCommand(agent)  # pyright: ignore[reportArgumentType]
+        agent.monitor_cmd = monitor_cmd  # type: ignore[attr-defined]
+        reset_cmd = ResetCommand(agent)  # pyright: ignore[reportArgumentType]
+
+        try:
+            pattern = f"{module_name}.fn"
+            start = monitor_cmd.execute(
+                {"action": "start", "pattern": pattern, "cycle": 60}
+            )
+            assert start["status"] == "success"
+
+            assert module.fn(5) == 10
+            reset_result = reset_cmd.execute({"action": "reset", "pattern": pattern})
+            assert reset_result["status"] == "success"
+
+            assert getattr(module, "fn") is decorated_fn, (
+                "reset must restore decorated wrapper, not bypass it"
+            )
+            assert getattr(module, "fn") is not raw_fn, (
+                "raw inner function must not be exposed as canonical after reset"
+            )
+            call_log.clear()
+            assert module.fn(3) == 6
+            assert call_log == [("audit", 3)], (
+                "decorator behavior must be intact after reset"
+            )
+        finally:
+            self._cleanup_module(module_name)
+
+    def test_user_decorator_preserved_after_multiple_stops(self):
+        """Regression: decorated callable must survive multiple sequential monitor stops."""
+        agent, monitor_cmd = self._build_monitor_cmd()
+        module_name = "test_user_decorator_preserved_after_multiple_stops"
+        call_log = []
+
+        def counting_decorator(fn):
+            @functools.wraps(fn)
+            def wrapper(*args, **kwargs):
+                call_log.append(args)
+                return fn(*args, **kwargs)
+
+            return wrapper
+
+        def raw_fn(value):
+            return value + 1
+
+        decorated_fn = counting_decorator(raw_fn)
+        module = self._register_module(module_name, decorated_fn)
+        monitor_a_id = None
+        monitor_b_id = None
+        monitor_c_id = None
+
+        try:
+            pattern = f"{module_name}.fn"
+
+            start_a = monitor_cmd.execute(
+                {"action": "start", "pattern": pattern, "cycle": 60}
+            )
+            assert start_a["status"] == "success"
+            monitor_a_id = start_a["watch_id"]
+
+            start_b = monitor_cmd.execute(
+                {"action": "start", "pattern": pattern, "cycle": 60}
+            )
+            assert start_b["status"] == "success"
+            monitor_b_id = start_b["watch_id"]
+
+            start_c = monitor_cmd.execute(
+                {"action": "start", "pattern": pattern, "cycle": 60}
+            )
+            assert start_c["status"] == "success"
+            monitor_c_id = start_c["watch_id"]
+
+            assert module.fn(1) == 2
+
+            monitor_cmd.execute({"action": "stop", "watch_id": monitor_a_id})
+            monitor_a_id = None
+            assert module.fn(2) == 3
+
+            monitor_cmd.execute({"action": "stop", "watch_id": monitor_b_id})
+            monitor_b_id = None
+            assert module.fn(3) == 4
+
+            monitor_cmd.execute({"action": "stop", "watch_id": monitor_c_id})
+            monitor_c_id = None
+
+            assert getattr(module, "fn") is decorated_fn, (
+                "decorated callable must be restored after all monitors stop"
+            )
+            assert getattr(module, "fn") is not raw_fn, (
+                "raw inner function must not be exposed as canonical after all monitors stop"
+            )
+            call_log.clear()
+            assert module.fn(5) == 6
+            assert call_log == [(5,)], "decorator behavior must be intact after all stops"
+        finally:
+            for mid in (monitor_a_id, monitor_b_id, monitor_c_id):
+                if mid is not None and mid in monitor_cmd._monitors:
+                    monitor_cmd.execute({"action": "stop", "watch_id": mid})
+            self._cleanup_module(module_name)
+
+
+class TestStopOrderMatrix:
+    def _build_tools(self):
+        from peeka.core.injector import DecoratorInjector
+
+        agent = MockAgent()
+        injector = DecoratorInjector(agent)  # pyright: ignore[reportArgumentType]
+        agent.injector = injector
+        monitor_cmd = MonitorCommand(agent)  # pyright: ignore[reportArgumentType]
+        return agent, injector, monitor_cmd
+
+    def _make_target(self, module_name: str):
+        def target_fn(value: int) -> int:
+            return value + 10
+
+        mod = ModuleType(module_name)
+        setattr(mod, "target_fn", target_fn)
+        sys.modules[module_name] = mod
+        return mod, target_fn
+
+    def _start_watch(self, injector, pattern: str) -> str:
+        return injector.inject(pattern, {"depth": 2, "times": -1})
+
+    def _start_trace(self, injector, pattern: str) -> str:
+        return injector.inject_trace(
+            pattern, {"trace_depth": 2, "times": -1}, force_backend=BACKEND_WRAPPER_ONLY
+        )
+
+    def _start_stack(self, injector, pattern: str) -> str:
+        return injector.inject(pattern, {"depth": 2, "times": -1, "stack_depth": 3})
+
+    def _start_monitor(self, monitor_cmd, pattern: str) -> str:
+        result = monitor_cmd.execute({"action": "start", "pattern": pattern, "cycle": 60})
+        assert result["status"] == "success"
+        return cast(str, result["watch_id"])
+
+    def _stop_monitor(self, monitor_cmd, monitor_id: str) -> None:
+        result = monitor_cmd.execute({"action": "stop", "watch_id": monitor_id})
+        assert result["status"] == "success"
+
+    def _live_wrappers(self, injector, monitor_cmd) -> set:
+        inj = {info["wrapper"] for info in injector.instrumented.values()}
+        mon = {info["wrapper"] for info in monitor_cmd._monitors.values()}
+        return inj | mon
+
+    def _assert_final_stop(self, mod, original, injector, monitor_cmd) -> None:
+        assert not injector.instrumented, (
+            f"injector still has entries: {list(injector.instrumented)}"
+        )
+        assert not monitor_cmd._monitors, (
+            f"monitor_cmd still has entries: {list(monitor_cmd._monitors)}"
+        )
+        assert getattr(mod, "target_fn") is original, (
+            f"canonical not restored: got {getattr(mod, 'target_fn')!r}"
+        )
+        _assert_no_inactive_peeka_wrappers(getattr(mod, "target_fn"), set())
+
+    def test_stop_order_monitor_monitor_stop_a_then_b(self) -> None:
+        agent, injector, monitor_cmd = self._build_tools()
+        module_name = "test_stop_order_mon_mon_ab"
+        mod, original = self._make_target(module_name)
+        pattern = f"{module_name}.target_fn"
+        monitor_a = monitor_b = None
+        try:
+            monitor_a = self._start_monitor(monitor_cmd, pattern)
+            monitor_b = self._start_monitor(monitor_cmd, pattern)
+
+            assert mod.target_fn(1) == 11
+            assert monitor_cmd.manager.get_stats(monitor_a)["total"] == 1
+            assert monitor_cmd.manager.get_stats(monitor_b)["total"] == 1
+
+            self._stop_monitor(monitor_cmd, monitor_a)
+            monitor_a = None
+
+            live = self._live_wrappers(injector, monitor_cmd)
+            _assert_no_inactive_peeka_wrappers(getattr(mod, "target_fn"), live)
+            assert monitor_cmd.manager.get_stats(monitor_b) is not None
+
+            assert mod.target_fn(2) == 12
+            assert monitor_cmd.manager.get_stats(monitor_b)["total"] == 2
+
+            self._stop_monitor(monitor_cmd, monitor_b)
+            monitor_b = None
+
+            self._assert_final_stop(mod, original, injector, monitor_cmd)
+            assert mod.target_fn(3) == 13
+        finally:
+            for mid in (monitor_a, monitor_b):
+                if mid and mid in monitor_cmd._monitors:
+                    monitor_cmd.execute({"action": "stop", "watch_id": mid})
+            sys.modules.pop(module_name, None)
+
+    def test_stop_order_monitor_monitor_stop_b_then_a(self) -> None:
+        agent, injector, monitor_cmd = self._build_tools()
+        module_name = "test_stop_order_mon_mon_ba"
+        mod, original = self._make_target(module_name)
+        pattern = f"{module_name}.target_fn"
+        monitor_a = monitor_b = None
+        try:
+            monitor_a = self._start_monitor(monitor_cmd, pattern)
+            monitor_b = self._start_monitor(monitor_cmd, pattern)
+
+            assert mod.target_fn(1) == 11
+            assert monitor_cmd.manager.get_stats(monitor_a)["total"] == 1
+            assert monitor_cmd.manager.get_stats(monitor_b)["total"] == 1
+
+            self._stop_monitor(monitor_cmd, monitor_b)
+            monitor_b = None
+
+            live = self._live_wrappers(injector, monitor_cmd)
+            _assert_no_inactive_peeka_wrappers(getattr(mod, "target_fn"), live)
+            assert monitor_cmd.manager.get_stats(monitor_a) is not None
+
+            assert mod.target_fn(2) == 12
+            assert monitor_cmd.manager.get_stats(monitor_a)["total"] == 2
+
+            self._stop_monitor(monitor_cmd, monitor_a)
+            monitor_a = None
+
+            self._assert_final_stop(mod, original, injector, monitor_cmd)
+            assert mod.target_fn(3) == 13
+        finally:
+            for mid in (monitor_a, monitor_b):
+                if mid and mid in monitor_cmd._monitors:
+                    monitor_cmd.execute({"action": "stop", "watch_id": mid})
+            sys.modules.pop(module_name, None)
+
+    def test_stop_order_monitor_watch_stop_monitor_then_watch(self) -> None:
+        agent, injector, monitor_cmd = self._build_tools()
+        module_name = "test_stop_order_mon_watch_mw"
+        mod, original = self._make_target(module_name)
+        pattern = f"{module_name}.target_fn"
+        monitor_id = watch_id = None
+        try:
+            monitor_id = self._start_monitor(monitor_cmd, pattern)
+            watch_id = self._start_watch(injector, pattern)
+
+            assert mod.target_fn(1) == 11
+            assert monitor_cmd.manager.get_stats(monitor_id)["total"] == 1
+            assert [o["watch_id"] for o in agent._observations] == [watch_id]
+
+            agent._observations.clear()
+            self._stop_monitor(monitor_cmd, monitor_id)
+            monitor_id = None
+
+            live = self._live_wrappers(injector, monitor_cmd)
+            _assert_no_inactive_peeka_wrappers(getattr(mod, "target_fn"), live)
+            assert not monitor_cmd._monitors
+
+            assert mod.target_fn(2) == 12
+            assert [o["watch_id"] for o in agent._observations] == [watch_id]
+
+            agent._observations.clear()
+            injector.uninject(watch_id)
+            watch_id = None
+
+            self._assert_final_stop(mod, original, injector, monitor_cmd)
+            assert mod.target_fn(3) == 13
+        finally:
+            if watch_id and watch_id in injector.instrumented:
+                injector.uninject(watch_id)
+            if monitor_id and monitor_id in monitor_cmd._monitors:
+                monitor_cmd.execute({"action": "stop", "watch_id": monitor_id})
+            sys.modules.pop(module_name, None)
+
+    def test_stop_order_monitor_watch_stop_watch_then_monitor(self) -> None:
+        agent, injector, monitor_cmd = self._build_tools()
+        module_name = "test_stop_order_mon_watch_wm"
+        mod, original = self._make_target(module_name)
+        pattern = f"{module_name}.target_fn"
+        monitor_id = watch_id = None
+        try:
+            monitor_id = self._start_monitor(monitor_cmd, pattern)
+            watch_id = self._start_watch(injector, pattern)
+
+            assert mod.target_fn(1) == 11
+            assert monitor_cmd.manager.get_stats(monitor_id)["total"] == 1
+            assert [o["watch_id"] for o in agent._observations] == [watch_id]
+
+            agent._observations.clear()
+            injector.uninject(watch_id)
+            watch_id = None
+
+            live = self._live_wrappers(injector, monitor_cmd)
+            _assert_no_inactive_peeka_wrappers(getattr(mod, "target_fn"), live)
+            assert not injector.instrumented
+
+            assert mod.target_fn(2) == 12
+            assert agent._observations == []
+            assert monitor_cmd.manager.get_stats(monitor_id)["total"] == 2
+
+            self._stop_monitor(monitor_cmd, monitor_id)
+            monitor_id = None
+
+            self._assert_final_stop(mod, original, injector, monitor_cmd)
+            assert mod.target_fn(3) == 13
+        finally:
+            if watch_id and watch_id in injector.instrumented:
+                injector.uninject(watch_id)
+            if monitor_id and monitor_id in monitor_cmd._monitors:
+                monitor_cmd.execute({"action": "stop", "watch_id": monitor_id})
+            sys.modules.pop(module_name, None)
+
+    def test_stop_order_monitor_trace_stop_monitor_then_trace(self) -> None:
+        agent, injector, monitor_cmd = self._build_tools()
+        module_name = "test_stop_order_mon_trace_mt"
+        mod, original = self._make_target(module_name)
+        pattern = f"{module_name}.target_fn"
+        monitor_id = trace_id = None
+        try:
+            monitor_id = self._start_monitor(monitor_cmd, pattern)
+            trace_id = self._start_trace(injector, pattern)
+
+            assert mod.target_fn(1) == 11
+            assert monitor_cmd.manager.get_stats(monitor_id)["total"] == 1
+            assert [o["watch_id"] for o in agent._observations] == [trace_id]
+
+            agent._observations.clear()
+            self._stop_monitor(monitor_cmd, monitor_id)
+            monitor_id = None
+
+            live = self._live_wrappers(injector, monitor_cmd)
+            _assert_no_inactive_peeka_wrappers(getattr(mod, "target_fn"), live)
+            assert not monitor_cmd._monitors
+
+            assert mod.target_fn(2) == 12
+            assert [o["watch_id"] for o in agent._observations] == [trace_id]
+
+            agent._observations.clear()
+            injector.uninject(trace_id)
+            trace_id = None
+
+            self._assert_final_stop(mod, original, injector, monitor_cmd)
+            assert mod.target_fn(3) == 13
+        finally:
+            if trace_id and trace_id in injector.instrumented:
+                injector.uninject(trace_id)
+            if monitor_id and monitor_id in monitor_cmd._monitors:
+                monitor_cmd.execute({"action": "stop", "watch_id": monitor_id})
+            sys.modules.pop(module_name, None)
+
+    def test_stop_order_monitor_trace_stop_trace_then_monitor(self) -> None:
+        agent, injector, monitor_cmd = self._build_tools()
+        module_name = "test_stop_order_mon_trace_tm"
+        mod, original = self._make_target(module_name)
+        pattern = f"{module_name}.target_fn"
+        monitor_id = trace_id = None
+        try:
+            monitor_id = self._start_monitor(monitor_cmd, pattern)
+            trace_id = self._start_trace(injector, pattern)
+
+            assert mod.target_fn(1) == 11
+            assert monitor_cmd.manager.get_stats(monitor_id)["total"] == 1
+            assert [o["watch_id"] for o in agent._observations] == [trace_id]
+
+            agent._observations.clear()
+            injector.uninject(trace_id)
+            trace_id = None
+
+            live = self._live_wrappers(injector, monitor_cmd)
+            _assert_no_inactive_peeka_wrappers(getattr(mod, "target_fn"), live)
+            assert not injector.instrumented
+
+            assert mod.target_fn(2) == 12
+            assert agent._observations == []
+            assert monitor_cmd.manager.get_stats(monitor_id)["total"] == 2
+
+            self._stop_monitor(monitor_cmd, monitor_id)
+            monitor_id = None
+
+            self._assert_final_stop(mod, original, injector, monitor_cmd)
+            assert mod.target_fn(3) == 13
+        finally:
+            if trace_id and trace_id in injector.instrumented:
+                injector.uninject(trace_id)
+            if monitor_id and monitor_id in monitor_cmd._monitors:
+                monitor_cmd.execute({"action": "stop", "watch_id": monitor_id})
+            sys.modules.pop(module_name, None)
+
+    def test_stop_order_monitor_stack_stop_monitor_then_stack(self) -> None:
+        agent, injector, monitor_cmd = self._build_tools()
+        module_name = "test_stop_order_mon_stack_ms"
+        mod, original = self._make_target(module_name)
+        pattern = f"{module_name}.target_fn"
+        monitor_id = stack_id = None
+        try:
+            monitor_id = self._start_monitor(monitor_cmd, pattern)
+            stack_id = self._start_stack(injector, pattern)
+
+            assert mod.target_fn(1) == 11
+            assert monitor_cmd.manager.get_stats(monitor_id)["total"] == 1
+            assert [o["watch_id"] for o in agent._observations] == [stack_id]
+
+            agent._observations.clear()
+            self._stop_monitor(monitor_cmd, monitor_id)
+            monitor_id = None
+
+            live = self._live_wrappers(injector, monitor_cmd)
+            _assert_no_inactive_peeka_wrappers(getattr(mod, "target_fn"), live)
+            assert not monitor_cmd._monitors
+
+            assert mod.target_fn(2) == 12
+            assert [o["watch_id"] for o in agent._observations] == [stack_id]
+
+            agent._observations.clear()
+            injector.uninject(stack_id)
+            stack_id = None
+
+            self._assert_final_stop(mod, original, injector, monitor_cmd)
+            assert mod.target_fn(3) == 13
+        finally:
+            if stack_id and stack_id in injector.instrumented:
+                injector.uninject(stack_id)
+            if monitor_id and monitor_id in monitor_cmd._monitors:
+                monitor_cmd.execute({"action": "stop", "watch_id": monitor_id})
+            sys.modules.pop(module_name, None)
+
+    def test_stop_order_stack_above_monitor(self) -> None:
+        agent, injector, monitor_cmd = self._build_tools()
+        module_name = "test_stop_order_stack_above_mon"
+        mod, original = self._make_target(module_name)
+        pattern = f"{module_name}.target_fn"
+        monitor_id = stack_id = None
+        try:
+            monitor_id = self._start_monitor(monitor_cmd, pattern)
+            monitor_wrapper = getattr(mod, "target_fn")
+            assert monitor_wrapper is not original
+
+            stack_id = self._start_stack(injector, pattern)
+            assert getattr(mod, "target_fn") is not monitor_wrapper
+
+            assert mod.target_fn(1) == 11
+            assert monitor_cmd.manager.get_stats(monitor_id)["total"] == 1
+            assert [o["watch_id"] for o in agent._observations] == [stack_id]
+
+            agent._observations.clear()
+            injector.uninject(stack_id)
+            stack_id = None
+
+            assert not injector.instrumented
+            assert getattr(mod, "target_fn") is monitor_wrapper
+            live = self._live_wrappers(injector, monitor_cmd)
+            _assert_no_inactive_peeka_wrappers(getattr(mod, "target_fn"), live)
+
+            assert mod.target_fn(2) == 12
+            assert agent._observations == []
+            assert monitor_cmd.manager.get_stats(monitor_id)["total"] == 2
+
+            self._stop_monitor(monitor_cmd, monitor_id)
+            monitor_id = None
+
+            self._assert_final_stop(mod, original, injector, monitor_cmd)
+            assert mod.target_fn(3) == 13
+        finally:
+            if stack_id and stack_id in injector.instrumented:
+                injector.uninject(stack_id)
+            if monitor_id and monitor_id in monitor_cmd._monitors:
+                monitor_cmd.execute({"action": "stop", "watch_id": monitor_id})
+            sys.modules.pop(module_name, None)
+
+    def test_stop_order_watch_monitor_trace_forward(self) -> None:
+        agent, injector, monitor_cmd = self._build_tools()
+        module_name = "test_stop_order_watch_mon_trace_fwd"
+        mod, original = self._make_target(module_name)
+        pattern = f"{module_name}.target_fn"
+        watch_id = monitor_id = trace_id = None
+        try:
+            watch_id = self._start_watch(injector, pattern)
+            monitor_id = self._start_monitor(monitor_cmd, pattern)
+            trace_id = self._start_trace(injector, pattern)
+
+            assert mod.target_fn(1) == 11
+            assert monitor_cmd.manager.get_stats(monitor_id)["total"] == 1
+            assert {o["watch_id"] for o in agent._observations} == {watch_id, trace_id}
+
+            agent._observations.clear()
+            injector.uninject(watch_id)
+            watch_id = None
+
+            live = self._live_wrappers(injector, monitor_cmd)
+            _assert_no_inactive_peeka_wrappers(getattr(mod, "target_fn"), live)
+            assert watch_id not in injector.instrumented
+
+            assert mod.target_fn(2) == 12
+            assert monitor_cmd.manager.get_stats(monitor_id)["total"] == 2
+            assert {o["watch_id"] for o in agent._observations} == {trace_id}
+
+            agent._observations.clear()
+            self._stop_monitor(monitor_cmd, monitor_id)
+            monitor_id = None
+
+            live = self._live_wrappers(injector, monitor_cmd)
+            _assert_no_inactive_peeka_wrappers(getattr(mod, "target_fn"), live)
+            assert not monitor_cmd._monitors
+
+            assert mod.target_fn(3) == 13
+            assert {o["watch_id"] for o in agent._observations} == {trace_id}
+
+            agent._observations.clear()
+            injector.uninject(trace_id)
+            trace_id = None
+
+            self._assert_final_stop(mod, original, injector, monitor_cmd)
+            assert mod.target_fn(4) == 14
+        finally:
+            if watch_id and watch_id in injector.instrumented:
+                injector.uninject(watch_id)
+            if trace_id and trace_id in injector.instrumented:
+                injector.uninject(trace_id)
+            if monitor_id and monitor_id in monitor_cmd._monitors:
+                monitor_cmd.execute({"action": "stop", "watch_id": monitor_id})
+            injector.uninject_all()
+            sys.modules.pop(module_name, None)
+
+    def test_stop_order_watch_monitor_trace_reverse(self) -> None:
+        agent, injector, monitor_cmd = self._build_tools()
+        module_name = "test_stop_order_watch_mon_trace_rev"
+        mod, original = self._make_target(module_name)
+        pattern = f"{module_name}.target_fn"
+        watch_id = monitor_id = trace_id = None
+        try:
+            watch_id = self._start_watch(injector, pattern)
+            monitor_id = self._start_monitor(monitor_cmd, pattern)
+            trace_id = self._start_trace(injector, pattern)
+
+            assert mod.target_fn(1) == 11
+            assert monitor_cmd.manager.get_stats(monitor_id)["total"] == 1
+            assert {o["watch_id"] for o in agent._observations} == {watch_id, trace_id}
+
+            agent._observations.clear()
+            injector.uninject(trace_id)
+            trace_id = None
+
+            live = self._live_wrappers(injector, monitor_cmd)
+            _assert_no_inactive_peeka_wrappers(getattr(mod, "target_fn"), live)
+
+            assert mod.target_fn(2) == 12
+            assert {o["watch_id"] for o in agent._observations} == {watch_id}
+
+            agent._observations.clear()
+            self._stop_monitor(monitor_cmd, monitor_id)
+            monitor_id = None
+
+            live = self._live_wrappers(injector, monitor_cmd)
+            _assert_no_inactive_peeka_wrappers(getattr(mod, "target_fn"), live)
+            assert not monitor_cmd._monitors
+
+            assert mod.target_fn(3) == 13
+            assert {o["watch_id"] for o in agent._observations} == {watch_id}
+
+            agent._observations.clear()
+            injector.uninject(watch_id)
+            watch_id = None
+
+            self._assert_final_stop(mod, original, injector, monitor_cmd)
+            assert mod.target_fn(4) == 14
+        finally:
+            if watch_id and watch_id in injector.instrumented:
+                injector.uninject(watch_id)
+            if trace_id and trace_id in injector.instrumented:
+                injector.uninject(trace_id)
+            if monitor_id and monitor_id in monitor_cmd._monitors:
+                monitor_cmd.execute({"action": "stop", "watch_id": monitor_id})
+            injector.uninject_all()
+            sys.modules.pop(module_name, None)
+
+    def test_stop_order_monitor_watch_monitor(self) -> None:
+        agent, injector, monitor_cmd = self._build_tools()
+        module_name = "test_stop_order_mon_watch_mon"
+        mod, original = self._make_target(module_name)
+        pattern = f"{module_name}.target_fn"
+        monitor_a = watch_id = monitor_b = None
+        try:
+            monitor_a = self._start_monitor(monitor_cmd, pattern)
+            watch_id = self._start_watch(injector, pattern)
+            monitor_b = self._start_monitor(monitor_cmd, pattern)
+
+            assert mod.target_fn(1) == 11
+            assert monitor_cmd.manager.get_stats(monitor_a)["total"] == 1
+            assert monitor_cmd.manager.get_stats(monitor_b)["total"] == 1
+            assert [o["watch_id"] for o in agent._observations] == [watch_id]
+
+            agent._observations.clear()
+            self._stop_monitor(monitor_cmd, monitor_b)
+            monitor_b = None
+
+            live = self._live_wrappers(injector, monitor_cmd)
+            _assert_no_inactive_peeka_wrappers(getattr(mod, "target_fn"), live)
+
+            assert mod.target_fn(2) == 12
+            assert monitor_cmd.manager.get_stats(monitor_a)["total"] == 2
+            assert [o["watch_id"] for o in agent._observations] == [watch_id]
+
+            agent._observations.clear()
+            injector.uninject(watch_id)
+            watch_id = None
+
+            live = self._live_wrappers(injector, monitor_cmd)
+            _assert_no_inactive_peeka_wrappers(getattr(mod, "target_fn"), live)
+            assert not injector.instrumented
+
+            assert mod.target_fn(3) == 13
+            assert agent._observations == []
+            assert monitor_cmd.manager.get_stats(monitor_a)["total"] == 3
+
+            self._stop_monitor(monitor_cmd, monitor_a)
+            monitor_a = None
+
+            self._assert_final_stop(mod, original, injector, monitor_cmd)
+            assert mod.target_fn(4) == 14
+        finally:
+            if watch_id and watch_id in injector.instrumented:
+                injector.uninject(watch_id)
+            for mid in (monitor_a, monitor_b):
+                if mid and mid in monitor_cmd._monitors:
+                    monitor_cmd.execute({"action": "stop", "watch_id": mid})
+            injector.uninject_all()
+            sys.modules.pop(module_name, None)
+
+    def test_stop_order_watch_monitor_trace_monitor(self) -> None:
+        agent, injector, monitor_cmd = self._build_tools()
+        module_name = "test_stop_order_watch_mon_trace_mon"
+        mod, original = self._make_target(module_name)
+        pattern = f"{module_name}.target_fn"
+        watch_id = monitor_a = trace_id = monitor_b = None
+        try:
+            watch_id = self._start_watch(injector, pattern)
+            monitor_a = self._start_monitor(monitor_cmd, pattern)
+            trace_id = self._start_trace(injector, pattern)
+            monitor_b = self._start_monitor(monitor_cmd, pattern)
+
+            assert mod.target_fn(1) == 11
+            assert monitor_cmd.manager.get_stats(monitor_a)["total"] == 1
+            assert monitor_cmd.manager.get_stats(monitor_b)["total"] == 1
+            assert {o["watch_id"] for o in agent._observations} == {watch_id, trace_id}
+
+            agent._observations.clear()
+            self._stop_monitor(monitor_cmd, monitor_b)
+            monitor_b = None
+
+            live = self._live_wrappers(injector, monitor_cmd)
+            _assert_no_inactive_peeka_wrappers(getattr(mod, "target_fn"), live)
+
+            assert mod.target_fn(2) == 12
+            assert monitor_cmd.manager.get_stats(monitor_a)["total"] == 2
+            assert {o["watch_id"] for o in agent._observations} == {watch_id, trace_id}
+
+            agent._observations.clear()
+            injector.uninject(trace_id)
+            trace_id = None
+
+            live = self._live_wrappers(injector, monitor_cmd)
+            _assert_no_inactive_peeka_wrappers(getattr(mod, "target_fn"), live)
+
+            assert mod.target_fn(3) == 13
+            assert {o["watch_id"] for o in agent._observations} == {watch_id}
+            assert monitor_cmd.manager.get_stats(monitor_a)["total"] == 3
+
+            agent._observations.clear()
+            self._stop_monitor(monitor_cmd, monitor_a)
+            monitor_a = None
+
+            live = self._live_wrappers(injector, monitor_cmd)
+            _assert_no_inactive_peeka_wrappers(getattr(mod, "target_fn"), live)
+            assert not monitor_cmd._monitors
+
+            assert mod.target_fn(4) == 14
+            assert {o["watch_id"] for o in agent._observations} == {watch_id}
+
+            agent._observations.clear()
+            injector.uninject(watch_id)
+            watch_id = None
+
+            self._assert_final_stop(mod, original, injector, monitor_cmd)
+            assert mod.target_fn(5) == 15
+        finally:
+            if watch_id and watch_id in injector.instrumented:
+                injector.uninject(watch_id)
+            if trace_id and trace_id in injector.instrumented:
+                injector.uninject(trace_id)
+            for mid in (monitor_a, monitor_b):
+                if mid and mid in monitor_cmd._monitors:
+                    monitor_cmd.execute({"action": "stop", "watch_id": mid})
+            injector.uninject_all()
+            sys.modules.pop(module_name, None)

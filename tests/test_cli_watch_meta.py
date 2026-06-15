@@ -2,6 +2,7 @@
 
 # pyright: reportDeprecated=false, reportExplicitAny=false, reportAny=false
 
+import json
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -12,6 +13,130 @@ import pytest
 from peeka.cli.handlers import observe
 from peeka.cli.streaming import counted_limit
 from peeka.core.output import OutputFormatter
+
+
+class _MockSessionContext:
+    def __init__(self, session_id: str) -> None:
+        self._session_id = session_id
+
+    def __enter__(self) -> str:
+        return self._session_id
+
+    def __exit__(self, *args: Any) -> bool:
+        return False
+
+
+class _MockWatchStreamingClient:
+    def __init__(
+        self, socket_path: str, observations: List[Dict[str, Any]]
+    ) -> None:
+        self.socket_path = socket_path
+        self.observations = observations
+        self.commands_sent: List[Dict[str, Any]] = []
+        self.connected = False
+
+    def connect(self) -> Dict[str, Any]:
+        self.connected = True
+        return {"status": "success"}
+
+    def send_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        self.commands_sent.append(command)
+        if command.get("type") == "watch" and command.get("action") == "start":
+            return {"status": "success", "watch_id": "watch_cli_123"}
+        return {"status": "success"}
+
+    def stream_observations(self):  # type: ignore[return]
+        return iter(self.observations)
+
+    def disconnect(self) -> None:
+        self.connected = False
+
+
+class _MockTraceStreamingClient:
+    def __init__(
+        self, socket_path: str, observations: List[Dict[str, Any]]
+    ) -> None:
+        self.socket_path = socket_path
+        self.observations = observations
+        self.commands_sent: List[Dict[str, Any]] = []
+        self.connected = False
+
+    def connect(self) -> Dict[str, Any]:
+        self.connected = True
+        return {"status": "success"}
+
+    def send_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        self.commands_sent.append(command)
+        if command.get("type") == "trace" and command.get("action") == "start":
+            return {"status": "success", "watch_id": "trace_cli_789"}
+        return {"status": "success"}
+
+    def stream_observations(self):  # type: ignore[return]
+        return iter(self.observations)
+
+    def disconnect(self) -> None:
+        self.connected = False
+
+
+class _MockStackStreamingClient:
+    def __init__(
+        self, socket_path: str, observations: List[Dict[str, Any]]
+    ) -> None:
+        self.socket_path = socket_path
+        self.observations = observations
+        self.commands_sent: List[Dict[str, Any]] = []
+        self.connected = False
+
+    def connect(self) -> Dict[str, Any]:
+        self.connected = True
+        return {"status": "success"}
+
+    def send_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        self.commands_sent.append(command)
+        if command.get("type") == "stack" and command.get("action") == "start":
+            return {"status": "success", "watch_id": "stack_cli_456"}
+        return {"status": "success"}
+
+    def stream_observations(self):  # type: ignore[return]
+        return iter(self.observations)
+
+    def disconnect(self) -> None:
+        self.connected = False
+
+
+def _watch_args(times: int) -> SimpleNamespace:
+    return SimpleNamespace(
+        pattern="mod.fn",
+        depth=1,
+        times=times,
+        before=False,
+        exception=False,
+        success=True,
+        finish=True,
+        condition_express=None,
+        client=None,
+    )
+
+
+def _trace_args(times: int) -> SimpleNamespace:
+    return SimpleNamespace(
+        pattern="mod.fn",
+        depth=3,
+        times=times,
+        condition_express=None,
+        skip_builtin=True,
+        min_duration=0,
+        client=None,
+    )
+
+
+def _stack_args(times: int) -> SimpleNamespace:
+    return SimpleNamespace(
+        pattern="mod.fn",
+        depth=2,
+        times=times,
+        condition_express=None,
+    )
 
 
 def test_emit_watch_started_forwards_runtime_meta(
@@ -105,5 +230,191 @@ def test_watch_times_help_does_not_say_capture() -> None:
 
     assert result.returncode == 0
     help_text = result.stdout.lower()
-    # Old wording was "number of times to capture"; it must be gone after T8.
     assert "number of times to capture" not in help_text
+
+
+def test_watch_n_counts_only_watch_observations(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    active_id = "watch_cli_123"
+    unrelated_obs = {"watch_id": "watch_other_999", "count": 1, "data": "unrelated"}
+    active_obs_1 = {"watch_id": active_id, "count": 5, "location": "AtReturn"}
+    active_obs_2 = {"watch_id": active_id, "count": 6, "location": "AtReturn"}
+    observations = [unrelated_obs, active_obs_1, active_obs_2]
+    streaming_clients: List[_MockWatchStreamingClient] = []
+
+    def build_streaming_client(socket_path: str) -> _MockWatchStreamingClient:
+        client = _MockWatchStreamingClient(socket_path, observations)
+        streaming_clients.append(client)
+        return client
+
+    monkeypatch.setattr(observe, "_check_agent_attached", lambda: ("/tmp/peeka_watch.sock", 1234))
+    monkeypatch.setattr(observe, "StreamingAgentClient", build_streaming_client)
+    monkeypatch.setattr(observe, "ephemeral_client", lambda _tid: _MockSessionContext("w_session"))
+
+    assert observe.cmd_watch(_watch_args(times=2)) == 0
+
+    records = [
+        json.loads(line)
+        for line in capsys.readouterr().out.splitlines()
+        if line.strip().startswith("{")
+    ]
+    active_records = [r for r in records if r.get("watch_id") == active_id]
+    assert len(active_records) == 2, (
+        f"Expected 2 active watch observations, got {len(active_records)}; "
+        "unrelated probe observations must not count toward the local -n limit"
+    )
+    assert [r["count"] for r in active_records] == [5, 6]
+
+
+def test_unrelated_log_frames_do_not_decrement_watch_n(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    active_id = "watch_cli_123"
+    log_frame_1 = {"type": "log", "level": "INFO", "msg": "background log"}
+    log_frame_2 = {"type": "log", "level": "DEBUG", "msg": "another log"}
+    active_obs_1 = {"watch_id": active_id, "count": 1, "location": "AtReturn"}
+    active_obs_2 = {"watch_id": active_id, "count": 2, "location": "AtReturn"}
+    observations = [log_frame_1, log_frame_2, active_obs_1, active_obs_2]
+    streaming_clients: List[_MockWatchStreamingClient] = []
+
+    def build_streaming_client(socket_path: str) -> _MockWatchStreamingClient:
+        client = _MockWatchStreamingClient(socket_path, observations)
+        streaming_clients.append(client)
+        return client
+
+    monkeypatch.setattr(observe, "_check_agent_attached", lambda: ("/tmp/peeka_watch.sock", 1234))
+    monkeypatch.setattr(observe, "StreamingAgentClient", build_streaming_client)
+    monkeypatch.setattr(observe, "ephemeral_client", lambda _tid: _MockSessionContext("w_session"))
+
+    assert observe.cmd_watch(_watch_args(times=2)) == 0
+
+    records = [
+        json.loads(line)
+        for line in capsys.readouterr().out.splitlines()
+        if line.strip().startswith("{")
+    ]
+    active_records = [r for r in records if r.get("watch_id") == active_id]
+    assert len(active_records) == 2, (
+        f"Expected 2 active watch observations, got {len(active_records)}; "
+        "log frames must not count toward the local -n limit"
+    )
+    assert [r["count"] for r in active_records] == [1, 2]
+
+
+def test_trace_n_counts_only_trace_observations(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    active_id = "trace_cli_789"
+    unrelated_obs = {"watch_id": "watch_other_999", "count": 1, "data": "unrelated"}
+    log_frame = {"type": "log", "level": "INFO", "msg": "bg log"}
+    active_obs_1 = {"watch_id": active_id, "count": 5, "call_tree": []}
+    active_obs_2 = {"watch_id": active_id, "count": 6, "call_tree": []}
+    observations = [unrelated_obs, log_frame, active_obs_1, active_obs_2]
+    streaming_clients: List[_MockTraceStreamingClient] = []
+
+    def build_streaming_client(socket_path: str) -> _MockTraceStreamingClient:
+        client = _MockTraceStreamingClient(socket_path, observations)
+        streaming_clients.append(client)
+        return client
+
+    monkeypatch.setattr(observe, "_check_agent_attached", lambda: ("/tmp/peeka_trace.sock", 1234))
+    monkeypatch.setattr(observe, "StreamingAgentClient", build_streaming_client)
+    monkeypatch.setattr(observe, "ephemeral_client", lambda _tid: _MockSessionContext("t_session"))
+
+    assert observe.cmd_trace(_trace_args(times=2)) == 0
+
+    records = [
+        json.loads(line)
+        for line in capsys.readouterr().out.splitlines()
+        if line.strip().startswith("{")
+    ]
+    active_records = [r for r in records if r.get("watch_id") == active_id]
+    assert len(active_records) == 2, (
+        f"Expected 2 active trace observations, got {len(active_records)}; "
+        "unrelated frames must not count toward the local -n limit"
+    )
+    assert [r["count"] for r in active_records] == [5, 6]
+
+
+def test_stack_n_counts_only_stack_observations(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    active_id = "stack_cli_456"
+    unrelated_obs = {"watch_id": "watch_other_999", "count": 1, "data": "unrelated"}
+    log_frame = {"type": "log", "level": "WARNING", "msg": "bg warning"}
+    active_obs_1 = {"watch_id": active_id, "count": 3, "frames": []}
+    active_obs_2 = {"watch_id": active_id, "count": 4, "frames": []}
+    observations = [unrelated_obs, log_frame, active_obs_1, active_obs_2]
+    streaming_clients: List[_MockStackStreamingClient] = []
+
+    def build_streaming_client(socket_path: str) -> _MockStackStreamingClient:
+        client = _MockStackStreamingClient(socket_path, observations)
+        streaming_clients.append(client)
+        return client
+
+    monkeypatch.setattr(observe, "_check_agent_attached", lambda: ("/tmp/peeka_stack.sock", 1234))
+    monkeypatch.setattr(observe, "StreamingAgentClient", build_streaming_client)
+    monkeypatch.setattr(observe, "ephemeral_client", lambda _tid: _MockSessionContext("s_session"))
+
+    assert observe.cmd_stack(_stack_args(times=2)) == 0
+
+    records = [
+        json.loads(line)
+        for line in capsys.readouterr().out.splitlines()
+        if line.strip().startswith("{")
+    ]
+    active_records = [r for r in records if r.get("watch_id") == active_id]
+    assert len(active_records) == 2, (
+        f"Expected 2 active stack observations, got {len(active_records)}; "
+        "unrelated frames must not count toward the local -n limit"
+    )
+    assert [r["count"] for r in active_records] == [3, 4]
+
+
+def test_stack_start_returns_watch_id_and_cleanup_uses_watch_id(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    active_id = "stack_cli_456"
+    active_obs_1 = {"watch_id": active_id, "count": 1, "frames": []}
+    active_obs_2 = {"watch_id": active_id, "count": 2, "frames": []}
+    unrelated_obs = {"watch_id": "watch_other_999", "count": 9}
+    observations = [active_obs_1, unrelated_obs, active_obs_2]
+    streaming_clients: List[_MockStackStreamingClient] = []
+
+    def build_streaming_client(socket_path: str) -> _MockStackStreamingClient:
+        client = _MockStackStreamingClient(socket_path, observations)
+        streaming_clients.append(client)
+        return client
+
+    monkeypatch.setattr(observe, "_check_agent_attached", lambda: ("/tmp/peeka_stack.sock", 1234))
+    monkeypatch.setattr(observe, "StreamingAgentClient", build_streaming_client)
+    monkeypatch.setattr(observe, "ephemeral_client", lambda _tid: _MockSessionContext("s_session"))
+
+    assert observe.cmd_stack(_stack_args(times=2)) == 0
+
+    client = streaming_clients[0]
+    stop_commands = [
+        cmd for cmd in client.commands_sent
+        if cmd.get("type") == "stack" and cmd.get("action") == "stop"
+    ]
+    assert stop_commands, "cmd_stack must send a stack stop command on cleanup"
+    assert stop_commands[0]["watch_id"] == active_id, (
+        f"stop command watch_id must be {active_id!r}, got {stop_commands[0].get('watch_id')!r}"
+    )
+
+    records = [
+        json.loads(line)
+        for line in capsys.readouterr().out.splitlines()
+        if line.strip().startswith("{")
+    ]
+    active_records = [r for r in records if r.get("watch_id") == active_id]
+    assert len(active_records) == 2, (
+        f"Expected 2 active stack observations with times=2, got {len(active_records)}"
+    )
+    assert [r["count"] for r in active_records] == [1, 2]

@@ -342,6 +342,84 @@ class TestDecoratorInjector:
         finally:
             del sys.modules["test_module_info"]
 
+    def test_alias_restored_to_original_after_all_stop(self, injector, mock_agent):
+        """uninject_all() must restore module-level aliases set by inject_trace().
+
+        Mirrors test_uninject_all_restores_module_global_alias but for trace probes.
+        Regression (V-INJECTOR-TRACE-ALIASES): inject_trace() never stores alias
+        metadata, so uninject_all() cannot restore the alias.  The intermediate
+        assertion (alias == trace wrapper) MUST FAIL until the bug is fixed.
+        """
+
+        def handler(event):
+            return {"value": event["value"] * 2}
+
+        app_module = type(sys)("test_trace_alias_all")
+        app_module.handler = handler
+        wrapper_module = type(sys)("test_trace_bytefaas_all")
+        wrapper_module.handler = handler
+        sys.modules["test_trace_alias_all"] = app_module
+        sys.modules["test_trace_bytefaas_all"] = wrapper_module
+
+        try:
+            injector.inject_trace(
+                "test_trace_alias_all.handler", {"trace_depth": 2, "times": -1}
+            )
+            assert app_module.handler is not handler, "canonical replaced by trace wrapper"
+            assert wrapper_module.handler is not handler, (
+                "alias must be updated to the trace wrapper by inject_trace()"
+            )
+            assert app_module.handler is wrapper_module.handler, (
+                "canonical and alias must both point to the same trace wrapper"
+            )
+
+            count = injector.uninject_all()
+            assert count == 1
+            assert app_module.handler is handler
+            assert wrapper_module.handler is handler
+        finally:
+            injector.uninject_all()
+            sys.modules.pop("test_trace_alias_all", None)
+            sys.modules.pop("test_trace_bytefaas_all", None)
+
+    def test_alias_restored_after_reset(self, injector, mock_agent):
+        """reset() must restore module-level aliases set by inject_trace().
+
+        After inject_trace(), a pattern-matched reset must restore both the
+        canonical slot and any module-level aliases to the pre-Peeka callable.
+        Regression (V-INJECTOR-TRACE-ALIASES): inject_trace() never stores alias
+        metadata, so the reset path cannot restore the alias.  The intermediate
+        assertion (alias == trace wrapper) MUST FAIL until the bug is fixed.
+        """
+
+        def handler(event):
+            return {"value": event["value"] * 2}
+
+        app_module = type(sys)("test_trace_alias_reset")
+        app_module.handler = handler
+        wrapper_module = type(sys)("test_trace_bytefaas_reset")
+        wrapper_module.handler = handler
+        sys.modules["test_trace_alias_reset"] = app_module
+        sys.modules["test_trace_bytefaas_reset"] = wrapper_module
+
+        try:
+            injector.inject_trace(
+                "test_trace_alias_reset.handler", {"trace_depth": 2, "times": -1}
+            )
+            assert app_module.handler is not handler, "canonical replaced by trace wrapper"
+            assert wrapper_module.handler is not handler, (
+                "alias must be updated to the trace wrapper by inject_trace()"
+            )
+
+            injector.reset("test_trace_alias_reset.handler")
+
+            assert app_module.handler is handler, "canonical restored after reset"
+            assert wrapper_module.handler is handler, "alias restored after reset"
+        finally:
+            injector.uninject_all()
+            sys.modules.pop("test_trace_alias_reset", None)
+            sys.modules.pop("test_trace_bytefaas_reset", None)
+
 
 class TestValueFormatting:
     @pytest.fixture

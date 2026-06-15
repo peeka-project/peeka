@@ -12,6 +12,20 @@ if TYPE_CHECKING:
     from peeka.core.agent import PeekaAgent
 
 
+def _assert_no_inactive_peeka_wrappers(func: Any, live_wrappers: set) -> None:
+    inner = getattr(func, "__wrapped__", None)
+    if inner is None:
+        return
+    if inner in live_wrappers:
+        return
+    stale_next = getattr(inner, "__wrapped__", None)
+    assert stale_next is None, (
+        f"Inactive Peeka wrapper at depth 1: {func!r}.__wrapped__ = "
+        f"{inner!r} (not live, but has __wrapped__ = {stale_next!r}). "
+        f"Live wrappers: {live_wrappers}"
+    )
+
+
 class MockAgent:
     def __init__(self):
         self._observations: List[Dict[str, Any]] = []
@@ -379,3 +393,235 @@ class TestWatchOwnerCleanup:
             Path(socket_path).unlink(missing_ok=True)
             Path(ready_path).unlink(missing_ok=True)
             _ = sys.modules.pop("test_two_watch_owner_module", None)
+
+
+class TestStopOrderMatrix:
+    @pytest.fixture
+    def mock_agent(self) -> MockAgent:
+        return MockAgent()
+
+    @pytest.fixture
+    def injector(self, mock_agent: MockAgent):
+        from peeka.core.injector import DecoratorInjector
+
+        return DecoratorInjector(cast("PeekaAgent", cast(object, mock_agent)))
+
+    def _make_target(self, module_name: str):
+        def target_fn(value: int) -> int:
+            return value + 10
+
+        mod = ModuleType(module_name)
+        setattr(mod, "target_fn", target_fn)
+        sys.modules[module_name] = mod
+        return mod, target_fn
+
+    def _start_watch(self, injector, pattern: str) -> str:
+        return injector.inject(pattern, {"depth": 2, "times": -1})
+
+    def _start_trace(self, injector, pattern: str) -> str:
+        from peeka.core.runtime.compat import BACKEND_WRAPPER_ONLY
+
+        return injector.inject_trace(
+            pattern, {"trace_depth": 2, "times": -1}, force_backend=BACKEND_WRAPPER_ONLY
+        )
+
+    def _live_inj_wrappers(self, injector) -> set:
+        return {info["wrapper"] for info in injector.instrumented.values()}
+
+    def _assert_final_stop(self, mod, original, injector, mock_agent) -> None:
+        assert not injector.instrumented
+        assert getattr(mod, "target_fn") is original
+        _assert_no_inactive_peeka_wrappers(getattr(mod, "target_fn"), set())
+        mock_agent._observations.clear()
+        assert mod.target_fn(99) == 109
+        assert mock_agent._observations == []
+
+    def test_stop_order_watch_watch_stop_a_then_b(
+        self, injector, mock_agent: MockAgent
+    ) -> None:
+        module_name = "test_stop_order_watch_watch_ab"
+        mod, original = self._make_target(module_name)
+        pattern = f"{module_name}.target_fn"
+        try:
+            watch_a = self._start_watch(injector, pattern)
+            watch_b = self._start_watch(injector, pattern)
+
+            assert mod.target_fn(1) == 11
+            assert {o["watch_id"] for o in mock_agent._observations} == {watch_a, watch_b}
+
+            mock_agent._observations.clear()
+            injector.uninject(watch_a)
+
+            assert watch_a not in injector.instrumented
+            assert watch_b in injector.instrumented
+            live = self._live_inj_wrappers(injector)
+            _assert_no_inactive_peeka_wrappers(getattr(mod, "target_fn"), live)
+            assert mod.target_fn(2) == 12
+            obs_ids = {o["watch_id"] for o in mock_agent._observations}
+            assert obs_ids == {watch_b}
+            assert watch_a not in obs_ids
+
+            mock_agent._observations.clear()
+            injector.uninject(watch_b)
+            self._assert_final_stop(mod, original, injector, mock_agent)
+        finally:
+            injector.uninject_all()
+            sys.modules.pop(module_name, None)
+
+    def test_stop_order_watch_watch_stop_b_then_a(
+        self, injector, mock_agent: MockAgent
+    ) -> None:
+        module_name = "test_stop_order_watch_watch_ba"
+        mod, original = self._make_target(module_name)
+        pattern = f"{module_name}.target_fn"
+        try:
+            watch_a = self._start_watch(injector, pattern)
+            watch_b = self._start_watch(injector, pattern)
+
+            assert mod.target_fn(1) == 11
+
+            mock_agent._observations.clear()
+            injector.uninject(watch_b)
+
+            assert watch_b not in injector.instrumented
+            assert watch_a in injector.instrumented
+            live = self._live_inj_wrappers(injector)
+            _assert_no_inactive_peeka_wrappers(getattr(mod, "target_fn"), live)
+            assert mod.target_fn(2) == 12
+            obs_ids = {o["watch_id"] for o in mock_agent._observations}
+            assert obs_ids == {watch_a}
+            assert watch_b not in obs_ids
+
+            mock_agent._observations.clear()
+            injector.uninject(watch_a)
+            self._assert_final_stop(mod, original, injector, mock_agent)
+        finally:
+            injector.uninject_all()
+            sys.modules.pop(module_name, None)
+
+    def test_stop_order_trace_trace_stop_a_then_b(
+        self, injector, mock_agent: MockAgent
+    ) -> None:
+        module_name = "test_stop_order_trace_trace_ab"
+        mod, original = self._make_target(module_name)
+        pattern = f"{module_name}.target_fn"
+        try:
+            trace_a = self._start_trace(injector, pattern)
+            trace_b = self._start_trace(injector, pattern)
+
+            assert mod.target_fn(1) == 11
+            assert {o["watch_id"] for o in mock_agent._observations} == {trace_a, trace_b}
+
+            mock_agent._observations.clear()
+            injector.uninject(trace_a)
+
+            assert trace_a not in injector.instrumented
+            assert trace_b in injector.instrumented
+            live = self._live_inj_wrappers(injector)
+            _assert_no_inactive_peeka_wrappers(getattr(mod, "target_fn"), live)
+            assert mod.target_fn(2) == 12
+            obs_ids = {o["watch_id"] for o in mock_agent._observations}
+            assert obs_ids == {trace_b}
+            assert trace_a not in obs_ids
+
+            mock_agent._observations.clear()
+            injector.uninject(trace_b)
+            self._assert_final_stop(mod, original, injector, mock_agent)
+        finally:
+            injector.uninject_all()
+            sys.modules.pop(module_name, None)
+
+    def test_stop_order_trace_trace_stop_b_then_a(
+        self, injector, mock_agent: MockAgent
+    ) -> None:
+        module_name = "test_stop_order_trace_trace_ba"
+        mod, original = self._make_target(module_name)
+        pattern = f"{module_name}.target_fn"
+        try:
+            trace_a = self._start_trace(injector, pattern)
+            trace_b = self._start_trace(injector, pattern)
+
+            assert mod.target_fn(1) == 11
+
+            mock_agent._observations.clear()
+            injector.uninject(trace_b)
+
+            assert trace_b not in injector.instrumented
+            assert trace_a in injector.instrumented
+            live = self._live_inj_wrappers(injector)
+            _assert_no_inactive_peeka_wrappers(getattr(mod, "target_fn"), live)
+            assert mod.target_fn(2) == 12
+            obs_ids = {o["watch_id"] for o in mock_agent._observations}
+            assert obs_ids == {trace_a}
+            assert trace_b not in obs_ids
+
+            mock_agent._observations.clear()
+            injector.uninject(trace_a)
+            self._assert_final_stop(mod, original, injector, mock_agent)
+        finally:
+            injector.uninject_all()
+            sys.modules.pop(module_name, None)
+
+    def test_stop_order_watch_trace_stop_watch_then_trace(
+        self, injector, mock_agent: MockAgent
+    ) -> None:
+        module_name = "test_stop_order_watch_trace_wt"
+        mod, original = self._make_target(module_name)
+        pattern = f"{module_name}.target_fn"
+        try:
+            watch_a = self._start_watch(injector, pattern)
+            trace_b = self._start_trace(injector, pattern)
+
+            assert mod.target_fn(1) == 11
+            assert {o["watch_id"] for o in mock_agent._observations} == {watch_a, trace_b}
+
+            mock_agent._observations.clear()
+            injector.uninject(watch_a)
+
+            assert watch_a not in injector.instrumented
+            assert trace_b in injector.instrumented
+            live = self._live_inj_wrappers(injector)
+            _assert_no_inactive_peeka_wrappers(getattr(mod, "target_fn"), live)
+            assert mod.target_fn(2) == 12
+            obs_ids = {o["watch_id"] for o in mock_agent._observations}
+            assert obs_ids == {trace_b}
+            assert watch_a not in obs_ids
+
+            mock_agent._observations.clear()
+            injector.uninject(trace_b)
+            self._assert_final_stop(mod, original, injector, mock_agent)
+        finally:
+            injector.uninject_all()
+            sys.modules.pop(module_name, None)
+
+    def test_stop_order_watch_trace_stop_trace_then_watch(
+        self, injector, mock_agent: MockAgent
+    ) -> None:
+        module_name = "test_stop_order_watch_trace_tw"
+        mod, original = self._make_target(module_name)
+        pattern = f"{module_name}.target_fn"
+        try:
+            watch_a = self._start_watch(injector, pattern)
+            trace_b = self._start_trace(injector, pattern)
+
+            assert mod.target_fn(1) == 11
+            assert {o["watch_id"] for o in mock_agent._observations} == {watch_a, trace_b}
+
+            mock_agent._observations.clear()
+            injector.uninject(trace_b)
+
+            assert trace_b not in injector.instrumented
+            assert watch_a in injector.instrumented
+            live = self._live_inj_wrappers(injector)
+            _assert_no_inactive_peeka_wrappers(getattr(mod, "target_fn"), live)
+            assert mod.target_fn(2) == 12
+            obs_ids = {o["watch_id"] for o in mock_agent._observations}
+            assert obs_ids == {watch_a}
+            assert trace_b not in obs_ids
+
+            mock_agent._observations.clear()
+            injector.uninject(watch_a)
+            self._assert_final_stop(mod, original, injector, mock_agent)
+        finally:
+            injector.uninject_all()
+            sys.modules.pop(module_name, None)

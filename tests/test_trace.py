@@ -647,6 +647,140 @@ class TestTraceCommand:
             injector.uninject_all()
             del sys.modules["test_mixed_stop_middle_lifecycle"]
 
+    def test_trace_updates_alias_on_inject(self, injector, mock_agent):
+        """inject_trace must update module-level aliases, just as inject() does.
+
+        Regression (V-INJECTOR-TRACE-ALIASES): inject_trace() never calls
+        _find_module_aliases() or _replace_aliases(), so module-level aliases
+        that cache the original function are never redirected to the trace
+        wrapper.  This test asserts the correct post-inject state and MUST
+        FAIL until the bug is fixed.
+        """
+
+        def handler(x):
+            return x * 2
+
+        app_module = type(sys)("test_trace_alias_inject")
+        app_module.handler = handler
+        wrapper_module = type(sys)("test_trace_alias_inject_wrapper")
+        wrapper_module.handler = handler
+        sys.modules["test_trace_alias_inject"] = app_module
+        sys.modules["test_trace_alias_inject_wrapper"] = wrapper_module
+
+        try:
+            injector.inject_trace(
+                "test_trace_alias_inject.handler",
+                {"trace_depth": 2, "times": -1},
+                force_backend=BACKEND_WRAPPER_ONLY,
+            )
+            trace_wrapper = app_module.handler
+            assert trace_wrapper is not handler, "canonical must be the trace wrapper"
+            assert wrapper_module.handler is trace_wrapper, (
+                "alias must be updated to the trace wrapper by inject_trace()"
+            )
+        finally:
+            injector.uninject_all()
+            sys.modules.pop("test_trace_alias_inject", None)
+            sys.modules.pop("test_trace_alias_inject_wrapper", None)
+
+    def test_trace_restores_alias_on_stop(self, injector, mock_agent):
+        """After inject_trace + uninject, aliases must be restored to original.
+
+        Regression (V-INJECTOR-TRACE-ALIASES): because inject_trace() never
+        stores alias metadata, _restore_watch_aliases() has nothing to restore
+        on uninject.  The intermediate assertion (alias == trace wrapper during
+        active trace) proves the bug and MUST FAIL until fixed.
+        """
+
+        def handler(x):
+            return x * 2
+
+        app_module = type(sys)("test_trace_alias_restore")
+        app_module.handler = handler
+        wrapper_module = type(sys)("test_trace_alias_restore_wrapper")
+        wrapper_module.handler = handler
+        sys.modules["test_trace_alias_restore"] = app_module
+        sys.modules["test_trace_alias_restore_wrapper"] = wrapper_module
+
+        try:
+            assert wrapper_module.handler is handler, "pre-inject: alias is original"
+
+            trace_id = injector.inject_trace(
+                "test_trace_alias_restore.handler",
+                {"trace_depth": 2, "times": -1},
+                force_backend=BACKEND_WRAPPER_ONLY,
+            )
+            trace_wrapper = app_module.handler
+            assert trace_wrapper is not handler, "canonical replaced by trace wrapper"
+
+            assert wrapper_module.handler is trace_wrapper, (
+                "during active trace alias must point to the trace wrapper"
+            )
+
+            injector.uninject(trace_id)
+
+            assert app_module.handler is handler, "canonical restored after uninject"
+            assert wrapper_module.handler is handler, "alias restored after uninject"
+        finally:
+            injector.uninject_all()
+            sys.modules.pop("test_trace_alias_restore", None)
+            sys.modules.pop("test_trace_alias_restore_wrapper", None)
+
+    def test_alias_points_to_live_wrapper_after_stop(self, injector, mock_agent):
+        """After watch+trace stacking, stopping trace must leave alias on live watch wrapper.
+
+        inject(watch) correctly updates the alias to the watch wrapper.
+        When inject_trace() is layered on top, the alias should advance to the
+        trace wrapper.  After uninject(trace) the alias should revert to the
+        still-live watch wrapper.
+
+        Regression: inject_trace() never updates the alias, so the alias stays
+        on the watch wrapper throughout.  The assertion that alias == trace
+        wrapper during active trace MUST FAIL.
+        """
+
+        def handler(x):
+            return x * 2
+
+        app_module = type(sys)("test_trace_alias_live")
+        app_module.handler = handler
+        wrapper_module = type(sys)("test_trace_alias_live_wrapper")
+        wrapper_module.handler = handler
+        sys.modules["test_trace_alias_live"] = app_module
+        sys.modules["test_trace_alias_live_wrapper"] = wrapper_module
+
+        try:
+            watch_id = injector.inject(
+                "test_trace_alias_live.handler", {"depth": 2, "times": -1}
+            )
+            watch_wrapper = app_module.handler
+            assert wrapper_module.handler is watch_wrapper, (
+                "inject() must have updated the alias to the watch wrapper"
+            )
+
+            trace_id = injector.inject_trace(
+                "test_trace_alias_live.handler",
+                {"trace_depth": 2, "times": -1},
+                force_backend=BACKEND_WRAPPER_ONLY,
+            )
+            trace_wrapper = app_module.handler
+            assert trace_wrapper is not watch_wrapper, "trace wrapped the watch wrapper"
+
+            assert wrapper_module.handler is trace_wrapper, (
+                "alias must advance to the outermost trace wrapper"
+            )
+
+            injector.uninject(trace_id)
+
+            assert app_module.handler is watch_wrapper
+            assert wrapper_module.handler is watch_wrapper, (
+                "alias must revert to the live watch wrapper after trace stop"
+            )
+        finally:
+            injector.uninject_all()
+            sys.modules.pop("test_trace_alias_live", None)
+            sys.modules.pop("test_trace_alias_live_wrapper", None)
+
 
 class TestTraceIntegration:
     """Integration tests for trace functionality"""
