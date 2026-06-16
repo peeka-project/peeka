@@ -1059,3 +1059,96 @@ class TestResetLifecycleRegression:
         finally:
             sys.modules.pop("test_rlr_pattern_a", None)
             sys.modules.pop("test_rlr_pattern_b", None)
+
+
+class TestResetListMonitorRegression:
+    """Regression tests for reset --list including active monitors (T3 fix).
+
+    Verifies that _list_enhanced() merges MonitorCommand._monitors entries
+    into the list response so consumers can see active monitors alongside
+    injector entries.
+    """
+
+    def _make_agent_with_mock_monitor(self, monitors=None):
+        """Create a minimal agent with a mock MonitorCommand in command_handlers."""
+        import threading
+
+        from peeka.commands.reset import ResetCommand
+        from peeka.core.injector import DecoratorInjector
+        from peeka.core.observer import ObservationManager
+
+        class _MockMonitorCmd:
+            def __init__(self, monitors_dict):
+                self._lock = threading.Lock()
+                self._monitors = monitors_dict if monitors_dict is not None else {}
+
+        class _Agent:
+            def __init__(self):
+                self._observations = []
+                self.observer = ObservationManager()
+                self.command_handlers = {}
+                self.injector = None
+
+            def _send_observation(self, obs):
+                self._observations.append(obs)
+
+        agent = _Agent()
+        injector = DecoratorInjector(agent)  # pyright: ignore[reportArgumentType]
+        agent.injector = injector
+        mock_monitor = _MockMonitorCmd(monitors)
+        agent.command_handlers["monitor"] = mock_monitor
+        reset_cmd = ResetCommand(agent)  # pyright: ignore[reportArgumentType]
+        return agent, injector, mock_monitor, reset_cmd
+
+    def test_reset_list_includes_active_monitor(self):
+        """reset --list must include active monitor entries alongside injector entries.
+
+        Regression for T3: _list_enhanced() must merge MonitorCommand._monitors
+        entries into the list response so TUI/CLI consumers can see active monitors.
+        """
+        agent, injector, mock_monitor, reset_cmd = self._make_agent_with_mock_monitor(
+            monitors={
+                "monitor_abc123": {
+                    "pattern": "mymodule.*",
+                    "cycle": 1.0,
+                    "cycles": 5,
+                    "cycle_count": 2,
+                }
+            }
+        )
+
+        response = reset_cmd.execute({"action": "list"})
+
+        assert response["status"] == "success"
+        enhanced = response["enhanced"]
+        assert response["total"] == len(enhanced)
+
+        monitor_entries = [e for e in enhanced if e.get("command") == "monitor"]
+        assert len(monitor_entries) >= 1, "reset --list must include active monitor entries"
+
+        monitor_entry = next(
+            (e for e in monitor_entries if e.get("monitor_id") == "monitor_abc123"),
+            None,
+        )
+        assert monitor_entry is not None, (
+            "monitor_abc123 must appear in reset --list enhanced entries"
+        )
+        assert monitor_entry["monitor_id"] == "monitor_abc123"
+        assert monitor_entry["command"] == "monitor"
+
+    def test_reset_list_no_monitors_works(self):
+        """reset --list must work correctly when no monitors are active.
+
+        Regression: must not raise or error when monitor handler exists but
+        has empty _monitors dict — should return only injector entries.
+        """
+        agent, injector, mock_monitor, reset_cmd = self._make_agent_with_mock_monitor(
+            monitors={}
+        )
+
+        response = reset_cmd.execute({"action": "list"})
+
+        assert response["status"] == "success"
+        assert response["action"] == "list"
+        assert response["total"] == 0
+        assert len(response["enhanced"]) == 0
