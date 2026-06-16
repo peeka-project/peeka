@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import types
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -17,6 +18,7 @@ from peeka.cli.parsers.observe import build_stack_run_parser
 from peeka.cli.parsers.observe import build_trace_run_parser
 from peeka.cli.parsers.observe import build_watch_run_parser
 from peeka.cli.parsers.runtime import build_top_run_parser
+from peeka.cli.streaming import stream_counted_limit
 from peeka.core.attach import ProcessAttacher
 from peeka.core.client import StreamingAgentClient
 from peeka.core.output import OutputFormatter
@@ -339,11 +341,45 @@ def cmd_run(args) -> int:
                 f.write(str(os.getpid()))
 
             child_exited = False
+            limit_hit = False
             exit_code = 0
+
+            if command_type in ("watch", "trace", "stack"):
+                _limit_attr = "times"
+                _stream_id_key = "watch_id"
+                _stop_command = {
+                    "type": command_type,
+                    "action": "stop",
+                    "watch_id": watch_id,
+                }
+            elif command_type == "monitor":
+                _limit_attr = "cycles"
+                _stream_id_key = "monitor_id"
+                _stop_command = {
+                    "type": "monitor",
+                    "action": "stop",
+                    "monitor_id": watch_id,
+                }
+            else:
+                _limit_attr = "cycles"
+                _stream_id_key = "top_id"
+                _stop_command = {"type": "top", "action": "stop"}
+
+            _limit_predicate, _set_stream_id = stream_counted_limit(
+                _limit_attr, _stream_id_key
+            )
+            _limit_args = types.SimpleNamespace(
+                **{_limit_attr: command.get(_limit_attr, -1)}
+            )
+            _set_stream_id(watch_id)
 
             try:
                 for observation in streaming_client.stream_observations():
                     print(json.dumps(observation), file=output_dest, flush=True)
+
+                    if _limit_predicate(_limit_args, observation):
+                        limit_hit = True
+                        break
 
                     # Check if child has exited
                     try:
@@ -362,10 +398,30 @@ def cmd_run(args) -> int:
 
                     time.sleep(0.01)
             finally:
-                if not child_exited:
+                if limit_hit:
+                    try:
+                        stop_client = StreamingAgentClient(socket_path)
+                        stop_client.connect()
+                        stop_client.send_command(_stop_command)
+                        stop_client.disconnect()
+                    except Exception:
+                        pass
+                elif not child_exited:
                     cleanup_and_exit()
 
-            cleanup_and_exit()
+            if limit_hit:
+                if not child_exited:
+                    try:
+                        _, status = os.waitpid(child_pid, 0)
+                        if os.WIFEXITED(status):
+                            exit_code = os.WEXITSTATUS(status)
+                        elif os.WIFSIGNALED(status):
+                            exit_code = 128 + os.WTERMSIG(status)
+                    except ChildProcessError:
+                        pass
+                attacher.cleanup()
+            else:
+                cleanup_and_exit()
             return exit_code
 
         except Exception as e:
