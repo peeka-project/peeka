@@ -376,6 +376,142 @@ def test_stack_n_counts_only_stack_observations(
     assert [r["count"] for r in active_records] == [3, 4]
 
 
+class _MockMonitorStreamingClient:
+    def __init__(
+        self, socket_path: str, observations: List[Dict[str, Any]]
+    ) -> None:
+        self.socket_path = socket_path
+        self.observations = observations
+        self.commands_sent: List[Dict[str, Any]] = []
+        self.connected = False
+
+    def connect(self) -> Dict[str, Any]:
+        self.connected = True
+        return {"status": "success"}
+
+    def send_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        self.commands_sent.append(command)
+        if command.get("type") == "monitor" and command.get("action") == "start":
+            return {"status": "success", "monitor_id": "monitor_cli_111"}
+        return {"status": "success"}
+
+    def stream_observations(self):  # type: ignore[return]
+        return iter(self.observations)
+
+    def disconnect(self) -> None:
+        self.connected = False
+
+
+class _MockTopStreamingClient:
+    def __init__(
+        self, socket_path: str, observations: List[Dict[str, Any]]
+    ) -> None:
+        self.socket_path = socket_path
+        self.observations = observations
+        self.commands_sent: List[Dict[str, Any]] = []
+        self.connected = False
+
+    def connect(self) -> Dict[str, Any]:
+        self.connected = True
+        return {"status": "success"}
+
+    def send_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        self.commands_sent.append(command)
+        if command.get("type") == "top" and command.get("action") == "start":
+            return {"status": "success", "top_id": "top_cli_222"}
+        return {"status": "success"}
+
+    def stream_observations(self):  # type: ignore[return]
+        return iter(self.observations)
+
+    def disconnect(self) -> None:
+        self.connected = False
+
+
+def _monitor_args(cycles: int) -> SimpleNamespace:
+    return SimpleNamespace(
+        pattern="mod.fn",
+        interval=1,
+        cycles=cycles,
+    )
+
+
+def _top_args(cycles: int) -> SimpleNamespace:
+    return SimpleNamespace(
+        interval=1,
+        cycles=cycles,
+        no_filter_peeka=False,
+    )
+
+
+def test_monitor_n_counts_only_monitor_observations(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    active_id = "monitor_cli_111"
+    log_frame = {"type": "LOG", "level": "INFO", "msg": "background log"}
+    unrelated_obs = {"monitor_id": "monitor_other_999", "cycles": 1, "data": "unrelated"}
+    active_obs = {"monitor_id": active_id, "cycles": 1, "stats": {}}
+    observations = [log_frame, unrelated_obs, active_obs]
+    streaming_clients: List[_MockMonitorStreamingClient] = []
+
+    def build_streaming_client(socket_path: str) -> _MockMonitorStreamingClient:
+        client = _MockMonitorStreamingClient(socket_path, observations)
+        streaming_clients.append(client)
+        return client
+
+    monkeypatch.setattr(observe, "_check_agent_attached", lambda: ("/tmp/peeka_monitor.sock", 1234))
+    monkeypatch.setattr(observe, "StreamingAgentClient", build_streaming_client)
+    monkeypatch.setattr(observe, "ephemeral_client", lambda _tid: _MockSessionContext("m_session"))
+
+    assert observe.cmd_monitor(_monitor_args(cycles=1)) == 0
+
+    records = [
+        json.loads(line)
+        for line in capsys.readouterr().out.splitlines()
+        if line.strip().startswith("{")
+    ]
+    active_records = [r for r in records if r.get("monitor_id") == active_id]
+    assert len(active_records) == 1, (
+        f"Expected 1 active monitor observation, got {len(active_records)}; "
+        "LOG frames and unrelated OBS frames must not count toward the --cycles limit"
+    )
+
+
+def test_top_n_counts_only_top_observations(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    active_id = "top_cli_222"
+    log_frame = {"type": "LOG", "level": "INFO", "msg": "background log"}
+    unrelated_obs = {"top_id": "top_other_999", "cycles": 1, "data": "unrelated"}
+    active_obs = {"top_id": active_id, "cycles": 1, "functions": []}
+    observations = [log_frame, unrelated_obs, active_obs]
+    streaming_clients: List[_MockTopStreamingClient] = []
+
+    def build_streaming_client(socket_path: str) -> _MockTopStreamingClient:
+        client = _MockTopStreamingClient(socket_path, observations)
+        streaming_clients.append(client)
+        return client
+
+    monkeypatch.setattr(observe, "_check_agent_attached", lambda: ("/tmp/peeka_top.sock", 1234))
+    monkeypatch.setattr(observe, "StreamingAgentClient", build_streaming_client)
+    monkeypatch.setattr(observe, "ephemeral_client", lambda _tid: _MockSessionContext("top_session"))
+
+    assert observe.cmd_top(_top_args(cycles=1)) == 0
+
+    records = [
+        json.loads(line)
+        for line in capsys.readouterr().out.splitlines()
+        if line.strip().startswith("{")
+    ]
+    active_records = [r for r in records if r.get("top_id") == active_id]
+    assert len(active_records) == 1, (
+        f"Expected 1 active top observation, got {len(active_records)}; "
+        "LOG frames and unrelated OBS frames must not count toward the --cycles limit"
+    )
+
+
 def test_stack_start_returns_watch_id_and_cleanup_uses_watch_id(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture,
