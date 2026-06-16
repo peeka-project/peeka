@@ -3,6 +3,7 @@ Tests for peeka.commands.detach.DetachCommand
 """
 
 import sys
+import threading
 from typing import Any, cast
 from unittest.mock import MagicMock
 
@@ -203,3 +204,83 @@ class TestDetachCommand:
 
         finally:
             del sys.modules["test_detach_double_uninject"]
+
+
+class TestDetachMonitorTopCleanup:
+    """Regression tests: detach stops active monitor and top before uninject."""
+
+    def test_detach_stops_active_monitor(self):
+        """DetachCommand clears _monitors for all active monitors before uninject."""
+
+        class _FakeMonitorCmd:
+            def __init__(self):
+                self._lock = threading.Lock()
+                self._monitors = {
+                    "fake_monitor_001": {"pattern": "test.func", "cycle": 60}
+                }
+
+            def _stop_monitor(self, params):
+                mid = params.get("monitor_id")
+                with self._lock:
+                    self._monitors.pop(mid, None)
+                return {"status": "success"}
+
+        monitor_cmd = _FakeMonitorCmd()
+
+        mock_agent = MagicMock()
+        mock_agent.attached_pid = 12345
+        mock_agent._get_handler.side_effect = (
+            lambda name: monitor_cmd if name == "monitor" else None
+        )
+
+        result = DetachCommand(mock_agent).execute({})
+
+        assert result["status"] == "success"
+        assert monitor_cmd._monitors == {}
+
+    def test_detach_stops_active_top(self):
+        """DetachCommand stops active sampling thread via _stop before uninject."""
+
+        class _AliveThread:
+            def __init__(self):
+                self._alive = True
+
+            def is_alive(self):
+                return self._alive
+
+            def join(self, timeout=None):
+                self._alive = False
+
+        class _FakeTopCmd:
+            def __init__(self):
+                self._lock = threading.Lock()
+                self._top_id = "top_test_001"
+                self._sampling_thread = _AliveThread()
+
+            def _stop(self, params):
+                with self._lock:
+                    if (
+                        self._sampling_thread is None
+                        or not self._sampling_thread.is_alive()
+                    ):
+                        return {"status": "error", "error": "Profiler not running"}
+                if self._sampling_thread:
+                    self._sampling_thread.join(timeout=2.0)
+                with self._lock:
+                    self._sampling_thread = None
+                    self._top_id = None
+                return {"status": "success"}
+
+        top_cmd = _FakeTopCmd()
+        assert top_cmd._sampling_thread.is_alive()
+
+        mock_agent = MagicMock()
+        mock_agent.attached_pid = 12345
+        mock_agent._get_handler.side_effect = (
+            lambda name: top_cmd if name == "top" else None
+        )
+
+        result = DetachCommand(mock_agent).execute({})
+
+        assert result["status"] == "success"
+        assert top_cmd._sampling_thread is None
