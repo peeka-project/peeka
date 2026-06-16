@@ -6,7 +6,6 @@ from peeka.cli._client_helper import ephemeral_client
 from peeka.cli.connection import _socket_path_to_target_id
 from peeka.cli.sessions import _check_agent_attached
 from peeka.cli.streaming import LimitPredicate
-from peeka.cli.streaming import counted_limit
 from peeka.cli.streaming import run_streaming_command
 from peeka.cli.streaming import stream_counted_limit
 from peeka.core.client import StreamingAgentClient
@@ -216,6 +215,14 @@ def _emit_monitor_started(
 
 
 def cmd_monitor(args) -> int:
+    limit_predicate, set_monitor_id = stream_counted_limit("cycles", "monitor_id")
+
+    def _emit_monitor_started_with_id(
+        args: Any, response: Dict[str, Any], stream_id: Optional[str]
+    ) -> None:
+        set_monitor_id(stream_id)
+        _emit_monitor_started(args, response, stream_id)
+
     return _run_streaming_command(
         args,
         command_name="monitor",
@@ -227,8 +234,8 @@ def cmd_monitor(args) -> int:
             "action": "stop",
             "monitor_id": stream_id,
         },
-        emit_started=_emit_monitor_started,
-        limit_reached=counted_limit("cycles"),
+        emit_started=_emit_monitor_started_with_id,
+        limit_reached=limit_predicate,
     )
 
 
@@ -258,6 +265,14 @@ def _emit_top_started(
 
 
 def cmd_top(args) -> int:
+    limit_predicate, set_top_id = stream_counted_limit("cycles", "top_id")
+
+    def _emit_top_started_with_id(
+        args: Any, response: Dict[str, Any], stream_id: Optional[str]
+    ) -> None:
+        set_top_id(stream_id)
+        _emit_top_started(args, response, stream_id)
+
     return _run_streaming_command(
         args,
         command_name="top",
@@ -265,6 +280,6 @@ def cmd_top(args) -> int:
         command_builder=_top_command,
         response_id_key="top_id",
         stop_command_builder=lambda stream_id: {"type": "top", "action": "stop"},
-        emit_started=_emit_top_started,
-        limit_reached=counted_limit("cycles"),
+        emit_started=_emit_top_started_with_id,
+        limit_reached=limit_predicate,
     )
