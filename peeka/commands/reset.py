@@ -3,12 +3,20 @@ Reset Command - Restore enhanced methods to original state
 Similar to Arthas 'reset' command
 """
 
-from typing import Any, ClassVar, Dict, TYPE_CHECKING
+from typing import Any, ClassVar, Dict, Optional, Protocol, TYPE_CHECKING, cast
 
 from peeka.commands.base import BaseCommand
 
 if TYPE_CHECKING:
     from peeka.core.agent import PeekaAgent
+
+
+class _MonitorCommandProtocol(Protocol):
+    _lock: Any
+    _monitors: Dict[str, Dict[str, Any]]
+
+    def execute(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        ...
 
 
 class ResetCommand(BaseCommand):
@@ -58,13 +66,7 @@ class ResetCommand(BaseCommand):
 
         pattern = params.get("pattern")
 
-        monitor_cmd = getattr(self.agent, "monitor_cmd", None)
-        if monitor_cmd is None:
-            get_handler = getattr(self.agent, "_get_handler", None)
-            if callable(get_handler):
-                monitor_cmd = get_handler("monitor")
-            if monitor_cmd is None:
-                monitor_cmd = getattr(self.agent, "command_handlers", {}).get("monitor")
+        monitor_cmd = self._get_monitor_command()
         if monitor_cmd is not None:
             monitors_to_stop = []
             with monitor_cmd._lock:
@@ -78,4 +80,38 @@ class ResetCommand(BaseCommand):
 
     def _list_enhanced(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """List all current enhancements."""
-        return self.agent.injector.list_enhanced()
+        result = self.agent.injector.list_enhanced()
+
+        monitor_cmd = self._get_monitor_command()
+
+        if monitor_cmd is not None:
+            with monitor_cmd._lock:
+                for monitor_id, info in list(monitor_cmd._monitors.items()):
+                    result["enhanced"].append(
+                        {
+                            "monitor_id": monitor_id,
+                            "pattern": info.get("pattern", "unknown"),
+                            "command": "monitor",
+                            "cycle": info.get("cycle", 0),
+                            "cycles": info.get("cycles", -1),
+                            "cycle_count": info.get("cycle_count", 0),
+                        }
+                    )
+
+        result["total"] = len(result["enhanced"])
+        return result
+
+    def _get_monitor_command(self) -> Optional[_MonitorCommandProtocol]:
+        """Resolve the active monitor command handler, if available."""
+        monitor_cmd = getattr(self.agent, "monitor_cmd", None)
+        if monitor_cmd is None:
+            get_handler = getattr(self.agent, "_get_handler", None)
+            if callable(get_handler):
+                monitor_cmd = get_handler("monitor")
+            if monitor_cmd is None:
+                monitor_cmd = getattr(self.agent, "command_handlers", {}).get("monitor")
+
+        if monitor_cmd is None:
+            return None
+
+        return cast(_MonitorCommandProtocol, monitor_cmd)
