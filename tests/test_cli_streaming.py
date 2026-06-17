@@ -1,41 +1,21 @@
 # pyright: reportDeprecated=false, reportExplicitAny=false, reportAny=false
 
 import json
+from dataclasses import dataclass
 from types import SimpleNamespace
-from typing import Any, Callable, Dict, List, Type
+from typing import Any, Callable, Dict, List, Type, cast
 
 import pytest
 
 from peeka.cli.handlers import observe
-from peeka.cli.handlers.observe import (
-    cmd_monitor,
-    cmd_stack,
-    cmd_top,
-    cmd_trace,
-    cmd_watch,
-)
+from peeka.cli.streaming_config import STREAMING_COMMANDS
+from peeka.cli.streaming_config import StreamingCommandConfig
 
 
-class _CmdConfig:
-    def __init__(
-        self,
-        command_type: str,
-        response_id_key: str,
-        stream_id_key: str,
-        limit_attr: str,
-        stop_has_id: bool,
-        cmd_func: Callable[..., int],
-        args_factory: Callable[[int], SimpleNamespace],
-        observation_factory: Callable[[str, int], Dict[str, Any]],
-    ) -> None:
-        self.command_type = command_type
-        self.response_id_key = response_id_key
-        self.stream_id_key = stream_id_key
-        self.limit_attr = limit_attr
-        self.stop_has_id = stop_has_id
-        self.cmd_func = cmd_func
-        self.args_factory = args_factory
-        self.observation_factory = observation_factory
+@dataclass
+class _TestConfig:
+    args_factory: Callable[[int], SimpleNamespace]
+    observation_factory: Callable[[str, int], Dict[str, Any]]
 
 
 def _watch_args(n: int) -> SimpleNamespace:
@@ -101,67 +81,48 @@ def _top_obs(stream_id: str, idx: int) -> Dict[str, Any]:
     return {"top_id": stream_id, "cycles": idx, "functions": []}
 
 
-_CMD_CONFIGS: Dict[str, _CmdConfig] = {
-    "watch": _CmdConfig(
-        command_type="watch",
-        response_id_key="watch_id",
-        stream_id_key="watch_id",
-        limit_attr="times",
-        stop_has_id=True,
-        cmd_func=cmd_watch,
-        args_factory=_watch_args,
-        observation_factory=_watch_obs,
+_TEST_HELPERS: Dict[str, _TestConfig] = {
+    "watch": _TestConfig(args_factory=_watch_args, observation_factory=_watch_obs),
+    "trace": _TestConfig(args_factory=_trace_args, observation_factory=_watch_obs),
+    "stack": _TestConfig(args_factory=_stack_args, observation_factory=_watch_obs),
+    "monitor": _TestConfig(
+        args_factory=_monitor_args, observation_factory=_monitor_obs
     ),
-    "trace": _CmdConfig(
-        command_type="trace",
-        response_id_key="watch_id",
-        stream_id_key="watch_id",
-        limit_attr="times",
-        stop_has_id=True,
-        cmd_func=cmd_trace,
-        args_factory=_trace_args,
-        observation_factory=_watch_obs,
-    ),
-    "stack": _CmdConfig(
-        command_type="stack",
-        response_id_key="watch_id",
-        stream_id_key="watch_id",
-        limit_attr="times",
-        stop_has_id=True,
-        cmd_func=cmd_stack,
-        args_factory=_stack_args,
-        observation_factory=_watch_obs,
-    ),
-    "monitor": _CmdConfig(
-        command_type="monitor",
-        response_id_key="monitor_id",
-        stream_id_key="monitor_id",
-        limit_attr="cycles",
-        stop_has_id=True,
-        cmd_func=cmd_monitor,
-        args_factory=_monitor_args,
-        observation_factory=_monitor_obs,
-    ),
-    "top": _CmdConfig(
-        command_type="top",
-        response_id_key="top_id",
-        stream_id_key="top_id",
-        limit_attr="cycles",
-        stop_has_id=False,
-        cmd_func=cmd_top,
-        args_factory=_top_args,
-        observation_factory=_top_obs,
-    ),
+    "top": _TestConfig(args_factory=_top_args, observation_factory=_top_obs),
 }
 
+assert set(_TEST_HELPERS.keys()) == set(STREAMING_COMMANDS.keys()), (
+    f"_TEST_HELPERS must cover all STREAMING_COMMANDS. Missing: "
+    f"{set(STREAMING_COMMANDS.keys()) - set(_TEST_HELPERS.keys())}"
+)
+
+
+_CMD_FUNCS: Dict[str, Callable[..., int]] = {
+    "watch": cast(Callable[..., int], observe.cmd_watch),
+    "trace": cast(Callable[..., int], observe.cmd_trace),
+    "stack": cast(Callable[..., int], observe.cmd_stack),
+    "monitor": cast(Callable[..., int], observe.cmd_monitor),
+    "top": cast(Callable[..., int], observe.cmd_top),
+}
+assert set(_CMD_FUNCS.keys()) == set(STREAMING_COMMANDS.keys())
+
+
+def _stop_has_id(cfg: StreamingCommandConfig) -> bool:
+    """True if the stop command includes a stream-id field."""
+
+    test_id = "test_id_check"
+    stop = cfg.stop_command_builder(test_id)
+    return stop is not None and any(value == test_id for value in stop.values())
+
+
 _CMDS_WITH_STOP_ID: List[str] = [
-    name for name, cfg in _CMD_CONFIGS.items() if cfg.stop_has_id
+    name for name, cfg in STREAMING_COMMANDS.items() if _stop_has_id(cfg)
 ]
 
 
 class _MockSessionContext:
     def __init__(self, session_id: str) -> None:
-        self._session_id = session_id
+        self._session_id: str = session_id
 
     def __enter__(self) -> str:
         return self._session_id
@@ -171,7 +132,7 @@ class _MockSessionContext:
 
 
 def _make_mock_client_class(
-    cfg: _CmdConfig,
+    cfg: StreamingCommandConfig,
     stream_id: str,
     observations: List[Dict[str, Any]],
 ) -> Type[Any]:
@@ -185,7 +146,7 @@ def _make_mock_client_class(
         connected: bool
 
         def __init__(self, socket_path: str) -> None:
-            self.socket_path = socket_path
+            self.socket_path: str = socket_path
             self.commands_sent = []
             self.connected = False
 
@@ -211,6 +172,13 @@ def _make_mock_client_class(
     return _MockClient
 
 
+def _make_session_context_factory(cmd_name: str) -> Callable[[Any], _MockSessionContext]:
+    def _factory(_tid: Any) -> _MockSessionContext:
+        return _MockSessionContext(f"{cmd_name}_session")
+
+    return _factory
+
+
 def _patch_observe(
     monkeypatch: pytest.MonkeyPatch,
     cmd_name: str,
@@ -225,23 +193,24 @@ def _patch_observe(
     monkeypatch.setattr(
         observe,
         "ephemeral_client",
-        lambda _tid: _MockSessionContext(f"{cmd_name}_session"),
+        _make_session_context_factory(cmd_name),
     )
 
 
-@pytest.mark.parametrize("cmd_name", list(_CMD_CONFIGS.keys()))
+@pytest.mark.parametrize("cmd_name", list(STREAMING_COMMANDS.keys()))
 def test_stream_id_filter_excludes_unrelated_observations(
     cmd_name: str,
     monkeypatch: pytest.MonkeyPatch,
     capsys: "pytest.CaptureFixture[str]",
 ) -> None:
-    cfg = _CMD_CONFIGS[cmd_name]
+    cfg = STREAMING_COMMANDS[cmd_name]
+    helpers = _TEST_HELPERS[cmd_name]
     stream_id = f"{cmd_name}_test_001"
     unrelated_id = f"{cmd_name}_unrelated_999"
 
     unrelated_obs = {cfg.stream_id_key: unrelated_id, "count": 1, "data": "noise"}
     log_frame = {"type": "log", "level": "INFO", "msg": "background noise"}
-    matching_obs = [cfg.observation_factory(stream_id, i + 1) for i in range(2)]
+    matching_obs = [helpers.observation_factory(stream_id, i + 1) for i in range(2)]
     observations: List[Dict[str, Any]] = [unrelated_obs, log_frame] + matching_obs
 
     built_clients: List[Any] = []
@@ -254,8 +223,8 @@ def test_stream_id_filter_excludes_unrelated_observations(
 
     _patch_observe(monkeypatch, cmd_name, build_client)
 
-    args = cfg.args_factory(2)
-    assert cfg.cmd_func(args) == 0
+    args = helpers.args_factory(2)
+    assert _CMD_FUNCS[cmd_name](args) == 0
 
     records = [
         json.loads(line)
@@ -269,17 +238,18 @@ def test_stream_id_filter_excludes_unrelated_observations(
     )
 
 
-@pytest.mark.parametrize("cmd_name", list(_CMD_CONFIGS.keys()))
+@pytest.mark.parametrize("cmd_name", list(STREAMING_COMMANDS.keys()))
 def test_limit_stops_after_n_matching_observations(
     cmd_name: str,
     monkeypatch: pytest.MonkeyPatch,
     capsys: "pytest.CaptureFixture[str]",
 ) -> None:
-    cfg = _CMD_CONFIGS[cmd_name]
+    cfg = STREAMING_COMMANDS[cmd_name]
+    helpers = _TEST_HELPERS[cmd_name]
     stream_id = f"{cmd_name}_test_002"
     n = 3
 
-    observations = [cfg.observation_factory(stream_id, i + 1) for i in range(n + 10)]
+    observations = [helpers.observation_factory(stream_id, i + 1) for i in range(n + 10)]
 
     built_clients: List[Any] = []
     MockClient = _make_mock_client_class(cfg, stream_id, observations)
@@ -291,8 +261,8 @@ def test_limit_stops_after_n_matching_observations(
 
     _patch_observe(monkeypatch, cmd_name, build_client)
 
-    args = cfg.args_factory(n)
-    assert cfg.cmd_func(args) == 0
+    args = helpers.args_factory(n)
+    assert _CMD_FUNCS[cmd_name](args) == 0
 
     records = [
         json.loads(line)
@@ -309,12 +279,12 @@ def test_limit_stops_after_n_matching_observations(
 def test_cleanup_sends_type_specific_stop_command(
     cmd_name: str,
     monkeypatch: pytest.MonkeyPatch,
-    capsys: "pytest.CaptureFixture[str]",
 ) -> None:
-    cfg = _CMD_CONFIGS[cmd_name]
+    cfg = STREAMING_COMMANDS[cmd_name]
+    helpers = _TEST_HELPERS[cmd_name]
     stream_id = f"{cmd_name}_test_003"
 
-    observations = [cfg.observation_factory(stream_id, i + 1) for i in range(2)]
+    observations = [helpers.observation_factory(stream_id, i + 1) for i in range(2)]
 
     built_clients: List[Any] = []
     MockClient = _make_mock_client_class(cfg, stream_id, observations)
@@ -326,8 +296,8 @@ def test_cleanup_sends_type_specific_stop_command(
 
     _patch_observe(monkeypatch, cmd_name, build_client)
 
-    args = cfg.args_factory(1)
-    assert cfg.cmd_func(args) == 0
+    args = helpers.args_factory(1)
+    assert _CMD_FUNCS[cmd_name](args) == 0
 
     assert built_clients, f"[{cmd_name}] No streaming client was constructed"
     client = built_clients[0]
