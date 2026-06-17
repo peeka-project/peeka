@@ -317,3 +317,42 @@ def test_cleanup_sends_type_specific_stop_command(
         f"[{cmd_name}] Stop command {stop_id_key!r} must be {stream_id!r}, "
         f"got {stop_cmds[0].get(stop_id_key)!r}"
     )
+
+
+def test_top_cleanup_sends_stop_without_stream_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """top stop command has no stream-id field — verify it is still sent on limit hit."""
+    cfg = STREAMING_COMMANDS["top"]
+    helpers = _TEST_HELPERS["top"]
+    stream_id = "top_test_stop_004"
+
+    observations = [helpers.observation_factory(stream_id, i + 1) for i in range(2)]
+
+    built_clients: List[Any] = []
+    MockClient = _make_mock_client_class(cfg, stream_id, observations)
+
+    def build_client(socket_path: str) -> Any:
+        client = MockClient(socket_path)
+        built_clients.append(client)
+        return client
+
+    _patch_observe(monkeypatch, "top", build_client)
+
+    args = helpers.args_factory(1)
+    assert _CMD_FUNCS["top"](args) == 0
+
+    assert built_clients, "No streaming client was constructed for top"
+    client = built_clients[0]
+
+    stop_cmds = [
+        cmd
+        for cmd in client.commands_sent
+        if cmd.get("type") == "top" and cmd.get("action") == "stop"
+    ]
+    assert stop_cmds, (
+        "top: no stop command (type='top', action='stop') was sent after limit hit"
+    )
+    assert "top_id" not in stop_cmds[0], (
+        f"top stop command must NOT include 'top_id', got: {stop_cmds[0]}"
+    )
