@@ -18,20 +18,6 @@ EphemeralClientFactory = Callable[[str], ContextManager[str]]
 TargetIdResolver = Callable[[str], str]
 
 
-def counted_limit(attr_name: str) -> LimitPredicate:
-    """Return a predicate that stops after a local emitted-observation count."""
-    emitted = {"count": 0}
-
-    def reached(args: Any, observation: Dict[str, Any]) -> bool:
-        limit = int(getattr(args, attr_name, -1))
-        if limit <= 0:
-            return False
-        emitted["count"] += 1
-        return emitted["count"] >= limit
-
-    return reached
-
-
 def stream_counted_limit(attr_name: str, stream_id_key: str) -> "Tuple[LimitPredicate, Callable[[Optional[str]], None]]":
     """Return a (predicate, set_stream_id) pair for stream-filtered local counting.
 
