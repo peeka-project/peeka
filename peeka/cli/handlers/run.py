@@ -11,7 +11,7 @@ import time
 import types
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, List, Optional
 
 from peeka.cli.parsers.observe import build_monitor_run_parser
 from peeka.cli.parsers.observe import build_stack_run_parser
@@ -19,7 +19,6 @@ from peeka.cli.parsers.observe import build_trace_run_parser
 from peeka.cli.parsers.observe import build_watch_run_parser
 from peeka.cli.parsers.runtime import build_top_run_parser
 from peeka.cli.streaming import stream_counted_limit
-from peeka.cli.streaming_config import STREAMING_COMMANDS
 from peeka.core.attach import ProcessAttacher
 from peeka.core.client import StreamingAgentClient
 from peeka.core.output import OutputFormatter
@@ -345,13 +344,32 @@ def cmd_run(args) -> int:
             limit_hit = False
             exit_code = 0
 
-            _cfg = STREAMING_COMMANDS[command_type]
-            _stop_command = cast(Dict[str, Any], _cfg.stop_command_builder(watch_id))
+            if command_type in ("watch", "trace", "stack"):
+                _limit_attr = "times"
+                _stream_id_key = "watch_id"
+                _stop_command = {
+                    "type": command_type,
+                    "action": "stop",
+                    "watch_id": watch_id,
+                }
+            elif command_type == "monitor":
+                _limit_attr = "cycles"
+                _stream_id_key = "monitor_id"
+                _stop_command = {
+                    "type": "monitor",
+                    "action": "stop",
+                    "monitor_id": watch_id,
+                }
+            else:
+                _limit_attr = "cycles"
+                _stream_id_key = "top_id"
+                _stop_command = {"type": "top", "action": "stop"}
+
             _limit_predicate, _set_stream_id = stream_counted_limit(
-                _cfg.limit_attr, _cfg.stream_id_key
+                _limit_attr, _stream_id_key
             )
             _limit_args = types.SimpleNamespace(
-                **{_cfg.limit_attr: command.get(_cfg.limit_attr, -1)}
+                **{_limit_attr: command.get(_limit_attr, -1)}
             )
             _set_stream_id(watch_id)
 

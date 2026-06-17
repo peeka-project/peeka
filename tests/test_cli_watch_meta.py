@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 import pytest
 
 from peeka.cli.handlers import observe
+from peeka.cli.streaming import counted_limit
 from peeka.core.output import OutputFormatter
 
 
@@ -176,6 +177,36 @@ def test_emit_watch_started_forwards_runtime_meta(
     assert captured["meta"] == runtime_meta
 
 
+@pytest.mark.parametrize(
+    "limit, expected",
+    [
+        (-1, [False, False, False]),
+        (0, [False, False, False]),
+        (1, [True, True, True]),
+        (2, [False, True, True]),
+    ],
+)
+def test_counted_limit_uses_local_emitted_observation_count(
+    limit: int,
+    expected: List[bool],
+) -> None:
+    args = SimpleNamespace(times=limit)
+    predicate = counted_limit("times")
+
+    results = [predicate(args, {"count": index}) for index in range(3)]
+
+    assert results == expected
+
+
+def test_counted_limit_stops_after_n_emitted_observations() -> None:
+    args = SimpleNamespace(times=2)
+    predicate = counted_limit("times")
+
+    assert predicate(args, {"count": 1}) is False
+    assert predicate(args, {"count": 2}) is True
+    assert predicate(args, {"count": 3}) is True
+
+
 def test_watch_times_help_current_wording_mentions_print_observations() -> None:
     result = subprocess.run(
         [sys.executable, "-m", "peeka.cli.main", "watch", "--help"],
@@ -204,7 +235,7 @@ def test_watch_times_help_does_not_say_capture() -> None:
 
 def test_watch_n_counts_only_watch_observations(
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
+    capsys: pytest.CaptureFixture,
 ) -> None:
     active_id = "watch_cli_123"
     unrelated_obs = {"watch_id": "watch_other_999", "count": 1, "data": "unrelated"}
@@ -239,7 +270,7 @@ def test_watch_n_counts_only_watch_observations(
 
 def test_unrelated_log_frames_do_not_decrement_watch_n(
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
+    capsys: pytest.CaptureFixture,
 ) -> None:
     active_id = "watch_cli_123"
     log_frame_1 = {"type": "log", "level": "INFO", "msg": "background log"}
@@ -275,7 +306,7 @@ def test_unrelated_log_frames_do_not_decrement_watch_n(
 
 def test_trace_n_counts_only_trace_observations(
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
+    capsys: pytest.CaptureFixture,
 ) -> None:
     active_id = "trace_cli_789"
     unrelated_obs = {"watch_id": "watch_other_999", "count": 1, "data": "unrelated"}
@@ -311,7 +342,7 @@ def test_trace_n_counts_only_trace_observations(
 
 def test_stack_n_counts_only_stack_observations(
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
+    capsys: pytest.CaptureFixture,
 ) -> None:
     active_id = "stack_cli_456"
     unrelated_obs = {"watch_id": "watch_other_999", "count": 1, "data": "unrelated"}
@@ -415,7 +446,7 @@ def _top_args(cycles: int) -> SimpleNamespace:
 
 def test_monitor_n_counts_only_monitor_observations(
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
+    capsys: pytest.CaptureFixture,
 ) -> None:
     active_id = "monitor_cli_111"
     log_frame = {"type": "LOG", "level": "INFO", "msg": "background log"}
@@ -449,7 +480,7 @@ def test_monitor_n_counts_only_monitor_observations(
 
 def test_top_n_counts_only_top_observations(
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
+    capsys: pytest.CaptureFixture,
 ) -> None:
     active_id = "top_cli_222"
     log_frame = {"type": "LOG", "level": "INFO", "msg": "background log"}
@@ -483,7 +514,7 @@ def test_top_n_counts_only_top_observations(
 
 def test_stack_start_returns_watch_id_and_cleanup_uses_watch_id(
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
+    capsys: pytest.CaptureFixture,
 ) -> None:
     active_id = "stack_cli_456"
     active_obs_1 = {"watch_id": active_id, "count": 1, "frames": []}
