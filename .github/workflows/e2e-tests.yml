@@ -11,6 +11,7 @@ jobs:
   unit-tests:
     name: Unit Tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -35,6 +36,7 @@ jobs:
   perf-regression:
     name: Perf Regression (Python 3.12)
     runs-on: ubuntu-latest
+    # Perf tests are informational; CI runners are too variable for hard thresholds.
     continue-on-error: true
 
     steps:
