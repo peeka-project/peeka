@@ -13,15 +13,19 @@ import os
 import socket
 import time
 import tracemalloc
-from typing import Any, Dict, List
+from typing import Any, Dict, List, cast
 
 import pytest
 
 from peeka.core.agent import PeekaAgent
 
 
+_is_ci = os.environ.get("CI") == "true"
+
 PERF_THRESHOLDS: Dict[str, Any] = {
-    "enqueue_throughput_obs_per_sec": 344_000,  # 50% of ~688k baseline
+    # CI runners (shared, variable CPU) run ~200k obs/s; local baseline ~688k.
+    # Use a relaxed threshold in CI to prevent noise failures.
+    "enqueue_throughput_obs_per_sec": 120_000 if _is_ci else 344_000,
     "flush_latency_64_ms": 1.78,                # 2x of ~0.89ms baseline
     "memory_peak_50k_kb": 348.0,                # 1.5x of ~232KB baseline
     "fast_client_ms_under_slow": 0.80,          # 2x of ~0.40ms baseline
@@ -108,15 +112,18 @@ class TestObservationQueuePerfBaseline:
             elapsed = time.perf_counter() - t0
 
             throughput = 10_000 / elapsed
+            threshold = cast(int, PERF_THRESHOLDS["enqueue_throughput_obs_per_sec"])
+            threshold_label = "CI threshold" if _is_ci else "local threshold"
             print(
                 f"\nThroughput: {throughput:.0f} obs/s (elapsed={elapsed * 1000:.1f}ms)"
+                f"; active threshold={threshold} ({threshold_label})"
             )
 
             assert elapsed > 0
             _baseline["enqueue_throughput_obs_per_sec"] = throughput
-            assert throughput >= PERF_THRESHOLDS["enqueue_throughput_obs_per_sec"], (
+            assert throughput >= threshold, (
                 f"Throughput {throughput:.0f} obs/s < threshold "
-                f"{PERF_THRESHOLDS['enqueue_throughput_obs_per_sec']} obs/s"
+                f"{threshold} obs/s"
             )
         finally:
             agent._unregister_client_connection(server_sock)
