@@ -1,45 +1,15 @@
 """Streaming observation CLI handlers."""
 
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Dict, Optional
 
 from peeka.cli._client_helper import ephemeral_client
 from peeka.cli.connection import _socket_path_to_target_id
 from peeka.cli.sessions import _check_agent_attached
-from peeka.cli.streaming_config import STREAMING_COMMANDS
-from peeka.cli.streaming_config import StreamingCommandConfig
-from peeka.cli.streaming_config import _emit_monitor_started
-from peeka.cli.streaming_config import _emit_stack_started
-from peeka.cli.streaming_config import _emit_top_started
-from peeka.cli.streaming_config import _emit_trace_started
-from peeka.cli.streaming_config import _emit_watch_started
-from peeka.cli.streaming_config import _monitor_command
-from peeka.cli.streaming_config import _stack_command
-from peeka.cli.streaming_config import _top_command
-from peeka.cli.streaming_config import _trace_command
-from peeka.cli.streaming_config import _watch_command
 from peeka.cli.streaming import LimitPredicate
 from peeka.cli.streaming import run_streaming_command
 from peeka.cli.streaming import stream_counted_limit
 from peeka.core.client import StreamingAgentClient
 from peeka.core.output import OutputFormatter
-
-__all__ = [
-    "_emit_monitor_started",
-    "_emit_stack_started",
-    "_emit_top_started",
-    "_emit_trace_started",
-    "_emit_watch_started",
-    "_monitor_command",
-    "_stack_command",
-    "_top_command",
-    "_trace_command",
-    "_watch_command",
-    "cmd_monitor",
-    "cmd_stack",
-    "cmd_top",
-    "cmd_trace",
-    "cmd_watch",
-]
 
 
 def _run_streaming_command(
@@ -73,54 +43,243 @@ def _run_streaming_command(
     )
 
 
-def _emit_with_stream_id(
-    config: StreamingCommandConfig,
-    set_stream_id: Callable[[Optional[str]], None],
-):
-    def _emit_started_with_id(
-        args: Any, response: Dict[str, Any], stream_id: Optional[str]
-    ) -> None:
-        set_stream_id(stream_id)
-        config.emit_started(args, response, stream_id)
+def _watch_command(args: Any, client_session_id: str) -> Dict[str, Any]:
+    return {
+        "type": "watch",
+        "action": "start",
+        "client_session_id": client_session_id,
+        "pattern": args.pattern,
+        "depth": args.depth,
+        "times": args.times,
+        "before": args.before,
+        "exception": args.exception,
+        "success": args.success,
+        "finish": args.finish,
+        "condition_express": args.condition_express,
+    }
 
-    return _emit_started_with_id
 
-
-def _run_configured_streaming_command(
-    args: Any, config: StreamingCommandConfig
-) -> int:
-    limit_predicate, set_stream_id = stream_counted_limit(
-        config.limit_attr, config.stream_id_key
-    )
-    return _run_streaming_command(
-        args,
-        command_name=config.command_type,
-        start_error=f"{config.command_type.capitalize()} start failed",
-        command_builder=config.command_builder,
-        response_id_key=config.response_id_key,
-        stop_command_builder=config.stop_command_builder,
-        emit_started=_emit_with_stream_id(config, set_stream_id),
-        limit_reached=limit_predicate,
-        allow_explicit_client=config.allow_explicit_client,
-        exception_status=config.exception_status,
+def _emit_watch_started(
+    args: Any, response: Dict[str, Any], stream_id: Optional[str]
+) -> None:
+    start_data = {"watch_id": stream_id, "pattern": args.pattern}
+    target_info = response.get("target")
+    if target_info:
+        start_data["target"] = target_info
+    OutputFormatter.event(
+        "watch_started",
+        data=start_data,
+        meta=response.get("runtime_meta"),
     )
 
 
 def cmd_watch(args) -> int:
-    return _run_configured_streaming_command(args, STREAMING_COMMANDS["watch"])
+    limit_predicate, set_watch_id = stream_counted_limit("times", "watch_id")
+
+    def _emit_watch_started_with_id(
+        args: Any, response: Dict[str, Any], stream_id: Optional[str]
+    ) -> None:
+        set_watch_id(stream_id)
+        _emit_watch_started(args, response, stream_id)
+
+    return _run_streaming_command(
+        args,
+        command_name="watch",
+        start_error="Watch start failed",
+        command_builder=_watch_command,
+        response_id_key="watch_id",
+        stop_command_builder=lambda stream_id: {
+            "type": "watch",
+            "action": "stop",
+            "watch_id": stream_id,
+        },
+        emit_started=_emit_watch_started_with_id,
+        limit_reached=limit_predicate,
+        allow_explicit_client=True,
+    )
+
+
+def _trace_command(args: Any, client_session_id: str) -> Dict[str, Any]:
+    return {
+        "type": "trace",
+        "action": "start",
+        "client_session_id": client_session_id,
+        "pattern": args.pattern,
+        "depth": args.depth,
+        "times": -1,
+        "condition_express": args.condition_express,
+        "skip_builtin": args.skip_builtin,
+        "min_duration": args.min_duration,
+    }
+
+
+def _emit_trace_started(
+    args: Any, response: Dict[str, Any], stream_id: Optional[str]
+) -> None:
+    OutputFormatter.event(
+        "trace_started",
+        data={"trace_id": stream_id, "pattern": args.pattern},
+        meta=response.get("meta"),
+    )
 
 
 def cmd_trace(args) -> int:
-    return _run_configured_streaming_command(args, STREAMING_COMMANDS["trace"])
+    limit_predicate, set_trace_id = stream_counted_limit("times", "watch_id")
+
+    def _emit_trace_started_with_id(
+        args: Any, response: Dict[str, Any], stream_id: Optional[str]
+    ) -> None:
+        set_trace_id(stream_id)
+        _emit_trace_started(args, response, stream_id)
+
+    return _run_streaming_command(
+        args,
+        command_name="trace",
+        start_error="Trace start failed",
+        command_builder=_trace_command,
+        response_id_key="watch_id",
+        stop_command_builder=lambda stream_id: {
+            "type": "trace",
+            "action": "stop",
+            "watch_id": stream_id,
+        },
+        emit_started=_emit_trace_started_with_id,
+        limit_reached=limit_predicate,
+        allow_explicit_client=True,
+    )
+
+
+def _stack_command(args: Any, client_session_id: str) -> Dict[str, Any]:
+    return {
+        "type": "stack",
+        "action": "start",
+        "client_session_id": client_session_id,
+        "pattern": args.pattern,
+        "depth": args.depth,
+        "times": -1,
+        "condition_express": args.condition_express,
+    }
+
+
+def _emit_stack_started(
+    args: Any, response: Dict[str, Any], stream_id: Optional[str]
+) -> None:
+    OutputFormatter.event(
+        "stack_started", data={"stack_id": stream_id, "pattern": args.pattern}
+    )
 
 
 def cmd_stack(args) -> int:
-    return _run_configured_streaming_command(args, STREAMING_COMMANDS["stack"])
+    limit_predicate, set_stack_id = stream_counted_limit("times", "watch_id")
+
+    def _emit_stack_started_with_id(
+        args: Any, response: Dict[str, Any], stream_id: Optional[str]
+    ) -> None:
+        set_stack_id(stream_id)
+        _emit_stack_started(args, response, stream_id)
+
+    return _run_streaming_command(
+        args,
+        command_name="stack",
+        start_error="Stack start failed",
+        command_builder=_stack_command,
+        response_id_key="watch_id",
+        stop_command_builder=lambda stream_id: {
+            "type": "stack",
+            "action": "stop",
+            "watch_id": stream_id,
+        },
+        emit_started=_emit_stack_started_with_id,
+        limit_reached=limit_predicate,
+        exception_status=0,
+    )
+
+
+def _monitor_command(args: Any, client_session_id: str) -> Dict[str, Any]:
+    return {
+        "type": "monitor",
+        "action": "start",
+        "client_session_id": client_session_id,
+        "pattern": args.pattern,
+        "cycle": args.interval,
+        "cycles": args.cycles,
+    }
+
+
+def _emit_monitor_started(
+    args: Any, response: Dict[str, Any], stream_id: Optional[str]
+) -> None:
+    OutputFormatter.event(
+        "monitor_started", data={"monitor_id": stream_id, "pattern": args.pattern}
+    )
 
 
 def cmd_monitor(args) -> int:
-    return _run_configured_streaming_command(args, STREAMING_COMMANDS["monitor"])
+    limit_predicate, set_monitor_id = stream_counted_limit("cycles", "monitor_id")
+
+    def _emit_monitor_started_with_id(
+        args: Any, response: Dict[str, Any], stream_id: Optional[str]
+    ) -> None:
+        set_monitor_id(stream_id)
+        _emit_monitor_started(args, response, stream_id)
+
+    return _run_streaming_command(
+        args,
+        command_name="monitor",
+        start_error="Monitor start failed",
+        command_builder=_monitor_command,
+        response_id_key="monitor_id",
+        stop_command_builder=lambda stream_id: {
+            "type": "monitor",
+            "action": "stop",
+            "monitor_id": stream_id,
+        },
+        emit_started=_emit_monitor_started_with_id,
+        limit_reached=limit_predicate,
+    )
+
+
+def _top_command(args: Any, client_session_id: str) -> Dict[str, Any]:
+    return {
+        "type": "top",
+        "action": "start",
+        "client_session_id": client_session_id,
+        "interval": args.interval,
+        "stream": True,
+        "filter_peeka": not args.no_filter_peeka,
+    }
+
+
+def _emit_top_started(
+    args: Any, response: Dict[str, Any], stream_id: Optional[str]
+) -> None:
+    OutputFormatter.event(
+        "top_started",
+        data={
+            "top_id": stream_id,
+            "interval": args.interval,
+            "filter_peeka": not args.no_filter_peeka,
+        },
+        meta=response.get("meta"),
+    )
 
 
 def cmd_top(args) -> int:
-    return _run_configured_streaming_command(args, STREAMING_COMMANDS["top"])
+    limit_predicate, set_top_id = stream_counted_limit("cycles", "top_id")
+
+    def _emit_top_started_with_id(
+        args: Any, response: Dict[str, Any], stream_id: Optional[str]
+    ) -> None:
+        set_top_id(stream_id)
+        _emit_top_started(args, response, stream_id)
+
+    return _run_streaming_command(
+        args,
+        command_name="top",
+        start_error="Top start failed",
+        command_builder=_top_command,
+        response_id_key="top_id",
+        stop_command_builder=lambda stream_id: {"type": "top", "action": "stop"},
+        emit_started=_emit_top_started_with_id,
+        limit_reached=limit_predicate,
+    )
