@@ -3,20 +3,12 @@ Reset Command - Restore enhanced methods to original state
 Similar to Arthas 'reset' command
 """
 
-from typing import Any, ClassVar, Dict, Optional, Protocol, TYPE_CHECKING, cast
+from typing import Any, ClassVar, Dict, TYPE_CHECKING
 
 from peeka.commands.base import BaseCommand
 
 if TYPE_CHECKING:
     from peeka.core.agent import PeekaAgent
-
-
-class _MonitorCommandProtocol(Protocol):
-    _lock: Any
-    _monitors: Dict[str, Dict[str, Any]]
-
-    def execute(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        ...
 
 
 class ResetCommand(BaseCommand):
@@ -66,15 +58,22 @@ class ResetCommand(BaseCommand):
 
         pattern = params.get("pattern")
 
-        monitor_cmd = self._get_monitor_command()
-        if monitor_cmd is not None:
-            monitors_to_stop = []
-            with monitor_cmd._lock:
-                for wid, info in list(monitor_cmd._monitors.items()):
-                    if pattern is None or fnmatch.fnmatch(info.get("pattern", ""), pattern):
-                        monitors_to_stop.append(wid)
-            for wid in monitors_to_stop:
-                monitor_cmd.execute({"action": "stop", "watch_id": wid})
+        stop_context = getattr(self.agent, "stop_probe_context", None)
+        probe_context_lock = getattr(self.agent, "_probe_context_lock", None)
+        probe_context_types = getattr(self.agent, "_probe_context_types", {})
+        probe_contexts = getattr(self.agent, "_probe_contexts", {})
+
+        if callable(stop_context) and probe_context_lock is not None:
+            stream_keys = []
+            with probe_context_lock:
+                for stream_key in list(probe_context_types.keys()):
+                    probe_context = probe_contexts.get(stream_key)
+                    probe_run = getattr(probe_context, "probe", None)
+                    probe_pattern = getattr(probe_run, "pattern", stream_key)
+                    if pattern is None or fnmatch.fnmatch(probe_pattern or "", pattern):
+                        stream_keys.append(stream_key)
+            for stream_key in stream_keys:
+                stop_context(stream_key)
 
         return self.agent.injector.reset(pattern)
 
@@ -82,36 +81,23 @@ class ResetCommand(BaseCommand):
         """List all current enhancements."""
         result = self.agent.injector.list_enhanced()
 
-        monitor_cmd = self._get_monitor_command()
+        probe_context_lock = getattr(self.agent, "_probe_context_lock", None)
+        probe_context_types = getattr(self.agent, "_probe_context_types", {})
+        probe_contexts = getattr(self.agent, "_probe_contexts", {})
 
-        if monitor_cmd is not None:
-            with monitor_cmd._lock:
-                for monitor_id, info in list(monitor_cmd._monitors.items()):
+        if probe_context_lock is not None:
+            with probe_context_lock:
+                for stream_key, probe_type in list(probe_context_types.items()):
+                    probe_context = probe_contexts.get(stream_key)
+                    probe_run = getattr(probe_context, "probe", None)
+                    pattern = getattr(probe_run, "pattern", stream_key)
                     result["enhanced"].append(
                         {
-                            "monitor_id": monitor_id,
-                            "pattern": info.get("pattern", "unknown"),
-                            "command": "monitor",
-                            "cycle": info.get("cycle", 0),
-                            "cycles": info.get("cycles", -1),
-                            "cycle_count": info.get("cycle_count", 0),
+                            "stream_id": stream_key,
+                            "command": probe_type,
+                            "pattern": pattern,
                         }
                     )
 
         result["total"] = len(result["enhanced"])
         return result
-
-    def _get_monitor_command(self) -> Optional[_MonitorCommandProtocol]:
-        """Resolve the active monitor command handler, if available."""
-        monitor_cmd = getattr(self.agent, "monitor_cmd", None)
-        if monitor_cmd is None:
-            get_handler = getattr(self.agent, "_get_handler", None)
-            if callable(get_handler):
-                monitor_cmd = get_handler("monitor")
-            if monitor_cmd is None:
-                monitor_cmd = getattr(self.agent, "command_handlers", {}).get("monitor")
-
-        if monitor_cmd is None:
-            return None
-
-        return cast(_MonitorCommandProtocol, monitor_cmd)

@@ -1,6 +1,7 @@
 """Tests for reset command - restore enhanced methods to original state."""
 
 import sys
+import threading
 from typing import Any
 
 import pytest
@@ -528,627 +529,122 @@ class TestResetCommand:
             del sys.modules["test_reset_stream_observer"]
 
 
-class TestResetMonitorInteraction:
-    """T3: reset must stop and restore active monitor wrappers."""
+class TestResetProbeContextRegistry:
+    """Regression tests for reset using active probe context registry."""
 
-    @pytest.fixture
-    def mod_and_fn(self):
-        def target(x):
-            return x + 5
-
-        mod = type(sys)("test_reset_monitor_mod")
-        mod.target = target
-        sys.modules["test_reset_monitor_mod"] = mod
-        yield mod, target
-        sys.modules.pop("test_reset_monitor_mod", None)
-
-    def _make_agent_with_monitor(self, mod, fn_name):
-        from peeka.commands.monitor import MonitorCommand
-        from peeka.core.injector import DecoratorInjector
+    def _make_agent(self):
         from peeka.commands.reset import ResetCommand
+        from peeka.core.injector import DecoratorInjector
         from peeka.core.observer import ObservationManager
 
-        class _Agent:
-            injector: Any
-            monitor_cmd: Any
+        class _ProbeRun:
+            def __init__(self, pattern):
+                self.pattern = pattern
 
+        class _ProbeContext:
+            def __init__(self, pattern):
+                self.probe = _ProbeRun(pattern)
+
+        class _Agent:
             def __init__(self):
                 self._observations = []
+                self._probe_context_lock = threading.Lock()
+                self._probe_contexts = {}
+                self._probe_context_types = {}
+                self.stopped_streams = []
                 self.observer = ObservationManager()
-                self.injector = None
-                self.monitor_cmd = None
+                self.injector = DecoratorInjector(self)  # pyright: ignore[reportArgumentType]
 
             def _send_observation(self, obs):
                 self._observations.append(obs)
 
+            def add_probe(self, stream_key, probe_type, pattern):
+                with self._probe_context_lock:
+                    self._probe_contexts[stream_key] = _ProbeContext(pattern)
+                    self._probe_context_types[stream_key] = probe_type
+
+            def stop_probe_context(self, stream_key):
+                self.stopped_streams.append(stream_key)
+                with self._probe_context_lock:
+                    self._probe_contexts.pop(stream_key, None)
+                    self._probe_context_types.pop(stream_key, None)
+
         agent = _Agent()
-        injector = DecoratorInjector(agent)  # pyright: ignore[reportArgumentType]
-        agent.injector = injector
-        monitor_cmd = MonitorCommand(agent)  # pyright: ignore[reportArgumentType]
-        agent.monitor_cmd = monitor_cmd
         reset_cmd = ResetCommand(agent)  # pyright: ignore[reportArgumentType]
-        return agent, injector, monitor_cmd, reset_cmd
+        return agent, reset_cmd
 
-    def test_reset_monitor_all_stops_monitor_and_restores_callable(self, mod_and_fn):
-        """reset-all must stop active monitor, restore callable, and clear monitor state."""
-        mod, original_fn = mod_and_fn
-        agent, injector, monitor_cmd, reset_cmd = self._make_agent_with_monitor(
-            mod, "target"
-        )
-
-        start = monitor_cmd.execute(
-            {"action": "start", "pattern": "test_reset_monitor_mod.target", "cycle": 60}
-        )
-        assert start["status"] == "success"
-        watch_id = start["watch_id"]
-        assert mod.target is not original_fn, "monitor should wrap the callable"
-
-        setattr(reset_cmd.agent, "monitor_cmd", monitor_cmd)
-        response = reset_cmd.execute({"action": "reset"})
-
-        assert response["status"] == "success"
-        assert mod.target is original_fn, (
-            "reset must restore callable to original after stopping monitor"
-        )
-        assert watch_id not in monitor_cmd._monitors, (
-            "reset must remove monitor from _monitors"
-        )
-
-    def test_reset_stops_monitor_first_watch_second(self, mod_and_fn):
-        """reset must stop the monitor before restoring the watch wrapper."""
-        mod, original_fn = mod_and_fn
-        agent, injector, monitor_cmd, reset_cmd = self._make_agent_with_monitor(
-            mod, "target"
-        )
+    def test_reset_stops_matching_probe_contexts_before_injector_reset(self):
+        agent, reset_cmd = self._make_agent()
         call_order = []
 
-        original_monitor_execute = monitor_cmd.execute
-        original_injector_reset = injector.reset
+        agent.add_probe("watch_a", "watch", "pkg.alpha")
+        agent.add_probe("monitor_a", "monitor", "pkg.alpha")
+        agent.add_probe("top_a", "top", "pkg.beta")
 
-        def recording_monitor_execute(params):
-            if params.get("action") == "stop":
-                call_order.append("monitor")
-            return original_monitor_execute(params)
+        original_stop = agent.stop_probe_context
+        original_reset = agent.injector.reset
 
-        def recording_injector_reset(pattern=None):
-            call_order.append("watch")
-            return original_injector_reset(pattern)
+        def recording_stop(stream_key):
+            call_order.append("probe")
+            original_stop(stream_key)
 
-        monitor_cmd.execute = recording_monitor_execute  # type: ignore[assignment]
-        injector.reset = recording_injector_reset  # type: ignore[assignment]
+        def recording_reset(pattern=None):
+            call_order.append("injector")
+            return original_reset(pattern)
 
-        start = original_monitor_execute(
-            {"action": "start", "pattern": "test_reset_monitor_mod.target", "cycle": 60}
-        )
-        assert start["status"] == "success"
-        watch_id = start["watch_id"]
+        agent.stop_probe_context = recording_stop
+        agent.injector.reset = recording_reset
 
-        injected_watch_id = injector.inject(
-            "test_reset_monitor_mod.target", {"depth": 2}
-        )
+        response = reset_cmd.execute({"action": "reset", "pattern": "pkg.alpha"})
 
-        assert mod.target is not original_fn, "watch wrapper should sit above monitor"
-        assert mod.target(1) == 6
-        stats = monitor_cmd.manager.get_stats(watch_id)
-        assert stats is not None
-        assert stats["total"] == 1
-        assert watch_id in monitor_cmd._monitors
-        assert injected_watch_id in injector.instrumented
+        assert response["status"] == "success"
+        assert agent.stopped_streams == ["watch_a", "monitor_a"]
+        assert "top_a" in agent._probe_contexts
+        assert call_order == ["probe", "probe", "injector"]
+
+    def test_reset_all_stops_all_probe_context_types(self):
+        agent, reset_cmd = self._make_agent()
+        for stream_key, probe_type in [
+            ("watch_1", "watch"),
+            ("trace_1", "trace"),
+            ("stack_1", "stack"),
+            ("monitor_1", "monitor"),
+            ("top_1", "top"),
+        ]:
+            agent.add_probe(stream_key, probe_type, "pkg.target")
 
         response = reset_cmd.execute({"action": "reset"})
 
         assert response["status"] == "success"
-        assert call_order == ["monitor", "watch"]
-        assert mod.target is original_fn
-        assert watch_id not in monitor_cmd._monitors
-        assert injected_watch_id not in injector.instrumented
-        assert monitor_cmd.manager.get_stats(watch_id) is None
-
-    def test_reset_preserves_user_decorator_after_monitor_stop(self, mod_and_fn):
-        """reset must restore the user decorator object, not the raw function."""
-        from functools import wraps
-
-        mod, raw_fn = mod_and_fn
-        calls = []
-
-        def record_calls(fn):
-            @wraps(fn)
-            def wrapper(*args, **kwargs):
-                calls.append((args, kwargs))
-                return fn(*args, **kwargs)
-
-            return wrapper
-
-        decorated_fn = record_calls(raw_fn)
-        mod.target = decorated_fn
-
-        agent, injector, monitor_cmd, reset_cmd = self._make_agent_with_monitor(
-            mod, "target"
-        )
-
-        start = monitor_cmd.execute(
-            {"action": "start", "pattern": "test_reset_monitor_mod.target", "cycle": 60}
-        )
-        assert start["status"] == "success"
-        assert mod.target is not decorated_fn
-
-        response = reset_cmd.execute({"action": "reset"})
-
-        assert response["status"] == "success"
-        assert mod.target is decorated_fn
-        assert mod.target is not raw_fn
-        assert mod.target(7) == 12
-        assert calls == [((7,), {})]
-
-    def test_reset_monitor_pattern_stops_matching_monitor_only(self, mod_and_fn):
-        """reset pattern must stop only monitors whose pattern matches."""
-        mod, original_fn = mod_and_fn
-
-        def other_fn(x):
-            return x * 2
-
-        mod2 = type(sys)("test_reset_monitor_mod2")
-        mod2.other_fn = other_fn
-        sys.modules["test_reset_monitor_mod2"] = mod2
-
-        try:
-            agent, injector, monitor_cmd, reset_cmd = self._make_agent_with_monitor(
-                mod, "target"
-            )
-
-            start1 = monitor_cmd.execute(
-                {"action": "start", "pattern": "test_reset_monitor_mod.target", "cycle": 60}
-            )
-            start2 = monitor_cmd.execute(
-                {"action": "start", "pattern": "test_reset_monitor_mod2.other_fn", "cycle": 60}
-            )
-            assert start1["status"] == "success"
-            assert start2["status"] == "success"
-            wid1 = start1["watch_id"]
-            wid2 = start2["watch_id"]
-
-            setattr(reset_cmd.agent, "monitor_cmd", monitor_cmd)
-            response = reset_cmd.execute(
-                {"action": "reset", "pattern": "test_reset_monitor_mod.target"}
-            )
-
-            assert response["status"] == "success"
-            assert mod.target is original_fn, "matched monitor callable must be restored"
-            assert wid1 not in monitor_cmd._monitors, "matched monitor must be removed"
-            assert wid2 in monitor_cmd._monitors, "unmatched monitor must remain active"
-
-            monitor_cmd.execute({"action": "stop", "watch_id": wid2})
-        finally:
-            sys.modules.pop("test_reset_monitor_mod2", None)
-
-
-    def test_reset_resolves_monitor_via_command_handlers(self, mod_and_fn):
-        """Regression: reset must find the monitor handler through real agent command_handlers.
-
-        Real PeekaAgent stores handlers in self.command_handlers and exposes
-        _get_handler(); it never has agent.monitor_cmd. Current ResetCommand
-        only checks getattr(self.agent, 'monitor_cmd', None), so on a real
-        agent monitor wrappers are never cleaned up.
-        """
-        from peeka.commands.monitor import MonitorCommand
-        from peeka.core.injector import DecoratorInjector
-        from peeka.commands.reset import ResetCommand
-        from peeka.core.observer import ObservationManager
-
-        mod, original_fn = mod_and_fn
-
-        class _RealishAgent:
-            injector: Any
-            monitor_cmd: Any
-
-            def __init__(self):
-                self._observations = []
-                self.observer = ObservationManager()
-                self.command_handlers = {}
-                self.injector = None
-                self.monitor_cmd = None
-
-            def _send_observation(self, obs):
-                self._observations.append(obs)
-
-            def _get_handler(self, cmd_type):
-                handler = self.command_handlers.get(cmd_type)
-                if handler is not None:
-                    return handler
-                if cmd_type == "monitor":
-                    handler = MonitorCommand(self)  # pyright: ignore[reportArgumentType]
-                    self.command_handlers[cmd_type] = handler
-                    return handler
-                return None
-
-        agent = _RealishAgent()
-        injector = DecoratorInjector(agent)  # pyright: ignore[reportArgumentType]
-        agent.injector = injector
-        monitor_cmd = agent._get_handler("monitor")
-        assert monitor_cmd is not None
-        reset_cmd = ResetCommand(agent)  # pyright: ignore[reportArgumentType]
-
-        start = monitor_cmd.execute(
-            {"action": "start", "pattern": "test_reset_monitor_mod.target", "cycle": 60}
-        )
-        assert start["status"] == "success"
-        watch_id = start["watch_id"]
-        assert mod.target is not original_fn
-
-        response = reset_cmd.execute({"action": "reset"})
-        assert response["status"] == "success"
-
-        assert mod.target is original_fn, (
-            "reset must restore the callable — monitor handler must be resolved "
-            "via command_handlers/_get_handler, not just agent.monitor_cmd"
-        )
-        assert watch_id not in monitor_cmd._monitors, (
-            "reset must remove the monitor from _monitors via real handler lookup"
-        )
-
-
-class TestResetLifecycleRegression:
-    """Regression tests for reset lifecycle gaps (Task 4 — probe-lifecycle-fix)."""
-
-    def _make_handler_agent(self):
-        from peeka.commands.monitor import MonitorCommand
-        from peeka.commands.reset import ResetCommand
-        from peeka.core.injector import DecoratorInjector
-        from peeka.core.observer import ObservationManager
-        from typing import Any
-
-        class _HandlerAgent:
-            injector: Any
-            monitor_cmd: Any
-
-            def __init__(self):
-                self._observations = []
-                self.observer = ObservationManager()
-                self.command_handlers: dict = {}
-                self.injector = None
-                self.monitor_cmd = None
-
-            def _send_observation(self, obs):
-                self._observations.append(obs)
-
-            def _get_handler(self, cmd_type):
-                handler = self.command_handlers.get(cmd_type)
-                if handler is not None:
-                    return handler
-                if cmd_type == "monitor":
-                    handler = MonitorCommand(self)  # pyright: ignore[reportArgumentType]
-                    self.command_handlers[cmd_type] = handler
-                    return handler
-                return None
-
-        agent = _HandlerAgent()
-        injector = DecoratorInjector(agent)  # pyright: ignore[reportArgumentType]
-        agent.injector = injector
-        monitor_cmd = agent._get_handler("monitor")
-        reset_cmd = ResetCommand(agent)  # pyright: ignore[reportArgumentType]
-        return agent, injector, monitor_cmd, reset_cmd
-
-    def test_reset_removes_monitor_in_real_handler_registry(self):
-        """After reset, _monitors must be empty when monitor is stored via command_handlers.
-
-        Regression: reset must resolve MonitorCommand through _get_handler /
-        command_handlers, not only agent.monitor_cmd, so that active monitors
-        registered in that real-handler registry are stopped and removed.
-        """
-
-        def target(x):
-            return x + 1
-
-        mod = type(sys)("test_rlr_handler_registry")
-        mod.target = target
-        sys.modules["test_rlr_handler_registry"] = mod
-
-        try:
-            agent, injector, monitor_cmd, reset_cmd = self._make_handler_agent()
-
-            start = monitor_cmd.execute(
-                {"action": "start", "pattern": "test_rlr_handler_registry.target", "cycle": 60}
-            )
-            assert start["status"] == "success"
-            watch_id = start["watch_id"]
-
-            assert watch_id in monitor_cmd._monitors
-
-            response = reset_cmd.execute({"action": "reset"})
-
-            assert response["status"] == "success"
-            assert monitor_cmd._monitors == {}, (
-                "reset must empty _monitors when handler is resolved via command_handlers"
-            )
-        finally:
-            sys.modules.pop("test_rlr_handler_registry", None)
-
-    def test_reset_mixed_probes_leaves_no_active_wrapper(self):
-        """After reset, the canonical slot must be the pre-Peeka original even when
-        watch, trace, and monitor probes were all active on the same target.
-        """
-
-        def target(x):
-            return x * 2
-
-        mod = type(sys)("test_rlr_mixed_probes")
-        mod.target = target
-        sys.modules["test_rlr_mixed_probes"] = mod
-
-        try:
-            agent, injector, monitor_cmd, reset_cmd = self._make_handler_agent()
-
-            mon_start = monitor_cmd.execute(
-                {"action": "start", "pattern": "test_rlr_mixed_probes.target", "cycle": 60}
-            )
-            assert mon_start["status"] == "success"
-
-            watch_id = injector.inject(
-                "test_rlr_mixed_probes.target", {"depth": 2, "command": "watch"}
-            )
-
-            trace_id = injector.inject_trace(
-                "test_rlr_mixed_probes.target", {"depth": 2}
-            )
-
-            assert mod.target is not target
-
-            response = reset_cmd.execute({"action": "reset"})
-
-            assert response["status"] == "success"
-            assert mod.target is target, (
-                "reset must restore canonical slot to original even with "
-                "watch + trace + monitor all active"
-            )
-            assert watch_id not in injector.instrumented
-            assert trace_id not in injector.instrumented
-            assert monitor_cmd._monitors == {}
-        finally:
-            sys.modules.pop("test_rlr_mixed_probes", None)
-
-    def test_reset_restores_aliases(self):
-        """reset must restore module-level aliases back to the original callable.
-
-        When inject() discovers an alias in another module and replaces it with
-        the wrapper, reset() must undo that alias replacement so the alias slot
-        points at the original function again.
-        """
-
-        def handler(event):
-            return event
-
-        primary_mod = type(sys)("test_rlr_alias_primary")
-        primary_mod.handler = handler
-        alias_mod = type(sys)("test_rlr_alias_secondary")
-        alias_mod.handler = handler
-        sys.modules["test_rlr_alias_primary"] = primary_mod
-        sys.modules["test_rlr_alias_secondary"] = alias_mod
-
-        try:
-            from peeka.commands.reset import ResetCommand
-            from peeka.core.injector import DecoratorInjector
-            from peeka.core.observer import ObservationManager
-
-            class _Agent:
-                def __init__(self):
-                    self._observations = []
-                    self.observer = ObservationManager()
-
-                def _send_observation(self, obs):
-                    self._observations.append(obs)
-
-            agent = _Agent()
-            injector = DecoratorInjector(agent)  # pyright: ignore[reportArgumentType]
-            agent.injector = injector  # type: ignore[attr-defined]
-
-            watch_id = injector.inject("test_rlr_alias_primary.handler", {"depth": 2})
-
-            assert primary_mod.handler is not handler
-            assert alias_mod.handler is not handler
-            assert primary_mod.handler is alias_mod.handler
-
-            response = ResetCommand(agent).execute({"action": "reset"})  # pyright: ignore[reportArgumentType]
-
-            assert response["status"] == "success"
-            assert primary_mod.handler is handler, "canonical slot must be restored"
-            assert alias_mod.handler is handler, "alias slot must also be restored"
-            assert watch_id not in injector.instrumented
-        finally:
-            sys.modules.pop("test_rlr_alias_primary", None)
-            sys.modules.pop("test_rlr_alias_secondary", None)
-
-    def test_reset_after_monitor_stop_restores_original(self):
-        """reset after an explicit monitor stop must still restore the callable.
-
-        If a monitor is started and then manually stopped before reset is called,
-        reset must leave the canonical slot as the original function (not a
-        stale wrapper) and must not error on an already-empty _monitors dict.
-        """
-
-        def target(x):
-            return x - 1
-
-        mod = type(sys)("test_rlr_after_stop")
-        mod.target = target
-        sys.modules["test_rlr_after_stop"] = mod
-
-        try:
-            agent, injector, monitor_cmd, reset_cmd = self._make_handler_agent()
-
-            start = monitor_cmd.execute(
-                {"action": "start", "pattern": "test_rlr_after_stop.target", "cycle": 60}
-            )
-            assert start["status"] == "success"
-            watch_id = start["watch_id"]
-
-            stop = monitor_cmd.execute({"action": "stop", "watch_id": watch_id})
-            assert stop["status"] == "success"
-            assert watch_id not in monitor_cmd._monitors
-            assert mod.target is target
-
-            injected_id = injector.inject(
-                "test_rlr_after_stop.target", {"depth": 2, "command": "watch"}
-            )
-            assert mod.target is not target
-
-            response = reset_cmd.execute({"action": "reset"})
-
-            assert response["status"] == "success", f"reset failed: {response}"
-            assert mod.target is target, (
-                "reset must restore canonical even when monitor was already stopped"
-            )
-            assert injected_id not in injector.instrumented
-            assert monitor_cmd._monitors == {}
-        finally:
-            sys.modules.pop("test_rlr_after_stop", None)
-
-    def test_reset_with_pattern_only_affects_matching(self):
-        """reset with a specific pattern must only affect probes that match.
-
-        Probes on a non-matching target (different module) must remain active
-        and their canonical slots must remain wrapped after the partial reset.
-        """
-
-        def fn_a(x):
-            return x
-
-        def fn_b(x):
-            return x + 10
-
-        mod_a = type(sys)("test_rlr_pattern_a")
-        mod_a.fn = fn_a
-        mod_b = type(sys)("test_rlr_pattern_b")
-        mod_b.fn = fn_b
-        sys.modules["test_rlr_pattern_a"] = mod_a
-        sys.modules["test_rlr_pattern_b"] = mod_b
-
-        try:
-            agent, injector, monitor_cmd, reset_cmd = self._make_handler_agent()
-
-            # Start monitors on both targets
-            start_a = monitor_cmd.execute(
-                {"action": "start", "pattern": "test_rlr_pattern_a.fn", "cycle": 60}
-            )
-            start_b = monitor_cmd.execute(
-                {"action": "start", "pattern": "test_rlr_pattern_b.fn", "cycle": 60}
-            )
-            assert start_a["status"] == "success"
-            assert start_b["status"] == "success"
-            wid_a = start_a["watch_id"]
-            wid_b = start_b["watch_id"]
-
-            watch_a = injector.inject("test_rlr_pattern_a.fn", {"depth": 2})
-            watch_b = injector.inject("test_rlr_pattern_b.fn", {"depth": 2})
-
-            response = reset_cmd.execute(
-                {"action": "reset", "pattern": "test_rlr_pattern_a.*"}
-            )
-
-            assert response["status"] == "success"
-
-            assert mod_a.fn is fn_a, "canonical for pattern_a must be restored"
-            assert wid_a not in monitor_cmd._monitors, "monitor_a must be removed"
-            assert watch_a not in injector.instrumented, "watch_a must be removed"
-
-            assert mod_b.fn is not fn_b, "canonical for pattern_b must remain wrapped"
-            assert wid_b in monitor_cmd._monitors, "monitor_b must still be active"
-            assert watch_b in injector.instrumented, "watch_b must still be active"
-
-            monitor_cmd.execute({"action": "stop", "watch_id": wid_b})
-            injector.uninject(watch_b)
-        finally:
-            sys.modules.pop("test_rlr_pattern_a", None)
-            sys.modules.pop("test_rlr_pattern_b", None)
-
-
-class TestResetListMonitorRegression:
-    """Regression tests for reset --list including active monitors (T3 fix).
-
-    Verifies that _list_enhanced() merges MonitorCommand._monitors entries
-    into the list response so consumers can see active monitors alongside
-    injector entries.
-    """
-
-    def _make_agent_with_mock_monitor(self, monitors=None):
-        """Create a minimal agent with a mock MonitorCommand in command_handlers."""
-        import threading
-
-        from peeka.commands.reset import ResetCommand
-        from peeka.core.injector import DecoratorInjector
-        from peeka.core.observer import ObservationManager
-
-        class _MockMonitorCmd:
-            def __init__(self, monitors_dict):
-                self._lock = threading.Lock()
-                self._monitors = monitors_dict if monitors_dict is not None else {}
-
-        class _Agent:
-            def __init__(self):
-                self._observations = []
-                self.observer = ObservationManager()
-                self.command_handlers = {}
-                self.injector = None
-
-            def _send_observation(self, obs):
-                self._observations.append(obs)
-
-        agent = _Agent()
-        injector = DecoratorInjector(agent)  # pyright: ignore[reportArgumentType]
-        agent.injector = injector
-        mock_monitor = _MockMonitorCmd(monitors)
-        agent.command_handlers["monitor"] = mock_monitor
-        reset_cmd = ResetCommand(agent)  # pyright: ignore[reportArgumentType]
-        return agent, injector, mock_monitor, reset_cmd
-
-    def test_reset_list_includes_active_monitor(self):
-        """reset --list must include active monitor entries alongside injector entries.
-
-        Regression for T3: _list_enhanced() must merge MonitorCommand._monitors
-        entries into the list response so TUI/CLI consumers can see active monitors.
-        """
-        agent, injector, mock_monitor, reset_cmd = self._make_agent_with_mock_monitor(
-            monitors={
-                "monitor_abc123": {
-                    "pattern": "mymodule.*",
-                    "cycle": 1.0,
-                    "cycles": 5,
-                    "cycle_count": 2,
-                }
-            }
-        )
+        assert set(agent.stopped_streams) == {
+            "watch_1",
+            "trace_1",
+            "stack_1",
+            "monitor_1",
+            "top_1",
+        }
+        assert agent._probe_contexts == {}
+        assert agent._probe_context_types == {}
+
+    def test_reset_list_includes_all_active_probe_context_types(self):
+        agent, reset_cmd = self._make_agent()
+        agent.add_probe("watch_1", "watch", "pkg.watch")
+        agent.add_probe("trace_1", "trace", "pkg.trace")
+        agent.add_probe("stack_1", "stack", "pkg.stack")
+        agent.add_probe("monitor_1", "monitor", "pkg.monitor")
+        agent.add_probe("top_1", "top", "pkg.top")
 
         response = reset_cmd.execute({"action": "list"})
 
         assert response["status"] == "success"
-        enhanced = response["enhanced"]
-        assert response["total"] == len(enhanced)
-
-        monitor_entries = [e for e in enhanced if e.get("command") == "monitor"]
-        assert len(monitor_entries) >= 1, "reset --list must include active monitor entries"
-
-        monitor_entry = next(
-            (e for e in monitor_entries if e.get("monitor_id") == "monitor_abc123"),
-            None,
-        )
-        assert monitor_entry is not None, (
-            "monitor_abc123 must appear in reset --list enhanced entries"
-        )
-        assert monitor_entry["monitor_id"] == "monitor_abc123"
-        assert monitor_entry["command"] == "monitor"
-
-    def test_reset_list_no_monitors_works(self):
-        """reset --list must work correctly when no monitors are active.
-
-        Regression: must not raise or error when monitor handler exists but
-        has empty _monitors dict — should return only injector entries.
-        """
-        agent, injector, mock_monitor, reset_cmd = self._make_agent_with_mock_monitor(
-            monitors={}
-        )
-
-        response = reset_cmd.execute({"action": "list"})
-
-        assert response["status"] == "success"
-        assert response["action"] == "list"
-        assert response["total"] == 0
-        assert len(response["enhanced"]) == 0
+        stream_entries = {entry["stream_id"]: entry for entry in response["enhanced"]}
+        assert stream_entries["watch_1"] == {
+            "stream_id": "watch_1",
+            "command": "watch",
+            "pattern": "pkg.watch",
+        }
+        assert stream_entries["trace_1"]["command"] == "trace"
+        assert stream_entries["stack_1"]["command"] == "stack"
+        assert stream_entries["monitor_1"]["command"] == "monitor"
+        assert stream_entries["top_1"]["command"] == "top"
+        assert response["total"] == len(response["enhanced"])

@@ -3,8 +3,7 @@ Tests for peeka.commands.detach.DetachCommand
 """
 
 import sys
-import threading
-from typing import Any, cast
+from typing import Any, List, cast
 from unittest.mock import MagicMock
 
 from peeka.commands.detach import DetachCommand
@@ -206,81 +205,60 @@ class TestDetachCommand:
             del sys.modules["test_detach_double_uninject"]
 
 
-class TestDetachMonitorTopCleanup:
-    """Regression tests: detach stops active monitor and top before uninject."""
+class TestDetachProbeContextCleanup:
+    """Regression: detach stops all active probe contexts via probe registry."""
 
-    def test_detach_stops_active_monitor(self):
-        """DetachCommand clears _monitors for all active monitors before uninject."""
+    def test_detach_calls_stop_probe_contexts_by_type(self):
+        stopped_types: List[str] = []
 
-        class _FakeMonitorCmd:
-            def __init__(self):
-                self._lock = threading.Lock()
-                self._monitors = {
-                    "fake_monitor_001": {"pattern": "test.func", "cycle": 60}
-                }
+        class _FakeAgent:
+            attached_pid = 12345
+            injector = MagicMock()
+            observer = MagicMock()
 
-            def _stop_monitor(self, params):
-                mid = params.get("monitor_id")
-                with self._lock:
-                    self._monitors.pop(mid, None)
-                return {"status": "success"}
+            def stop_probe_contexts_by_type(self, probe_types: List[str]) -> None:
+                stopped_types.extend(probe_types)
 
-        monitor_cmd = _FakeMonitorCmd()
+            def stop(self) -> None:
+                pass
 
-        mock_agent = MagicMock()
-        mock_agent.attached_pid = 12345
-        mock_agent._get_handler.side_effect = (
-            lambda name: monitor_cmd if name == "monitor" else None
-        )
-
-        result = DetachCommand(mock_agent).execute({})
+        result = DetachCommand(cast(Any, _FakeAgent())).execute({})
 
         assert result["status"] == "success"
-        assert monitor_cmd._monitors == {}
+        assert set(stopped_types) == {"watch", "trace", "stack", "monitor", "top"}
 
-    def test_detach_stops_active_top(self):
-        """DetachCommand stops active sampling thread via _stop before uninject."""
+    def test_detach_probe_cleanup_before_uninject(self):
+        call_order: List[str] = []
 
-        class _AliveThread:
-            def __init__(self):
-                self._alive = True
+        class _FakeAgent:
+            attached_pid = 12345
 
-            def is_alive(self):
-                return self._alive
+            def stop_probe_contexts_by_type(self, types: List[str]) -> None:
+                _ = types
+                call_order.append("stop_probe_contexts")
 
-            def join(self, timeout=None):
-                self._alive = False
+            @property
+            def injector(self):
+                class _Inj:
+                    def uninject_all(self) -> None:
+                        call_order.append("uninject_all")
 
-        class _FakeTopCmd:
-            def __init__(self):
-                self._lock = threading.Lock()
-                self._top_id = "top_test_001"
-                self._sampling_thread = _AliveThread()
+                    def __getattr__(self, name: str) -> Any:
+                        _ = name
+                        return MagicMock()
 
-            def _stop(self, params):
-                with self._lock:
-                    if (
-                        self._sampling_thread is None
-                        or not self._sampling_thread.is_alive()
-                    ):
-                        return {"status": "error", "error": "Profiler not running"}
-                if self._sampling_thread:
-                    self._sampling_thread.join(timeout=2.0)
-                with self._lock:
-                    self._sampling_thread = None
-                    self._top_id = None
-                return {"status": "success"}
+                return _Inj()
 
-        top_cmd = _FakeTopCmd()
-        assert top_cmd._sampling_thread.is_alive()
+            @property
+            def observer(self):
+                class _Obs:
+                    def clear_all(self) -> None:
+                        call_order.append("clear_all")
 
-        mock_agent = MagicMock()
-        mock_agent.attached_pid = 12345
-        mock_agent._get_handler.side_effect = (
-            lambda name: top_cmd if name == "top" else None
-        )
+                return _Obs()
 
-        result = DetachCommand(mock_agent).execute({})
+            def stop(self) -> None:
+                call_order.append("stop")
 
-        assert result["status"] == "success"
-        assert top_cmd._sampling_thread is None
+        _ = DetachCommand(cast(Any, _FakeAgent())).execute({})
+        assert call_order == ["stop_probe_contexts", "uninject_all", "clear_all", "stop"]
