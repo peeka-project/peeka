@@ -334,7 +334,7 @@ class WatchWrapperFactory:
         if "stack_depth" in config:
             self.times_limit = config.get("times", -1)
         else:
-            self.times_limit = -1  # CLI counted_limit() handles watch -n semantics.
+            self.times_limit = -1  # CLI stream_counted_limit handles watch -n semantics.
         self.before = config.get("before", False)
         self.on_exception = config.get("exception", False)
         self.on_success = config.get("success", False)

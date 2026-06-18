@@ -154,10 +154,8 @@ def test_trace_cli_disables_agent_times_gate(monkeypatch, capsys):
 def test_trace_cli_filtered_count_ignores_unrelated_frames(monkeypatch, capsys):
     """Regression: trace -n must count only frames for the active trace stream.
 
-    Currently counted_limit() increments on EVERY yielded dict, so an unrelated
-    observation (different watch_id) or LOG frame can trigger early cleanup.
-    After Task 6 implementation this test must pass; before implementation it
-    must fail because the 2nd observation (unrelated) triggers the limit.
+    stream_counted_limit filters by watch_id, so an unrelated observation
+    (different watch_id) or LOG frame must not count toward the limit.
     """
     active_id = "trace_cli_123"
     unrelated_obs = {"watch_id": "watch_other_999", "count": 1, "data": "unrelated"}

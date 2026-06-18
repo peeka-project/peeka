@@ -328,7 +328,7 @@ class TestWatchLimitFixRegression:
                 f"CLI must print exactly {n} observations (the -n value), "
                 f"got {cli_printed_count}. "
                 f"internal_count={internal_count}. "
-                "CLI counted_limit must control stop, not agent internal gate."
+                "CLI stream_counted_limit must control stop, not agent internal gate."
             )
         finally:
             exec_in_container(
