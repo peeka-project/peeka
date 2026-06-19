@@ -261,6 +261,40 @@ class TopCommand(BaseCommand):
 
         return {"status": "success", "message": "Statistics reset"}
 
+    def stop_active_resources(
+        self, pattern: Optional[str], reason: str
+    ) -> Dict[str, Any]:
+        """Stop the active top sampler if one is running."""
+        logger = logging.getLogger(__name__)
+
+        with self._lock:
+            top_id = self._top_id
+
+        if top_id is None:
+            return {"stopped": False, "errors": []}
+
+        try:
+            result = self._stop({"top_id": top_id})
+            if result.get("status") == "success":
+                return {"stopped": True, "errors": []}
+
+            error_message = str(result.get("error", "Unknown error"))
+            logger.error(
+                "[peeka Top] stop_active_resources failed for %s (%s): %s",
+                top_id,
+                reason,
+                error_message,
+            )
+            return {"stopped": False, "errors": [{"top_id": top_id, "error": error_message}]}
+        except Exception as exc:
+            logger.error(
+                "[peeka Top] stop_active_resources failed for %s (%s)",
+                top_id,
+                reason,
+                exc_info=True,
+            )
+            return {"stopped": False, "errors": [{"top_id": top_id, "error": str(exc)}]}
+
     def _sampling_loop(self) -> None:
         """Background thread that periodically samples all thread stacks."""
         while not self._stop_event.is_set():
