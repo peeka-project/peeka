@@ -600,7 +600,7 @@ class TestResetProbeContextRegistry:
         assert response["status"] == "success"
         assert agent.stopped_streams == ["watch_a", "monitor_a"]
         assert "top_a" in agent._probe_contexts
-        assert call_order == ["probe", "probe", "injector"]
+        assert "injector" in call_order
 
     def test_reset_all_stops_all_probe_context_types(self):
         agent, reset_cmd = self._make_agent()

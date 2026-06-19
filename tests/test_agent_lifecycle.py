@@ -106,8 +106,11 @@ class _MockAgentWithProbes:
 
 
 @pytest.mark.parametrize("probe_type", ["watch", "trace", "stack", "monitor", "top"])
-def test_detach_stops_probe_context_for_all_types(probe_type: str) -> None:
-    """Detach calls stop_probe_contexts_by_type and exits each probe context."""
+def test_detach_stops_probe_context_for_all_types(probe_type: str) -> None:  # BRITTLE: fake ProbeContext smoke check only; no real resource-owner verification → REPLACE WITH: detach restores wrappers and stops active probe resources for each stream type
+    """Detach calls stop_probe_contexts_by_type and exits each probe context.
+
+    smoke: ProbeContext bookkeeping only
+    """
     agent = _MockAgentWithProbes()
     stream_id = f"{probe_type}_test_001"
     ctx = agent.register_stream(stream_id, probe_type)
@@ -125,8 +128,11 @@ def test_detach_stops_probe_context_for_all_types(probe_type: str) -> None:
 
 
 @pytest.mark.parametrize("probe_type", ["watch", "trace", "stack", "monitor", "top"])
-def test_reset_stops_matching_probe_context_for_all_types(probe_type: str) -> None:
-    """Reset with a matching pattern stops that stream's probe context."""
+def test_reset_stops_matching_probe_context_for_all_types(probe_type: str) -> None:  # BRITTLE: fake ProbeContext smoke check only; no real resource-owner verification → REPLACE WITH: reset stops only matching probe resources and preserves unrelated streams
+    """Reset with a matching pattern stops that stream's probe context.
+
+    smoke: ProbeContext bookkeeping only
+    """
     agent = _MockAgentWithProbes()
     stream_id = f"{probe_type}_test_002"
     pattern = "mymodule.MyClass.method"

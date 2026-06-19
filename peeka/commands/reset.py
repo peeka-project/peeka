@@ -3,9 +3,15 @@ Reset Command - Restore enhanced methods to original state
 Similar to Arthas 'reset' command
 """
 
-from typing import Any, ClassVar, Dict, TYPE_CHECKING
+from __future__ import annotations
+
+import logging
+from typing import ClassVar, TYPE_CHECKING, cast
+
+from typing_extensions import override
 
 from peeka.commands.base import BaseCommand
+from peeka.core.agent_control.lifecycle import stop_resource_owners_for_reset
 
 if TYPE_CHECKING:
     from peeka.core.agent import PeekaAgent
@@ -33,14 +39,16 @@ class ResetCommand(BaseCommand):
 
     category: ClassVar[str] = "mutation"
     allows_concurrent: ClassVar[bool] = False
+    agent: "PeekaAgent"
 
     def __init__(self, agent: "PeekaAgent"):
         super().__init__()
         self.agent = agent
 
-    def execute(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    @override
+    def execute(self, params: dict[str, object]) -> dict[str, object]:
         try:
-            action = params.get("action", "reset")
+            action = str(params.get("action", "reset"))
 
             if action == "reset":
                 return self._reset(params)
@@ -52,19 +60,28 @@ class ResetCommand(BaseCommand):
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
-    def _reset(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    def _reset(self, params: dict[str, object]) -> dict[str, object]:
         """Reset enhancements, optionally filtered by pattern."""
         import fnmatch
 
-        pattern = params.get("pattern")
+        pattern_obj = params.get("pattern")
+        pattern = pattern_obj if isinstance(pattern_obj, str) else None
+
+        # CLEANUP CONTRACT:
+        # 1) Command-level monitor resources own real runtime state and must be cleaned first.
+        # 2) Probe-context bookkeeping follows so registry state matches reset teardown.
+        # Both layers must complete before injector teardown.
+        # REGRESSION GUARD: c03971e
+        logger = logging.getLogger(__name__)
+        _ = stop_resource_owners_for_reset(self.agent, pattern, logger)
 
         stop_context = getattr(self.agent, "stop_probe_context", None)
         probe_context_lock = getattr(self.agent, "_probe_context_lock", None)
-        probe_context_types = getattr(self.agent, "_probe_context_types", {})
-        probe_contexts = getattr(self.agent, "_probe_contexts", {})
+        probe_context_types = cast(dict[str, object], getattr(self.agent, "_probe_context_types", {}))
+        probe_contexts = cast(dict[str, object], getattr(self.agent, "_probe_contexts", {}))
 
         if callable(stop_context) and probe_context_lock is not None:
-            stream_keys = []
+            stream_keys: list[str] = []
             with probe_context_lock:
                 for stream_key in list(probe_context_types.keys()):
                     probe_context = probe_contexts.get(stream_key)
@@ -73,17 +90,18 @@ class ResetCommand(BaseCommand):
                     if pattern is None or fnmatch.fnmatch(probe_pattern or "", pattern):
                         stream_keys.append(stream_key)
             for stream_key in stream_keys:
-                stop_context(stream_key)
+                _ = stop_context(stream_key)
 
         return self.agent.injector.reset(pattern)
 
-    def _list_enhanced(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    def _list_enhanced(self, _params: dict[str, object]) -> dict[str, object]:
         """List all current enhancements."""
         result = self.agent.injector.list_enhanced()
+        enhanced = cast(list[dict[str, object]], result["enhanced"])
 
         probe_context_lock = getattr(self.agent, "_probe_context_lock", None)
-        probe_context_types = getattr(self.agent, "_probe_context_types", {})
-        probe_contexts = getattr(self.agent, "_probe_contexts", {})
+        probe_context_types = cast(dict[str, object], getattr(self.agent, "_probe_context_types", {}))
+        probe_contexts = cast(dict[str, object], getattr(self.agent, "_probe_contexts", {}))
 
         if probe_context_lock is not None:
             with probe_context_lock:
@@ -91,7 +109,7 @@ class ResetCommand(BaseCommand):
                     probe_context = probe_contexts.get(stream_key)
                     probe_run = getattr(probe_context, "probe", None)
                     pattern = getattr(probe_run, "pattern", stream_key)
-                    result["enhanced"].append(
+                    enhanced.append(
                         {
                             "stream_id": stream_key,
                             "command": probe_type,
@@ -99,5 +117,5 @@ class ResetCommand(BaseCommand):
                         }
                     )
 
-        result["total"] = len(result["enhanced"])
+        result["total"] = len(enhanced)
         return result
