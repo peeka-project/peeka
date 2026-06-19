@@ -2,12 +2,13 @@
 Detach Command - Detach from the target process
 """
 
-from typing import Any, ClassVar, Dict, TYPE_CHECKING
+# pyright: reportAny=false, reportDeprecated=false, reportExplicitAny=false, reportImplicitOverride=false, reportUnannotatedClassAttribute=false
 
+import logging
+from typing import Any, ClassVar, Dict
+
+from peeka.core.agent_control.lifecycle import stop_resource_owners_for_detach
 from peeka.commands.base import BaseCommand
-
-if TYPE_CHECKING:
-    from peeka.core.agent import PeekaAgent
 
 
 class DetachCommand(BaseCommand):
@@ -27,18 +28,29 @@ class DetachCommand(BaseCommand):
     category: ClassVar[str] = "mutation"
     allows_concurrent: ClassVar[bool] = False
 
-    def __init__(self, agent: "PeekaAgent"):
+    def __init__(self, agent: Any):
         super().__init__()
         self.agent = agent
 
     def execute(self, params: Dict[str, Any]) -> Dict[str, Any]:
         try:
+            logger = logging.getLogger(__name__)
+
+            def log_cleanup_error(scope: str) -> None:
+                logger.error("[peeka Detach] %s cleanup failed", scope, exc_info=True)
+
+            _ = stop_resource_owners_for_detach(self.agent, logger)
+
             stop_by_type = getattr(self.agent, "stop_probe_contexts_by_type", None)
             if callable(stop_by_type):
-                stop_by_type(["watch", "trace", "stack", "monitor", "top"])
+                try:
+                    _ = stop_by_type(["watch", "trace", "stack", "monitor", "top"])
+                except Exception:
+                    log_cleanup_error("probe contexts")
+                    raise
 
-            self.agent.injector.uninject_all()
-            self.agent.observer.clear_all()
+            _ = self.agent.injector.uninject_all()
+            _ = self.agent.observer.clear_all()
 
             attached_pid = self.agent.attached_pid
             self.agent.stop()
@@ -50,4 +62,5 @@ class DetachCommand(BaseCommand):
             }
 
         except Exception as e:
+            logging.getLogger(__name__).exception("[peeka Detach] detach failed")
             return {"status": "error", "error": str(e)}
