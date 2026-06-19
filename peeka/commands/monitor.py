@@ -5,10 +5,12 @@ This command tracks performance metrics (call count, success/fail rate,
 response time statistics) for injected functions with periodic output.
 """
 
+import fnmatch
 from functools import wraps
+import logging
 import threading
 import uuid
-from typing import Any, ClassVar, Dict, List, Set, TYPE_CHECKING, Tuple, cast
+from typing import Any, ClassVar, Dict, List, Optional, Set, TYPE_CHECKING, Tuple, cast
 
 from peeka.commands.base import BaseCommand
 from peeka.core.monitor import MonitorManager
@@ -480,6 +482,55 @@ class MonitorCommand(BaseCommand):
             "watch_id": watch_id,
             "final_stats": final_stats,
         }
+
+    def stop_active_resources(
+        self, pattern: Optional[str], reason: str
+    ) -> Dict[str, Any]:
+        """Stop active monitor resources, optionally filtered by pattern."""
+        logger = logging.getLogger(__name__)
+        with self._lock:
+            monitor_ids = list(self._monitors.keys())
+
+        stopped: List[str] = []
+        errors: List[Dict[str, Any]] = []
+        skipped: List[str] = []
+
+        for monitor_id in monitor_ids:
+            try:
+                with self._lock:
+                    monitor_info = self._monitors.get(monitor_id)
+
+                if monitor_info is None:
+                    skipped.append(monitor_id)
+                    continue
+
+                monitor_pattern = monitor_info.get("pattern", "")
+                if pattern is not None and not fnmatch.fnmatch(monitor_pattern, pattern):
+                    skipped.append(monitor_id)
+                    continue
+
+                result = self._stop_monitor({"monitor_id": monitor_id})
+                if result.get("status") == "success":
+                    stopped.append(monitor_id)
+                else:
+                    error_message = cast(str, result.get("error", "Unknown error"))
+                    logger.error(
+                        "[peeka Monitor] stop_active_resources failed for %s (%s): %s",
+                        monitor_id,
+                        reason,
+                        error_message,
+                    )
+                    errors.append({"monitor_id": monitor_id, "error": error_message})
+            except Exception as exc:
+                logger.error(
+                    "[peeka Monitor] stop_active_resources failed for %s (%s)",
+                    monitor_id,
+                    reason,
+                    exc_info=True,
+                )
+                errors.append({"monitor_id": monitor_id, "error": str(exc)})
+
+        return {"stopped": stopped, "errors": errors, "skipped": skipped}
 
     def _get_status(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Get list of active monitors."""
