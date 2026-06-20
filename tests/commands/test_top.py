@@ -460,3 +460,21 @@ class TestTopCommand:
         finally:
             stop_flag.set()
             worker.join(timeout=2.0)
+
+    def test_stop_active_resources_returns_list_shape(self, top_command):
+        """Test that stop_active_resources always returns a list for 'stopped'."""
+        result = top_command.stop_active_resources(pattern=None, reason="test")
+        assert isinstance(result["stopped"], list)
+        assert result["stopped"] == []
+        assert isinstance(result["errors"], list)
+        assert result["errors"] == []
+
+        start_result = top_command.execute({"action": "start", "interval": 0.01})
+        assert start_result["status"] == "success"
+        top_id = start_result["top_id"]
+
+        result = top_command.stop_active_resources(pattern=None, reason="test")
+        assert isinstance(result["stopped"], list)
+        assert len(result["stopped"]) == 1
+        assert result["stopped"][0]["top_id"] == top_id
+        assert result["errors"] == []
