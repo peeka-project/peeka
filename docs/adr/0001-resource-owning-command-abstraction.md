@@ -99,6 +99,15 @@ for handler in list(agent.command_handlers.values()):
 | `test_resource_owning_subclasses_can_be_instantiated` | ABC 链路存在抽象漏洞 |
 | `test_lifecycle_module_has_no_hardcoded_command_names` | `lifecycle.py` 出现硬编码命令名 |
 
+## Reset 对 ProbeContext 的语义
+
+`ResetCommand` 在清理 `_probe_contexts` 字典时遵循同一个 `cleanup_scope` 契约：
+
+- `DETACH_AND_RESET` 命令的 ProbeContext 在 reset 时被停止（与命令资源同步）
+- `DETACH_ONLY` 命令的 ProbeContext 在 reset 时**保留**（避免与底层资源不同步导致状态分裂）
+
+这确保 reset 不会出现"命令资源活着但 ProbeContext 死了"的半生半死状态。具体实现见 `peeka/commands/reset.py:_reset` 中的 cleanup_scope 过滤：reset 通过 `command_handlers.get(probe_type)` 动态查找 handler，检查其 `cleanup_scope`，**不**硬编码命令名。
+
 ## 边界（哪些**没**纳入抽象）
 
 显式排除以下范围，避免抽象过度泛化：

@@ -141,6 +141,10 @@ class MyCommand(ResourceOwningCommand):
 - `DETACH_ONLY` — 只在 `detach` 时清理（如 `top` 的采样线程、`memory` 的 tracemalloc）
 - `DETACH_AND_RESET` — `detach` 和 `reset` 都清理（如 `monitor` 的注入装饰器，因为 `reset` 也要还原函数）
 
+**Reset 对 ProbeContext 的影响**：
+- `DETACH_AND_RESET` 命令的 ProbeContext 会随 reset 一同关闭
+- `DETACH_ONLY` 命令的 ProbeContext 在 reset 时**保留**（reset.py 通过 cleanup_scope 动态判断，**不**用硬编码命令名）
+
 **重要**：
 - 不要修改 `peeka/core/agent_control/lifecycle.py` 加硬编码命令名。`lifecycle.py` 通过 `isinstance(handler, ResourceOwningCommand)` + `cleanup_scope` 自动发现 owner，新命令会**自动**进入 detach/reset 路径
 - 如果命令同时启动了被外部代码也使用的全局资源（如 `tracemalloc`），用 state machine（参考 `MemoryCommand._started_by_peeka`）确保只清理 peeka 自己启动的部分
