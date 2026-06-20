@@ -19,10 +19,12 @@ from peeka.commands.resource_owning import CleanupScope, ResourceOwningCommand
 
 
 def _iter_concrete_basecommand_subclasses():
-    """Recursively yield all concrete (non-abstract) subclasses of BaseCommand."""
+    """Recursively yield all concrete (non-abstract) subclasses of BaseCommand
+    that are defined in the peeka.commands package (not test fakes)."""
     def _recurse(cls):
         for sub in cls.__subclasses__():
-            if not inspect.isabstract(sub):
+            module = getattr(sub, "__module__", "") or ""
+            if not inspect.isabstract(sub) and module.startswith("peeka.commands"):
                 yield sub
             yield from _recurse(sub)
     yield from _recurse(BaseCommand)

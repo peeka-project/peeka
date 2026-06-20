@@ -16,6 +16,8 @@ _LOG = logging.getLogger("test")
 class _FakeDetachAndReset(ResourceOwningCommand):
     cleanup_scope = CleanupScope.DETACH_AND_RESET
     is_resource_owner = True
+    category = "probe"
+    allows_concurrent = False
 
     def __init__(self, agent: Any = None) -> None:
         super().__init__(agent=agent)
@@ -37,6 +39,8 @@ class _FakeDetachAndReset(ResourceOwningCommand):
 class _FakeDetachOnly(ResourceOwningCommand):
     cleanup_scope = CleanupScope.DETACH_ONLY
     is_resource_owner = True
+    category = "probe"
+    allows_concurrent = False
 
     def __init__(self, agent: Any = None) -> None:
         super().__init__(agent=agent)

@@ -19,10 +19,11 @@ from peeka.commands.complete import CompleteCommand  # noqa: F401
 
 
 def get_all_concrete_subclasses(cls):
-    """Recursively enumerate all non-abstract subclasses of a given class."""
+    """Recursively enumerate all non-abstract subclasses from peeka.commands package."""
     subclasses = []
     for subclass in cls.__subclasses__():
-        if not getattr(subclass, "__abstractmethods__", None):
+        module = getattr(subclass, "__module__", "") or ""
+        if not getattr(subclass, "__abstractmethods__", None) and module.startswith("peeka.commands"):
             subclasses.append(subclass)
         subclasses.extend(get_all_concrete_subclasses(subclass))
     return subclasses
