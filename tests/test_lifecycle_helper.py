@@ -1,9 +1,10 @@
-import importlib.util
 import logging
-import os
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 import pytest
 
+from peeka.commands.resource_owning import CleanupScope, ResourceOwningCommand
 from peeka.core.agent_control.lifecycle import (
     stop_resource_owners_for_detach,
     stop_resource_owners_for_reset,
@@ -12,126 +13,155 @@ from peeka.core.agent_control.lifecycle import (
 _LOG = logging.getLogger("test")
 
 
-class _FakeHandler:
-    def __init__(self):
-        self.called_with = []
+class _FakeDetachAndReset(ResourceOwningCommand):
+    cleanup_scope = CleanupScope.DETACH_AND_RESET
+    is_resource_owner = True
 
-    def stop_active_resources(self, pattern, reason):
-        self.called_with.append((pattern, reason))
+    def __init__(self) -> None:
+        super().__init__(agent=None)
+        self.stop_calls: List[Dict[str, Any]] = []
+
+    def execute(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        return {"status": "success"}
+
+    def stop_active_resources(
+        self, pattern: Optional[str], reason: str
+    ) -> Dict[str, Any]:
+        self.stop_calls.append({"pattern": pattern, "reason": reason})
         return {"stopped": [], "errors": []}
 
-
-class _FailingHandler:
-    def stop_active_resources(self, pattern, reason):
-        raise RuntimeError("boom")
+    def list_active_resources(self) -> Dict[str, Any]:
+        return {"active": []}
 
 
-class _FakeAgent:
-    def __init__(self, handlers=None):
-        self.command_handlers = handlers or {}
+class _FakeDetachOnly(ResourceOwningCommand):
+    cleanup_scope = CleanupScope.DETACH_ONLY
+    is_resource_owner = True
+
+    def __init__(self) -> None:
+        super().__init__(agent=None)
+        self.stop_calls: List[Dict[str, Any]] = []
+
+    def execute(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        return {"status": "success"}
+
+    def stop_active_resources(
+        self, pattern: Optional[str], reason: str
+    ) -> Dict[str, Any]:
+        self.stop_calls.append({"pattern": pattern, "reason": reason})
+        return {"stopped": [], "errors": []}
+
+    def list_active_resources(self) -> Dict[str, Any]:
+        return {"active": []}
 
 
-class _AgentWithNoHandlers:
-    pass
+def _make_agent(handlers_dict: Any) -> Any:
+    class _Agent:
+        def __init__(self, h: Any) -> None:
+            self.command_handlers = h
 
-
-@pytest.mark.unit
-def test_detach_stops_monitor_and_top_handlers():
-    monitor = _FakeHandler()
-    top = _FakeHandler()
-    agent = _FakeAgent({"monitor": monitor, "top": top})
-
-    result = stop_resource_owners_for_detach(agent, _LOG)
-
-    assert result["errors"] == []
-    assert set(result["handlers_stopped"]) == {"monitor", "top"}
-    assert monitor.called_with == [(None, "detach")]
-    assert top.called_with == [(None, "detach")]
-
-
-@pytest.mark.unit
-def test_reset_stops_only_monitor_handler():
-    monitor = _FakeHandler()
-    top = _FakeHandler()
-    agent = _FakeAgent({"monitor": monitor, "top": top})
-
-    result = stop_resource_owners_for_reset(agent, "some_pattern", _LOG)
-
-    assert result["errors"] == []
-    assert result["handlers_stopped"] == ["monitor"]
-    assert monitor.called_with == [("some_pattern", "reset")]
-    assert top.called_with == []
+    return _Agent(handlers_dict)
 
 
 @pytest.mark.unit
-def test_detach_tolerates_absent_command_handlers():
-    agent = _AgentWithNoHandlers()
+class TestLifecycleHelper:
+    def test_detach_stops_all_resource_owners(self) -> None:
+        dar = _FakeDetachAndReset()
+        do_ = _FakeDetachOnly()
+        agent = _make_agent({"a": dar, "b": do_})
 
-    result = stop_resource_owners_for_detach(agent, _LOG)
+        result = stop_resource_owners_for_detach(agent, _LOG)
 
-    assert result["handlers_stopped"] == []
-    assert result["errors"] == []
+        assert result["errors"] == []
+        assert set(result["handlers_stopped"]) == {"_FakeDetachAndReset", "_FakeDetachOnly"}
+        assert dar.stop_calls == [{"pattern": None, "reason": "detach"}]
+        assert do_.stop_calls == [{"pattern": None, "reason": "detach"}]
 
+    def test_reset_stops_only_detach_and_reset_owners(self) -> None:
+        dar = _FakeDetachAndReset()
+        do_ = _FakeDetachOnly()
+        agent = _make_agent({"a": dar, "b": do_})
 
-@pytest.mark.unit
-def test_detach_tolerates_none_handler_value():
-    agent = _FakeAgent({"monitor": None, "top": None})
+        result = stop_resource_owners_for_reset(agent, "some_pattern", _LOG)
 
-    result = stop_resource_owners_for_detach(agent, _LOG)
+        assert result["errors"] == []
+        assert result["handlers_stopped"] == ["_FakeDetachAndReset"]
+        assert dar.stop_calls == [{"pattern": "some_pattern", "reason": "reset"}]
+        assert do_.stop_calls == []
 
-    assert result["handlers_stopped"] == []
-    assert result["errors"] == []
+    def test_detach_with_missing_command_handlers_is_safe(self) -> None:
+        class _NoHandlerAgent:
+            pass
 
+        result = stop_resource_owners_for_detach(_NoHandlerAgent(), _LOG)
 
-@pytest.mark.unit
-def test_detach_tolerates_handler_without_cleanup_method():
-    class _BareHandler:
-        pass
+        assert result["handlers_stopped"] == []
+        assert result["errors"] == []
 
-    agent = _FakeAgent({"monitor": _BareHandler(), "top": _BareHandler()})
+    def test_detach_with_none_command_handlers_is_safe(self) -> None:
+        agent = _make_agent(None)
 
-    result = stop_resource_owners_for_detach(agent, _LOG)
+        result = stop_resource_owners_for_detach(agent, _LOG)
 
-    assert result["handlers_stopped"] == []
-    assert result["errors"] == []
+        assert result["handlers_stopped"] == []
+        assert result["errors"] == []
 
+    def test_detach_one_handler_exception_does_not_abort_other(self) -> None:
+        class _RaisingFake(ResourceOwningCommand):
+            cleanup_scope = CleanupScope.DETACH_AND_RESET
+            is_resource_owner = True
 
-@pytest.mark.unit
-def test_detach_error_in_one_handler_does_not_abort_other():
-    failing = _FailingHandler()
-    good = _FakeHandler()
-    agent = _FakeAgent({"monitor": failing, "top": good})
+            def __init__(self) -> None:
+                super().__init__(agent=None)
 
-    result = stop_resource_owners_for_detach(agent, _LOG)
+            def execute(self, params: Dict[str, Any]) -> Dict[str, Any]:
+                return {"status": "success"}
 
-    assert len(result["errors"]) == 1
-    assert result["errors"][0]["handler"] == "monitor"
-    assert "boom" in result["errors"][0]["error"]
-    assert result["handlers_stopped"] == ["top"]
-    assert good.called_with == [(None, "detach")]
+            def stop_active_resources(
+                self, pattern: Optional[str], reason: str
+            ) -> Dict[str, Any]:
+                raise RuntimeError("boom")
 
+            def list_active_resources(self) -> Dict[str, Any]:
+                return {"active": []}
 
-@pytest.mark.unit
-def test_lifecycle_helper_does_not_use_get_handler():
-    spec = importlib.util.find_spec("peeka.core.agent_control.lifecycle")
-    assert spec is not None
-    source_path = spec.origin
-    assert source_path is not None and os.path.isfile(source_path)
-    assert "_get_handler(" not in open(source_path).read()
+        raising = _RaisingFake()
+        good = _FakeDetachAndReset()
+        agent = _make_agent({"a": raising, "b": good})
 
+        result = stop_resource_owners_for_detach(agent, _LOG)
 
-@pytest.mark.unit
-def test_repeated_detach_calls_are_safe():
-    monitor = _FakeHandler()
-    top = _FakeHandler()
-    agent = _FakeAgent({"monitor": monitor, "top": top})
+        assert len(result["errors"]) == 1
+        assert result["errors"][0]["handler"] == "_RaisingFake"
+        assert "boom" in result["errors"][0]["error"]
+        assert result["handlers_stopped"] == ["_FakeDetachAndReset"]
+        assert good.stop_calls == [{"pattern": None, "reason": "detach"}]
 
-    result1 = stop_resource_owners_for_detach(agent, _LOG)
-    result2 = stop_resource_owners_for_detach(agent, _LOG)
+    def test_detach_is_idempotent(self) -> None:
+        dar = _FakeDetachAndReset()
+        agent = _make_agent({"a": dar})
 
-    assert result1["errors"] == []
-    assert result2["errors"] == []
-    assert monitor.called_with == [(None, "detach"), (None, "detach")]
-    assert top.called_with == [(None, "detach"), (None, "detach")]
-    assert set(result1["handlers_stopped"]) == {"monitor", "top"}
-    assert set(result2["handlers_stopped"]) == {"monitor", "top"}
+        result1 = stop_resource_owners_for_detach(agent, _LOG)
+        result2 = stop_resource_owners_for_detach(agent, _LOG)
+
+        assert result1["errors"] == []
+        assert result2["errors"] == []
+        assert result1["handlers_stopped"] == ["_FakeDetachAndReset"]
+        assert result2["handlers_stopped"] == ["_FakeDetachAndReset"]
+        assert len(dar.stop_calls) == 2
+
+    def test_lifecycle_source_does_not_use_get_handler(self) -> None:
+        import peeka.core.agent_control.lifecycle as _lifecycle_mod
+
+        source_path = Path(_lifecycle_mod.__file__).with_suffix(".py")  # type: ignore[arg-type]
+        source = source_path.read_text(encoding="utf-8")
+        assert "_get_handler(" not in source
+
+    def test_lifecycle_source_does_not_have_hardcoded_names(self) -> None:
+        import peeka.core.agent_control.lifecycle as _lifecycle_mod
+
+        source_path = Path(_lifecycle_mod.__file__).with_suffix(".py")  # type: ignore[arg-type]
+        source = source_path.read_text(encoding="utf-8")
+        assert '"monitor"' not in source
+        assert '"top"' not in source
+        assert '"memory"' not in source
