@@ -9,7 +9,7 @@ import uuid
 from typing import cast
 from typing import Any, Callable, ClassVar, Dict, Optional, Set, TYPE_CHECKING
 
-from peeka.commands.base import BaseCommand
+from peeka.commands.resource_owning import CleanupScope, ResourceOwningCommand
 from peeka.core.probes import ProbeContext
 from peeka.core.runtime import primitives as _rpl
 from peeka.core.runtime.compat import (
@@ -46,11 +46,13 @@ class _NativeThreadHandle:
         self._done_event.wait(timeout=timeout)
 
 
-class TopCommand(BaseCommand):
+class TopCommand(ResourceOwningCommand):
     """Sampling profiler that collects CPU profiling statistics."""
 
     category: ClassVar[str] = "snapshot"
     allows_concurrent: ClassVar[bool] = False
+    is_resource_owner: bool = True
+    cleanup_scope: CleanupScope = CleanupScope.DETACH_ONLY
 
     def __init__(self, agent: Optional["PeekaAgent"] = None):
         super().__init__(agent)
@@ -271,12 +273,12 @@ class TopCommand(BaseCommand):
             top_id = self._top_id
 
         if top_id is None:
-            return {"stopped": False, "errors": []}
+            return {"stopped": [], "errors": []}
 
         try:
             result = self._stop({"top_id": top_id})
             if result.get("status") == "success":
-                return {"stopped": True, "errors": []}
+                return {"stopped": [{"top_id": top_id}], "errors": []}
 
             error_message = str(result.get("error", "Unknown error"))
             logger.error(
@@ -285,7 +287,7 @@ class TopCommand(BaseCommand):
                 reason,
                 error_message,
             )
-            return {"stopped": False, "errors": [{"top_id": top_id, "error": error_message}]}
+            return {"stopped": [], "errors": [{"top_id": top_id, "error": error_message}]}
         except Exception as exc:
             logger.error(
                 "[peeka Top] stop_active_resources failed for %s (%s)",
@@ -293,7 +295,20 @@ class TopCommand(BaseCommand):
                 reason,
                 exc_info=True,
             )
-            return {"stopped": False, "errors": [{"top_id": top_id, "error": str(exc)}]}
+            return {"stopped": [], "errors": [{"top_id": top_id, "error": str(exc)}]}
+
+    def list_active_resources(self) -> Dict[str, Any]:
+        """List the active top sampler if one is running."""
+        with self._lock:
+            is_running = (
+                self._top_id is not None
+                and self._sampling_thread is not None
+                and self._sampling_thread.is_alive()
+            )
+            if not is_running:
+                return {"active": []}
+
+            return {"active": [{"top_id": self._top_id, "running": True}]}
 
     def _sampling_loop(self) -> None:
         """Background thread that periodically samples all thread stacks."""
