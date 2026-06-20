@@ -16,22 +16,25 @@ import tracemalloc
 from collections import defaultdict
 from typing import Any, ClassVar, Dict, List, Optional, Set, Tuple, TYPE_CHECKING
 
-from peeka.commands.base import BaseCommand
+from peeka.commands.resource_owning import CleanupScope, ResourceOwningCommand
 
 if TYPE_CHECKING:
     from peeka.core.agent import PeekaAgent
 
 
-class MemoryCommand(BaseCommand):
+class MemoryCommand(ResourceOwningCommand):
     """Memory diagnostics command - track allocations and analyze memory usage."""
 
     category: ClassVar[str] = "snapshot"
     allows_concurrent: ClassVar[bool] = True
+    is_resource_owner: bool = True
+    cleanup_scope: CleanupScope = CleanupScope.DETACH_ONLY
 
     def __init__(self, agent: "PeekaAgent"):
-        super().__init__()
+        super().__init__(agent)
         self.agent = agent
         self._snapshots: List[tracemalloc.Snapshot] = []
+        self._started_by_peeka: bool = False
 
     def execute(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -149,6 +152,7 @@ class MemoryCommand(BaseCommand):
 
         if not was_running:
             tracemalloc.start(nframe)
+            self._started_by_peeka = True
             return {
                 "status": "success",
                 "action": "start",
@@ -175,6 +179,7 @@ class MemoryCommand(BaseCommand):
 
         if was_running:
             tracemalloc.stop()
+            self._started_by_peeka = False
             return {
                 "status": "success",
                 "action": "stop",
@@ -188,6 +193,46 @@ class MemoryCommand(BaseCommand):
                 "message": "tracemalloc was not running",
                 "was_running": False,
             }
+
+    def stop_active_resources(
+        self, pattern: Optional[str], reason: str
+    ) -> Dict[str, Any]:
+        """Stop tracemalloc resources started by Peeka and clear snapshots."""
+        stopped: List[Dict[str, str]] = []
+        errors: List[Dict[str, str]] = []
+
+        if self._started_by_peeka:
+            try:
+                tracemalloc.stop()
+                self._started_by_peeka = False
+                stopped.append({"resource": "tracemalloc"})
+            except Exception as exc:
+                errors.append({"resource": "tracemalloc", "error": str(exc)})
+
+        try:
+            self._snapshots = []
+        except Exception as exc:
+            errors.append({"resource": "snapshots", "error": str(exc)})
+
+        return {"stopped": stopped, "errors": errors}
+
+    def list_active_resources(self) -> Dict[str, Any]:
+        """List active tracemalloc resources or retained snapshots."""
+        is_tracing = tracemalloc.is_tracing()
+        snapshot_count = len(self._snapshots)
+        if not is_tracing and snapshot_count == 0:
+            return {"active": []}
+
+        return {
+            "active": [
+                {
+                    "resource": "tracemalloc",
+                    "started_by_peeka": self._started_by_peeka,
+                    "is_tracing": is_tracing,
+                    "snapshot_count": snapshot_count,
+                }
+            ]
+        }
 
     def _top_allocations(self, limit: int, group_by: str) -> Dict[str, Any]:
         """
