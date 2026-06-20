@@ -18,20 +18,46 @@ from peeka.commands.top import TopCommand
 
 class _ContractAgent:
     def __init__(self) -> None:
+        from peeka.core import probes as _probes_module
         from peeka.core.injector import DecoratorInjector
         from peeka.core.observer import ObservationManager
+        from peeka.core.runtime import primitives as _rpl
 
         self.attached_pid: int = 12345
         self.observer = ObservationManager()
         self.injector = DecoratorInjector(cast(Any, self))
         self.command_handlers: Dict[str, Any] = {}
         self._observations: List[Any] = []
+        self.probe_registry = _probes_module.probe_registry
+        self._probe_contexts: Dict[str, Any] = {}
+        self._probe_context_types: Dict[str, str] = {}
+        self._probe_context_lock = _rpl.allocate_lock()
 
     def _send_observation(self, observation: Any) -> None:
         self._observations.append(observation)
 
     def stop(self) -> None:
         pass
+
+    def track_probe_context(self, top_id: str, probe: Any, probe_type: str) -> None:
+        with self._probe_context_lock:
+            self._probe_contexts[top_id] = probe
+            self._probe_context_types[top_id] = probe_type
+
+    def untrack_probe_context(self, top_id: str) -> None:
+        with self._probe_context_lock:
+            self._probe_contexts.pop(top_id, None)
+            self._probe_context_types.pop(top_id, None)
+
+    def _target_id_for_jobs(self) -> str:
+        return f"contract-agent-{self.attached_pid}"
+
+    def stop_probe_context(self, stream_key: str) -> None:
+        with self._probe_context_lock:
+            probe = self._probe_contexts.pop(stream_key, None)
+            self._probe_context_types.pop(stream_key, None)
+        if probe is not None:
+            probe.should_stop()
 
 
 @pytest.mark.integration
@@ -298,6 +324,57 @@ class TestResetContractCleanup:
 
         finally:
             top_cmd.execute({"action": "stop"})
+
+    def test_reset_does_not_stop_top_sampler_streaming_mode(self) -> None:
+        import time
+
+        agent = _ContractAgent()
+        top_cmd = TopCommand(cast(Any, agent))
+        reset_cmd = ResetCommand(cast(Any, agent))
+        agent.command_handlers["top"] = top_cmd
+
+        assert top_cmd._supports_probe_instrumentation(), (
+            "_ContractAgent must have probe_registry — "
+            "otherwise this test covers legacy path only"
+        )
+
+        try:
+            start_result = top_cmd.execute(
+                {"action": "start", "stream": True, "interval": 0.01}
+            )
+            assert start_result["status"] == "success", (
+                f"top start (streaming) failed: {start_result}"
+            )
+
+            with top_cmd._lock:
+                sampling_thread = top_cmd._sampling_thread
+                top_id_before = top_cmd._top_id
+
+            assert sampling_thread is not None, "Sampling thread must exist after start"
+            assert sampling_thread.is_alive(), "Sampling thread must be alive after streaming start"
+            assert top_id_before is not None, "_top_id must be set after streaming start"
+
+            time.sleep(0.05)
+
+            reset_result = ResetCommand(cast(Any, agent)).execute({"action": "reset"})
+            assert reset_result["status"] == "success", (
+                f"reset failed: {reset_result}"
+            )
+
+            assert sampling_thread.is_alive(), (
+                "P1-B regression: top sampling thread was killed by reset — "
+                "reset must not manage DETACH_ONLY ProbeContext"
+            )
+            with top_cmd._lock:
+                assert top_cmd._top_id is not None, (
+                    "_top_id must remain set after generic reset (DETACH_ONLY contract)"
+                )
+
+        finally:
+            try:
+                top_cmd.execute({"action": "stop"})
+            except Exception:
+                pass
 
     def test_reset_idempotent_second_call_succeeds(self) -> None:
         """Reset twice on fresh agent with no active monitors must succeed both calls."""
