@@ -1477,6 +1477,7 @@ class TestMonitorUserDecoratorPreservation:
         agent.injector = injector
         monitor_cmd = MonitorCommand(agent)  # pyright: ignore[reportArgumentType]
         agent.monitor_cmd = monitor_cmd  # type: ignore[attr-defined]
+        agent.command_handlers = {"monitor": monitor_cmd}  # type: ignore[attr-defined]
         reset_cmd = ResetCommand(agent)  # pyright: ignore[reportArgumentType]
 
         try:

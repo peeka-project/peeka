@@ -17,8 +17,8 @@ class _FakeDetachAndReset(ResourceOwningCommand):
     cleanup_scope = CleanupScope.DETACH_AND_RESET
     is_resource_owner = True
 
-    def __init__(self) -> None:
-        super().__init__(agent=None)
+    def __init__(self, agent: Any = None) -> None:
+        super().__init__(agent=agent)
         self.stop_calls: List[Dict[str, Any]] = []
 
     def execute(self, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -38,8 +38,8 @@ class _FakeDetachOnly(ResourceOwningCommand):
     cleanup_scope = CleanupScope.DETACH_ONLY
     is_resource_owner = True
 
-    def __init__(self) -> None:
-        super().__init__(agent=None)
+    def __init__(self, agent: Any = None) -> None:
+        super().__init__(agent=agent)
         self.stop_calls: List[Dict[str, Any]] = []
 
     def execute(self, params: Dict[str, Any]) -> Dict[str, Any]:
