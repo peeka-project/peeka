@@ -26,6 +26,11 @@ def stop_resource_owners_for_detach(agent: Any, logger: Any) -> Dict[str, Any]:
     for handler in snapshot:
         if not isinstance(handler, ResourceOwningCommand):
             continue
+        if handler.cleanup_scope not in (
+            CleanupScope.DETACH_ONLY,
+            CleanupScope.DETACH_AND_RESET,
+        ):
+            continue
         handler_name = type(handler).__name__
 
         try:

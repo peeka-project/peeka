@@ -110,6 +110,38 @@ class TestLifecycleHelper:
         assert result["handlers_stopped"] == []
         assert result["errors"] == []
 
+    def test_detach_skips_handler_with_invalid_cleanup_scope(self) -> None:
+        class _InvalidCleanupScopeFake(ResourceOwningCommand):
+            cleanup_scope = "not_an_enum_value"  # pyright: ignore[reportAssignmentType]
+            is_resource_owner = True
+            category = "probe"
+            allows_concurrent = False
+
+            def __init__(self, agent: Any = None) -> None:
+                super().__init__(agent=agent)
+                self.stop_calls: List[Dict[str, Any]] = []
+
+            def execute(self, params: Dict[str, Any]) -> Dict[str, Any]:
+                return {"status": "success"}
+
+            def stop_active_resources(
+                self, pattern: Optional[str], reason: str
+            ) -> Dict[str, Any]:
+                self.stop_calls.append({"pattern": pattern, "reason": reason})
+                return {"stopped": [], "errors": []}
+
+            def list_active_resources(self) -> Dict[str, Any]:
+                return {"active": []}
+
+        fake = _InvalidCleanupScopeFake()
+        agent = _make_agent({"a": fake})
+
+        result = stop_resource_owners_for_detach(agent, _LOG)
+
+        assert result["handlers_stopped"] == []
+        assert result["errors"] == []
+        assert fake.stop_calls == []
+
     def test_detach_one_handler_exception_does_not_abort_other(self) -> None:
         class _RaisingFake(ResourceOwningCommand):
             cleanup_scope = CleanupScope.DETACH_AND_RESET

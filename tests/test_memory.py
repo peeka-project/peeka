@@ -376,7 +376,7 @@ class TestMemoryCleanupContract:
         from peeka.commands.memory import MemoryCommand
 
         agent = MockAgent()
-        memory_cmd = MemoryCommand(agent)
+        memory_cmd = MemoryCommand(agent)  # pyright: ignore[reportArgumentType]
 
         result = memory_cmd._start_tracking(25)
         assert result["status"] == "success"
@@ -388,6 +388,29 @@ class TestMemoryCleanupContract:
         assert tracemalloc.is_tracing() is False
         assert memory_cmd._started_by_peeka is False
 
+    def test_detach_clears_snapshots(self):
+        """stop_active_resources clears retained snapshots on detach."""
+        tracemalloc.stop()
+
+        from peeka.commands.memory import MemoryCommand
+
+        agent = MockAgent()
+        memory_cmd = MemoryCommand(agent)  # pyright: ignore[reportArgumentType]
+
+        try:
+            start_result = memory_cmd._start_tracking(25)
+            assert start_result["status"] == "success"
+
+            snapshot_result = memory_cmd.execute({"action": "snapshot"})
+            assert snapshot_result["status"] == "success"
+            assert len(memory_cmd._snapshots) > 0
+
+            memory_cmd.stop_active_resources(None, "detach")
+
+            assert memory_cmd._snapshots == []
+        finally:
+            tracemalloc.stop()
+
     def test_detach_preserves_external_tracemalloc(self):
         """stop_active_resources must NOT stop tracemalloc started externally."""
         tracemalloc.start(5)
@@ -395,7 +418,7 @@ class TestMemoryCleanupContract:
         from peeka.commands.memory import MemoryCommand
 
         agent = MockAgent()
-        memory_cmd = MemoryCommand(agent)
+        memory_cmd = MemoryCommand(agent)  # pyright: ignore[reportArgumentType]
 
         # Peeka never called _start_tracking — _started_by_peeka stays False
         assert memory_cmd._started_by_peeka is False
@@ -416,7 +439,7 @@ class TestMemoryCleanupContract:
         from peeka.commands.memory import MemoryCommand
 
         agent = MockAgent()
-        memory_cmd = MemoryCommand(agent)
+        memory_cmd = MemoryCommand(agent)  # pyright: ignore[reportArgumentType]
 
         memory_cmd._start_tracking(25)
         assert memory_cmd._started_by_peeka is True
