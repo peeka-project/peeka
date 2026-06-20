@@ -1,11 +1,9 @@
 """Tests for memory command - memory analysis and tracing."""
 
 import pytest
-import sys
 import threading
 import tracemalloc
 import os
-from pathlib import Path
 
 
 class MockAgent:
@@ -367,3 +365,63 @@ class TestMemoryCommand:
         assert "count" in result["target"]
         assert "referents" in result
         assert isinstance(result["referents"], list)
+
+
+class TestMemoryCleanupContract:
+
+    def test_detach_stops_only_peeka_started_tracemalloc(self):
+        """stop_active_resources stops tracemalloc iff Peeka started it."""
+        tracemalloc.stop()
+
+        from peeka.commands.memory import MemoryCommand
+
+        agent = MockAgent()
+        memory_cmd = MemoryCommand(agent)
+
+        result = memory_cmd._start_tracking(25)
+        assert result["status"] == "success"
+        assert memory_cmd._started_by_peeka is True
+        assert tracemalloc.is_tracing()
+
+        memory_cmd.stop_active_resources(None, "detach")
+
+        assert tracemalloc.is_tracing() is False
+        assert memory_cmd._started_by_peeka is False
+
+    def test_detach_preserves_external_tracemalloc(self):
+        """stop_active_resources must NOT stop tracemalloc started externally."""
+        tracemalloc.start(5)
+
+        from peeka.commands.memory import MemoryCommand
+
+        agent = MockAgent()
+        memory_cmd = MemoryCommand(agent)
+
+        # Peeka never called _start_tracking — _started_by_peeka stays False
+        assert memory_cmd._started_by_peeka is False
+
+        try:
+            memory_cmd.stop_active_resources(None, "detach")
+
+            assert tracemalloc.is_tracing() is True, (
+                "Externally-started tracemalloc must survive Peeka detach"
+            )
+        finally:
+            tracemalloc.stop()
+
+    def test_stop_tracking_resets_started_by_peeka_flag(self):
+        """_stop_tracking() must clear _started_by_peeka regardless of who started tracing."""
+        tracemalloc.stop()
+
+        from peeka.commands.memory import MemoryCommand
+
+        agent = MockAgent()
+        memory_cmd = MemoryCommand(agent)
+
+        memory_cmd._start_tracking(25)
+        assert memory_cmd._started_by_peeka is True
+
+        memory_cmd._stop_tracking()
+
+        assert memory_cmd._started_by_peeka is False
+        assert tracemalloc.is_tracing() is False

@@ -13,6 +13,7 @@ import pytest
 
 from peeka.commands.detach import DetachCommand
 from peeka.commands.monitor import MonitorCommand
+from peeka.commands.resource_owning import CleanupScope, ResourceOwningCommand
 from peeka.commands.top import TopCommand
 
 
@@ -258,9 +259,18 @@ class TestDetachContractCleanup:
     def test_detach_cleanup_failure_continues_structural_teardown(self) -> None:
         """A handler's stop_active_resources raising must not abort agent.stop()."""
 
-        class _FailingHandler:
-            def stop_active_resources(self, pattern: Any, reason: Any) -> None:
+        class _FailingHandler(ResourceOwningCommand):
+            is_resource_owner = True
+            cleanup_scope = CleanupScope.DETACH_ONLY
+
+            def execute(self, params: Any) -> Dict[str, Any]:
+                return {"status": "success"}
+
+            def stop_active_resources(self, pattern: Any, reason: Any) -> Dict[str, Any]:
                 raise RuntimeError("simulated cleanup failure")
+
+            def list_active_resources(self) -> Dict[str, Any]:
+                return {"active": []}
 
         agent = _ContractAgent()
         agent.command_handlers["monitor"] = _FailingHandler()
