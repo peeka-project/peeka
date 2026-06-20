@@ -103,9 +103,55 @@ peeka/
 
 1. 创建 `peeka/commands/mycommand.py`，继承 `BaseCommand`
 2. 实现 `execute(self, params: Dict[str, Any]) -> Dict[str, Any]`
-3. 在 `PeekaAgent._COMMAND_REGISTRY`（`peeka/core/agent.py` 中的字典）注册 — 命令首次调度时通过 `_get_handler()` 惰性加载
-4. 在 `peeka/cli/main.py` 添加 CLI 子命令
-5. 在 `tests/test_mycommand.py` 编写测试
+3. **显式声明 `is_resource_owner`**：
+   - 无副作用、纯查询命令 → `is_resource_owner = False`
+   - 启动后台线程、修改全局状态、注入装饰器、持有外部句柄等 → 见下方"添加资源所有命令"
+4. 在 `PeekaAgent._COMMAND_REGISTRY`（`peeka/core/agent.py` 中的字典）注册 — 命令首次调度时通过 `_get_handler()` 惰性加载
+5. 在 `peeka/cli/main.py` 添加 CLI 子命令
+6. 在 `tests/test_mycommand.py` 编写测试
+
+> **强制约束**：`tests/test_resource_owning_contract.py` 中的枚举测试会扫描所有 `BaseCommand` 子类。如果新命令没在 `cls.__dict__` 里显式声明 `is_resource_owner`，CI 会失败。
+
+### 添加资源所有命令（resource-owning command）
+
+如果命令拥有需要在 detach / reset 时清理的运行时资源（注入的装饰器、tracemalloc、采样线程、文件句柄等），**必须**继承 `ResourceOwningCommand`，否则资源会泄漏。
+
+参考实现：`peeka/commands/monitor.py`、`top.py`、`memory.py`。
+
+```python
+from peeka.commands.resource_owning import CleanupScope, ResourceOwningCommand
+
+
+class MyCommand(ResourceOwningCommand):
+    cleanup_scope = CleanupScope.DETACH_AND_RESET  # 或 DETACH_ONLY
+
+    def execute(self, params): ...
+
+    def stop_active_resources(self, pattern, reason):
+        # 必须返回至少 {"stopped": list, "errors": list}
+        # 可加 "skipped" 等扩展字段
+        ...
+
+    def list_active_resources(self):
+        # 必须返回至少 {"active": list}
+        ...
+```
+
+**`cleanup_scope` 选择**：
+- `DETACH_ONLY` — 只在 `detach` 时清理（如 `top` 的采样线程、`memory` 的 tracemalloc）
+- `DETACH_AND_RESET` — `detach` 和 `reset` 都清理（如 `monitor` 的注入装饰器，因为 `reset` 也要还原函数）
+
+**重要**：
+- 不要修改 `peeka/core/agent_control/lifecycle.py` 加硬编码命令名。`lifecycle.py` 通过 `isinstance(handler, ResourceOwningCommand)` + `cleanup_scope` 自动发现 owner，新命令会**自动**进入 detach/reset 路径
+- 如果命令同时启动了被外部代码也使用的全局资源（如 `tracemalloc`），用 state machine（参考 `MemoryCommand._started_by_peeka`）确保只清理 peeka 自己启动的部分
+- streaming 命令（`watch` / `trace` / `stack`）走 `ProbeContext` 边界，**不**继承 `ResourceOwningCommand`，声明 `is_resource_owner = False`
+
+**契约测试**：以下测试会自动覆盖你的新命令，无需手动添加：
+- `test_resource_owning_subclasses_have_valid_cleanup_scope` — 检查 `cleanup_scope` 是合法枚举值
+- `test_bidirectional_consistency_is_resource_owner_and_resource_owning_command` — 检查双向一致
+- `test_lifecycle_module_has_no_hardcoded_command_names` — 确保 `lifecycle.py` 没有硬编码
+
+参考架构决策：[ADR 0001 - ResourceOwningCommand 抽象](docs/adr/0001-resource-owning-command-abstraction.md)。
 
 ### 安全
 
