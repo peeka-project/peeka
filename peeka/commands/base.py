@@ -38,6 +38,7 @@ class BaseCommand(ABC):
     - allows_concurrent=False: Enforced per-session foreground rule; mutation lock for mutation category.
     """
 
+    is_resource_owner: bool = False  # subclasses MUST explicitly redeclare; see ResourceOwningCommand
     category: ClassVar[str] = "snapshot"
     allows_concurrent: ClassVar[bool] = False
 
