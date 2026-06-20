@@ -12,7 +12,7 @@ import threading
 import uuid
 from typing import Any, ClassVar, Dict, List, Optional, Set, TYPE_CHECKING, Tuple, cast
 
-from peeka.commands.base import BaseCommand
+from peeka.commands.resource_owning import CleanupScope, ResourceOwningCommand
 from peeka.core.monitor import MonitorManager
 from peeka.core.probes import ProbeContext
 from peeka.core.runtime import primitives as _rpl
@@ -21,7 +21,10 @@ if TYPE_CHECKING:
     from peeka.core.agent import PeekaAgent
 
 
-class MonitorCommand(BaseCommand):
+class MonitorCommand(ResourceOwningCommand):
+    is_resource_owner: bool = True
+    cleanup_scope: CleanupScope = CleanupScope.DETACH_AND_RESET
+
     """
     Monitor command - collects performance statistics for functions.
 
@@ -54,7 +57,7 @@ class MonitorCommand(BaseCommand):
     allows_concurrent: ClassVar[bool] = False
 
     def __init__(self, agent: "PeekaAgent"):
-        super().__init__()
+        super().__init__(agent)
         self.agent = agent
         self.manager = MonitorManager()
         self._monitors: Dict[str, Dict[str, Any]] = {}
@@ -531,6 +534,16 @@ class MonitorCommand(BaseCommand):
                 errors.append({"monitor_id": monitor_id, "error": str(exc)})
 
         return {"stopped": stopped, "errors": errors, "skipped": skipped}
+
+    def list_active_resources(self) -> Dict[str, Any]:
+        """List active monitor resources."""
+        with self._lock:
+            active = [
+                {"watch_pattern": monitor.get("pattern"), "alias": monitor_id}
+                for monitor_id, monitor in self._monitors.items()
+            ]
+
+        return {"active": active}
 
     def _get_status(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Get list of active monitors."""
