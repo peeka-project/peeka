@@ -127,8 +127,8 @@ def test_detach_stops_probe_context_for_all_types(probe_type: str) -> None:  # B
     assert agent.stop_called
 
 
-@pytest.mark.parametrize("probe_type", ["watch", "trace", "stack", "monitor", "top"])
-def test_reset_stops_matching_probe_context_for_all_types(probe_type: str) -> None:  # BRITTLE: fake ProbeContext smoke check only; no real resource-owner verification → REPLACE WITH: reset stops only matching probe resources and preserves unrelated streams
+@pytest.mark.parametrize("probe_type", ["watch", "trace", "stack", "monitor"])
+def test_reset_stops_matching_probe_context_for_all_types(probe_type: str) -> None:  # top is DETACH_ONLY; its probe context survives reset (see test_reset_contract.py:263-297)
     """Reset with a matching pattern stops that stream's probe context.
 
     smoke: ProbeContext bookkeeping only

@@ -534,8 +534,22 @@ class TestResetProbeContextRegistry:
 
     def _make_agent(self):
         from peeka.commands.reset import ResetCommand
+        from peeka.commands.resource_owning import CleanupScope, ResourceOwningCommand
         from peeka.core.injector import DecoratorInjector
         from peeka.core.observer import ObservationManager
+
+        class _FakeDetachOnlyHandler(ResourceOwningCommand):
+            is_resource_owner = True
+            cleanup_scope = CleanupScope.DETACH_ONLY
+
+            def execute(self, params):
+                return {}
+
+            def stop_active_resources(self, pattern, reason):
+                return {"stopped": [], "errors": []}
+
+            def list_active_resources(self):
+                return {"active": []}
 
         class _ProbeRun:
             def __init__(self, pattern):
@@ -552,6 +566,7 @@ class TestResetProbeContextRegistry:
                 self._probe_contexts = {}
                 self._probe_context_types = {}
                 self.stopped_streams = []
+                self.command_handlers = {}
                 self.observer = ObservationManager()
                 self.injector = DecoratorInjector(self)  # pyright: ignore[reportArgumentType]
 
@@ -570,6 +585,7 @@ class TestResetProbeContextRegistry:
                     self._probe_context_types.pop(stream_key, None)
 
         agent = _Agent()
+        agent.command_handlers["top"] = _FakeDetachOnlyHandler(agent)
         reset_cmd = ResetCommand(agent)  # pyright: ignore[reportArgumentType]
         return agent, reset_cmd
 
@@ -621,10 +637,13 @@ class TestResetProbeContextRegistry:
             "trace_1",
             "stack_1",
             "monitor_1",
-            "top_1",
         }
-        assert agent._probe_contexts == {}
-        assert agent._probe_context_types == {}
+        assert set(agent._probe_contexts.keys()) == {"top_1"}
+        assert set(agent._probe_context_types.keys()) == {"top_1"}
+        assert "watch_1" not in agent._probe_contexts
+        assert "trace_1" not in agent._probe_contexts
+        assert "stack_1" not in agent._probe_contexts
+        assert "monitor_1" not in agent._probe_contexts
 
     def test_reset_list_includes_all_active_probe_context_types(self):
         agent, reset_cmd = self._make_agent()

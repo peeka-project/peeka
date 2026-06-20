@@ -82,9 +82,20 @@ class ResetCommand(BaseCommand):
         probe_contexts = cast(dict[str, object], getattr(self.agent, "_probe_contexts", {}))
 
         if callable(stop_context) and probe_context_lock is not None:
+            from peeka.commands.resource_owning import CleanupScope, ResourceOwningCommand
+
+            command_handlers = getattr(self.agent, "command_handlers", {}) or {}
             stream_keys: list[str] = []
             with probe_context_lock:
                 for stream_key in list(probe_context_types.keys()):
+                    probe_type = probe_context_types.get(stream_key)
+                    if isinstance(probe_type, str):
+                        handler = command_handlers.get(probe_type)
+                        if (
+                            isinstance(handler, ResourceOwningCommand)
+                            and handler.cleanup_scope == CleanupScope.DETACH_ONLY
+                        ):
+                            continue
                     probe_context = probe_contexts.get(stream_key)
                     probe_run = getattr(probe_context, "probe", None)
                     probe_pattern = getattr(probe_run, "pattern", stream_key)
