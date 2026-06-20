@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
 
 class PatchStatusCommand(BaseCommand):
+    is_resource_owner = False  # explicit; not a resource owner
     """
     Patch status command - introspect runtime environment for monkey-patching.
 

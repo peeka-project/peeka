@@ -12,6 +12,7 @@ from peeka.commands.base import BaseCommand
 
 
 class CompleteCommand(BaseCommand):
+    is_resource_owner = False  # explicit; not a resource owner
     """Provides completion suggestions by introspecting sys.modules."""
 
     category: ClassVar[str] = "snapshot"

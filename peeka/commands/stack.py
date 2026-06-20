@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 
 class StackCommand(BaseCommand):
+    is_resource_owner = False  # explicit; not a resource owner
     """
     Stack command - captures call trace when function is invoked (Arthas-compatible)
 

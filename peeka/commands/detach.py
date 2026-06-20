@@ -12,6 +12,7 @@ from peeka.commands.base import BaseCommand
 
 
 class DetachCommand(BaseCommand):
+    is_resource_owner = False  # explicit; not a resource owner
     """
     Detach command - stops the agent and cleans up all resources
 

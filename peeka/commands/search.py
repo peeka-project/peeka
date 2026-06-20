@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
 
 class SearchClassCommand(BaseCommand):
+    is_resource_owner = False  # explicit; not a resource owner
     """
     Search Class command - discovers classes in loaded modules (Arthas-compatible)
 
@@ -151,6 +152,7 @@ class SearchClassCommand(BaseCommand):
 
 
 class SearchMethodCommand(BaseCommand):
+    is_resource_owner = False  # explicit; not a resource owner
     """
     Search Method command - discovers methods in classes (Arthas-compatible)
 

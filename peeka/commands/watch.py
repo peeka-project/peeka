@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 
 
 class WatchCommand(BaseCommand):
+    is_resource_owner = False  # explicit; not a resource owner
     """
     Watch command - monitors function execution (Arthas-compatible)
 

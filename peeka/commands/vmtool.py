@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 
 
 class VMToolCommand(BaseCommand):
+    is_resource_owner = False  # explicit; not a resource owner
     """VM introspection command - inspect objects and heap at runtime."""
 
     category: ClassVar[str] = "snapshot"

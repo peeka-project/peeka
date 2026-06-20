@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
 
 class TraceCommand(BaseCommand):
+    is_resource_owner = False  # explicit; not a resource owner
     """
     Trace command - traces function call tree and timing (Arthas-compatible)
 

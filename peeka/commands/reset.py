@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
 
 class ResetCommand(BaseCommand):
+    is_resource_owner = False  # explicit; not a resource owner
     """
     Reset command - removes instrumentation and restores original functions
 

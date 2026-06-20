@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 
 class LoggerCommand(BaseCommand):
+    is_resource_owner = False  # explicit; not a resource owner
     """
     Logger command - inspect and modify logger levels at runtime
 

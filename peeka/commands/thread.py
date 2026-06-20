@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 
 
 class ThreadCommand(BaseCommand):
+    is_resource_owner = False  # explicit; not a resource owner
     """
     Thread command - enumerate threads and inspect stacks (Arthas-compatible).
 
