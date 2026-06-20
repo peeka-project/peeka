@@ -2,28 +2,14 @@
 
 from typing import Any, Dict, List, Optional
 
+from peeka.commands.resource_owning import CleanupScope, ResourceOwningCommand
+
 
 __all__ = ["stop_resource_owners_for_detach", "stop_resource_owners_for_reset"]
 
 
-def _resolve_handler(agent: Any, name: str) -> Any:
-    """Return the already-instantiated handler for *name* without lazy creation.
-
-    Checks ``agent.command_handlers[name]`` first, then falls back to
-    ``agent.<name>_cmd`` for legacy test fixtures that set the attribute
-    directly (e.g. ``agent.monitor_cmd = MonitorCommand(agent)``).
-    """
-    handlers = getattr(agent, "command_handlers", {})
-    handler = handlers.get(name)
-    if handler is not None:
-        return handler
-    # Legacy/test-fixture fallback: some tests set agent.monitor_cmd directly
-    # without populating command_handlers.
-    return getattr(agent, f"{name}_cmd", None)
-
-
 def stop_resource_owners_for_detach(agent: Any, logger: Any) -> Dict[str, Any]:
-    """Stop monitor and top resources before detach teardown.
+    """Stop resource-owning command resources before detach teardown.
 
     Args:
         agent: Agent-like object with an optional command_handlers mapping.
@@ -34,23 +20,24 @@ def stop_resource_owners_for_detach(agent: Any, logger: Any) -> Dict[str, Any]:
     """
     handlers_stopped: List[str] = []
     errors: List[Dict[str, Any]] = []
+    handlers = getattr(agent, "command_handlers", {}) or {}
+    snapshot = list(handlers.values())
 
-    for name in ["monitor", "top"]:
-        handler = _resolve_handler(agent, name)
-        stop_active_resources = getattr(handler, "stop_active_resources", None)
-        if handler is None or not callable(stop_active_resources):
+    for handler in snapshot:
+        if not isinstance(handler, ResourceOwningCommand):
             continue
+        handler_name = type(handler).__name__
 
         try:
-            _ = stop_active_resources(pattern=None, reason="detach")
-            handlers_stopped.append(name)
+            _ = handler.stop_active_resources(pattern=None, reason="detach")
+            handlers_stopped.append(handler_name)
         except Exception as exc:
             logger.error(
                 "[peeka Lifecycle] %s resource cleanup failed during detach",
-                name,
+                handler_name,
                 exc_info=True,
             )
-            errors.append({"handler": name, "error": str(exc)})
+            errors.append({"handler": handler_name, "error": str(exc)})
 
     return {"handlers_stopped": handlers_stopped, "errors": errors}
 
@@ -58,11 +45,11 @@ def stop_resource_owners_for_detach(agent: Any, logger: Any) -> Dict[str, Any]:
 def stop_resource_owners_for_reset(
     agent: Any, pattern: Optional[str], logger: Any
 ) -> Dict[str, Any]:
-    """Stop monitor resources matching *pattern* before reset teardown.
+    """Stop reset-scoped resource-owning command resources before reset teardown.
 
     Args:
         agent: Agent-like object with an optional command_handlers mapping.
-        pattern: Optional function pattern to pass to monitor cleanup.
+        pattern: Optional function pattern to pass to resource cleanup.
         logger: Logger-like object used for per-handler cleanup failures.
 
     Returns:
@@ -70,18 +57,25 @@ def stop_resource_owners_for_reset(
     """
     handlers_stopped: List[str] = []
     errors: List[Dict[str, Any]] = []
+    handlers = getattr(agent, "command_handlers", {}) or {}
+    snapshot = list(handlers.values())
 
-    handler = _resolve_handler(agent, "monitor")
-    stop_active_resources = getattr(handler, "stop_active_resources", None)
-    if handler is not None and callable(stop_active_resources):
+    for handler in snapshot:
+        if not isinstance(handler, ResourceOwningCommand):
+            continue
+        if handler.cleanup_scope != CleanupScope.DETACH_AND_RESET:
+            continue
+        handler_name = type(handler).__name__
+
         try:
-            _ = stop_active_resources(pattern=pattern, reason="reset")
-            handlers_stopped.append("monitor")
+            _ = handler.stop_active_resources(pattern=pattern, reason="reset")
+            handlers_stopped.append(handler_name)
         except Exception as exc:
             logger.error(
-                "[peeka Lifecycle] monitor resource cleanup failed during reset",
+                "[peeka Lifecycle] %s resource cleanup failed during reset",
+                handler_name,
                 exc_info=True,
             )
-            errors.append({"handler": "monitor", "error": str(exc)})
+            errors.append({"handler": handler_name, "error": str(exc)})
 
     return {"handlers_stopped": handlers_stopped, "errors": errors}
