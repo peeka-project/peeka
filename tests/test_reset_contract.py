@@ -330,7 +330,6 @@ class TestResetContractCleanup:
 
         agent = _ContractAgent()
         top_cmd = TopCommand(cast(Any, agent))
-        reset_cmd = ResetCommand(cast(Any, agent))
         agent.command_handlers["top"] = top_cmd
 
         assert top_cmd._supports_probe_instrumentation(), (
