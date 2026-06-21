@@ -1058,6 +1058,7 @@ class PeekaAgent(
             self._stopped = True
 
         logger = logging.getLogger(__name__)
+        # probe types discovered dynamically from agent state — do not hardcode
         shutdown_agent_resources(
             self, logger, self.list_tracked_probe_types()
         )
