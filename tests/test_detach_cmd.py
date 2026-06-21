@@ -25,6 +25,9 @@ class LocalDetachAgent:
         _ = observation
         pass
 
+    def list_tracked_probe_types(self) -> List[str]:
+        return []
+
     def stop(self) -> None:
         self.stop_calls += 1
         _ = self.injector.uninject_all()
@@ -215,6 +218,9 @@ class TestDetachProbeContextCleanup:
             injector = MagicMock()
             observer = MagicMock()
 
+            def list_tracked_probe_types(self) -> List[str]:
+                return ["monitor", "watch"]
+
             def stop_probe_contexts_by_type(self, probe_types: List[str]) -> None:
                 stopped_types.extend(probe_types)
 
@@ -224,13 +230,16 @@ class TestDetachProbeContextCleanup:
         result = DetachCommand(cast(Any, _FakeAgent())).execute({})
 
         assert result["status"] == "success"
-        assert set(stopped_types) == {"watch", "trace", "stack", "monitor", "top"}
+        assert stopped_types == ["monitor", "watch"]
 
     def test_detach_probe_cleanup_before_uninject(self):
         call_order: List[str] = []
 
         class _FakeAgent:
             attached_pid = 12345
+
+            def list_tracked_probe_types(self) -> List[str]:
+                return ["watch"]
 
             def stop_probe_contexts_by_type(self, types: List[str]) -> None:
                 _ = types

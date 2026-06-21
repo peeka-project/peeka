@@ -32,6 +32,9 @@ class _ContractAgent:
     def _send_observation(self, observation: Any) -> None:
         self._observations.append(observation)
 
+    def list_tracked_probe_types(self) -> List[str]:
+        return []
+
     def stop(self) -> None:
         self._stop_calls += 1
 

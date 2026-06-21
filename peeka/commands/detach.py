@@ -36,9 +36,12 @@ class DetachCommand(BaseCommand):
     def execute(self, params: Dict[str, Any]) -> Dict[str, Any]:
         try:
             logger = logging.getLogger(__name__)
+            list_probe_types = getattr(
+                self.agent, "list_tracked_probe_types", lambda: []
+            )
 
             _ = shutdown_agent_resources(
-                self.agent, logger, ["watch", "trace", "stack", "monitor", "top"]
+                self.agent, logger, list_probe_types()
             )
 
             attached_pid = self.agent.attached_pid

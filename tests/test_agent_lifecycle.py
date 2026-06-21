@@ -6,7 +6,7 @@ Verifies that ``detach`` and ``reset`` correctly stop all 5 stream probe types
 """
 
 import threading
-from typing import Any, Dict, List
+from typing import Any, Dict, List, cast
 
 import pytest
 
@@ -33,6 +33,14 @@ class _MockProbeContext:
 class _MockAgentWithProbes:
     """Minimal agent double with real probe_context tracking."""
 
+    _probe_contexts: Dict[str, Any]
+    _probe_context_types: Dict[str, str]
+    _probe_context_lock: threading.Lock
+    uninject_all_called: bool = False
+    clear_all_called: bool = False
+    stop_called: bool = False
+    attached_pid: int = 12345
+
     def __init__(self) -> None:
         self._probe_contexts: Dict[str, Any] = {}
         self._probe_context_types: Dict[str, str] = {}
@@ -53,6 +61,10 @@ class _MockAgentWithProbes:
         for stream_key in stream_keys:
             self.stop_probe_context(stream_key)
 
+    def list_tracked_probe_types(self) -> List[str]:
+        with self._probe_context_lock:
+            return sorted(set(self._probe_context_types.values()))
+
     def stop_probe_context(self, stream_key: str) -> None:
         with self._probe_context_lock:
             ctx = self._probe_contexts.pop(stream_key, None)
@@ -63,11 +75,14 @@ class _MockAgentWithProbes:
     @property
     def injector(self):  # type: ignore[override]
         class _FakeInjector:
-            def uninject_all(self_inner) -> int:
-                self.uninject_all_called = True
+            def __init__(self, outer: _MockAgentWithProbes) -> None:
+                self._outer = outer
+
+            def uninject_all(self) -> int:
+                self._outer.uninject_all_called = True
                 return 0
 
-            def reset(self_inner, pattern: Any = None) -> Dict[str, Any]:
+            def reset(self, pattern: Any = None) -> Dict[str, Any]:
                 return {
                     "status": "success",
                     "action": "reset",
@@ -75,18 +90,21 @@ class _MockAgentWithProbes:
                     "affected": [],
                 }
 
-            def list_enhanced(self_inner) -> Dict[str, Any]:
+            def list_enhanced(self) -> Dict[str, Any]:
                 return {"status": "success", "enhanced": [], "total": 0}
 
-        return _FakeInjector()
+        return _FakeInjector(self)
 
     @property
     def observer(self):  # type: ignore[override]
         class _FakeObserver:
-            def clear_all(self_inner) -> None:
-                self.clear_all_called = True
+            def __init__(self, outer: _MockAgentWithProbes) -> None:
+                self._outer = outer
 
-        return _FakeObserver()
+            def clear_all(self) -> None:
+                self._outer.clear_all_called = True
+
+        return _FakeObserver(self)
 
     def stop(self) -> None:
         self.stop_called = True
@@ -106,16 +124,23 @@ class _MockAgentWithProbes:
 
 
 @pytest.mark.parametrize("probe_type", ["watch", "trace", "stack", "monitor", "top"])
-def test_detach_stops_probe_context_for_all_types(probe_type: str) -> None:  # BRITTLE: fake ProbeContext smoke check only; no real resource-owner verification → REPLACE WITH: detach restores wrappers and stops active probe resources for each stream type
+def test_detach_stops_probe_context_for_all_types(probe_type: str) -> None:
     """Detach calls stop_probe_contexts_by_type and exits each probe context.
 
     smoke: ProbeContext bookkeeping only
     """
-    agent = _MockAgentWithProbes()
-    stream_id = f"{probe_type}_test_001"
-    ctx = agent.register_stream(stream_id, probe_type)
+    stream_id = f"sk_{probe_type}"
 
-    result = DetachCommand(agent).execute({})  # type: ignore[arg-type]
+    class _ProbeAwareAgent(_MockAgentWithProbes):
+        def list_tracked_probe_types(self) -> List[str]:
+            return [probe_type]
+
+    agent = _ProbeAwareAgent()
+    ctx = agent.register_stream(stream_id, probe_type)
+    with agent._probe_context_lock:
+        agent._probe_context_types = {f"sk_{probe_type}": probe_type}
+
+    result = DetachCommand(cast(Any, agent)).execute({})
 
     assert result["status"] == "success"
     assert ctx.exited is True, (
@@ -138,7 +163,7 @@ def test_reset_stops_matching_probe_context_for_all_types(probe_type: str) -> No
     pattern = "mymodule.MyClass.method"
     ctx = agent.register_stream(stream_id, probe_type, pattern=pattern)
 
-    result = ResetCommand(agent).execute(  # type: ignore[arg-type]
+    result = ResetCommand(cast(Any, agent)).execute(
         {"action": "reset", "pattern": pattern}
     )
 
@@ -156,10 +181,10 @@ def test_reset_list_includes_all_probe_context_types(probe_type: str) -> None:
     stream_id = f"{probe_type}_test_003"
     agent.register_stream(stream_id, probe_type)
 
-    result = ResetCommand(agent).execute({"action": "list"})  # type: ignore[arg-type]
+    result = ResetCommand(cast(Any, agent)).execute({"action": "list"})
 
     assert result["status"] == "success"
-    commands_in_list = [item["command"] for item in result["enhanced"]]
+    commands_in_list = [item["command"] for item in cast(List[Dict[str, Any]], result["enhanced"])]
     assert probe_type in commands_in_list, (
         f"[{probe_type}] reset --list must include active {probe_type} streams"
     )
@@ -170,7 +195,7 @@ def test_reset_non_matching_pattern_does_not_stop_probe_context() -> None:
     agent = _MockAgentWithProbes()
     ctx = agent.register_stream("watch_keepme", "watch", pattern="other.func")
 
-    ResetCommand(agent).execute(  # type: ignore[arg-type]
+    ResetCommand(cast(Any, agent)).execute(
         {"action": "reset", "pattern": "mymodule.*"}
     )
 
@@ -197,5 +222,5 @@ def test_detach_succeeds_when_no_probe_tracking_available() -> None:
         def stop(self) -> None:
             pass
 
-    result = DetachCommand(_MinimalAgent()).execute({})  # type: ignore[arg-type]
+    result = DetachCommand(cast(Any, _MinimalAgent())).execute({})
     assert result["status"] == "success"
