@@ -6,7 +6,9 @@ This code is injected into the target process and handles command execution
 
 from collections import deque
 
+import atexit
 import json
+import signal
 import socket
 import sys
 import threading
@@ -328,7 +330,22 @@ class PeekaAgent(
         # Error ring buffer for target.status (last 5 errors)
         self._recent_errors: List[Dict[str, Any]] = []
         self._error_ring_lock = _rpl.allocate_lock()  # DOMAIN: native_thread
+        self._stopped: bool = False
+        self._stop_lock = threading.Lock()
+        self._prev_sigterm_handler: Any = None
+        atexit.register(self.stop)
+        if threading.current_thread() is threading.main_thread():
+            try:
+                self._prev_sigterm_handler = signal.signal(signal.SIGTERM, self._handle_sigterm)
+            except (ValueError, OSError):
+                self._prev_sigterm_handler = None
         self._last_seen_at = _time.time()
+
+    def _handle_sigterm(self, signum: int, frame: Any) -> None:
+        self.stop()
+        prev = self._prev_sigterm_handler
+        if callable(prev) and prev not in (signal.SIG_DFL, signal.SIG_IGN):
+            prev(signum, frame)
 
     # ------------------------------------------------------------------ #
     #  Lazy command handler loading                                      #
