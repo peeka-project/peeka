@@ -36,6 +36,7 @@ class DetachCommand(BaseCommand):
     def execute(self, params: Dict[str, Any]) -> Dict[str, Any]:
         try:
             logger = logging.getLogger(__name__)
+            # probe types discovered dynamically from agent state — do not hardcode
             list_probe_types = getattr(
                 self.agent, "list_tracked_probe_types", lambda: []
             )

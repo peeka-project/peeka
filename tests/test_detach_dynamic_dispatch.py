@@ -8,7 +8,8 @@ probe-type literal lists passed to shutdown_agent_resources.
 
 import ast
 import pathlib
-from typing import List, Tuple
+import threading
+from typing import Dict, List, Tuple
 
 import pytest
 
@@ -76,3 +77,11 @@ def test_list_tracked_probe_types_exists_on_mixin() -> None:
         "AgentProbeControlMixin.list_tracked_probe_types() is missing. "
         "This method provides dynamic probe discovery for detach/stop paths."
     )
+
+    class _MinimalStub(AgentProbeControlMixin):
+        def __init__(self) -> None:
+            self._probe_context_lock = threading.Lock()
+            self._probe_context_types: Dict[str, str] = {}
+            self._probe_contexts: Dict[str, object] = {}
+
+    assert _MinimalStub().list_tracked_probe_types() == []
