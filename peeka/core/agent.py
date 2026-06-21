@@ -1101,6 +1101,7 @@ class PeekaAgent(
         try:
             atexit.unregister(self.stop)
         except Exception:
+            # Non-fatal: atexit.unregister should not raise; silently skip on any error.
             pass
         if (
             self._prev_sigterm_handler is not None
