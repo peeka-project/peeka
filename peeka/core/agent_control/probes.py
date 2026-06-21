@@ -72,6 +72,21 @@ class AgentProbeControlMixin:
         for stream_key in stream_keys:
             self.stop_probe_context(stream_key)
 
+    def list_tracked_probe_types(self) -> List[str]:
+        """Return a snapshot of currently tracked probe-context types.
+
+        Returns a deduplicated, sorted list. The lock is held only during
+        snapshot; result is a new list, not a live view. Empty list is a
+        valid no-op for callers (nothing to stop).
+
+        Note: A probe type registered after this snapshot is taken will not
+        appear in the result. This matches the existing
+        stop_probe_contexts_by_type snapshot semantics and is an accepted
+        limitation.
+        """
+        with self._probe_context_lock:
+            return sorted(set(self._probe_context_types.values()))
+
     def _stop_probe_resources(self, probe_id: str) -> Dict[str, Any]:
         """Stop runtime resources backing an active ProbeRun."""
         context_ref = self._find_probe_context_by_probe_id(probe_id)
