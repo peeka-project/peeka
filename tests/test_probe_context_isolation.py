@@ -123,3 +123,41 @@ def test_stop_probe_contexts_by_type_continues_after_one_failure() -> None:
     assert agent.list_tracked_probe_types() == []
     assert failing_ctx.exited is True
     assert good_ctx.exited is True
+
+
+def test_reset_loop_survives_failing_probe_via_composition(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """G5: reset.py's direct stop_probe_context calls survive __exit__ failures.
+
+    reset.py (lines 101-102) calls stop_probe_context(stream_key) directly,
+    NOT via stop_probe_contexts_by_type. The G4 fix inside stop_probe_context
+    provides isolation at the lowest level, so this composition closes G5
+    without any change to reset.py.
+
+    This test simulates that call pattern exactly.
+    """
+    failing_ctx = _FailingExitContext()
+    good_ctx = _GoodExitContext()
+    agent = _StubProbeAgent(
+        probe_types={"sk1": "watch", "sk2": "watch"},
+        probe_contexts={"sk1": failing_ctx, "sk2": good_ctx},  # type: ignore[arg-type]
+    )
+
+    # Simulate reset.py lines 101-102:
+    # for stream_key in stream_keys:
+    #     _ = stop_context(stream_key)
+    stream_keys = list(agent._probe_context_types.keys())
+    with caplog.at_level("ERROR"):
+        for stream_key in stream_keys:
+            agent.stop_probe_context(stream_key)  # must NOT raise
+
+    # Both probes must be stopped and removed from tracking
+    assert agent.get_probe_context("sk1") is None
+    assert agent.get_probe_context("sk2") is None
+    assert agent.list_tracked_probe_types() == []
+
+    # The failure must have been logged
+    assert any("probe_context.__exit__ failed" in r.message for r in caplog.records)
+
+    # G5 contract: reset.py is unmodified (verified by caller)
