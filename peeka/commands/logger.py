@@ -5,16 +5,18 @@ Similar to Arthas 'logger' command for diagnosis
 
 import fnmatch
 import logging
-from typing import Any, ClassVar, Dict, TYPE_CHECKING
+import threading
+from typing import Any, ClassVar, Dict, List, Optional, TYPE_CHECKING
 
-from peeka.commands.base import BaseCommand
+from peeka.commands.resource_owning import CleanupScope, ResourceOwningCommand
 
 if TYPE_CHECKING:
     from peeka.core.agent import PeekaAgent
 
 
-class LoggerCommand(BaseCommand):
-    is_resource_owner = False  # explicit; not a resource owner
+class LoggerCommand(ResourceOwningCommand):
+    is_resource_owner: bool = True
+    cleanup_scope: CleanupScope = CleanupScope.DETACH_ONLY
     """
     Logger command - inspect and modify logger levels at runtime
 
@@ -41,6 +43,8 @@ class LoggerCommand(BaseCommand):
     def __init__(self, agent: "PeekaAgent"):
         super().__init__()
         self.agent = agent
+        self._original_levels: Dict[str, int] = {}
+        self._levels_lock = threading.Lock()
 
     def execute(self, params: Dict[str, Any]) -> Dict[str, Any]:
         try:
@@ -144,7 +148,11 @@ class LoggerCommand(BaseCommand):
         old_level = logger.level
         old_level_name = logging.getLevelName(old_level)
 
-        # Set new level
+        with self._levels_lock:
+            if name not in self._original_levels:
+                self._original_levels[name] = logger.level
+
+        # Set new level (outside lock to respect lock-ordering rule)
         logger.setLevel(new_level)
 
         return {
@@ -155,3 +163,38 @@ class LoggerCommand(BaseCommand):
             "old_level_num": old_level,
             "new_level_num": new_level,
         }
+
+    def stop_active_resources(self, pattern: Optional[str], reason: str) -> Dict[str, Any]:
+        """Stop active resources by restoring original logger levels."""
+        stopped: List[str] = []
+        errors: List[Dict[str, Any]] = []
+        with self._levels_lock:
+            to_restore = {
+                name: level
+                for name, level in self._original_levels.items()
+                if pattern is None or fnmatch.fnmatch(name, pattern)
+            }
+        for name, original_level in to_restore.items():
+            try:
+                logging.getLogger(name).setLevel(original_level)
+                stopped.append(name)
+                with self._levels_lock:
+                    self._original_levels.pop(name, None)
+            except Exception as exc:
+                errors.append({"name": name, "error": str(exc)})
+        return {"stopped": stopped, "errors": errors}
+
+    def list_active_resources(self) -> Dict[str, Any]:
+        """List loggers with modified levels."""
+        with self._levels_lock:
+            snapshot = dict(self._original_levels)
+        active = []
+        for name, original_level in snapshot.items():
+            current_level = logging.getLogger(name).level
+            active.append({
+                "name": name,
+                "original_level": original_level,
+                "current_level": current_level,
+                "current_level_name": logging.getLevelName(current_level),
+            })
+        return {"active": active}
