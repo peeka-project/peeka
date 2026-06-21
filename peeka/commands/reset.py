@@ -3,12 +3,12 @@ Reset Command - Restore enhanced methods to original state
 Similar to Arthas 'reset' command
 """
 
+# pyright: reportImplicitOverride=false, reportUnannotatedClassAttribute=false, reportUnnecessaryIsInstance=false
+
 from __future__ import annotations
 
 import logging
 from typing import ClassVar, TYPE_CHECKING, cast
-
-from typing_extensions import override
 
 from peeka.commands.base import BaseCommand
 from peeka.core.agent_control.lifecycle import stop_resource_owners_for_reset
@@ -46,7 +46,6 @@ class ResetCommand(BaseCommand):
         super().__init__()
         self.agent = agent
 
-    @override
     def execute(self, params: dict[str, object]) -> dict[str, object]:
         try:
             action = str(params.get("action", "reset"))
