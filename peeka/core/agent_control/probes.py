@@ -1,10 +1,14 @@
 """AgentProbeControlMixin implementation."""
 
+import logging
 import traceback
 from typing import Any, Dict, List, Optional, Tuple
 
 from peeka.core.jobs import TERMINAL_STATUSES
 from peeka.core.probes import ProbeContext
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class AgentProbeControlMixin:
@@ -37,11 +41,17 @@ class AgentProbeControlMixin:
         if probe_context is None:
             return
 
-        if exc_info is None:
-            probe_context.__exit__(None, None, None)
-            return
-
-        probe_context.__exit__(exc_info[0], exc_info[1], exc_info[2])
+        try:
+            if exc_info is None:
+                probe_context.__exit__(None, None, None)
+            else:
+                probe_context.__exit__(exc_info[0], exc_info[1], exc_info[2])
+        except Exception:
+            _LOGGER.error(
+                "[peeka Probes] probe_context.__exit__ failed for stream_key=%r",
+                stream_key,
+                exc_info=True,
+            )
 
     def untrack_probe_context(self, stream_key: str) -> None:
         """Forget an active probe context without closing it."""
