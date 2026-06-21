@@ -9,6 +9,7 @@ from collections import deque
 import atexit
 import json
 import logging
+import os
 import signal
 import socket
 import sys
@@ -344,10 +345,26 @@ class PeekaAgent(
         self._last_seen_at = _time.time()
 
     def _handle_sigterm(self, signum: int, frame: Any) -> None:
-        self.stop()
         prev = self._prev_sigterm_handler
-        if callable(prev) and prev not in (signal.SIG_DFL, signal.SIG_IGN):
-            prev(signum, frame)
+        try:
+            signal.signal(signum, prev if prev is not None else signal.SIG_DFL)
+        except (ValueError, OSError):
+            pass
+        try:
+            self.stop()
+        except Exception:
+            pass
+        if prev is signal.SIG_IGN:
+            return
+        if callable(prev) and prev is not signal.SIG_DFL:
+            try:
+                prev(signum, frame)
+            except SystemExit:
+                raise
+            except Exception:
+                pass
+            return
+        os.kill(os.getpid(), signum)
 
     # ------------------------------------------------------------------ #
     #  Lazy command handler loading                                      #
