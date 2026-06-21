@@ -13,6 +13,7 @@ These tests verify:
 """
 
 import atexit
+import os as _os_module
 import signal
 import sys
 import threading
@@ -191,6 +192,12 @@ def test_init_skips_sigterm_off_main_thread() -> None:
 
 
 def test_sigterm_handler_chains_previous() -> None:
+    _real_kill = _os_module.kill
+    kill_calls: List[Any] = []
+
+    def _fake_kill(pid: int, sig: int) -> None:
+        kill_calls.append((pid, sig))
+
     class _MockCallable:
         def __init__(self) -> None:
             self.calls: List[Any] = []
@@ -198,19 +205,38 @@ def test_sigterm_handler_chains_previous() -> None:
         def __call__(self, signum: int, frame: Any) -> None:
             self.calls.append((signum, frame))
 
-    # Capture the handler before the agent installs its own.
     pre_test_sigterm = signal.getsignal(signal.SIGTERM)
     agent = _TestAgent("test_sigterm_chain_06")
     try:
+        _os_module.kill = _fake_kill
+
+        # Subtest 1: callable prev — forwarded, no os.kill
+        kill_calls.clear()
         mock_handler = _MockCallable()
         agent._prev_sigterm_handler = mock_handler
         agent._handle_sigterm(15, None)
         assert mock_handler.calls == [(15, None)]
+        assert kill_calls == []
 
-        # SIG_DFL is not callable — _handle_sigterm must not raise.
+        # Subtest 2: SIG_DFL — must call os.kill(pid, 15)
+        kill_calls.clear()
         agent._prev_sigterm_handler = signal.SIG_DFL
         agent._handle_sigterm(15, None)
+        assert kill_calls == [(_os_module.getpid(), 15)]
+
+        # Subtest 3: SIG_IGN — must NOT call os.kill
+        kill_calls.clear()
+        agent._prev_sigterm_handler = signal.SIG_IGN
+        agent._handle_sigterm(15, None)
+        assert kill_calls == []
+
+        # Subtest 4: None (registration failed) — treated as SIG_DFL, must call os.kill(pid, 15)
+        kill_calls.clear()
+        agent._prev_sigterm_handler = None
+        agent._handle_sigterm(15, None)
+        assert kill_calls == [(_os_module.getpid(), 15)]
     finally:
+        _os_module.kill = _real_kill
         try:
             signal.signal(signal.SIGTERM, pre_test_sigterm)
         except (ValueError, OSError):
