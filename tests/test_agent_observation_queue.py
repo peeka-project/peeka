@@ -685,7 +685,7 @@ class TestObservationQueueLifecycle:
             agent._unregister_client_connection(stalled_conn)
             cast(Any, stalled_conn).close()
 
-    def test_stop_orders_uninject_after_drain(self) -> None:
+    def test_stop_orders_shutdown_before_drain(self) -> None:
         agent = _make_agent()
         lifecycle_events: List[str] = []
 
@@ -701,4 +701,4 @@ class TestObservationQueueLifecycle:
 
         agent.stop()
 
-        assert lifecycle_events == ["drain_signal", "uninject_all"]
+        assert lifecycle_events == ["uninject_all", "drain_signal"]

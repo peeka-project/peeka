@@ -8,6 +8,7 @@ from collections import deque
 
 import atexit
 import json
+import logging
 import signal
 import socket
 import sys
@@ -23,6 +24,7 @@ from peeka.core.agent_control.consumers import AgentConsumerControlMixin
 from peeka.core.agent_control.dispatch import AgentCommandDispatchMixin
 from peeka.core.agent_control.dx import AgentDXControlMixin
 from peeka.core.agent_control.jobs import AgentJobControlMixin
+from peeka.core.agent_control.lifecycle import shutdown_agent_resources
 from peeka.core.agent_control.probes import AgentProbeControlMixin
 from peeka.core.agent_control.target import AgentTargetControlMixin
 from peeka.core.injector import DecoratorInjector
@@ -1048,6 +1050,18 @@ class PeekaAgent(
             pass
 
     def stop(self) -> None:
+        if self._stopped:
+            return
+        with self._stop_lock:
+            if self._stopped:
+                return
+            self._stopped = True
+
+        logger = logging.getLogger(__name__)
+        shutdown_agent_resources(
+            self, logger, ["watch", "trace", "stack", "monitor", "top"]
+        )
+
         self.running = False
         self._signal_observation_queue_drain()
 
@@ -1069,9 +1083,6 @@ class PeekaAgent(
                     stats["drain_dropped"] = stats.get("drain_dropped", 0) + remaining
                     stats["drain_dropped_count"] = stats.get("drain_dropped_count", 0) + remaining
                 queue.clear()
-
-        self.injector.uninject_all()
-
         if self.server:
             try:
                 self.server.close()
@@ -1086,6 +1097,19 @@ class PeekaAgent(
             keys_to_remove = [k for k, v in agents.items() if v is self]
             for k in keys_to_remove:
                 del agents[k]
+
+        try:
+            atexit.unregister(self.stop)
+        except Exception:
+            pass
+        if (
+            self._prev_sigterm_handler is not None
+            and threading.current_thread() is threading.main_thread()
+        ):
+            try:
+                signal.signal(signal.SIGTERM, self._prev_sigterm_handler)
+            except (ValueError, OSError):
+                pass
 
     def _cleanup_session_files(self) -> None:
         """Remove .sock, .ready, and .pid files for this session.
