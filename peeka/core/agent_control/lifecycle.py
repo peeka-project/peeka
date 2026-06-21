@@ -55,6 +55,10 @@ def shutdown_agent_resources(
                 older_than_seconds=0, completed_only=True
             ),
         )
+        run_step(
+            "orphan_watch_sweep",
+            lambda: agent.injector.cleanup_orphan_watches(),
+        )
 
     return {"steps_run": steps_run, "errors": errors}
 
