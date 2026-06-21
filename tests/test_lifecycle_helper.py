@@ -6,6 +6,7 @@ import pytest
 
 from peeka.commands.resource_owning import CleanupScope, ResourceOwningCommand
 from peeka.core.agent_control.lifecycle import (
+    shutdown_agent_resources,
     stop_resource_owners_for_detach,
     stop_resource_owners_for_reset,
 )
@@ -69,6 +70,74 @@ def _make_agent(handlers_dict: Any) -> Any:
 
 @pytest.mark.unit
 class TestLifecycleHelper:
+    def test_shutdown_helper_runs_all_steps(self) -> None:
+        class _Injector:
+            def __init__(self, calls: List[str]) -> None:
+                self.calls = calls
+
+            def uninject_all(self) -> None:
+                self.calls.append("uninject_all")
+
+        class _Observer:
+            def __init__(self, calls: List[str]) -> None:
+                self.calls = calls
+
+            def clear_all(self) -> None:
+                self.calls.append("clear_all")
+
+        class _Agent:
+            def __init__(self) -> None:
+                self.calls: List[str] = []
+                self.command_handlers: Dict[str, Any] = {}
+                self.injector = _Injector(self.calls)
+                self.observer = _Observer(self.calls)
+
+            def stop_probe_contexts_by_type(self, probe_types: List[str]) -> None:
+                self.calls.append("stop_probe_contexts")
+                self.calls.extend(probe_types)
+
+        agent = _Agent()
+
+        result = shutdown_agent_resources(agent, _LOG, ["custom_probe"])
+
+        assert result["steps_run"] == [
+            "stop_resource_owners",
+            "stop_probe_contexts",
+            "uninject_all",
+            "clear_all",
+        ]
+        assert result["errors"] == {}
+        assert agent.calls == ["stop_probe_contexts", "custom_probe", "uninject_all", "clear_all"]
+
+    def test_shutdown_helper_isolates_exceptions(self) -> None:
+        class _Injector:
+            def uninject_all(self) -> None:
+                raise RuntimeError("boom")
+
+        class _Observer:
+            def __init__(self) -> None:
+                self.cleared = False
+
+            def clear_all(self) -> None:
+                self.cleared = True
+
+        class _Agent:
+            def __init__(self) -> None:
+                self.command_handlers: Dict[str, Any] = {}
+                self.injector = _Injector()
+                self.observer = _Observer()
+
+            def stop_probe_contexts_by_type(self, probe_types: List[str]) -> None:
+                _ = probe_types
+
+        agent = _Agent()
+
+        result = shutdown_agent_resources(agent, _LOG, ["custom_probe"])
+
+        assert result["errors"]["uninject_all"] == "boom"
+        assert "clear_all" in result["steps_run"]
+        assert agent.observer.cleared is True
+
     def test_detach_stops_all_resource_owners(self) -> None:
         dar = _FakeDetachAndReset()
         do_ = _FakeDetachOnly()

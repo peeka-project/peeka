@@ -5,7 +5,51 @@ from typing import Any, Dict, List, Optional
 from peeka.commands.resource_owning import CleanupScope, ResourceOwningCommand
 
 
-__all__ = ["stop_resource_owners_for_detach", "stop_resource_owners_for_reset"]
+__all__ = [
+    "shutdown_agent_resources",
+    "stop_resource_owners_for_detach",
+    "stop_resource_owners_for_reset",
+]
+
+
+def shutdown_agent_resources(
+    agent: Any, logger: Any, probe_types: List[str]
+) -> Dict[str, Any]:
+    """Run isolated agent resource shutdown steps.
+
+    Args:
+        agent: Agent-like object with resource, probe, injector, and observer hooks.
+        logger: Logger-like object used for per-step cleanup failures.
+        probe_types: Probe context types to stop during shutdown.
+
+    Returns:
+        Structured shutdown summary with completed step names and errors by step.
+    """
+    steps_run: List[str] = []
+    errors: Dict[str, Any] = {}
+
+    def run_step(step_name: str, step_callable: Any) -> None:
+        try:
+            _ = step_callable()
+            steps_run.append(step_name)
+        except Exception as exc:
+            logger.error(
+                "[peeka Shutdown] step %s failed: %s",
+                step_name,
+                exc,
+                exc_info=True,
+            )
+            errors[step_name] = str(exc)
+
+    run_step(
+        "stop_resource_owners",
+        lambda: stop_resource_owners_for_detach(agent, logger),
+    )
+    run_step("stop_probe_contexts", lambda: agent.stop_probe_contexts_by_type(probe_types))
+    run_step("uninject_all", agent.injector.uninject_all)
+    run_step("clear_all", agent.observer.clear_all)
+
+    return {"steps_run": steps_run, "errors": errors}
 
 
 def stop_resource_owners_for_detach(agent: Any, logger: Any) -> Dict[str, Any]:
