@@ -107,9 +107,17 @@ class ResetCommand(BaseCommand):
         return self.agent.injector.reset(pattern)
 
     def _list_enhanced(self, _params: dict[str, object]) -> dict[str, object]:
-        """List all current enhancements."""
+        """List all current enhancements (deduplicated)."""
         result = self.agent.injector.list_enhanced()
         enhanced = cast(list[dict[str, object]], result["enhanced"])
+
+        # Build seen set from injector entries to dedupe watch/trace/stack
+        # (those commands register in BOTH injector AND probe_context_types with same watch_id)
+        seen_watch_ids = {
+            str(entry["watch_id"])
+            for entry in enhanced
+            if isinstance(entry, dict) and "watch_id" in entry
+        }
 
         probe_context_lock = getattr(self.agent, "_probe_context_lock", None)
         probe_context_types = cast(dict[str, object], getattr(self.agent, "_probe_context_types", {}))
@@ -118,6 +126,8 @@ class ResetCommand(BaseCommand):
         if probe_context_lock is not None:
             with probe_context_lock:
                 for stream_key, probe_type in list(probe_context_types.items()):
+                    if stream_key in seen_watch_ids:
+                        continue  # already represented in injector output
                     probe_context = probe_contexts.get(stream_key)
                     probe_run = getattr(probe_context, "probe", None)
                     pattern = getattr(probe_run, "pattern", stream_key)
