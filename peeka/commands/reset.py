@@ -3,8 +3,6 @@ Reset Command - Restore enhanced methods to original state
 Similar to Arthas 'reset' command
 """
 
-# pyright: reportImplicitOverride=false, reportUnannotatedClassAttribute=false, reportUnnecessaryIsInstance=false
-
 from __future__ import annotations
 
 import logging
