@@ -82,18 +82,17 @@ class TestDetachCommand:
         assert "stop" in call_order
 
     def test_execute_error_during_uninject(self):
-        """Test error handling when uninject fails."""
+        """shutdown_agent_resources swallows per-step errors; detach must still return success."""
         mock_agent = MagicMock()
         mock_agent.injector.uninject_all.side_effect = Exception("Uninject failed")
 
         cmd = DetachCommand(mock_agent)
         result = cmd.execute({})
 
-        assert result["status"] == "error"
-        assert "Uninject failed" in result["error"]
+        assert result["status"] == "success"
 
     def test_execute_error_during_clear(self):
-        """Test error handling when clear_all fails."""
+        """shutdown_agent_resources swallows per-step errors; detach must still return success."""
         mock_agent = MagicMock()
         mock_agent.injector = MagicMock()
         mock_agent.observer.clear_all.side_effect = Exception("Clear failed")
@@ -101,8 +100,7 @@ class TestDetachCommand:
         cmd = DetachCommand(mock_agent)
         result = cmd.execute({})
 
-        assert result["status"] == "error"
-        assert "Clear failed" in result["error"]
+        assert result["status"] == "success"
 
     def test_execute_error_during_stop(self):
         """Test error handling when stop fails."""

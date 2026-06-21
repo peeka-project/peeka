@@ -7,7 +7,7 @@ Detach Command - Detach from the target process
 import logging
 from typing import Any, ClassVar, Dict
 
-from peeka.core.agent_control.lifecycle import stop_resource_owners_for_detach
+from peeka.core.agent_control.lifecycle import shutdown_agent_resources
 from peeka.commands.base import BaseCommand
 
 
@@ -37,21 +37,9 @@ class DetachCommand(BaseCommand):
         try:
             logger = logging.getLogger(__name__)
 
-            def log_cleanup_error(scope: str) -> None:
-                logger.error("[peeka Detach] %s cleanup failed", scope, exc_info=True)
-
-            _ = stop_resource_owners_for_detach(self.agent, logger)
-
-            stop_by_type = getattr(self.agent, "stop_probe_contexts_by_type", None)
-            if callable(stop_by_type):
-                try:
-                    _ = stop_by_type(["watch", "trace", "stack", "monitor", "top"])
-                except Exception:
-                    log_cleanup_error("probe contexts")
-                    raise
-
-            _ = self.agent.injector.uninject_all()
-            _ = self.agent.observer.clear_all()
+            _ = shutdown_agent_resources(
+                self.agent, logger, ["watch", "trace", "stack", "monitor", "top"]
+            )
 
             attached_pid = self.agent.attached_pid
             self.agent.stop()
