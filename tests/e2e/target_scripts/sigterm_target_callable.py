@@ -15,7 +15,7 @@ signal.signal(signal.SIGTERM, _user_handler)
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
-from peeka.core.agent import PeekaAgent
+from peeka.core.agent import PeekaAgent  # noqa: E402
 
 PeekaAgent(os.getpid())
 while True:

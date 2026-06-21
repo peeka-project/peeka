@@ -45,6 +45,30 @@ attach stability, safety, or platform compatibility issues need attention.
   Add workflow docs for FastAPI and Uvicorn, Gunicorn multi-worker setups,
   Celery, Docker, and other long-running services.
 
+## Internal Backlog (Lifecycle Audit, June 2026)
+
+Captured during the 4-Plan lifecycle hardening series (Plans 1-4) and a
+follow-up Codex review. Listed in priority order for future plan generation.
+
+- `Safety` Reset cleanup error visibility
+  `ResetCommand._reset()` aggregates per-handler cleanup errors via
+  `stop_resource_owners_for_reset` (lifecycle.py:122-139) but discards them
+  before returning `injector.reset(pattern)`. CLI and TUI never see partial
+  cleanup failures. Future plan: merge aggregated errors into the response
+  payload and surface them in CLI and TUI output paths.
+- `Safety` Remove inline hardcoded probe-type lists
+  Five call sites still hardcode probe command names: `commands/watch.py:153`,
+  `commands/trace.py:167`, `commands/stack.py:140`,
+  `core/agent_control/probes.py:107`, `cli/handlers/run.py:56,313`. Adding a
+  new streaming probe currently requires edits at all five sites. Future plan:
+  introduce probe-type metadata on `ProbeContext` so each site queries
+  dynamically rather than enumerating hardcoded strings.
+- `Safety` Optional chained cleanup hook for edge exit paths
+  Codex flagged that `agent.stop()` cleanup may not always fire on exit paths
+  beyond SIGTERM and atexit. Any future hook must be additive and must not
+  override existing user-installed signal handlers. Requires explicit design
+  review before plan generation.
+
 ## Longer Term
 
 - `Automation` Saved sessions and evidence bundles
