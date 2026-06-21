@@ -117,8 +117,14 @@ def _trigger_future_orphan_cleanup(agent: Any, watch_id: str) -> None:
         hook = getattr(agent, hook_name, None)
         if hook is None:
             continue
+        t1 = time.monotonic()
         try:
-            hook(now=time.monotonic())
+            hook(now=t1)
+        except TypeError:
+            hook()
+        t2 = t1 + TEST_GRACE_SECONDS + 0.001
+        try:
+            hook(now=t2)
         except TypeError:
             hook()
         return
