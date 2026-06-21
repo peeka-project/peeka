@@ -48,17 +48,16 @@ def shutdown_agent_resources(
     run_step("stop_probe_contexts", lambda: agent.stop_probe_contexts_by_type(probe_types))
     run_step("uninject_all", agent.injector.uninject_all)
     run_step("clear_all", agent.observer.clear_all)
-    if not hasattr(agent, "calls"):
-        run_step(
-            "probe_registry_sweep",
-            lambda: agent.probe_registry.cleanup(
-                older_than_seconds=0, completed_only=True
-            ),
-        )
-        run_step(
-            "orphan_watch_sweep",
-            lambda: agent.injector.cleanup_orphan_watches(),
-        )
+    run_step(
+        "probe_registry_sweep",
+        lambda: agent.probe_registry.cleanup(
+            older_than_seconds=0, completed_only=True
+        ),
+    )
+    run_step(
+        "orphan_watch_sweep",
+        lambda: agent.injector.cleanup_orphan_watches(),
+    )
 
     return {"steps_run": steps_run, "errors": errors}
 

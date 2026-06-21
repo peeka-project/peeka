@@ -78,6 +78,10 @@ class TestLifecycleHelper:
             def uninject_all(self) -> None:
                 self.calls.append("uninject_all")
 
+            def cleanup_orphan_watches(self) -> int:
+                self.calls.append("orphan_watch_sweep")
+                return 0
+
         class _Observer:
             def __init__(self, calls: List[str]) -> None:
                 self.calls = calls
@@ -85,12 +89,21 @@ class TestLifecycleHelper:
             def clear_all(self) -> None:
                 self.calls.append("clear_all")
 
+        class _ProbeRegistry:
+            def __init__(self, calls: List[str]) -> None:
+                self.calls = calls
+
+            def cleanup(self, older_than_seconds: int = 600, completed_only: bool = True) -> List[str]:
+                self.calls.append("probe_registry_sweep")
+                return []
+
         class _Agent:
             def __init__(self) -> None:
                 self.calls: List[str] = []
                 self.command_handlers: Dict[str, Any] = {}
                 self.injector = _Injector(self.calls)
                 self.observer = _Observer(self.calls)
+                self.probe_registry = _ProbeRegistry(self.calls)
 
             def stop_probe_contexts_by_type(self, probe_types: List[str]) -> None:
                 self.calls.append("stop_probe_contexts")
@@ -105,14 +118,19 @@ class TestLifecycleHelper:
             "stop_probe_contexts",
             "uninject_all",
             "clear_all",
+            "probe_registry_sweep",
+            "orphan_watch_sweep",
         ]
         assert result["errors"] == {}
-        assert agent.calls == ["stop_probe_contexts", "custom_probe", "uninject_all", "clear_all"]
+        assert agent.calls == ["stop_probe_contexts", "custom_probe", "uninject_all", "clear_all", "probe_registry_sweep", "orphan_watch_sweep"]
 
     def test_shutdown_helper_isolates_exceptions(self) -> None:
         class _Injector:
             def uninject_all(self) -> None:
                 raise RuntimeError("boom")
+
+            def cleanup_orphan_watches(self) -> int:
+                return 0
 
         class _Observer:
             def __init__(self) -> None:
@@ -121,11 +139,16 @@ class TestLifecycleHelper:
             def clear_all(self) -> None:
                 self.cleared = True
 
+        class _ProbeRegistry:
+            def cleanup(self, older_than_seconds: int = 600, completed_only: bool = True) -> List[str]:
+                return []
+
         class _Agent:
             def __init__(self) -> None:
                 self.command_handlers: Dict[str, Any] = {}
                 self.injector = _Injector()
                 self.observer = _Observer()
+                self.probe_registry = _ProbeRegistry()
 
             def stop_probe_contexts_by_type(self, probe_types: List[str]) -> None:
                 _ = probe_types
