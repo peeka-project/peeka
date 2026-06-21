@@ -1059,7 +1059,7 @@ class PeekaAgent(
 
         logger = logging.getLogger(__name__)
         shutdown_agent_resources(
-            self, logger, ["watch", "trace", "stack", "monitor", "top"]
+            self, logger, self.list_tracked_probe_types()
         )
 
         self.running = False

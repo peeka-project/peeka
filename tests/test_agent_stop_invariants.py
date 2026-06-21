@@ -100,6 +100,27 @@ def test_stop_calls_helper_before_server_close() -> None:
     assert call_order.index("helper") < call_order.index("server_close")
 
 
+def test_stop_passes_dynamic_probe_types_to_helper() -> None:
+    captured_probe_types: List[str] = []
+    original_shutdown = _agent_mod.shutdown_agent_resources
+
+    def _tracking_shutdown(
+        agent: Any, logger: Any, probe_types: Any
+    ) -> Dict[str, Any]:
+        captured_probe_types.extend(probe_types)
+        return {"steps_run": [], "errors": {}}
+
+    _agent_mod.shutdown_agent_resources = _tracking_shutdown  # type: ignore[assignment]
+    try:
+        agent = _TestAgent("test_stop_dynamic_probe_types_01")
+        agent._probe_context_types = {"sk1": "watch", "sk2": "trace"}
+        agent.stop()
+    finally:
+        _agent_mod.shutdown_agent_resources = original_shutdown
+
+    assert captured_probe_types == ["trace", "watch"]
+
+
 def test_stop_idempotent_second_call_is_noop() -> None:
     shutdown_count: List[int] = [0]
     original_shutdown = _agent_mod.shutdown_agent_resources
