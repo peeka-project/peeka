@@ -58,16 +58,15 @@ class _EHTestAgent(PeekaAgent):
         self.probe_registry: Any = _MockProbeRegistry()
         atexit.register(self.stop)
         self._prev_excepthook = sys.excepthook
-
-        stop_ref = self.stop
+        _self_ref = self
 
         def _handle_exception(exc_type: Any, exc_value: Any, exc_tb: Any) -> None:
             try:
-                if self._prev_excepthook is not None:
-                    self._prev_excepthook(exc_type, exc_value, exc_tb)
+                if _self_ref._prev_excepthook is not None:
+                    _self_ref._prev_excepthook(exc_type, exc_value, exc_tb)
             finally:
                 try:
-                    stop_ref()
+                    _self_ref.stop()
                 except Exception:
                     pass
 

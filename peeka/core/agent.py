@@ -336,12 +336,27 @@ class PeekaAgent(
         self._stopped: bool = False
         self._stop_lock = threading.Lock()
         self._prev_sigterm_handler: Any = None
+        self._prev_excepthook: Any = None
         atexit.register(self.stop)
         if threading.current_thread() is threading.main_thread():
             try:
                 self._prev_sigterm_handler = signal.signal(signal.SIGTERM, self._handle_sigterm)
             except (ValueError, OSError):
                 self._prev_sigterm_handler = None
+        self._prev_excepthook = sys.excepthook
+        _self_ref = self
+
+        def _peeka_excepthook(exc_type: Any, exc_value: Any, exc_tb: Any) -> None:
+            try:
+                if _self_ref._prev_excepthook is not None:
+                    _self_ref._prev_excepthook(exc_type, exc_value, exc_tb)
+            finally:
+                try:
+                    _self_ref.stop()
+                except Exception:
+                    pass
+
+        sys.excepthook = _peeka_excepthook
         self._last_seen_at = _time.time()
 
     def _handle_sigterm(self, signum: int, frame: Any) -> None:
@@ -1119,7 +1134,6 @@ class PeekaAgent(
         try:
             atexit.unregister(self.stop)
         except Exception:
-            # Non-fatal: atexit.unregister should not raise; silently skip on any error.
             pass
         if (
             self._prev_sigterm_handler is not None
@@ -1128,6 +1142,11 @@ class PeekaAgent(
             try:
                 signal.signal(signal.SIGTERM, self._prev_sigterm_handler)
             except (ValueError, OSError):
+                pass
+        if self._prev_excepthook is not None:
+            try:
+                sys.excepthook = self._prev_excepthook
+            except Exception:
                 pass
 
     def _cleanup_session_files(self) -> None:
