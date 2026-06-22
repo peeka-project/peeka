@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import atexit
-import signal
 import sys
 import threading
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, List
 
-import peeka.core.agent as _agent_mod
 from peeka.core.agent import PeekaAgent
 
 

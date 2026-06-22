@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, cast
 
 import peeka.commands.watch as watch_mod
 import peeka.commands.trace as trace_mod
@@ -34,7 +33,8 @@ class TestStreamingTypesMetadata:
 
 class TestNoHardcodedProbeTypeListsInCommands:
     def test_watch_uses_streaming_types_not_hardcoded_list(self) -> None:
-        import ast, inspect
+        import ast
+        import inspect
         src = inspect.getsource(watch_mod)
         tree = ast.parse(src)
         for node in ast.walk(tree):
@@ -48,7 +48,8 @@ class TestNoHardcodedProbeTypeListsInCommands:
                     )
 
     def test_trace_uses_streaming_types_not_hardcoded_list(self) -> None:
-        import ast, inspect
+        import ast
+        import inspect
         src = inspect.getsource(trace_mod)
         tree = ast.parse(src)
         for node in ast.walk(tree):
@@ -62,7 +63,8 @@ class TestNoHardcodedProbeTypeListsInCommands:
                     )
 
     def test_stack_uses_streaming_types_not_hardcoded_list(self) -> None:
-        import ast, inspect
+        import ast
+        import inspect
         src = inspect.getsource(stack_mod)
         tree = ast.parse(src)
         for node in ast.walk(tree):
@@ -76,7 +78,8 @@ class TestNoHardcodedProbeTypeListsInCommands:
                     )
 
     def test_probes_ctl_uses_streaming_types_not_hardcoded_tuple(self) -> None:
-        import ast, inspect
+        import ast
+        import inspect
         src = inspect.getsource(probes_ctl_mod)
         tree = ast.parse(src)
         for node in ast.walk(tree):
@@ -90,7 +93,8 @@ class TestNoHardcodedProbeTypeListsInCommands:
                     )
 
     def test_run_handler_uses_streaming_types_not_hardcoded_tuple(self) -> None:
-        import ast, inspect
+        import ast
+        import inspect
         src = inspect.getsource(run_mod)
         tree = ast.parse(src)
         for node in ast.walk(tree):
