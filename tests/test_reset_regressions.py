@@ -1,13 +1,13 @@
-"""Regression tests for codex-reported reset.py issues (P1 and P2)."""
+"""Regression tests for codex-reported reset.py issues (P1 and P2) + Gap A cleanup visibility."""
 from __future__ import annotations
 
 import subprocess
 import sys
 import threading
-from typing import Any, Dict, List, Mapping, cast
-
+from typing import Any, Dict, List, Mapping, Optional, cast
 
 from peeka.commands.reset import ResetCommand
+from peeka.commands.resource_owning import CleanupScope, ResourceOwningCommand
 
 
 class _StubInjector:
@@ -24,6 +24,9 @@ class _StubInjector:
             "total": len(self._enhanced),
         }
 
+    def reset(self, pattern: Optional[str]) -> Dict[str, object]:
+        return {"status": "success", "action": "reset", "restored_count": 0}
+
 
 class _StubAgent:
     """Minimal agent stub with probe context tracking attributes."""
@@ -33,6 +36,21 @@ class _StubAgent:
         self._probe_context_types: Dict[str, str] = probe_context_types
         self._probe_contexts: Dict[str, object] = {}
         self._probe_context_lock = threading.Lock()
+        self.command_handlers: Dict[str, Any] = {}
+
+
+class _RaisingResourceOwner(ResourceOwningCommand):
+    is_resource_owner: bool = True
+    cleanup_scope = CleanupScope.DETACH_AND_RESET
+
+    def execute(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        return {"status": "success"}
+
+    def stop_active_resources(self, pattern: Optional[str], reason: str) -> Dict[str, Any]:
+        raise RuntimeError("simulated cleanup failure")
+
+    def list_active_resources(self) -> Dict[str, Any]:
+        return {"active": []}
 
 
 class TestResetImportWithoutTypingExtensions:
@@ -111,3 +129,54 @@ class TestListEnhancedDeduplication:
         assert result["total"] == 1
         assert enhanced[0].get("stream_id") == top_id
         assert enhanced[0].get("command") == "top"
+
+
+class TestResetCleanupSummary:
+    """Gap A: reset response must include cleanup_summary with errors when resource cleanup fails."""
+
+    def test_reset_response_contains_cleanup_summary_field(self) -> None:
+        """Successful reset with no resource owners must have cleanup_summary in response."""
+        agent = _StubAgent([], {})
+        cmd = ResetCommand(cast(Any, agent))
+        result = cmd.execute({"action": "reset"})
+        assert "cleanup_summary" in result, f"cleanup_summary not in response: {result}"
+
+    def test_reset_cleanup_summary_has_errors_on_failure(self) -> None:
+        """When resource cleanup raises, errors must appear in cleanup_summary.errors."""
+        agent = _StubAgent([], {})
+        owner = _RaisingResourceOwner(cast(Any, agent))
+        agent.command_handlers["monitor"] = owner
+        cmd = ResetCommand(cast(Any, agent))
+        result = cmd.execute({"action": "reset"})
+        assert result.get("status") == "success", f"reset should succeed overall: {result}"
+        summary = result.get("cleanup_summary", {})
+        assert isinstance(summary, dict), "cleanup_summary must be a dict"
+        errors = summary.get("errors", [])
+        assert len(errors) == 1, f"Expected 1 cleanup error, got: {errors}"
+        assert errors[0]["handler"] == "_RaisingResourceOwner"
+        assert "simulated cleanup failure" in errors[0]["error"]
+
+    def test_reset_cleanup_summary_handlers_stopped_on_success(self) -> None:
+        """cleanup_summary.handlers_stopped must list handlers that cleaned up without error."""
+        agent = _StubAgent([], {})
+
+        class _SuccessfulOwner(ResourceOwningCommand):
+            is_resource_owner: bool = True
+            cleanup_scope = CleanupScope.DETACH_AND_RESET
+
+            def execute(self, params: Dict[str, Any]) -> Dict[str, Any]:
+                return {"status": "success"}
+
+            def stop_active_resources(self, pattern: Optional[str], reason: str) -> Dict[str, Any]:
+                return {"stopped": [], "errors": []}
+
+            def list_active_resources(self) -> Dict[str, Any]:
+                return {"active": []}
+
+        owner = _SuccessfulOwner(cast(Any, agent))
+        agent.command_handlers["monitor"] = owner
+        cmd = ResetCommand(cast(Any, agent))
+        result = cmd.execute({"action": "reset"})
+        summary = result.get("cleanup_summary", {})
+        assert "_SuccessfulOwner" in summary.get("handlers_stopped", [])
+        assert summary.get("errors", []) == []
