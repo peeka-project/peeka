@@ -86,7 +86,7 @@ def test_shutdown_isolates_orphan_watch_cleanup_errors() -> None:
 
     result = shutdown_agent_resources(agent, _LOG, [])
 
-    assert result["errors"]["orphan_watch_sweep"] == "orphan_err"
+    assert result["step_errors"]["orphan_watch_sweep"] == "orphan_err"
     assert "clear_all" in result["steps_run"]
 
 
@@ -96,7 +96,7 @@ def test_shutdown_skips_orphan_sweep_when_injector_lacks_method() -> None:
 
     result = shutdown_agent_resources(agent, _LOG, [])
 
-    assert "orphan_watch_sweep" in result["errors"]
+    assert "orphan_watch_sweep" in result["step_errors"]
 
 
 @pytest.mark.unit

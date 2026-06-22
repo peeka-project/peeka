@@ -108,8 +108,8 @@ def test_shutdown_isolates_probe_registry_cleanup_errors() -> None:
 
     result = shutdown_agent_resources(agent, _LOG, [])
 
-    assert "probe_registry_sweep" in result["errors"]
-    assert "boom" in result["errors"]["probe_registry_sweep"]
+    assert "probe_registry_sweep" in result["step_errors"]
+    assert "boom" in result["step_errors"]["probe_registry_sweep"]
     assert "clear_all" in result["steps_run"]
 
 
@@ -119,7 +119,7 @@ def test_shutdown_handles_missing_probe_registry_gracefully() -> None:
 
     result = shutdown_agent_resources(agent, _LOG, [])
 
-    assert "probe_registry_sweep" in result["errors"]
+    assert "probe_registry_sweep" in result["step_errors"]
 
 
 @pytest.mark.unit

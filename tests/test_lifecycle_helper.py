@@ -121,7 +121,7 @@ class TestLifecycleHelper:
             "probe_registry_sweep",
             "orphan_watch_sweep",
         ]
-        assert result["errors"] == {}
+        assert result["step_errors"] == {}
         assert agent.calls == ["stop_probe_contexts", "custom_probe", "uninject_all", "clear_all", "probe_registry_sweep", "orphan_watch_sweep"]
 
     def test_shutdown_helper_isolates_exceptions(self) -> None:
@@ -157,7 +157,7 @@ class TestLifecycleHelper:
 
         result = shutdown_agent_resources(agent, _LOG, ["custom_probe"])
 
-        assert result["errors"]["uninject_all"] == "boom"
+        assert result["step_errors"]["uninject_all"] == "boom"
         assert "clear_all" in result["steps_run"]
         assert agent.observer.cleared is True
 

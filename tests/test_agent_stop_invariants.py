@@ -51,6 +51,7 @@ class _TestAgent(PeekaAgent):
         self._stop_lock: threading.Lock = threading.Lock()
         self._prev_sigterm_handler: Any = None
         self._prev_excepthook: Any = None
+        self._peeka_excepthook_ref: Any = None
         self.running: bool = True
         self.server: Any = None
         self.command_handlers: Dict[str, Any] = {}

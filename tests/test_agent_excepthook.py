@@ -70,6 +70,7 @@ class _EHTestAgent(PeekaAgent):
 
         sys.excepthook = _handle_exception
         self._peeka_excepthook = _handle_exception
+        self._peeka_excepthook_ref: Any = _handle_exception
 
 
 class TestExcepthookInstalled:

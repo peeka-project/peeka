@@ -337,6 +337,7 @@ class PeekaAgent(
         self._stop_lock = threading.Lock()
         self._prev_sigterm_handler: Any = None
         self._prev_excepthook: Any = None
+        self._peeka_excepthook_ref: Any = None
         atexit.register(self.stop)
         if threading.current_thread() is threading.main_thread():
             try:
@@ -357,6 +358,7 @@ class PeekaAgent(
                     pass
 
         sys.excepthook = _peeka_excepthook
+        self._peeka_excepthook_ref = _peeka_excepthook
         self._last_seen_at = _time.time()
 
     def _handle_sigterm(self, signum: int, frame: Any) -> None:
@@ -1138,12 +1140,17 @@ class PeekaAgent(
         if (
             self._prev_sigterm_handler is not None
             and threading.current_thread() is threading.main_thread()
+            and signal.getsignal(signal.SIGTERM) is self._handle_sigterm
         ):
             try:
                 signal.signal(signal.SIGTERM, self._prev_sigterm_handler)
             except (ValueError, OSError):
                 pass
-        if self._prev_excepthook is not None:
+        if (
+            self._prev_excepthook is not None
+            and self._peeka_excepthook_ref is not None
+            and sys.excepthook is self._peeka_excepthook_ref
+        ):
             try:
                 sys.excepthook = self._prev_excepthook
             except Exception:

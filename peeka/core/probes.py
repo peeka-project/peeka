@@ -38,6 +38,8 @@ TERMINAL_STATUSES = frozenset({"stopped", "failed"})
 
 STREAMING_PROBE_TYPES: FrozenSet[str] = frozenset({"watch", "trace", "stack", "monitor"})
 
+INJECTOR_MANAGED_STREAMING_PROBE_TYPES: FrozenSet[str] = frozenset({"watch", "trace", "stack"})
+
 _LEGAL_TRANSITIONS: Dict[str, FrozenSet[str]] = {
     "created": frozenset({"active"}),
     "active": frozenset({"paused", "stopped", "failed"}),
@@ -582,6 +584,10 @@ class ProbeContext:
     @staticmethod
     def streaming_types() -> FrozenSet[str]:
         return STREAMING_PROBE_TYPES
+
+    @staticmethod
+    def injector_managed_streaming_types() -> FrozenSet[str]:
+        return INJECTOR_MANAGED_STREAMING_PROBE_TYPES
 
 
 def next_valid_actions(status: ProbeStatus) -> List[str]:

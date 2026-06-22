@@ -23,15 +23,18 @@ def shutdown_agent_resources(
         probe_types: Probe context types to stop during shutdown.
 
     Returns:
-        Structured shutdown summary with completed step names and errors by step.
+        Structured shutdown summary with completed step names, step-level errors,
+        and a ``resource_owners`` sub-summary from the resource-owner cleanup step.
     """
     steps_run: List[str] = []
-    errors: Dict[str, Any] = {}
+    step_errors: Dict[str, str] = {}
+    resource_owners_summary: Dict[str, Any] = {"handlers_stopped": [], "errors": []}
 
-    def run_step(step_name: str, step_callable: Any) -> None:
+    def run_step(step_name: str, step_callable: Any) -> Optional[Any]:
         try:
-            _ = step_callable()
+            result = step_callable()
             steps_run.append(step_name)
+            return result
         except Exception as exc:
             logger.error(
                 "[peeka Shutdown] step %s failed: %s",
@@ -39,12 +42,16 @@ def shutdown_agent_resources(
                 exc,
                 exc_info=True,
             )
-            errors[step_name] = str(exc)
+            step_errors[step_name] = str(exc)
+            return None
 
-    run_step(
+    resource_owners_result = run_step(
         "stop_resource_owners",
         lambda: stop_resource_owners_for_detach(agent, logger),
     )
+    if isinstance(resource_owners_result, dict):
+        resource_owners_summary = resource_owners_result
+
     run_step("stop_probe_contexts", lambda: agent.stop_probe_contexts_by_type(probe_types))
     run_step("uninject_all", agent.injector.uninject_all)
     run_step("clear_all", agent.observer.clear_all)
@@ -59,7 +66,11 @@ def shutdown_agent_resources(
         lambda: agent.injector.cleanup_orphan_watches(),
     )
 
-    return {"steps_run": steps_run, "errors": errors}
+    return {
+        "steps_run": steps_run,
+        "step_errors": step_errors,
+        "resource_owners": resource_owners_summary,
+    }
 
 
 def stop_resource_owners_for_detach(agent: Any, logger: Any) -> Dict[str, Any]:
@@ -71,6 +82,8 @@ def stop_resource_owners_for_detach(agent: Any, logger: Any) -> Dict[str, Any]:
 
     Returns:
         Structured cleanup summary with stopped handler names and errors.
+        Per-handler errors include both exceptions raised by stop_active_resources
+        and error entries returned inside the result dict.
     """
     handlers_stopped: List[str] = []
     errors: List[Dict[str, Any]] = []
@@ -88,8 +101,17 @@ def stop_resource_owners_for_detach(agent: Any, logger: Any) -> Dict[str, Any]:
         handler_name = type(handler).__name__
 
         try:
-            _ = handler.stop_active_resources(pattern=None, reason="detach")
+            result = handler.stop_active_resources(pattern=None, reason="detach")
             handlers_stopped.append(handler_name)
+            # Surface per-handler errors returned inside the result dict.
+            if isinstance(result, dict):
+                returned_errors = result.get("errors") or []
+                if isinstance(returned_errors, list) and returned_errors:
+                    for entry in returned_errors:
+                        if isinstance(entry, dict):
+                            errors.append(entry)
+                        else:
+                            errors.append({"handler": handler_name, "error": str(entry)})
         except Exception as exc:
             logger.error(
                 "[peeka Lifecycle] %s resource cleanup failed during detach",
@@ -113,6 +135,8 @@ def stop_resource_owners_for_reset(
 
     Returns:
         Structured cleanup summary with stopped handler names and errors.
+        Per-handler errors include both exceptions raised by stop_active_resources
+        and error entries returned inside the result dict.
     """
     handlers_stopped: List[str] = []
     errors: List[Dict[str, Any]] = []
@@ -127,8 +151,17 @@ def stop_resource_owners_for_reset(
         handler_name = type(handler).__name__
 
         try:
-            _ = handler.stop_active_resources(pattern=pattern, reason="reset")
+            result = handler.stop_active_resources(pattern=pattern, reason="reset")
             handlers_stopped.append(handler_name)
+            # Surface per-handler errors returned inside the result dict.
+            if isinstance(result, dict):
+                returned_errors = result.get("errors") or []
+                if isinstance(returned_errors, list) and returned_errors:
+                    for entry in returned_errors:
+                        if isinstance(entry, dict):
+                            errors.append(entry)
+                        else:
+                            errors.append({"handler": handler_name, "error": str(entry)})
         except Exception as exc:
             logger.error(
                 "[peeka Lifecycle] %s resource cleanup failed during reset",
