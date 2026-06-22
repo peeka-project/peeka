@@ -17,6 +17,7 @@ from peeka.cli.parsers.observe import build_monitor_run_parser
 from peeka.cli.parsers.observe import build_stack_run_parser
 from peeka.cli.parsers.observe import build_trace_run_parser
 from peeka.cli.parsers.observe import build_watch_run_parser
+from peeka.core.probes import ProbeContext
 from peeka.cli.parsers.runtime import build_top_run_parser
 from peeka.cli.streaming import stream_counted_limit
 from peeka.cli.streaming_config import STREAMING_COMMANDS
@@ -53,7 +54,7 @@ def _build_run_command(
     if parts and parts[0] == command_type:
         parts = parts[1:]
 
-    if command_type in ("watch", "trace", "stack"):
+    if command_type in ProbeContext.streaming_types():
         if not parts:
             return None
         command["pattern"] = parts[0]
@@ -308,9 +309,10 @@ def cmd_run(args) -> int:
             command = _build_run_command(command_type, command_parts)
 
             if command is None:
+                _supported = "/".join(sorted(ProbeContext.streaming_types()) + ["top"])
                 OutputFormatter.error(
                     "run",
-                    error=f"Unsupported command for run: {command_type}\nOnly streaming observation commands (watch/trace/stack/monitor/top) are supported",
+                    error=f"Unsupported command for run: {command_type}\nOnly streaming observation commands ({_supported}) are supported",
                     file=sys.stderr,
                 )
                 cleanup_and_exit()

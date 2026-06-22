@@ -150,7 +150,7 @@ class WatchCommand(BaseCommand):
             count = self.agent.injector.uninject_all()
             self.agent.observer.clear_all()
             if self._supports_probe_instrumentation():
-                self.agent.stop_probe_contexts_by_type(["watch", "trace", "stack"])
+                self.agent.stop_probe_contexts_by_type(list(ProbeContext.streaming_types()))
             return {"status": "success", "stopped_count": count}
 
     def _get_status(self, params: Dict[str, Any]) -> Dict[str, Any]:

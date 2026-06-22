@@ -104,7 +104,7 @@ class AgentProbeControlMixin:
             return {"status": "success", "data": {"resource_stopped": False}}
 
         stream_key, probe_type = context_ref
-        if probe_type in ("watch", "trace", "stack", "monitor"):
+        if probe_type in ProbeContext.streaming_types():
             handler = self._get_handler(probe_type)
             if handler is None:
                 return {
