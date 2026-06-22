@@ -142,7 +142,6 @@ class TestResetCleanupSummary:
         assert "cleanup_summary" in result, f"cleanup_summary not in response: {result}"
 
     def test_reset_cleanup_summary_has_errors_on_failure(self) -> None:
-        """When resource cleanup raises, errors must appear in cleanup_summary.errors."""
         agent = _StubAgent([], {})
         owner = _RaisingResourceOwner(cast(Any, agent))
         agent.command_handlers["monitor"] = owner
@@ -151,13 +150,12 @@ class TestResetCleanupSummary:
         assert result.get("status") == "success", f"reset should succeed overall: {result}"
         summary = result.get("cleanup_summary", {})
         assert isinstance(summary, dict), "cleanup_summary must be a dict"
-        errors = summary.get("errors", [])
+        errors = summary.get("resource_owners", {}).get("errors", [])
         assert len(errors) == 1, f"Expected 1 cleanup error, got: {errors}"
         assert errors[0]["handler"] == "_RaisingResourceOwner"
         assert "simulated cleanup failure" in errors[0]["error"]
 
     def test_reset_cleanup_summary_handlers_stopped_on_success(self) -> None:
-        """cleanup_summary.handlers_stopped must list handlers that cleaned up without error."""
         agent = _StubAgent([], {})
 
         class _SuccessfulOwner(ResourceOwningCommand):
@@ -178,5 +176,5 @@ class TestResetCleanupSummary:
         cmd = ResetCommand(cast(Any, agent))
         result = cmd.execute({"action": "reset"})
         summary = result.get("cleanup_summary", {})
-        assert "_SuccessfulOwner" in summary.get("handlers_stopped", [])
-        assert summary.get("errors", []) == []
+        assert "_SuccessfulOwner" in summary.get("resource_owners", {}).get("handlers_stopped", [])
+        assert summary.get("resource_owners", {}).get("errors", []) == []

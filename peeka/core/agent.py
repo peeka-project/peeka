@@ -335,6 +335,7 @@ class PeekaAgent(
         self._error_ring_lock = _rpl.allocate_lock()  # DOMAIN: native_thread
         self._stopped: bool = False
         self._stop_lock = threading.Lock()
+        self._last_cleanup_summary: Dict[str, Any] = {}
         self._prev_sigterm_handler: Any = None
         self._prev_excepthook: Any = None
         self._peeka_excepthook_ref: Any = None
@@ -1093,7 +1094,7 @@ class PeekaAgent(
 
         logger = logging.getLogger(__name__)
         # probe types discovered dynamically from agent state — do not hardcode
-        shutdown_agent_resources(
+        self._last_cleanup_summary = shutdown_agent_resources(
             self, logger, self.list_tracked_probe_types()
         )
 
@@ -1186,8 +1187,10 @@ def _init_agent(
             for old_agent in old_agents:
                 try:
                     old_agent.stop()
+                    summary = getattr(old_agent, "_last_cleanup_summary", {})
                     msg = (
                         f"[peeka Agent] Stopped previous agent: {old_agent.session_id}"
+                        f" cleanup={summary}"
                     )
                     old_agent._emit_log("INFO", msg)
                 except Exception:

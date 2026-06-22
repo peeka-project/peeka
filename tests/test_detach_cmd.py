@@ -31,57 +31,42 @@ class LocalDetachAgent:
     def stop(self) -> None:
         self.stop_calls += 1
         _ = self.injector.uninject_all()
+        self.observer.clear_all()
 
 
 class TestDetachCommand:
     """Test the DetachCommand class."""
 
     def test_execute_success(self):
-        """Test successful detach execution."""
-        # Create mock agent
         mock_agent = MagicMock()
         mock_agent.attached_pid = 12345
-        mock_agent.injector = MagicMock()
-        mock_agent.observer = MagicMock()
+        mock_agent._last_cleanup_summary = {}
 
         cmd = DetachCommand(mock_agent)
         result = cmd.execute({})
 
-        # Verify result
         assert result["status"] == "success"
         assert result["pid"] == 12345
         assert "Detached from process" in result["message"]
-
-        # Verify cleanup was called
-        mock_agent.injector.uninject_all.assert_called_once()
-        mock_agent.observer.clear_all.assert_called_once()
+        assert "cleanup_summary" in result
         mock_agent.stop.assert_called_once()
 
     def test_execute_calls_in_order(self):
-        """Test that cleanup happens in correct order."""
         mock_agent = MagicMock()
         mock_agent.attached_pid = 9999
+        mock_agent._last_cleanup_summary = {}
 
         call_order = []
-
-        def track_uninject():
-            call_order.append("uninject_all")
-
-        def track_clear():
-            call_order.append("clear_all")
 
         def track_stop():
             call_order.append("stop")
 
-        mock_agent.injector.uninject_all.side_effect = track_uninject
-        mock_agent.observer.clear_all.side_effect = track_clear
         mock_agent.stop.side_effect = track_stop
 
         cmd = DetachCommand(mock_agent)
         result = cmd.execute({})
 
         assert result["status"] == "success"
-        assert "uninject_all" in call_order
         assert "stop" in call_order
 
     def test_execute_error_during_uninject(self):
@@ -208,68 +193,44 @@ class TestDetachCommand:
 
 
 class TestDetachProbeContextCleanup:
-    """Regression: detach stops all active probe contexts via probe registry."""
-
-    def test_detach_calls_stop_probe_contexts_by_type(self):
-        stopped_types: List[str] = []
-
+    def test_detach_calls_agent_stop(self):
         class _FakeAgent:
             attached_pid = 12345
-            injector = MagicMock()
-            observer = MagicMock()
+            _last_cleanup_summary: dict = {}
+            stop_called: bool = False
 
-            def list_tracked_probe_types(self) -> List[str]:
-                return ["monitor", "watch"]
+            def stop(self) -> None:
+                self.__class__.stop_called = True
 
-            def stop_probe_contexts_by_type(self, probe_types: List[str]) -> None:
-                stopped_types.extend(probe_types)
+        agent = _FakeAgent()
+        result = DetachCommand(cast(Any, agent)).execute({})
+
+        assert result["status"] == "success"
+        assert _FakeAgent.stop_called
+
+    def test_detach_returns_cleanup_summary(self):
+        class _FakeAgent:
+            attached_pid = 12345
+            _last_cleanup_summary = {"steps_run": ["stop_resource_owners"], "step_errors": {}, "resource_owners": {"handlers_stopped": [], "errors": []}}
 
             def stop(self) -> None:
                 pass
 
         result = DetachCommand(cast(Any, _FakeAgent())).execute({})
-
         assert result["status"] == "success"
-        assert stopped_types == ["monitor", "watch"]
+        assert "cleanup_summary" in result
+        assert result["cleanup_summary"]["steps_run"] == ["stop_resource_owners"]
 
-    def test_detach_probe_cleanup_before_uninject(self):
+    def test_detach_probe_cleanup_via_stop(self):
         call_order: List[str] = []
 
         class _FakeAgent:
             attached_pid = 12345
-
-            def list_tracked_probe_types(self) -> List[str]:
-                return ["watch"]
-
-            def stop_probe_contexts_by_type(self, types: List[str]) -> None:
-                _ = types
-                call_order.append("stop_probe_contexts")
-
-            @property
-            def injector(self):
-                class _Inj:
-                    def uninject_all(self) -> None:
-                        call_order.append("uninject_all")
-
-                    def __getattr__(self, name: str) -> Any:
-                        _ = name
-                        return MagicMock()
-
-                return _Inj()
-
-            @property
-            def observer(self):
-                class _Obs:
-                    def clear_all(self) -> None:
-                        call_order.append("clear_all")
-
-                return _Obs()
+            _last_cleanup_summary: dict = {}
 
             def stop(self) -> None:
                 call_order.append("stop")
 
         result = DetachCommand(cast(Any, _FakeAgent())).execute({})
         assert result["status"] == "success"
-        assert "stop_probe_contexts" in call_order
-        assert "uninject_all" in call_order
         assert "stop" in call_order

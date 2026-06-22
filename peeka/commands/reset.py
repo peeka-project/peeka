@@ -59,7 +59,6 @@ class ResetCommand(BaseCommand):
             return {"status": "error", "error": str(e)}
 
     def _reset(self, params: dict[str, object]) -> dict[str, object]:
-        """Reset enhancements, optionally filtered by pattern."""
         import fnmatch
 
         pattern_obj = params.get("pattern")
@@ -71,12 +70,15 @@ class ResetCommand(BaseCommand):
         # Both layers must complete before injector teardown.
         # REGRESSION GUARD: c03971e
         logger = logging.getLogger(__name__)
-        cleanup_summary = stop_resource_owners_for_reset(self.agent, pattern, logger)
+        resource_owners_summary = stop_resource_owners_for_reset(self.agent, pattern, logger)
 
         stop_context = getattr(self.agent, "stop_probe_context", None)
         probe_context_lock = getattr(self.agent, "_probe_context_lock", None)
         probe_context_types = cast(dict[str, object], getattr(self.agent, "_probe_context_types", {}))
         probe_contexts = cast(dict[str, object], getattr(self.agent, "_probe_contexts", {}))
+
+        probe_context_stopped: list[str] = []
+        probe_context_errors: list[dict[str, object]] = []
 
         if callable(stop_context) and probe_context_lock is not None:
             from peeka.commands.resource_owning import CleanupScope, ResourceOwningCommand
@@ -99,10 +101,27 @@ class ResetCommand(BaseCommand):
                     if pattern is None or fnmatch.fnmatch(probe_pattern or "", pattern):
                         stream_keys.append(stream_key)
             for stream_key in stream_keys:
-                _ = stop_context(stream_key)
+                try:
+                    stop_context(stream_key)
+                    probe_context_stopped.append(stream_key)
+                except Exception as exc:
+                    probe_context_errors.append({"stream_key": stream_key, "error": str(exc)})
 
-        result = self.agent.injector.reset(pattern)
-        result["cleanup_summary"] = cleanup_summary
+        injector_errors: list[dict[str, object]] = []
+        try:
+            result = self.agent.injector.reset(pattern)
+        except Exception as exc:
+            injector_errors.append({"error": str(exc)})
+            result = {"status": "error", "error": str(exc)}
+
+        result["cleanup_summary"] = {
+            "resource_owners": resource_owners_summary,
+            "probe_contexts": {
+                "stopped_count": len(probe_context_stopped),
+                "errors": probe_context_errors,
+            },
+            "injector": {"errors": injector_errors},
+        }
         return result
 
     def _list_enhanced(self, _params: dict[str, object]) -> dict[str, object]:

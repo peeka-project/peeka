@@ -7,7 +7,6 @@ Detach Command - Detach from the target process
 import logging
 from typing import Any, ClassVar, Dict
 
-from peeka.core.agent_control.lifecycle import shutdown_agent_resources
 from peeka.commands.base import BaseCommand
 
 
@@ -35,23 +34,15 @@ class DetachCommand(BaseCommand):
 
     def execute(self, params: Dict[str, Any]) -> Dict[str, Any]:
         try:
-            logger = logging.getLogger(__name__)
-            # probe types discovered dynamically from agent state — do not hardcode
-            list_probe_types = getattr(
-                self.agent, "list_tracked_probe_types", lambda: []
-            )
-
-            _ = shutdown_agent_resources(
-                self.agent, logger, list_probe_types()
-            )
-
             attached_pid = self.agent.attached_pid
             self.agent.stop()
+            cleanup_summary = getattr(self.agent, "_last_cleanup_summary", {})
 
             return {
                 "status": "success",
                 "message": f"Detached from process {attached_pid}",
                 "pid": attached_pid,
+                "cleanup_summary": cleanup_summary,
             }
 
         except Exception as e:
