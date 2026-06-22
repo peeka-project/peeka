@@ -36,6 +36,8 @@ ProbeStatus = Literal["created", "active", "paused", "stopped", "failed"]
 
 TERMINAL_STATUSES = frozenset({"stopped", "failed"})
 
+STREAMING_PROBE_TYPES: FrozenSet[str] = frozenset({"watch", "trace", "stack", "monitor"})
+
 _LEGAL_TRANSITIONS: Dict[str, FrozenSet[str]] = {
     "created": frozenset({"active"}),
     "active": frozenset({"paused", "stopped", "failed"}),
@@ -576,6 +578,10 @@ class ProbeContext:
     def probe(self) -> Optional[ProbeRun]:
         """Return the created ProbeRun dataclass."""
         return self._probe
+
+    @staticmethod
+    def streaming_types() -> FrozenSet[str]:
+        return STREAMING_PROBE_TYPES
 
 
 def next_valid_actions(status: ProbeStatus) -> List[str]:
