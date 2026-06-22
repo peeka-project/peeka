@@ -71,7 +71,7 @@ class ResetCommand(BaseCommand):
         # Both layers must complete before injector teardown.
         # REGRESSION GUARD: c03971e
         logger = logging.getLogger(__name__)
-        _ = stop_resource_owners_for_reset(self.agent, pattern, logger)
+        cleanup_summary = stop_resource_owners_for_reset(self.agent, pattern, logger)
 
         stop_context = getattr(self.agent, "stop_probe_context", None)
         probe_context_lock = getattr(self.agent, "_probe_context_lock", None)
@@ -101,7 +101,9 @@ class ResetCommand(BaseCommand):
             for stream_key in stream_keys:
                 _ = stop_context(stream_key)
 
-        return self.agent.injector.reset(pattern)
+        result = self.agent.injector.reset(pattern)
+        result["cleanup_summary"] = cleanup_summary
+        return result
 
     def _list_enhanced(self, _params: dict[str, object]) -> dict[str, object]:
         """List all current enhancements (deduplicated)."""

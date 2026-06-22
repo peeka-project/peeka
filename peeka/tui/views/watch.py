@@ -375,13 +375,22 @@ class WatchView(Container):
             pattern = watch_info.get("pattern")
             if pattern:
                 try:
-                    self._client.send_command(
+                    reset_response = self._client.send_command(
                         {
                             "type": "reset",
                             "action": "reset",
                             "pattern": pattern,
                         }
                     )
+                    cleanup_errors = (
+                        reset_response.get("cleanup_summary", {}).get("errors", [])
+                        if isinstance(reset_response, dict)
+                        else []
+                    )
+                    if cleanup_errors:
+                        logging.getLogger(__name__).warning(
+                            "[peeka TUI] reset cleanup errors for %s: %s", pattern, cleanup_errors
+                        )
                 except Exception:
                     pass
 
