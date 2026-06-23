@@ -178,7 +178,7 @@ class TestT2StopAllBoundary:
             def stop_probe_contexts_by_type(self, probe_types: List[str]) -> None:
                 stopped_types.extend(probe_types)
 
-        cmd = WatchCommand(_FakeAgent())  # type: ignore[arg-type]
+        cmd = WatchCommand(_FakeAgent())  # pyright: ignore[reportArgumentType]
         cmd._stop_watch({"watch_id": None})
 
         assert "monitor" not in stopped_types
@@ -206,46 +206,84 @@ class TestT2StopAllBoundary:
             def stop_probe_contexts_by_type(self, probe_types: List[str]) -> None:
                 stopped_types.extend(probe_types)
 
-        cmd = TraceCommand(_FakeAgent())  # type: ignore[arg-type]
+        cmd = TraceCommand(_FakeAgent())  # pyright: ignore[reportArgumentType]
         cmd._stop_trace({"watch_id": None})
 
         assert "monitor" not in stopped_types
 
 
 class TestT3HookRestorationGuards:
+    class _SigtermTestAgent:
+        def __init__(self) -> None:
+            from peeka.core.agent import PeekaAgent
+
+            class _Agent(PeekaAgent):
+                def __init__(self) -> None:  # pyright: ignore[reportMissingSuperCall]
+                    self.session_id = "test_sigterm_guard_01"
+                    self._stopped = False
+                    self._stop_lock = threading.Lock()
+                    self._last_cleanup_summary: Dict[str, Any] = {}
+                    self._prev_sigterm_handler: Any = None
+                    self._sigterm_handler_ref: Any = None
+                    self._prev_excepthook: Any = None
+                    self._peeka_excepthook_ref: Any = None
+                    self.running = True
+                    self.server = None
+                    self.command_handlers: Dict[str, Any] = {}
+                    self._observation_queues: Dict[Any, Any] = {}
+                    self._observation_queue_stats: Dict[Any, Any] = {}
+                    self._observation_queue_lock = threading.Lock()
+                    self._observation_flush_event = threading.Event()
+                    self._flush_thread_running = False
+                    self.injector: Any = _MockInjector()
+                    self.observer: Any = _MockObserver()
+                    self._probe_contexts: Dict[str, Any] = {}
+                    self._probe_context_types: Dict[str, Any] = {}
+                    self._probe_context_lock = threading.Lock()
+                    self.probe_registry: Any = _MockProbeRegistry()
+                    if threading.current_thread() is threading.main_thread():
+                        try:
+                            self._sigterm_handler_ref = self._handle_sigterm
+                            self._prev_sigterm_handler = signal.signal(
+                                signal.SIGTERM, self._sigterm_handler_ref
+                            )
+                        except (ValueError, OSError):
+                            self._prev_sigterm_handler = None
+
+            self.agent = _Agent()
+
     def test_sigterm_guard_does_not_overwrite_target_handler(self) -> None:
-        from peeka.core.agent import PeekaAgent
+        original = signal.getsignal(signal.SIGTERM)
+        agent = self._SigtermTestAgent().agent
+        try:
+            assert agent._sigterm_handler_ref is not None
+            assert agent._sigterm_handler_ref is not agent._handle_sigterm
+            assert signal.getsignal(signal.SIGTERM) is agent._sigterm_handler_ref
+        finally:
+            signal.signal(signal.SIGTERM, original)
 
-        class _TestAgent(PeekaAgent):
-            def __init__(self) -> None:
-                self.session_id = "test_hook_guard_01"
-                self._stopped = False
-                self._stop_lock = threading.Lock()
-                self._last_cleanup_summary: Dict[str, Any] = {}
-                self._prev_sigterm_handler: Any = None
-                self._prev_excepthook: Any = None
-                self._peeka_excepthook_ref: Any = None
-                self.running = True
-                self.server = None
-                self.command_handlers: Dict[str, Any] = {}
-                self._observation_queues: Dict[Any, Any] = {}
-                self._observation_queue_stats: Dict[Any, Any] = {}
-                self._observation_queue_lock = threading.Lock()
-                self._observation_flush_event = threading.Event()
-                self._flush_thread_running = False
-                self.injector: Any = _MockInjector()
-                self.observer: Any = _MockObserver()
-                self._probe_contexts: Dict[str, Any] = {}
-                self._probe_context_types: Dict[str, Any] = {}
-                self._probe_context_lock = threading.Lock()
-                self.probe_registry: Any = _MockProbeRegistry()
-                if threading.current_thread() is threading.main_thread():
-                    try:
-                        self._prev_sigterm_handler = signal.signal(signal.SIGTERM, self._handle_sigterm)
-                    except (ValueError, OSError):
-                        self._prev_sigterm_handler = None
+    def test_p2_sigterm_handler_ref_stored_at_init(self) -> None:
+        original = signal.getsignal(signal.SIGTERM)
+        agent = self._SigtermTestAgent().agent
+        try:
+            assert agent._sigterm_handler_ref is not None
+            assert agent._sigterm_handler_ref is not agent._handle_sigterm
+        finally:
+            signal.signal(signal.SIGTERM, original)
 
-        agent = _TestAgent()
+    def test_p2_sigterm_guard_restored_when_peeka_handler_installed(self) -> None:
+        original = signal.getsignal(signal.SIGTERM)
+        agent = self._SigtermTestAgent().agent
+        try:
+            signal.signal(signal.SIGTERM, agent._sigterm_handler_ref)
+            agent.stop()
+            assert signal.getsignal(signal.SIGTERM) is agent._prev_sigterm_handler
+        finally:
+            signal.signal(signal.SIGTERM, original)
+
+    def test_p2_sigterm_guard_not_restored_when_replaced_handler(self) -> None:
+        original = signal.getsignal(signal.SIGTERM)
+        agent = self._SigtermTestAgent().agent
         try:
             def target_handler(signum: int, frame: Any) -> None:
                 pass
@@ -254,13 +292,13 @@ class TestT3HookRestorationGuards:
             agent.stop()
             assert signal.getsignal(signal.SIGTERM) is target_handler
         finally:
-            signal.signal(signal.SIGTERM, signal.SIG_DFL)
+            signal.signal(signal.SIGTERM, original)
 
     def test_excepthook_guard_does_not_overwrite_target_hook(self) -> None:
         from peeka.core.agent import PeekaAgent
 
         class _TestAgent2(PeekaAgent):
-            def __init__(self) -> None:
+            def __init__(self) -> None:  # pyright: ignore[reportMissingSuperCall]
                 self.session_id = "test_hook_guard_02"
                 self._stopped = False
                 self._stop_lock = threading.Lock()
@@ -331,7 +369,7 @@ class TestT4CleanupContractShape:
             _probe_context_types: Dict[str, Any] = {}
             _probe_context_lock = threading.Lock()
 
-        result = ResetCommand(_StubAgent()).execute({"action": "reset"})  # type: ignore[arg-type]
+        result: Dict[str, Any] = ResetCommand(_StubAgent()).execute({"action": "reset"})  # pyright: ignore[reportArgumentType]
         assert result["status"] == "success"
         summary = result["cleanup_summary"]
         assert "resource_owners" in summary
@@ -355,7 +393,56 @@ class TestT4CleanupContractShape:
             def stop_probe_context(self, stream_key: str) -> None:
                 stopped.append(stream_key)
 
-        result = ResetCommand(_StubAgent()).execute({"action": "reset"})  # type: ignore[arg-type]
+        result: Dict[str, Any] = ResetCommand(_StubAgent()).execute({"action": "reset"})  # pyright: ignore[reportArgumentType]
         summary = result["cleanup_summary"]
         assert summary["probe_contexts"]["stopped_count"] == 2
         assert summary["probe_contexts"]["errors"] == []
+
+
+class TestT5WatchCleanupAggregation:
+    @staticmethod
+    def _extract_cleanup_errors(reset_response: Any) -> List[Any]:
+        cleanup_summary = reset_response.get("cleanup_summary", {}) if isinstance(reset_response, dict) else {}
+        return (
+            cleanup_summary.get("resource_owners", {}).get("errors", [])
+            + cleanup_summary.get("probe_contexts", {}).get("errors", [])
+            + cleanup_summary.get("injector", {}).get("errors", [])
+        )
+
+    def test_p2_watch_cleanup_errors_aggregated_from_nested_layers(self) -> None:
+        reset_response = {
+            "cleanup_summary": {
+                "resource_owners": {"errors": [{"handler": "X", "error": "boom"}]},
+                "probe_contexts": {"errors": []},
+                "injector": {"errors": []},
+            }
+        }
+
+        cleanup_errors = self._extract_cleanup_errors(reset_response)
+
+        assert len(cleanup_errors) == 1
+        assert cleanup_errors[0]["error"] == "boom"
+
+    def test_p2_watch_cleanup_no_errors_when_all_clean(self) -> None:
+        reset_response = {
+            "cleanup_summary": {
+                "resource_owners": {"errors": []},
+                "probe_contexts": {"errors": []},
+                "injector": {"errors": []},
+            }
+        }
+
+        assert self._extract_cleanup_errors(reset_response) == []
+
+    def test_p2_watch_cleanup_errors_from_all_three_layers(self) -> None:
+        reset_response = {
+            "cleanup_summary": {
+                "resource_owners": {"errors": [{"handler": "R", "error": "ro"}]},
+                "probe_contexts": {"errors": [{"handler": "P", "error": "pc"}]},
+                "injector": {"errors": [{"handler": "I", "error": "inj"}]},
+            }
+        }
+
+        cleanup_errors = self._extract_cleanup_errors(reset_response)
+
+        assert [entry["error"] for entry in cleanup_errors] == ["ro", "pc", "inj"]
