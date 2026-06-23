@@ -305,7 +305,7 @@ class ProbeRegistry:
             try:
                 from peeka.core.agent import _get_consumer_registry
 
-                _get_consumer_registry().append_for_scope(
+                _ = _get_consumer_registry().append_for_scope(
                     probe.target_id,
                     source_type="probe",
                     source_id=probe_id,
@@ -448,6 +448,8 @@ class ProbeContext:
                     break
     """
 
+    _PROBE_TYPE_REGISTRY: Dict[str, Dict[str, Any]] = {}
+
     def __init__(
         self,
         registry: ProbeRegistry,
@@ -470,13 +472,13 @@ class ProbeContext:
             pattern: Optional user-supplied match pattern.
             config: Optional probe configuration snapshot.
         """
-        self._registry = registry
-        self._target_id = target_id
-        self._client_session_id = client_session_id or ""
-        self._job_id = job_id or ""
-        self._type = type
-        self._pattern = pattern
-        self._config = config
+        self._registry: ProbeRegistry = registry
+        self._target_id: str = target_id
+        self._client_session_id: str = client_session_id or ""
+        self._job_id: str = job_id or ""
+        self._type: str = type
+        self._pattern: Optional[str] = pattern
+        self._config: Optional[Dict[str, Any]] = config
         self._probe: Optional[ProbeRun] = None
 
     def __enter__(self) -> "ProbeContext":
@@ -489,7 +491,7 @@ class ProbeContext:
             pattern=self._pattern,
             config=self._config,
         )
-        self._registry.set_status(self._probe.id, "active")
+        _ = self._registry.set_status(self._probe.id, "active")
         return self
 
     def __exit__(
@@ -520,7 +522,7 @@ class ProbeContext:
         # Clean exit: transition to stopped if not already terminal
         # Idempotent: if already failed/stopped, set_status returns False but that's OK
         if self._probe.status not in {"stopped", "failed"}:
-            self._registry.set_status(self._probe.id, "stopped")
+            _ = self._registry.set_status(self._probe.id, "stopped")
         return None
 
     def record_event(self, payload: Dict[str, Any]) -> Optional[ObservationEvent]:
@@ -547,7 +549,7 @@ class ProbeContext:
         """
         if self._probe is None:
             return
-        self._registry.set_status(
+        _ = self._registry.set_status(
             self._probe.id,
             "failed",
             error=message,
@@ -588,6 +590,18 @@ class ProbeContext:
     @staticmethod
     def injector_managed_streaming_types() -> FrozenSet[str]:
         return INJECTOR_MANAGED_STREAMING_PROBE_TYPES
+
+    @classmethod
+    def register_probe_type(cls, probe_type: str, *, managed: bool = False, **kwargs: Any) -> None:
+        cls._PROBE_TYPE_REGISTRY[probe_type] = {"managed": managed, **kwargs}
+
+    @classmethod
+    def managed_types(cls) -> FrozenSet[str]:
+        """All probe types that require runtime resource management."""
+        registered = frozenset(
+            key for key, value in cls._PROBE_TYPE_REGISTRY.items() if value.get("managed")
+        )
+        return registered | cls.streaming_types()
 
 
 def next_valid_actions(status: ProbeStatus) -> List[str]:

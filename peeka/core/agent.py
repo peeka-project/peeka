@@ -339,9 +339,19 @@ class PeekaAgent(
         self._last_cleanup_summary: Dict[str, Any] = {}
         self._prev_sigterm_handler: Any = None
         self._sigterm_handler_ref: Any = None
+        self._prev_sigint_handler: Any = None
+        self._prev_sighup_handler: Any = None
         self._prev_excepthook: Any = None
+        self._prev_threading_excepthook: Any = None
         self._peeka_excepthook_ref: Any = None
         atexit.register(self.stop)
+        self._install_exit_hooks()
+        self._last_seen_at = _time.time()
+
+    def _install_exit_hooks(self) -> None:
+        self._prev_sigint_handler = None
+        self._prev_sighup_handler = None
+        self._prev_threading_excepthook = None
         if threading.current_thread() is threading.main_thread():
             try:
                 self._sigterm_handler_ref = self._handle_sigterm
@@ -363,7 +373,6 @@ class PeekaAgent(
 
         sys.excepthook = _peeka_excepthook
         self._peeka_excepthook_ref = _peeka_excepthook
-        self._last_seen_at = _time.time()
 
     def _handle_sigterm(self, signum: int, frame: Any) -> None:
         prev = self._prev_sigterm_handler
@@ -1141,6 +1150,9 @@ class PeekaAgent(
             atexit.unregister(self.stop)
         except Exception:
             pass
+        self._uninstall_exit_hooks()
+
+    def _uninstall_exit_hooks(self) -> None:
         if (
             self._prev_sigterm_handler is not None
             and threading.current_thread() is threading.main_thread()

@@ -9,6 +9,8 @@ __all__ = [
     "shutdown_agent_resources",
     "stop_resource_owners_for_detach",
     "stop_resource_owners_for_reset",
+    "_has_cleanup_errors",
+    "_collect_cleanup_errors",
 ]
 
 
@@ -171,3 +173,34 @@ def stop_resource_owners_for_reset(
             errors.append({"handler": handler_name, "error": str(exc)})
 
     return {"handlers_stopped": handlers_stopped, "errors": errors}
+
+
+def _has_cleanup_errors(cleanup_summary: Dict[str, Any]) -> bool:
+    """Return True if any cleanup layer reported errors."""
+    if not isinstance(cleanup_summary, dict):
+        return False
+    layers = ("resource_owners", "probe_contexts", "injector")
+    for layer in layers:
+        layer_summary = cleanup_summary.get(layer, {})
+        if not isinstance(layer_summary, dict):
+            continue
+        errors = layer_summary.get("errors", [])
+        if isinstance(errors, list) and errors:
+            return True
+    return False
+
+
+def _collect_cleanup_errors(cleanup_summary: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Return combined error list from all cleanup layers."""
+    if not isinstance(cleanup_summary, dict):
+        return []
+    result: List[Dict[str, Any]] = []
+    layers = ("resource_owners", "probe_contexts", "injector")
+    for layer in layers:
+        layer_summary = cleanup_summary.get(layer, {})
+        if not isinstance(layer_summary, dict):
+            continue
+        errors = layer_summary.get("errors", [])
+        if isinstance(errors, list):
+            result.extend(e for e in errors if isinstance(e, dict))
+    return result

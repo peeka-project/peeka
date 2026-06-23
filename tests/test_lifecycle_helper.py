@@ -6,6 +6,8 @@ import pytest
 
 from peeka.commands.resource_owning import CleanupScope, ResourceOwningCommand
 from peeka.core.agent_control.lifecycle import (
+    _collect_cleanup_errors,
+    _has_cleanup_errors,
     shutdown_agent_resources,
     stop_resource_owners_for_detach,
     stop_resource_owners_for_reset,
@@ -293,3 +295,56 @@ class TestLifecycleHelper:
         assert '"monitor"' not in source
         assert '"top"' not in source
         assert '"memory"' not in source
+
+
+@pytest.mark.unit
+class TestCleanupSummaryHelpers:
+    def test_empty_cleanup_summary_returns_false_and_empty_list(self) -> None:
+        cleanup_summary: Dict[str, Any] = {}
+
+        assert _has_cleanup_errors(cleanup_summary) is False
+        assert _collect_cleanup_errors(cleanup_summary) == []
+
+    @pytest.mark.parametrize(
+        "layer",
+        ["resource_owners", "probe_contexts", "injector"],
+    )
+    def test_layer_errors_are_detected(self, layer: str) -> None:
+        cleanup_summary: Dict[str, Any] = {
+            layer: {"errors": [{"handler": layer, "error": "boom"}]}
+        }
+
+        assert _has_cleanup_errors(cleanup_summary) is True
+        assert _collect_cleanup_errors(cleanup_summary) == [
+            {"handler": layer, "error": "boom"}
+        ]
+
+    def test_all_layers_are_combined(self) -> None:
+        cleanup_summary: Dict[str, Any] = {
+            "resource_owners": {"errors": [{"handler": "a", "error": "one"}]},
+            "probe_contexts": {"errors": [{"handler": "b", "error": "two"}]},
+            "injector": {"errors": [{"handler": "c", "error": "three"}]},
+        }
+
+        assert _has_cleanup_errors(cleanup_summary) is True
+        assert _collect_cleanup_errors(cleanup_summary) == [
+            {"handler": "a", "error": "one"},
+            {"handler": "b", "error": "two"},
+            {"handler": "c", "error": "three"},
+        ]
+
+    def test_non_dict_input_is_safe(self) -> None:
+        cleanup_summary: Any = None
+
+        assert _has_cleanup_errors(cleanup_summary) is False
+        assert _collect_cleanup_errors(cleanup_summary) == []
+
+    def test_malformed_layer_values_are_ignored(self) -> None:
+        cleanup_summary: Dict[str, Any] = {
+            "resource_owners": "oops",
+            "probe_contexts": {"errors": "boom"},
+            "injector": None,
+        }
+
+        assert _has_cleanup_errors(cleanup_summary) is False
+        assert _collect_cleanup_errors(cleanup_summary) == []
