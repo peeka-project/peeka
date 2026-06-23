@@ -610,3 +610,6 @@ def next_valid_actions(status: ProbeStatus) -> List[str]:
 
 
 probe_registry = ProbeRegistry()
+
+# Register probe types that require runtime resource management
+ProbeContext.register_probe_type("top", managed=True)
