@@ -217,6 +217,7 @@ class PeekaAgent(
     _job_registry = staticmethod(lambda: job_registry)
     _get_requesting_client_session_id = staticmethod(_get_requesting_client_session_id)
     _consumer_owner_matches = staticmethod(_consumer_owner_matches)
+    _sigterm_handler_ref: Any = None
     _dx_owner_matches = staticmethod(_dx_owner_matches)
     _client_success = staticmethod(_client_success)
     _client_error = staticmethod(_client_error)
@@ -337,12 +338,14 @@ class PeekaAgent(
         self._stop_lock = threading.Lock()
         self._last_cleanup_summary: Dict[str, Any] = {}
         self._prev_sigterm_handler: Any = None
+        self._sigterm_handler_ref: Any = None
         self._prev_excepthook: Any = None
         self._peeka_excepthook_ref: Any = None
         atexit.register(self.stop)
         if threading.current_thread() is threading.main_thread():
             try:
-                self._prev_sigterm_handler = signal.signal(signal.SIGTERM, self._handle_sigterm)
+                self._sigterm_handler_ref = self._handle_sigterm
+                self._prev_sigterm_handler = signal.signal(signal.SIGTERM, self._sigterm_handler_ref)
             except (ValueError, OSError):
                 self._prev_sigterm_handler = None
         self._prev_excepthook = sys.excepthook
@@ -1141,7 +1144,7 @@ class PeekaAgent(
         if (
             self._prev_sigterm_handler is not None
             and threading.current_thread() is threading.main_thread()
-            and signal.getsignal(signal.SIGTERM) is self._handle_sigterm
+            and signal.getsignal(signal.SIGTERM) is self._sigterm_handler_ref
         ):
             try:
                 signal.signal(signal.SIGTERM, self._prev_sigterm_handler)
