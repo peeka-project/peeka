@@ -19,6 +19,8 @@ import sys
 import threading
 from typing import Any, Dict, List
 
+import pytest
+
 import peeka.core.agent as _agent_mod
 from peeka.core.agent import PeekaAgent, _init_agent
 
@@ -28,9 +30,13 @@ _SENTINEL = object()
 class _MockInjector:
     def __init__(self) -> None:
         self.uninject_all_calls = 0
+        self.orphan_watches_cleaned = False
 
     def uninject_all(self) -> None:
         self.uninject_all_calls += 1
+
+    def cleanup_orphan_watches(self) -> None:
+        self.orphan_watches_cleaned = True
 
 
 class _MockObserver:
@@ -41,7 +47,12 @@ class _MockObserver:
         self.clear_all_calls += 1
 
 
-class _TestAgent(PeekaAgent):
+class _MockProbeRegistry:
+    def cleanup(self, older_than_seconds: int = 0, completed_only: bool = False) -> None:
+        return None
+
+
+class _TestAgent(PeekaAgent):  # pyright: ignore[reportMissingSuperCall]
     def __init__(
         self, session_id: str, *, install_sigterm: bool = True
     ) -> None:
@@ -50,8 +61,15 @@ class _TestAgent(PeekaAgent):
         self._stopped: bool = False
         self._stop_lock: threading.Lock = threading.Lock()
         self._prev_sigterm_handler: Any = None
+        self._sigterm_handler_ref: Any = None
+        self._prev_sigint_handler: Any = None
+        self._sigint_handler_ref: Any = None
+        self._prev_sighup_handler: Any = None
+        self._sighup_handler_ref: Any = None
         self._prev_excepthook: Any = None
+        self._prev_threading_excepthook: Any = None
         self._peeka_excepthook_ref: Any = None
+        self._threading_excepthook_ref: Any = None
         self.running: bool = True
         self.server: Any = None
         self.command_handlers: Dict[str, Any] = {}
@@ -62,6 +80,7 @@ class _TestAgent(PeekaAgent):
         self._flush_thread_running: bool = False
         self.injector: Any = _MockInjector()
         self.observer: Any = _MockObserver()
+        self.probe_registry: Any = _MockProbeRegistry()
         # Required by AgentProbeControlMixin.stop_probe_contexts_by_type
         self._probe_contexts: Dict[str, Any] = {}
         self._probe_context_types: Dict[str, Any] = {}
@@ -74,6 +93,121 @@ class _TestAgent(PeekaAgent):
                 )
             except (ValueError, OSError):
                 self._prev_sigterm_handler = None
+
+
+class TestExitHookChaining:
+    def test_sigint_handler_installed_on_main_thread(self) -> None:
+        pre_test_sigint = signal.getsignal(signal.SIGINT)
+        agent = _TestAgent("test_sigint_install_10")
+        handler_ref = agent._handle_sigint
+        try:
+            agent._sigint_handler_ref = handler_ref
+            agent._prev_sigint_handler = signal.signal(signal.SIGINT, handler_ref)
+
+            assert signal.getsignal(signal.SIGINT) is handler_ref
+            assert agent._sigint_handler_ref is handler_ref
+            assert agent._sigint_handler_ref is not agent._handle_sigint
+        finally:
+            signal.signal(signal.SIGINT, pre_test_sigint)
+
+    def test_sigint_guard_restores_when_still_peeka(self) -> None:
+        pre_test_sigint = signal.getsignal(signal.SIGINT)
+        agent = _TestAgent("test_sigint_restore_11")
+        handler_ref = agent._handle_sigint
+        try:
+            agent._sigint_handler_ref = handler_ref
+            agent._prev_sigint_handler = signal.signal(signal.SIGINT, handler_ref)
+
+            agent.stop()
+
+            assert signal.getsignal(signal.SIGINT) is agent._prev_sigint_handler
+        finally:
+            signal.signal(signal.SIGINT, pre_test_sigint)
+
+    def test_sigint_not_restored_when_replaced(self) -> None:
+        pre_test_sigint = signal.getsignal(signal.SIGINT)
+        agent = _TestAgent("test_sigint_notrestore_12")
+        handler_ref = agent._handle_sigint
+
+        def user_handler(signum: int, frame: Any) -> None:
+            return None
+
+        try:
+            agent._sigint_handler_ref = handler_ref
+            agent._prev_sigint_handler = signal.signal(signal.SIGINT, handler_ref)
+            signal.signal(signal.SIGINT, user_handler)
+
+            agent.stop()
+
+            assert signal.getsignal(signal.SIGINT) is user_handler
+        finally:
+            signal.signal(signal.SIGINT, pre_test_sigint)
+
+    @pytest.mark.skipif(
+        sys.platform == "win32" or not hasattr(signal, "SIGHUP"),
+        reason="SIGHUP not available",
+    )
+    def test_sighup_handler_installed_and_chained(self) -> None:
+        sighup = signal.SIGHUP
+        pre_test_sighup = signal.getsignal(sighup)
+        agent = _TestAgent("test_sighup_install_13")
+        handler_ref = agent._handle_sighup
+
+        def user_handler(signum: int, frame: Any) -> None:
+            return None
+
+        try:
+            agent._sighup_handler_ref = handler_ref
+            agent._prev_sighup_handler = signal.signal(sighup, handler_ref)
+
+            assert signal.getsignal(sighup) is handler_ref
+            assert agent._sighup_handler_ref is handler_ref
+
+            signal.signal(sighup, user_handler)
+            agent.stop()
+
+            assert signal.getsignal(sighup) is user_handler
+        finally:
+            signal.signal(sighup, pre_test_sighup)
+
+    def test_threading_excepthook_installed_and_chained(self) -> None:
+        if not hasattr(threading, "excepthook"):
+            pytest.skip("threading.excepthook not available")
+
+        original_hook = threading.excepthook
+        agent = _TestAgent("test_thread_hook_14")
+        stop_calls: List[int] = []
+        prev_args: List[Any] = []
+
+        def previous_hook(args: Any) -> None:
+            prev_args.append(args)
+
+        original_stop = agent.stop
+
+        def counting_stop() -> None:
+            stop_calls.append(1)
+            original_stop()
+
+        def peeka_hook(args: Any) -> None:
+            previous_hook(args)
+            counting_stop()
+
+        try:
+            threading.excepthook = previous_hook
+            agent._prev_threading_excepthook = previous_hook
+            agent._threading_excepthook_ref = peeka_hook
+            threading.excepthook = peeka_hook
+
+            marker = object()
+            threading.excepthook(marker)
+
+            assert prev_args == [marker]
+            assert stop_calls == [1]
+            assert threading.excepthook is previous_hook
+            assert agent._prev_threading_excepthook is previous_hook
+            assert agent._threading_excepthook_ref is peeka_hook
+        finally:
+            threading.excepthook = original_hook
 
 
 def test_stop_calls_helper_before_server_close() -> None:
@@ -256,7 +390,7 @@ def test_init_agent_reattach_new_agent_registered_when_old_stop_raises() -> None
             pass
 
     original_agents = getattr(sys, "_peeka_agents", _SENTINEL)
-    sys._peeka_agents = {"old_raise_07": _RaisingOldAgent()}  # type: ignore[attr-defined]
+    setattr(sys, "_peeka_agents", {"old_raise_07": _RaisingOldAgent()})
 
     original_start = PeekaAgent.start
 
@@ -278,7 +412,7 @@ def test_init_agent_reattach_new_agent_registered_when_old_stop_raises() -> None
             if hasattr(sys, "_peeka_agents"):
                 delattr(sys, "_peeka_agents")
         else:
-            sys._peeka_agents = original_agents  # type: ignore[attr-defined]
+            setattr(sys, "_peeka_agents", original_agents)
 
 
 def test_stop_with_empty_command_handlers_is_noop() -> None:
