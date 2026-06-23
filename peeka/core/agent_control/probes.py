@@ -113,10 +113,14 @@ class AgentProbeControlMixin:
                 }
             return handler.execute({"action": "stop", "watch_id": stream_key})
 
-        if probe_type == "top":
-            handler = self._get_handler("top")
+        managed_non_streaming_types = ProbeContext.managed_types() - ProbeContext.streaming_types()
+        if probe_type in managed_non_streaming_types:
+            handler = self._get_handler(probe_type)
             if handler is None:
-                return {"status": "error", "error": "Handler not found for probe type 'top'"}
+                return {
+                    "status": "error",
+                    "error": f"Handler not found for probe type {probe_type!r}",
+                }
             return handler.execute({"action": "stop", "top_id": stream_key})
 
         self.stop_probe_context(stream_key)
