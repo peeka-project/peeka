@@ -1,9 +1,12 @@
 """Non-streaming runtime inspection CLI handlers."""
 
+import logging
+
 from peeka.cli._client_helper import ephemeral_client
 from peeka.cli.connection import _socket_path_to_target_id
 from peeka.cli.sessions import _check_agent_attached
 from peeka.core.client import StreamingAgentClient
+from peeka.core.agent_control.lifecycle import _has_cleanup_errors
 from peeka.core.output import OutputFormatter
 
 
@@ -272,6 +275,14 @@ def cmd_reset(args) -> int:
 
     if response.get("status") == "success":
         OutputFormatter.result("reset", data=response)
+        cleanup_summary = response.get("cleanup_summary", {})
+        if _has_cleanup_errors(cleanup_summary):
+            logging.getLogger(__name__).warning(
+                "[peeka CLI] reset completed with cleanup errors: %s",
+                cleanup_summary,
+            )
+            streaming_client.disconnect()
+            return 2
     else:
         OutputFormatter.error(
             "reset", error=response.get("error", "Reset command failed")
