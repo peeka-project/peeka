@@ -309,7 +309,7 @@ def cmd_run(args) -> int:
             command = _build_run_command(command_type, command_parts)
 
             if command is None:
-                _supported = "/".join(sorted(ProbeContext.streaming_types()) + ["top"])
+                _supported = "/".join(sorted(ProbeContext.managed_types()))
                 OutputFormatter.error(
                     "run",
                     error=f"Unsupported command for run: {command_type}\nOnly streaming observation commands ({_supported}) are supported",
