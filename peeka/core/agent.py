@@ -340,10 +340,13 @@ class PeekaAgent(
         self._prev_sigterm_handler: Any = None
         self._sigterm_handler_ref: Any = None
         self._prev_sigint_handler: Any = None
+        self._sigint_handler_ref: Any = None
         self._prev_sighup_handler: Any = None
+        self._sighup_handler_ref: Any = None
         self._prev_excepthook: Any = None
         self._prev_threading_excepthook: Any = None
         self._peeka_excepthook_ref: Any = None
+        self._threading_excepthook_ref: Any = None
         atexit.register(self.stop)
         self._install_exit_hooks()
         self._last_seen_at = _time.time()
@@ -352,12 +355,27 @@ class PeekaAgent(
         self._prev_sigint_handler = None
         self._prev_sighup_handler = None
         self._prev_threading_excepthook = None
+        self._threading_excepthook_ref = None
         if threading.current_thread() is threading.main_thread():
             try:
                 self._sigterm_handler_ref = self._handle_sigterm
                 self._prev_sigterm_handler = signal.signal(signal.SIGTERM, self._sigterm_handler_ref)
             except (ValueError, OSError):
                 self._prev_sigterm_handler = None
+            try:
+                self._sigint_handler_ref = self._handle_sigint
+                self._prev_sigint_handler = signal.signal(signal.SIGINT, self._sigint_handler_ref)
+            except (ValueError, OSError):
+                self._prev_sigint_handler = None
+                self._sigint_handler_ref = None
+            _sighup = getattr(signal, "SIGHUP", None)
+            if _sighup is not None:
+                try:
+                    self._sighup_handler_ref = self._handle_sighup
+                    self._prev_sighup_handler = signal.signal(_sighup, self._sighup_handler_ref)
+                except (ValueError, OSError):
+                    self._prev_sighup_handler = None
+                    self._sighup_handler_ref = None
         self._prev_excepthook = sys.excepthook
         _self_ref = self
 
@@ -373,6 +391,25 @@ class PeekaAgent(
 
         sys.excepthook = _peeka_excepthook
         self._peeka_excepthook_ref = _peeka_excepthook
+
+        # threading.excepthook — chained (Python 3.8+)
+        if hasattr(threading, "excepthook"):
+            _self_ref = self
+            _prev_threading_hook = threading.excepthook
+
+            def _peeka_threading_excepthook(args: Any) -> None:
+                try:
+                    if _prev_threading_hook is not None:
+                        _prev_threading_hook(args)
+                finally:
+                    try:
+                        _self_ref.stop()
+                    except Exception:
+                        pass
+
+            threading.excepthook = _peeka_threading_excepthook
+            self._prev_threading_excepthook = _prev_threading_hook
+            self._threading_excepthook_ref = _peeka_threading_excepthook
 
     def _handle_sigterm(self, signum: int, frame: Any) -> None:
         prev = self._prev_sigterm_handler
@@ -395,6 +432,49 @@ class PeekaAgent(
                 pass
             return
         os.kill(os.getpid(), signum)
+
+    def _handle_sigint(self, signum: int, frame: Any) -> None:
+        prev = self._prev_sigint_handler
+        try:
+            signal.signal(signum, prev if prev is not None else signal.SIG_DFL)
+        except (ValueError, OSError):
+            pass
+        try:
+            self.stop()
+        except Exception:
+            pass
+        if prev is signal.SIG_IGN:
+            return
+        if callable(prev) and prev is not signal.SIG_DFL:
+            try:
+                prev(signum, frame)
+            except Exception:
+                pass
+            return
+        raise KeyboardInterrupt
+
+    def _handle_sighup(self, signum: int, frame: Any) -> None:
+        prev = self._prev_sighup_handler
+        try:
+            signal.signal(signum, prev if prev is not None else signal.SIG_DFL)
+        except (ValueError, OSError):
+            pass
+        try:
+            self.stop()
+        except Exception:
+            pass
+        if prev is signal.SIG_IGN:
+            return
+        if callable(prev) and prev is not signal.SIG_DFL:
+            try:
+                prev(signum, frame)
+            except Exception:
+                pass
+            return
+        try:
+            os.kill(os.getpid(), signum)
+        except OSError:
+            pass
 
     # ------------------------------------------------------------------ #
     #  Lazy command handler loading                                      #
@@ -1153,22 +1233,60 @@ class PeekaAgent(
         self._uninstall_exit_hooks()
 
     def _uninstall_exit_hooks(self) -> None:
+        prev_sigterm_handler = getattr(self, "_prev_sigterm_handler", None)
+        sigterm_handler_ref = getattr(self, "_sigterm_handler_ref", None)
+        prev_sigint_handler = getattr(self, "_prev_sigint_handler", None)
+        sigint_handler_ref = getattr(self, "_sigint_handler_ref", None)
+        prev_sighup_handler = getattr(self, "_prev_sighup_handler", None)
+        sighup_handler_ref = getattr(self, "_sighup_handler_ref", None)
+        prev_excepthook = getattr(self, "_prev_excepthook", None)
+        peeka_excepthook_ref = getattr(self, "_peeka_excepthook_ref", None)
         if (
-            self._prev_sigterm_handler is not None
+            prev_sigterm_handler is not None
             and threading.current_thread() is threading.main_thread()
-            and signal.getsignal(signal.SIGTERM) is self._sigterm_handler_ref
+            and signal.getsignal(signal.SIGTERM) is sigterm_handler_ref
         ):
             try:
-                signal.signal(signal.SIGTERM, self._prev_sigterm_handler)
+                signal.signal(signal.SIGTERM, prev_sigterm_handler)
             except (ValueError, OSError):
                 pass
         if (
-            self._prev_excepthook is not None
-            and self._peeka_excepthook_ref is not None
-            and sys.excepthook is self._peeka_excepthook_ref
+            prev_sigint_handler is not None
+            and threading.current_thread() is threading.main_thread()
+            and signal.getsignal(signal.SIGINT) is sigint_handler_ref
         ):
             try:
-                sys.excepthook = self._prev_excepthook
+                signal.signal(signal.SIGINT, prev_sigint_handler)
+            except (ValueError, OSError):
+                pass
+        _sighup = getattr(signal, "SIGHUP", None)
+        if (
+            _sighup is not None
+            and prev_sighup_handler is not None
+            and threading.current_thread() is threading.main_thread()
+            and signal.getsignal(_sighup) is sighup_handler_ref
+        ):
+            try:
+                signal.signal(_sighup, prev_sighup_handler)
+            except (ValueError, OSError):
+                pass
+        if (
+            prev_excepthook is not None
+            and peeka_excepthook_ref is not None
+            and sys.excepthook is peeka_excepthook_ref
+        ):
+            try:
+                sys.excepthook = prev_excepthook
+            except Exception:
+                pass
+        if (
+            hasattr(threading, "excepthook")
+            and getattr(self, "_prev_threading_excepthook", None) is not None
+            and getattr(self, "_threading_excepthook_ref", None) is not None
+            and threading.excepthook is self._threading_excepthook_ref
+        ):
+            try:
+                threading.excepthook = self._prev_threading_excepthook
             except Exception:
                 pass
 
