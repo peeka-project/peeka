@@ -210,13 +210,25 @@ class StackView(Container):
                 pass
 
         try:
-            self._client.send_command(
+            reset_response = self._client.send_command(
                 {
                     "type": "reset",
                     "action": "reset",
                     "pattern": "*",
                 }
             )
+            cleanup_summary = (
+                reset_response.get("cleanup_summary", {}) if isinstance(reset_response, dict) else {}
+            )
+            cleanup_errors = (
+                cleanup_summary.get("resource_owners", {}).get("errors", [])
+                + cleanup_summary.get("probe_contexts", {}).get("errors", [])
+                + cleanup_summary.get("injector", {}).get("errors", [])
+            )
+            if cleanup_errors:
+                logging.getLogger(__name__).warning(
+                    "[peeka TUI] reset cleanup errors for %s: %s", "*", cleanup_errors
+                )
         except Exception:
             pass
 
