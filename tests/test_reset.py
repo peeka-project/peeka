@@ -2,7 +2,7 @@
 
 import sys
 import threading
-from typing import Any
+from typing import Any, Dict, List, cast
 
 import pytest
 
@@ -529,6 +529,105 @@ class TestResetCommand:
             del sys.modules["test_reset_stream_observer"]
 
 
+class TestCmdResetCleanupErrors:
+    """Tests for cmd_reset() cleanup error surfacing (T4)."""
+
+    def _make_mock_client(self, response: Dict[str, Any]):
+        """Create a stub streaming client that returns fixed response."""
+
+        class _StubClient:
+            def __init__(self):
+                self.connected = False
+                self.disconnected = False
+
+            def connect(self):
+                self.connected = True
+                return {"status": "success"}
+
+            def send_command(self, cmd):
+                return response
+
+            def disconnect(self):
+                self.disconnected = True
+
+        return _StubClient()
+
+    def _patch_runtime(self, monkeypatch, response):
+        from peeka.cli.handlers import runtime
+
+        stub = self._make_mock_client(response)
+        monkeypatch.setattr(runtime, "StreamingAgentClient", lambda _: stub)
+        monkeypatch.setattr(runtime, "_check_agent_attached", lambda: ("/tmp/test.sock", 123))
+        return runtime, stub
+
+    def test_cmd_reset_exits_2_when_cleanup_errors(self, monkeypatch):
+        """cmd_reset returns 2 when cleanup_summary has errors."""
+        response = {
+            "status": "success",
+            "cleanup_summary": {
+                "resource_owners": {"errors": [{"handler": "X", "error": "boom"}]},
+                "probe_contexts": {"errors": []},
+                "injector": {"errors": []},
+            },
+        }
+        runtime, stub = self._patch_runtime(monkeypatch, response)
+
+        class _Args:
+            list = False
+            pattern = None
+
+        result = runtime.cmd_reset(_Args())
+
+        assert result == 2
+        assert stub.disconnected is True
+
+    def test_cmd_reset_exits_0_when_no_cleanup_errors(self, monkeypatch):
+        """cmd_reset returns 0 when cleanup_summary has no errors."""
+        response = {
+            "status": "success",
+            "cleanup_summary": {
+                "resource_owners": {"errors": []},
+                "probe_contexts": {"errors": []},
+                "injector": {"errors": []},
+            },
+        }
+        runtime, stub = self._patch_runtime(monkeypatch, response)
+
+        class _Args:
+            list = False
+            pattern = None
+
+        result = runtime.cmd_reset(_Args())
+
+        assert result == 0
+        assert stub.disconnected is True
+
+    def test_cmd_reset_exits_1_when_connection_fails(self, monkeypatch):
+        """cmd_reset returns 1 when the agent connection fails."""
+        from peeka.cli.handlers import runtime
+
+        class _StubClient:
+            def connect(self):
+                return {"status": "error", "error": "Connection failed"}
+
+            def send_command(self, cmd):
+                raise AssertionError("send_command should not be called")
+
+            def disconnect(self):
+                raise AssertionError("disconnect should not be called")
+
+        monkeypatch.setattr(runtime, "StreamingAgentClient", lambda _: _StubClient())
+        monkeypatch.setattr(runtime, "_check_agent_attached", lambda: ("/tmp/test.sock", 123))
+
+        class _Args:
+            list = False
+            pattern = None
+
+        result = runtime.cmd_reset(_Args())
+
+        assert result == 1
+
+
 class TestResetProbeContextRegistry:
     """Regression tests for reset using active probe context registry."""
 
@@ -585,7 +684,7 @@ class TestResetProbeContextRegistry:
                     self._probe_context_types.pop(stream_key, None)
 
         agent = _Agent()
-        agent.command_handlers["top"] = _FakeDetachOnlyHandler(agent)
+        agent.command_handlers["top"] = _FakeDetachOnlyHandler(agent)  # pyright: ignore[reportArgumentType]
         reset_cmd = ResetCommand(agent)  # pyright: ignore[reportArgumentType]
         return agent, reset_cmd
 
@@ -656,7 +755,8 @@ class TestResetProbeContextRegistry:
         response = reset_cmd.execute({"action": "list"})
 
         assert response["status"] == "success"
-        stream_entries = {entry["stream_id"]: entry for entry in response["enhanced"]}
+        enhanced = cast(List[Dict[str, Any]], response["enhanced"])
+        stream_entries = {entry["stream_id"]: entry for entry in enhanced}
         assert stream_entries["watch_1"] == {
             "stream_id": "watch_1",
             "command": "watch",
@@ -666,4 +766,4 @@ class TestResetProbeContextRegistry:
         assert stream_entries["stack_1"]["command"] == "stack"
         assert stream_entries["monitor_1"]["command"] == "monitor"
         assert stream_entries["top_1"]["command"] == "top"
-        assert response["total"] == len(response["enhanced"])
+        assert response["total"] == len(enhanced)
