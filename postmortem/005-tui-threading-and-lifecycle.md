@@ -5,13 +5,14 @@
 | **话题** | TUI 的 run_worker 使用、主线程阻塞、错误反馈与关机生命周期问题 |
 | **受影响组件** | tui (app, screens, views) |
 | **最高严重级别** | SEV-1 (High) |
-| **事故次数** | 8 |
-| **时间跨度** | 2026-02-07 至 2026-05-07 |
+| **事故次数** | 9 |
+| **时间跨度** | 2026-02-07 至 2026-06-23 |
 
 ## 案例索引
 
 | # | 事故 | 严重级别 | 日期 |
 |---|------|----------|------|
+| [#9](#事故-9流式视图退出清理未暴露-nested-cleanup_summary-错误) | 流式视图退出清理未暴露 nested cleanup_summary 错误 | SEV-3 | 2026-06-23 |
 | [#8](#事故-8dashboard-未挂载时访问-app-导致-lifecycle-测试崩溃) | Dashboard 未挂载时访问 app 导致 lifecycle 测试崩溃 | SEV-3 | 2026-05-07 |
 | [#7](#事故-7logging-配置向-stderr-输出破坏-tui-活动日志集成) | logging 配置向 stderr 输出破坏 TUI 活动日志集成 | SEV-2 | 2026-05-06 |
 | [#6](#事故-6tui-缺少优雅关机信号处理) | TUI 缺少优雅关机信号处理 | SEV-2 | 2026-03-05 |
@@ -26,6 +27,117 @@
 ## 话题概述
 
 该话题聚焦 Textual 应用的基本运行约束：阻塞 IO 不可在主线程执行、worker 必须在正确上下文启动、后台线程结果必须安全回到 UI 线程、以及进程终止时需执行清理。事故跨越启动、运行、退出全生命周期，反复指向同一系统性原因——线程边界与生命周期边界未在架构层被统一约束。
+
+2026-06-23 的新增事故说明，退出清理不仅要“尽力执行”，还必须把 agent 返回的 nested `cleanup_summary` 转化为 TUI 可观测日志。否则 Watch/Stack/Trace 视图在退出时即使 reset 部分失败，也会静默吞掉错误，让用户以为目标进程已完全恢复。
+
+---
+
+## 事故 #9：流式视图退出清理未暴露 nested cleanup_summary 错误
+
+> **Tag 范围**：`v0.1.17` → `v0.1.18` | **严重级别**：SEV-3 | **日期**：2026-06-23
+
+### 概要
+
+Watch、Stack、Trace 视图在 `cleanup_for_exit()` 中会停止 active probe 并发送 `reset`，但早期实现只关心 `send_command()` 是否抛异常，未解析 reset 响应中的 nested `cleanup_summary`。当 resource owner、ProbeContext 或 injector 在 reset 中返回错误时，TUI 退出流程会静默忽略，用户无法知道目标进程可能仍残留 wrapper 或采样资源。
+
+### 根因分析
+
+#### 类别
+Observability Gap / Missing Validation
+
+#### 分析
+
+TUI cleanup 路径采用“best-effort + 吞异常”策略是为了避免退出时崩溃，但该策略被过度应用到了 agent 已结构化返回的清理错误。reset 响应中的错误位置并不是顶层 `errors`，而是 nested 在：
+
+```python
+cleanup_summary["resource_owners"]["errors"]
+cleanup_summary["probe_contexts"]["errors"]
+cleanup_summary["injector"]["errors"]
+```
+
+Watch 视图最初只检查了旧形状 `cleanup_summary.errors`，Stack/Trace 视图则完全没有记录 reset 返回值。结果是 cleanup contract 已经在 agent 层存在，但 TUI 没有把它转为用户/开发者可见的 warning 日志。
+
+#### 致因提交
+
+| 提交 | 作者 | 日期 | 描述 |
+|------|------|------|------|
+| 致因提交无法确定性定位 | - | 2026-06-23 前 | TUI 退出清理路径只覆盖命令异常，未跟随 reset cleanup_summary schema 演进 |
+
+### 复现
+
+#### 前置条件
+- TUI 中存在 active watch、stack 或 trace。
+- reset 响应包含 nested cleanup error，例如 `cleanup_summary.resource_owners.errors` 非空。
+
+#### 步骤
+1. 在 Watch/Stack/Trace 视图启动探针。
+2. 触发 TUI 退出或视图 cleanup。
+3. 让 agent reset 返回 `status=success` 且 nested cleanup errors 非空。
+
+#### 预期行为
+TUI 记录 warning，指出对应 pattern 或 `*` 的 reset cleanup errors。
+
+#### 实际行为
+cleanup errors 被静默忽略；用户只能看到 TUI 正常退出。
+
+### 修复
+
+#### 修复提交
+
+| 提交 | 作者 | 日期 | 描述 |
+|------|------|------|------|
+| [`3e14f5e`](https://github.com/peeka-project/peeka/commit/3e14f5edbe8fcf31e78fdb7b4e448e07db7f4f4c) | lufeihaidao | 2026-06-23 | fix(tui): aggregate nested cleanup_summary errors in watch cleanup_for_exit |
+| [`64a4f32`](https://github.com/peeka-project/peeka/commit/64a4f32b679088683d876a723ec25c71aa497428) | lufeihaidao | 2026-06-23 | fix(tui): log reset cleanup errors in stack view exit cleanup |
+| [`1d33757`](https://github.com/peeka-project/peeka/commit/1d33757fa4803ded2ee185de97f57cc35159ebe7) | lufeihaidao | 2026-06-23 | fix(tui): log reset cleanup errors in trace view exit cleanup |
+
+#### 变更内容
+- Watch/Stack/Trace cleanup 读取 `reset_response["cleanup_summary"]`。
+- 聚合 `resource_owners.errors`、`probe_contexts.errors` 和 `injector.errors`。
+- 当 errors 非空时通过 `logging.getLogger(__name__).warning(...)` 记录带 pattern 的清理失败信息。
+
+#### 验证
+相关提交添加/调整了 TUI cleanup_for_exit 回归测试，覆盖 nested cleanup_summary 聚合与日志记录路径。
+
+### 影响
+
+- **受影响用户**：使用 TUI Watch/Stack/Trace 后直接退出的用户，尤其是 cleanup 部分失败但顶层 reset 仍返回 success 的场景。
+- **持续时间**：reset cleanup_summary schema 引入后至 v0.1.18 修复。
+- **数据影响**：无持久数据损坏；影响是清理失败不可见，可能掩盖残留诊断资源。
+
+### 时间线
+
+| 时间 | 事件 |
+|------|------|
+| 2026-06-23 前 | TUI cleanup_for_exit 未完整解析 nested cleanup_summary |
+| 2026-06-23 | Watch cleanup 聚合 nested cleanup errors |
+| 2026-06-23 | Stack/Trace cleanup 同步记录 reset cleanup errors |
+
+### 经验教训
+
+#### 做得好的方面
+- 修复保持 TUI 退出路径 best-effort，不因 cleanup error 阻断退出。
+- 三个流式视图采用相同错误聚合结构，减少后续漂移。
+
+#### 可以改进的方面
+- cleanup_summary schema 变化缺少跨 CLI/TUI 消费者测试。
+- TUI 退出清理的日志可见性依赖 warning，未来可考虑在 Dashboard activity log 中展示。
+
+#### 行动项
+
+| 行动 | 优先级 | 状态 |
+|------|--------|------|
+| 为 Watch/Stack/Trace cleanup_for_exit 保留 nested cleanup_summary 日志测试 | P1 | 已完成 |
+| 将 cleanup_summary 错误聚合提取为 TUI 共享 helper，避免视图重复实现 | P2 | 待处理 |
+
+### 预防
+
+- **立即执行**：TUI cleanup 允许 best-effort，但禁止静默忽略结构化 cleanup errors。
+- **短期**：CLI/TUI 使用同一 `_has_cleanup_errors` 或等价 helper。
+- **长期**：将 cleanup_summary 纳入 Agent→CLI/TUI contract schema，变更时自动生成消费者测试。
+
+### 参考
+
+- 修复提交：`3e14f5e`, `64a4f32`, `1d33757`
 
 ---
 

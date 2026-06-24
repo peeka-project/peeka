@@ -5,13 +5,14 @@
 | **话题** | 进程 attach 就绪探测、会话文件清理、accept 循环时序与 agent 线程生命周期问题 |
 | **受影响组件** | core/attach, core/agent, tui process attach flow |
 | **最高严重级别** | SEV-0 (Critical) |
-| **事故次数** | 8 |
-| **时间跨度** | 2026-02-26 至 2026-06-07 |
+| **事故次数** | 9 |
+| **时间跨度** | 2026-02-26 至 2026-06-23 |
 
 ## 案例索引
 
 | # | 事故 | 严重级别 | 日期 |
 |---|------|----------|------|
+| [#9](#事故-9agent-stop-清理合同不完整与信号钩子恢复漂移) | Agent stop 清理合同不完整与信号钩子恢复漂移 | SEV-1 | 2026-06-23 |
 | [#8](#事故-8gdb-fallback-injector-build-路径误假设用户安装-uv) | GDB fallback injector build 路径误假设用户安装 uv | SEV-2 | 2026-06-07 |
 | [#7](#事故-7attach-异常路径未同步-_last_attach_error) | attach 异常路径未同步 `_last_attach_error` | SEV-2 | 2026-05-25 |
 | [#6](#事故-6attach-错误传播改进与-gdb-附加状态解析) | attach 错误传播改进与 GDB 附加状态解析 | SEV-2 | 2026-05-03 |
@@ -30,6 +31,137 @@
 2026-05-25 的新增事故说明，attach 链路的“错误可观测性”也是同一生命周期合同的一部分。`_attach_internal()` 在捕获异常后会返回 `False` 并发送 progress 事件，但若没有同步 `_last_attach_error`，CLI/TUI 上层只能看到泛化失败状态，无法稳定展示真实错误原因。
 
 2026-06-07 的新增事故说明，attach 的 fallback 路径不能依赖开发者本机工具链。`uv run python setup.py build_ext --inplace` 对仓库开发者方便，但用户容器或生产环境只保证有目标 Python 和编译依赖，不保证安装 uv。attach workflow 必须用当前解释器作为最小假设。
+
+2026-06-23 的新增事故把生命周期问题从 attach 建连阶段推进到 agent 退出阶段：`stop()` 不仅要关闭 socket 和清理会话文件，还必须停止资源所有命令、停止 ProbeContext、恢复 injector、清空 observer，并且只恢复 Peeka 自己仍然持有的 `SIGTERM` / `sys.excepthook` 钩子。退出清理合同不完整会让 detach/reset 看似成功，但目标进程中仍残留 wrapper、采样线程或被覆盖的宿主信号处理器。
+
+---
+
+## 事故 #9：Agent stop 清理合同不完整与信号钩子恢复漂移
+
+> **Tag 范围**：`v0.1.17` → `v0.1.18` | **严重级别**：SEV-1 | **日期**：2026-06-23
+
+### 概要
+
+`PeekaAgent.stop()` 曾主要负责停止 server、清理 session 文件和注销 agent 注册表，但没有把 resource-owning command、ProbeContext、injector wrapper、observer 状态和宿主钩子恢复统一纳入同一个可验证合同。结果是 detach、reset 或信号退出后，目标进程可能残留 monitor/top 采样资源、watch/trace/stack wrapper、ProbeContext 状态，或错误恢复非 Peeka 当前持有的 `SIGTERM` / `sys.excepthook` 钩子。
+
+### 根因分析
+
+#### 类别
+Resource Management / Integration Error
+
+#### 分析
+
+根因是 agent 生命周期的“退出”被分散实现：`stop()` 早期只覆盖 socket/session 文件层，resource owner 清理、probe context 停止、injector reset、observer 清空和 probe registry sweep 分散在 detach/reset 层或测试夹具中。`5551a91` 将 `shutdown_agent_resources(self, logger, ["watch", "trace", "stack", "monitor", "top"])` 接入 `PeekaAgent.stop()`，使 stop 成为统一清理入口。
+
+后续修复说明该入口仍有两个合同缺口：
+
+1. `stop_resource_owners_for_detach/reset()` 只记录 handler 抛出的异常，没有汇总 handler 返回值中的 `errors`，导致清理失败被吞掉。
+2. `stop_probe_contexts_by_type()` 使用通用 streaming 类型时会错误包含 monitor；而 monitor 是 resource-owning command 管理的资源，reset/stop-all 不应把它当成 injector-managed streaming probe 一并关闭。
+3. `signal.getsignal(signal.SIGTERM) is self._handle_sigterm` 使用 bound method 做身份比较不稳定；每次访问 bound method 都可能生成不同对象，导致 Peeka 无法可靠判断当前钩子是否仍由自己持有。
+
+关键修复片段：
+
+```python
+shutdown_agent_resources(
+    self, logger, ["watch", "trace", "stack", "monitor", "top"]
+)
+
+INJECTOR_MANAGED_STREAMING_PROBE_TYPES = frozenset({"watch", "trace", "stack"})
+
+self._sigterm_handler_ref = self._handle_sigterm
+self._prev_sigterm_handler = signal.signal(signal.SIGTERM, self._sigterm_handler_ref)
+...
+if signal.getsignal(signal.SIGTERM) is self._sigterm_handler_ref:
+    signal.signal(signal.SIGTERM, self._prev_sigterm_handler)
+```
+
+#### 致因提交
+
+| 提交 | 作者 | 日期 | 描述 |
+|------|------|------|------|
+| 致因提交无法确定性定位 | - | 2026-06-21 前 | agent stop、detach、reset 和 resource owner 清理分别演化，缺少统一关闭不变量 |
+
+### 复现
+
+#### 前置条件
+- 目标进程中存在 active watch/trace/stack 与 monitor/top 资源。
+- agent 注册过 `SIGTERM` 或 `sys.excepthook` 钩子。
+- 某个 resource-owning handler 在返回 dict 的 `errors` 字段中报告清理失败。
+
+#### 步骤
+1. 启动 monitor/top 后执行 detach 或触发 `agent.stop()`。
+2. 让 resource owner 返回 `{"errors": [...]}` 但不抛异常。
+3. 在宿主进程中修改 `SIGTERM` 或 `sys.excepthook` 后再调用 `stop()`。
+
+#### 预期行为
+所有 Peeka 资源被统一清理；返回式 cleanup error 被上层可见；只在当前钩子仍由 Peeka 持有时恢复旧钩子；宿主自定义钩子不被覆盖。
+
+#### 实际行为
+清理步骤分散且部分失败不可见；monitor ProbeContext 可能被错误归入 injector-managed stop-all；bound method 身份比较导致信号钩子恢复判断不可靠。
+
+### 修复
+
+#### 修复提交
+
+| 提交 | 作者 | 日期 | 描述 |
+|------|------|------|------|
+| [`5551a91`](https://github.com/peeka-project/peeka/commit/5551a91befd2071b75e108ba23fbad9d441101ee) | lufeihaidao | 2026-06-21 | fix(agent): complete stop() resource cleanup invariants |
+| [`aa03ee2`](https://github.com/peeka-project/peeka/commit/aa03ee23f8a7d014074a623254f88961daabab74) | lufeihaidao | 2026-06-21 | fix(agent): honor target SIGTERM disposition (SIG_DFL/callable/SIG_IGN) |
+| [`7b0b8fb`](https://github.com/peeka-project/peeka/commit/7b0b8fb334f74a1962d7fd495a3dfe4f3b5267d0) | lufeihaidao | 2026-06-23 | fix(lifecycle): propagate resource-owner returned errors, add injector_managed_streaming_types, guard hook restoration |
+| [`bdaf7b9`](https://github.com/peeka-project/peeka/commit/bdaf7b9665fdaf8417ee0b5b21ac97c5f11ca2a1) | lufeihaidao | 2026-06-23 | fix(agent): store stable SIGTERM handler reference for guard comparison |
+
+#### 变更内容
+- `PeekaAgent.stop()` 增加幂等 `_stopped/_stop_lock` 保护，并调用 `shutdown_agent_resources()` 执行 resource owner、ProbeContext、injector、observer 和 registry sweep。
+- `stop_resource_owners_for_detach/reset()` 汇总返回式 `errors`，不再只捕获异常。
+- 新增 `ProbeContext.injector_managed_streaming_types()`，把 watch/trace/stack 与 monitor 生命周期边界拆开。
+- `SIGTERM` 处理遵守宿主原有 `SIG_DFL`、callable 和 `SIG_IGN` 语义；钩子恢复使用稳定 `_sigterm_handler_ref` 与 `_peeka_excepthook_ref` 做 guard。
+
+#### 验证
+相关修复提交补充了 `tests/test_agent_stop_invariants.py`、`tests/test_agent_excepthook.py`、`tests/test_lifecycle_helper.py`、`tests/test_probe_registry_sweep.py` 等生命周期回归测试；`7b0b8fb` 的提交说明覆盖 returned errors、injector-managed probe types 和 hook restoration 三组测试。
+
+### 影响
+
+- **受影响用户**：频繁 attach/detach、使用 reset、monitor/top、TUI 退出清理或依赖宿主信号处理器的用户。
+- **持续时间**：无法从 git 历史确定；缺口在 resource-owning command 和 ProbeContext 引入后逐步累积，至 v0.1.18 修复。
+- **数据影响**：无持久数据损坏；风险是目标进程残留诊断 wrapper/采样线程或宿主信号钩子被错误恢复。
+
+### 时间线
+
+| 时间 | 事件 |
+|------|------|
+| 2026-06-21 前 | agent stop 未统一覆盖所有 Peeka 资源和宿主钩子恢复合同 |
+| 2026-06-21 | `5551a91` 将 `shutdown_agent_resources()` 接入 `stop()` |
+| 2026-06-21 | `aa03ee2` 修复 SIGTERM 原始 disposition 传播 |
+| 2026-06-23 | `7b0b8fb` 暴露 returned errors、probe type 边界和 hook guard |
+| 2026-06-23 | `bdaf7b9` 使用稳定 handler reference 修复 bound method 身份比较 |
+
+### 经验教训
+
+#### 做得好的方面
+- 生命周期清理被抽象为 `shutdown_agent_resources()`，后续命令可通过 `ResourceOwningCommand.cleanup_scope` 自动接入。
+- 修复同时覆盖正常 detach、reset、signal 和 excepthook 退出路径。
+
+#### 可以改进的方面
+- 初始 resource owner 合同只规定了调用入口，没有规定“返回式错误必须向上冒泡”。
+- 信号钩子恢复使用 Python bound method 身份比较，说明 hook ownership 需要稳定 token，而非临时对象。
+
+#### 行动项
+
+| 行动 | 优先级 | 状态 |
+|------|--------|------|
+| 为所有 lifecycle cleanup helper 保留“异常 + 返回式 errors”双路径测试 | P0 | 已完成 |
+| 将 watch/trace/stack 与 monitor/top 的 lifecycle ownership 写入架构文档 | P1 | 待处理 |
+| 对所有宿主全局钩子恢复逻辑统一使用稳定引用或 token guard | P1 | 待处理 |
+
+### 预防
+
+- **立即执行**：agent 退出必须通过统一 shutdown helper，禁止新增绕过 helper 的清理路径。
+- **短期**：清理结果 schema 固定为 step errors + resource owner errors + probe context errors，并在 CLI/TUI 层可见。
+- **长期**：建立生命周期状态机测试矩阵，覆盖 detach/reset/stop/signal/excepthook/重复调用。
+
+### 参考
+
+- 修复提交：`5551a91`, `aa03ee2`, `7b0b8fb`, `bdaf7b9`
 
 ---
 

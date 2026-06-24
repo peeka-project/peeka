@@ -5,13 +5,14 @@
 | **话题** | CLI 到 Agent 的命令分发、参数键和 JSONL payload 契约不一致问题，以及 CLI run 命令实现缺陷 |
 | **受影响组件** | cli/main.py, core/output.py, core/bootstrap.py, core/injector.py, commands/monitor.py, tests/container/ |
 | **最高严重级别** | SEV-1 (High) |
-| **事故次数** | 7 |
-| **时间跨度** | 2026-01-29 至 2026-06-07 |
+| **事故次数** | 8 |
+| **时间跨度** | 2026-01-29 至 2026-06-23 |
 
 ## 案例索引
 
 | # | 事故 | 严重级别 | 日期 |
 |---|------|----------|------|
+| [#8](#事故-8streaming-本地限制与-cleanup_summary-可见性契约漂移) | Streaming 本地限制与 cleanup_summary 可见性契约漂移 | SEV-2 | 2026-06-23 |
 | [#7](#事故-7session-control-plane-多目标路由与-probe-契约缺口) | session control-plane 多目标路由与 probe 契约缺口 | SEV-2 | 2026-06-07 |
 | [#6](#事故-6容器诊断-cli-兼容性回归) | 容器诊断 CLI 兼容性回归 | SEV-2 | 2026-05-27 |
 | [#5](#事故-5peeka-cli-run-命令-outputformatter-stdout-捕获缺陷及多处实现问题) | peeka-cli run 命令 OutputFormatter stdout 捕获缺陷及多处实现问题 | SEV-2 | 2026-04-03 |
@@ -31,6 +32,128 @@
 2026-05-27 新增第六类问题：容器级诊断测试暴露了 CLI shell 参数拼接、logger 参数别名、monitor 统计字段、instance method 参数语义、stack observation 兼容字段和 TUI smoke 覆盖之间的多点契约漂移。这类问题不一定表现为单个命令完全不可用，但会让真实容器中的 CLI/TUI 工作流出现断言失败、条件表达式误判或输出字段缺失。
 
 2026-06-07 新增第七类问题：session/control-plane 重构引入了 target、client、job、probe、consumer 和 dx 等新命名空间，但 CLI 侧 target 解析、agent 侧响应 envelope、probe/job 生命周期和 streaming observation 路由没有一次性用跨命名空间契约测试冻结。问题不是某个单点命令拼错，而是“对象模型扩展后，入口、路由、生命周期和输出 schema 同步不足”。
+
+2026-06-23 新增第八类问题：streaming CLI 的本地 `-n` 限制、active stream filtering、cleanup stop-by-id、`peeka-cli run` 的 stop cleanup、以及 reset 的 `cleanup_summary` 退出码语义在 v0.1.18 生命周期加固中集中漂移。共同模式是“命令成功状态”和“资源清理成功状态”被混为一谈，导致输出条数、停止对象和退出码无法可靠代表真实资源状态。
+
+---
+
+## 事故 #8：Streaming 本地限制与 cleanup_summary 可见性契约漂移
+
+> **Tag 范围**：`v0.1.17` → `v0.1.18` | **严重级别**：SEV-2 | **日期**：2026-06-23
+
+### 概要
+
+v0.1.18 前后，CLI streaming 命令在 `-n` 本地限制、流 ID 过滤、stop cleanup 和 reset 错误可见性上出现一组契约漂移：trace/stack 曾让 agent-side `times` 提前停止生产；unrelated OBS/LOG 帧会被计入本地限制；stack stop 使用错误 ID 键导致 cleanup 跳过；monitor/top 流没有按 active stream id 过滤；reset 即使 cleanup_summary 中有错误也返回 0。用户会看到输出条数不等于请求条数、无关流触发提前退出、cleanup 未停止真实资源，或自动化脚本误判 reset 成功。
+
+### 根因分析
+
+#### 类别
+Contract Drift / Missing Validation
+
+#### 分析
+
+CLI streaming 层的合同实际包含三部分：
+
+1. **打印计数合同**：`-n N` 应表示“打印 N 条属于当前 stream 的 observation”，而不是 agent 内部产生 N 次、也不是任意帧 N 条。
+2. **资源停止合同**：本地限制到达后只能停止当前 stream id 对应的资源，不应按 pattern broad reset，也不应因 ID 键不一致跳过 cleanup。
+3. **退出码合同**：命令主动作成功但 cleanup 有错误时，退出码不能仍表示完全成功。
+
+修复前这些合同分散在各 command handler 中，trace/stack、watch、monitor/top、run 和 reset 分别维护本地逻辑，导致字段名和语义反复漂移。例如 stack start 返回 `watch_id`，但 CLI 按 `stack_id` 读取；`counted_limit()` 对每个 yielded frame 递增，LOG 帧或其他 probe 的 OBS 也会触发退出；`reset` 只看 `response["status"]`，忽略 nested `cleanup_summary`。
+
+关键修复思路是引入 `stream_counted_limit(attr_name, stream_id_key)`，在 `emit_started` 后设置 active stream id，只对匹配当前 stream 的 observation 计数；cleanup 只发送 stop-by-id；`cmd_reset()` 使用 `_has_cleanup_errors(cleanup_summary)` 将 cleanup error 映射为退出码 2。
+
+#### 致因提交
+
+| 提交 | 作者 | 日期 | 描述 |
+|------|------|------|------|
+| 致因提交无法确定性定位 | - | 2026-06-13 前 | streaming CLI handler、agent streaming observation 和 reset cleanup summary 分别演化，缺少端到端 contract matrix |
+
+### 复现
+
+#### 前置条件
+- 同一 agent 中存在多个同时活跃的 watch/trace/stack/monitor/top stream。
+- CLI 使用 `-n` 本地限制或 `peeka-cli run` 启动短生命周期脚本。
+- reset 响应包含 nested `cleanup_summary.resource_owners.errors` 或 `probe_contexts.errors`。
+
+#### 步骤
+1. 同时启动两个 streaming probe，其中一个持续输出 LOG 或 OBS。
+2. 对另一个执行 `peeka-cli trace ... -n 2` 或 `peeka-cli stack ... -n 2`。
+3. 观察输出条数与 cleanup 后 active probe 状态。
+4. 构造 reset cleanup 返回 errors，执行 `peeka-cli reset` 并检查退出码。
+
+#### 预期行为
+只统计当前 stream 的 observation；达到限制后 stop 对应 stream id；其他 probe 不受影响；cleanup error 使 reset 返回非零退出码。
+
+#### 实际行为
+无关帧可能触发提前退出；agent-side times 可能在 CLI 打印足够记录前停止生产；stack cleanup 因 ID 键不匹配跳过；reset cleanup error 仍返回 0。
+
+### 修复
+
+#### 修复提交
+
+| 提交 | 作者 | 日期 | 描述 |
+|------|------|------|------|
+| [`65bf50e`](https://github.com/peeka-project/peeka/commit/65bf50e2442495378afed594a7d0b1d21e72ed01) | lufeihaidao | 2026-06-13 | fix(trace): count emitted observations for times limit |
+| [`afb71fc`](https://github.com/peeka-project/peeka/commit/afb71fcb0ed8805514b634bd06f4f1be40e4f021) | lufeihaidao | 2026-06-13 | fix(stack): count emitted observations for times limit |
+| [`2359842`](https://github.com/peeka-project/peeka/commit/2359842b0dfdb959b873521d44a0ec83f5b40600) | lufeihaidao | 2026-06-13 | fix(cli): disable agent times gate for trace stack local count |
+| [`5ce19d4`](https://github.com/peeka-project/peeka/commit/5ce19d4aa397d5a01563b10f68ec13c04fdc3b77) | lufeihaidao | 2026-06-14 | fix(cli): stop stack probes by watch id |
+| [`474fb41`](https://github.com/peeka-project/peeka/commit/474fb41c4a10a8e758e5e2764732e430e81ea464) | lufeihaidao | 2026-06-14 | fix(cli): count only active stream records for limits |
+| [`e6b5fcd`](https://github.com/peeka-project/peeka/commit/e6b5fcd368bf6bc51bca7c74c712dde3d6affd6a) | lufeihaidao | 2026-06-16 | fix(cli): filter monitor/top streams by active stream id |
+| [`0ee18dc`](https://github.com/peeka-project/peeka/commit/0ee18dced8d4acc19e983dee3c41435c5863f214) | lufeihaidao | 2026-06-16 | fix(cli): add local limit and stream filtering to run handler |
+| [`59b7c6f`](https://github.com/peeka-project/peeka/commit/59b7c6f9bd66d75bf145bcd74498189d94546dcf) | lufeihaidao | 2026-06-23 | fix(cli): reset returns non-zero exit code when cleanup errors exist |
+
+#### 变更内容
+- trace/stack CLI 发送 `times=-1` 给 agent，由 CLI 本地只统计已打印 observation。
+- 新增 `stream_counted_limit()`，以 active `watch_id`/`monitor_id`/`top_id` 过滤当前 stream。
+- stack cleanup 改用 `watch_id`，避免 `stream_id=None` 跳过 stop。
+- `run` handler 使用同一套 stream_counted_limit 和 stop command，在 limit hit 后通过新连接停止对应资源而不是 detach 子进程。
+- `cmd_reset()` 在 `cleanup_summary` 含错误时记录 warning 并返回退出码 2。
+
+#### 验证
+修复提交包含 `tests/test_trace.py`、`tests/test_stack.py`、`tests/test_monitor.py`、`tests/test_reset.py`、CLI run handler 相关回归测试；`79ad2d8` 后关联 16 个 probe lifecycle regression tests 通过。
+
+### 影响
+
+- **受影响用户**：依赖 CLI `-n` 精确采样、并发 streaming probe、`peeka-cli run` 自动 cleanup、或在脚本中使用 reset 退出码的用户。
+- **持续时间**：同一 v0.1.18 开发周期内集中发现并修复。
+- **数据影响**：无持久数据损坏；输出计数和资源状态可能误导自动化工具。
+
+### 时间线
+
+| 时间 | 事件 |
+|------|------|
+| 2026-06-13 | trace/stack emitted observation count 问题被修复 |
+| 2026-06-14 | stack cleanup ID 键和 active stream filtering 修复 |
+| 2026-06-16 | monitor/top/run handler 接入本地 stream filtering 与 stop cleanup |
+| 2026-06-23 | reset cleanup_summary 错误映射为非零退出码 |
+
+### 经验教训
+
+#### 做得好的方面
+- 修复将 `-n` 语义固定到“当前 stream 已打印记录”，更接近用户直觉和脚本需求。
+- reset 引入退出码 2，保留主动作成功与 cleanup 部分失败的区别。
+
+#### 可以改进的方面
+- Streaming 命令共享的计数、ID 和 cleanup 合同应更早抽到公共 helper，避免每个命令重复维护。
+- cleanup_summary schema 变更时缺少 CLI/TUI 可见性测试。
+
+#### 行动项
+
+| 行动 | 优先级 | 状态 |
+|------|--------|------|
+| 所有 streaming CLI handler 必须使用 shared stream_counted_limit 或显式说明例外 | P0 | 已完成 |
+| 为 reset cleanup_summary 增加 CLI 退出码 contract test | P0 | 已完成 |
+| 建立 `-n`、stream id、stop command、exit code 的命令契约表 | P1 | 待处理 |
+
+### 预防
+
+- **立即执行**：CLI streaming cleanup 只允许 stop-by-id，禁止隐式 pattern reset。
+- **短期**：对 watch/trace/stack/monitor/top/run 统一跑并发 stream + unrelated OBS/LOG 回归测试。
+- **长期**：从 shared schema 生成 stream id key、response id key 和 stop command builder。
+
+### 参考
+
+- 修复提交：`65bf50e`, `afb71fc`, `2359842`, `5ce19d4`, `474fb41`, `e6b5fcd`, `0ee18dc`, `59b7c6f`
 
 ---
 
