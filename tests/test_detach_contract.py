@@ -4,6 +4,7 @@ Contract tests for DetachCommand resource cleanup.
 # regression: c03971e
 """
 
+import logging
 import sys
 import threading
 from types import ModuleType
@@ -37,6 +38,11 @@ class _ContractAgent:
 
     def stop(self) -> None:
         self._stop_calls += 1
+        from peeka.core.agent_control.lifecycle import stop_resource_owners_for_detach
+
+        stop_resource_owners_for_detach(self, logging.getLogger(__name__))
+        self.injector.uninject_all()
+        self.observer.clear_all()
 
 
 @pytest.mark.integration

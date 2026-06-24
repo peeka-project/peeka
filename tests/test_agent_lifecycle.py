@@ -108,6 +108,9 @@ class _MockAgentWithProbes:
 
     def stop(self) -> None:
         self.stop_called = True
+        self.stop_probe_contexts_by_type(self.list_tracked_probe_types())
+        self.injector.uninject_all()
+        self.observer.clear_all()
 
     def register_stream(
         self,
