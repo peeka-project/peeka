@@ -4,6 +4,9 @@ The current CLI detach handler reports success even when the agent returns
 cleanup summary errors.
 """
 
+import json as _json
+from typing import cast
+
 import pytest
 
 import peeka.cli.handlers.attach as attach_module
@@ -26,7 +29,7 @@ class MockStreamingClient:
         return {
             "status": "success",
             "cleanup_summary": {
-                "step_errors": ["owner foo failed"],
+                "step_errors": {"uninject_all": "owner foo failed"},
                 "resource_owners": {
                     "errors": [
                         {"handler": "FooCommand", "error": "cleanup blew up"}
@@ -41,7 +44,9 @@ class MockStreamingClient:
 
 class TestDetachCleanupSummaryVisibility:
     def test_cmd_detach_reports_cleanup_summary_errors(
-        self, monkeypatch: pytest.MonkeyPatch
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         monkeypatch.setattr(
             attach_module,
@@ -55,4 +60,19 @@ class TestDetachCleanupSummaryVisibility:
         assert result == 2, (
             "detach should return a cleanup-error exit code when cleanup_summary "
             f"contains errors, got {result}"
+        )
+
+        captured = capsys.readouterr()
+        warning_found = False
+        for line in captured.out.splitlines():
+            try:
+                data = cast(dict[str, object], _json.loads(line))
+                if data.get("type") == "warning" and data.get("command") == "detach":
+                    warning_found = True
+                    break
+            except (ValueError, KeyError):
+                continue
+        assert warning_found, (
+            "Expected a JSON warning line on stdout with type='warning' and command='detach', "
+            f"got stdout: {captured.out!r}"
         )

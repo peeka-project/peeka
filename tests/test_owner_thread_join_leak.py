@@ -59,8 +59,12 @@ class TestOwnerThreadJoinLeak:
     def _build_monitor_command(self) -> MonitorCommand:
         cmd = MonitorCommand(_MonitorAgentStub())
         watch_id = "monitor_leak"
-        original = lambda: None
-        wrapper = lambda: None
+        def original() -> None:
+            pass
+
+        def wrapper() -> None:
+            pass
+
         owner = type("_Owner", (), {"target": original})()
         cmd._monitors[watch_id] = {
             "pattern": "*",
