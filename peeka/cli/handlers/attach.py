@@ -1,7 +1,5 @@
 """Attach and detach CLI handlers."""
 
-# pyright: reportPrivateUsage=false, reportUnknownParameterType=false, reportMissingParameterType=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnusedParameter=false, reportAny=false
-
 import json
 from pathlib import Path
 
