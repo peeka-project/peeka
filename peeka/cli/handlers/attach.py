@@ -2,9 +2,11 @@
 
 # pyright: reportPrivateUsage=false, reportUnknownParameterType=false, reportMissingParameterType=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnusedParameter=false, reportAny=false
 
+import json
 from pathlib import Path
 
 from peeka.cli.sessions import _check_agent_attached
+from peeka.core.agent_control.lifecycle import _has_cleanup_errors
 from peeka.core.attach import ProcessAttacher
 from peeka.core.client import StreamingAgentClient
 from peeka.core.output import OutputFormatter
@@ -52,6 +54,8 @@ def cmd_detach(args) -> int:
 
     response = streaming_client.send_command({"type": "detach"})
 
+    exit_code = 0
+
     if response.get("status") == "success":
         OutputFormatter.success(
             "detach",
@@ -62,6 +66,20 @@ def cmd_detach(args) -> int:
                 ),
             },
         )
+        cleanup_summary = response.get("cleanup_summary", {})
+        if _has_cleanup_errors(cleanup_summary):
+            exit_code = 2
+            print(
+                json.dumps(
+                    {
+                        "type": "warning",
+                        "command": "detach",
+                        "message": "Detach completed with cleanup errors",
+                        "cleanup_summary": cleanup_summary,
+                    }
+                ),
+                flush=True,
+            )
     else:
         OutputFormatter.error("detach", error=response.get("error", "Detach failed"))
 
@@ -77,4 +95,4 @@ def cmd_detach(args) -> int:
         ready_file.unlink(missing_ok=True)
         sock_file.unlink(missing_ok=True)
 
-    return 0 if response.get("status") == "success" else 1
+    return exit_code if response.get("status") == "success" else 1

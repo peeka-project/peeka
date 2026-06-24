@@ -179,6 +179,9 @@ def _has_cleanup_errors(cleanup_summary: Dict[str, Any]) -> bool:
     """Return True if any cleanup layer reported errors."""
     if not isinstance(cleanup_summary, dict):
         return False
+    step_errors = cleanup_summary.get("step_errors", [])
+    if isinstance(step_errors, list) and step_errors:
+        return True
     layers = ("resource_owners", "probe_contexts", "injector")
     for layer in layers:
         layer_summary = cleanup_summary.get(layer, {})
