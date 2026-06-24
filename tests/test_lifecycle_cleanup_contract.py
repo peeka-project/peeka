@@ -105,7 +105,7 @@ class TestT1ErrorAggregation:
 
         ro = result["resource_owners"]
         assert ro["errors"] == [{"handler": "ErrorOwner", "error": "partial_fail"}]
-        assert "ErrorOwner" not in ro["handlers_stopped"]
+        assert "_ErrorReturningOwner" in ro["handlers_stopped"]
 
     def test_exception_in_handler_propagates_into_resource_owners_errors(self) -> None:
         agent = _make_agent({"a": _RaisingOwner()})
