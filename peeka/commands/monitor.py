@@ -379,8 +379,10 @@ class MonitorCommand(ResourceOwningCommand):
 
             # Wait for timer thread to finish (short timeout)
             timer_thread = monitor_info.get("timer_thread")
+            timer_thread_alive = False
             if timer_thread:
                 timer_thread.join(timeout=2)
+                timer_thread_alive = timer_thread.is_alive()
 
             injector = getattr(self.agent, "injector", None)
             instrumented = getattr(injector, "instrumented", {})
@@ -476,6 +478,9 @@ class MonitorCommand(ResourceOwningCommand):
                     pass
 
         # Get final statistics
+        if timer_thread_alive:
+            return {"status": "error", "error": "timer thread still alive after join timeout"}
+
         final_stats = self.manager.stop_monitor(watch_id)
         if final_stats is None:
             final_stats = {}

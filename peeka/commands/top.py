@@ -213,10 +213,15 @@ class TopCommand(ResourceOwningCommand):
             self._stop_event.set()
 
         # Wait for threads to finish (outside lock to avoid deadlock)
+        thread_errors = []
         if self._sampling_thread:
             self._sampling_thread.join(timeout=2.0)
+            if self._sampling_thread.is_alive():
+                thread_errors.append("sampling thread still alive after join timeout")
         if self._observation_thread:
             self._observation_thread.join(timeout=2.0)
+            if self._observation_thread.is_alive():
+                thread_errors.append("observation thread still alive after join timeout")
 
         # Unregister watch
         if self.agent and top_id:
@@ -232,6 +237,9 @@ class TopCommand(ResourceOwningCommand):
             self._top_id = None
             self._client_session_id = None
             self._job_id = None
+
+        if thread_errors:
+            return {"status": "error", "error": "; ".join(thread_errors)}
 
         return {
             "status": "success",
