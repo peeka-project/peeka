@@ -150,3 +150,49 @@ def test_discover_python_processes_names_module_workload(
 
     assert len(discovered) == 1
     assert discovered[0].name == "package.worker"
+
+
+def test_discover_python_processes_falls_back_to_ps_without_proc(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    missing_proc = tmp_path / "missing-proc"
+    ps_output = "\n".join(
+        [
+            " 101 /usr/bin/python3.12 /usr/bin/python3.12 /app/target.py",
+            " 202 /bin/bash /bin/bash",
+            " 303 /usr/bin/python3.12 /usr/bin/python3.12 -m peeka.tui",
+        ]
+    )
+
+    monkeypatch.setattr(processes, "PROC_DIR", missing_proc)
+    monkeypatch.setattr(processes.os, "getpid", lambda: 999)
+    monkeypatch.setattr(processes.subprocess, "check_output", lambda *args, **kwargs: ps_output)
+
+    discovered = processes.discover_python_processes()
+    unfiltered = processes.discover_python_processes(exclude_peeka_tools=False)
+
+    assert [process.pid for process in discovered] == [101]
+    assert discovered[0].name == "target.py"
+    assert discovered[0].command == "/usr/bin/python3.12 /app/target.py"
+    assert discovered[0].python_version == "3.12"
+    assert [process.pid for process in unfiltered] == [101, 303]
+
+
+def test_discover_python_processes_ps_fallback_excludes_current_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    missing_proc = tmp_path / "missing-proc"
+    ps_output = "\n".join(
+        [
+            " 101 /usr/bin/python3.12 /usr/bin/python3.12 /app/target.py",
+            " 404 /usr/bin/python3.12 /usr/bin/python3.12 /app/current.py",
+        ]
+    )
+
+    monkeypatch.setattr(processes, "PROC_DIR", missing_proc)
+    monkeypatch.setattr(processes.os, "getpid", lambda: 404)
+    monkeypatch.setattr(processes.subprocess, "check_output", lambda *args, **kwargs: ps_output)
+
+    discovered = processes.discover_python_processes()
+
+    assert [process.pid for process in discovered] == [101]

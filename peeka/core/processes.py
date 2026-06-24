@@ -2,6 +2,8 @@
 
 import os
 import re
+import shlex
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List
@@ -35,11 +37,11 @@ def discover_python_processes(
         exclude_peeka_tools: Whether to omit Peeka CLI/TUI helper processes.
 
     Returns:
-        Sorted list of visible Python interpreter processes. Returns an empty
-        list on non-/proc platforms.
+        Sorted list of visible Python interpreter processes. Uses /proc when
+        available, then falls back to ps on platforms such as macOS.
     """
     if not PROC_DIR.exists():
-        return []
+        return _discover_python_processes_with_ps(exclude_current, exclude_peeka_tools)
 
     current_pid = os.getpid()
     processes = []
@@ -62,9 +64,78 @@ def discover_python_processes(
 
 def _read_python_process(proc_entry: Path, pid: int) -> Optional[PythonProcess]:
     cmdline_parts = _read_cmdline_parts(proc_entry / "cmdline")
-    command = " ".join(cmdline_parts)
     comm = _read_text(proc_entry / "comm")
     executable = _read_executable(proc_entry / "exe")
+
+    return _python_process_from_fields(
+        pid=pid,
+        cmdline_parts=cmdline_parts,
+        comm=comm,
+        executable=executable,
+        created_at=_get_created_at(proc_entry),
+    )
+
+
+def _discover_python_processes_with_ps(
+    exclude_current: bool, exclude_peeka_tools: bool
+) -> List[PythonProcess]:
+    """Discover Python processes using ps on platforms without /proc."""
+    try:
+        output = subprocess.check_output(
+            ["ps", "-axo", "pid=,comm=,command="],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+
+    current_pid = os.getpid()
+    processes = []
+    for line in output.splitlines():
+        parts = line.strip().split(None, 2)
+        if len(parts) < 2:
+            continue
+
+        try:
+            pid = int(parts[0])
+        except ValueError:
+            continue
+
+        if exclude_current and pid == current_pid:
+            continue
+
+        executable = parts[1]
+        command = parts[2] if len(parts) == 3 else executable
+        try:
+            cmdline_parts = shlex.split(command)
+        except ValueError:
+            cmdline_parts = command.split()
+        comm = Path(executable).name
+
+        process = _python_process_from_fields(
+            pid=pid,
+            cmdline_parts=cmdline_parts,
+            comm=comm,
+            executable=executable,
+            created_at=0.0,
+        )
+        if process is None:
+            continue
+        if exclude_peeka_tools and _is_peeka_tool_process(process.command):
+            continue
+        processes.append(process)
+
+    return sorted(processes, key=lambda process: (process.created_at, process.pid))
+
+
+def _python_process_from_fields(
+    pid: int,
+    cmdline_parts: List[str],
+    comm: str,
+    executable: str,
+    created_at: float,
+) -> Optional[PythonProcess]:
+    command = " ".join(cmdline_parts)
 
     if not _looks_like_python(executable, cmdline_parts, comm):
         return None
@@ -81,7 +152,7 @@ def _read_python_process(proc_entry: Path, pid: int) -> Optional[PythonProcess]:
         command=display_command,
         executable=executable,
         python_version=python_version,
-        created_at=_get_created_at(proc_entry),
+        created_at=created_at,
     )
 
 
