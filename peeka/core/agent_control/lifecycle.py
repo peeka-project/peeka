@@ -31,6 +31,7 @@ def shutdown_agent_resources(
     steps_run: List[str] = []
     step_errors: Dict[str, str] = {}
     resource_owners_summary: Dict[str, Any] = {"handlers_stopped": [], "errors": []}
+    probe_contexts_summary: Dict[str, Any] = {"errors": []}
 
     def run_step(step_name: str, step_callable: Any) -> Optional[Any]:
         try:
@@ -54,7 +55,14 @@ def shutdown_agent_resources(
     if isinstance(resource_owners_result, dict):
         resource_owners_summary = resource_owners_result
 
-    run_step("stop_probe_contexts", lambda: agent.stop_probe_contexts_by_type(probe_types))
+    probe_contexts_result = run_step(
+        "stop_probe_contexts", lambda: agent.stop_probe_contexts_by_type(probe_types)
+    )
+    if isinstance(probe_contexts_result, dict):
+        exit_errors = probe_contexts_result.get("exit_errors", [])
+        if isinstance(exit_errors, list):
+            probe_contexts_summary["errors"] = exit_errors
+
     run_step("uninject_all", agent.injector.uninject_all)
     run_step("clear_all", agent.observer.clear_all)
     run_step(
@@ -72,6 +80,7 @@ def shutdown_agent_resources(
         "steps_run": steps_run,
         "step_errors": step_errors,
         "resource_owners": resource_owners_summary,
+        "probe_contexts": probe_contexts_summary,
     }
 
 

@@ -102,8 +102,12 @@ class ResetCommand(BaseCommand):
                         stream_keys.append(stream_key)
             for stream_key in stream_keys:
                 try:
-                    stop_context(stream_key)
-                    probe_context_stopped.append(stream_key)
+                    stop_result = stop_context(stream_key)
+                    exit_error = stop_result.get("exit_error") if isinstance(stop_result, dict) else None
+                    if exit_error is not None:
+                        probe_context_errors.append(exit_error)
+                    else:
+                        probe_context_stopped.append(stream_key)
                 except Exception as exc:
                     probe_context_errors.append({"stream_key": stream_key, "error": str(exc)})
 

@@ -32,26 +32,28 @@ class AgentProbeControlMixin:
         self,
         stream_key: str,
         exc_info: Optional[Tuple[Any, Any, Any]] = None,
-    ) -> None:
+    ) -> Optional[Dict[str, Any]]:
         """Stop and forget an active probe context."""
         with self._probe_context_lock:
             probe_context = self._probe_contexts.pop(stream_key, None)
             self._probe_context_types.pop(stream_key, None)
 
         if probe_context is None:
-            return
+            return None
 
         try:
             if exc_info is None:
                 probe_context.__exit__(None, None, None)
             else:
                 probe_context.__exit__(exc_info[0], exc_info[1], exc_info[2])
-        except Exception:
+        except Exception as exc:
             _LOGGER.error(
                 "[peeka Probes] probe_context.__exit__ failed for stream_key=%r",
                 stream_key,
                 exc_info=True,
             )
+            return {"exit_error": {"stream_key": stream_key, "error": str(exc)}}
+        return None
 
     def untrack_probe_context(self, stream_key: str) -> None:
         """Forget an active probe context without closing it."""
@@ -70,7 +72,7 @@ class AgentProbeControlMixin:
                     return stream_key, probe_type
         return None
 
-    def stop_probe_contexts_by_type(self, probe_types: List[str]) -> None:
+    def stop_probe_contexts_by_type(self, probe_types: List[str]) -> Dict[str, Any]:
         """Stop all tracked probe contexts whose type matches *probe_types*."""
         with self._probe_context_lock:
             stream_keys = [
@@ -79,8 +81,12 @@ class AgentProbeControlMixin:
                 if probe_type in probe_types
             ]
 
+        exit_errors: List[Dict[str, Any]] = []
         for stream_key in stream_keys:
-            self.stop_probe_context(stream_key)
+            result = self.stop_probe_context(stream_key)
+            if isinstance(result, dict) and "exit_error" in result:
+                exit_errors.append(result["exit_error"])
+        return {"exit_errors": exit_errors}
 
     def list_tracked_probe_types(self) -> List[str]:
         """Return a snapshot of currently tracked probe-context types.
