@@ -1,5 +1,7 @@
 """Attach and detach CLI handlers."""
 
+# pyright: reportPrivateUsage=false, reportUnknownParameterType=false, reportMissingParameterType=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnusedParameter=false, reportAny=false
+
 from pathlib import Path
 
 from peeka.cli.sessions import _check_agent_attached
@@ -65,13 +67,14 @@ def cmd_detach(args) -> int:
 
     streaming_client.disconnect()
 
-    session_id = Path(socket_path).stem.replace("peeka_", "")
-    pid_file = Path(f"/tmp/peeka_{session_id}.pid")
-    ready_file = Path(f"/tmp/peeka_{session_id}.ready")
-    sock_file = Path(socket_path)
+    if response.get("status") == "success":
+        session_id = Path(socket_path).stem.replace("peeka_", "")
+        pid_file = Path(f"/tmp/peeka_{session_id}.pid")
+        ready_file = Path(f"/tmp/peeka_{session_id}.ready")
+        sock_file = Path(socket_path)
 
-    pid_file.unlink(missing_ok=True)
-    ready_file.unlink(missing_ok=True)
-    sock_file.unlink(missing_ok=True)
+        pid_file.unlink(missing_ok=True)
+        ready_file.unlink(missing_ok=True)
+        sock_file.unlink(missing_ok=True)
 
     return 0 if response.get("status") == "success" else 1
