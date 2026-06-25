@@ -5,13 +5,14 @@
 | **话题** | 进程 attach 就绪探测、会话文件清理、accept 循环时序与 agent 线程生命周期问题 |
 | **受影响组件** | core/attach, core/agent, tui process attach flow |
 | **最高严重级别** | SEV-0 (Critical) |
-| **事故次数** | 9 |
-| **时间跨度** | 2026-02-26 至 2026-06-23 |
+| **事故次数** | 10 |
+| **时间跨度** | 2026-02-26 至 2026-06-25 |
 
 ## 案例索引
 
 | # | 事故 | 严重级别 | 日期 |
 |---|------|----------|------|
+| [#10](#事故-10probecontext-退出失败与-monitor-top-停止超时未暴露) | ProbeContext 退出失败与 monitor/top 停止超时未暴露 | SEV-2 | 2026-06-25 |
 | [#9](#事故-9agent-stop-清理合同不完整与信号钩子恢复漂移) | Agent stop 清理合同不完整与信号钩子恢复漂移 | SEV-1 | 2026-06-23 |
 | [#8](#事故-8gdb-fallback-injector-build-路径误假设用户安装-uv) | GDB fallback injector build 路径误假设用户安装 uv | SEV-2 | 2026-06-07 |
 | [#7](#事故-7attach-异常路径未同步-_last_attach_error) | attach 异常路径未同步 `_last_attach_error` | SEV-2 | 2026-05-25 |
@@ -33,6 +34,129 @@
 2026-06-07 的新增事故说明，attach 的 fallback 路径不能依赖开发者本机工具链。`uv run python setup.py build_ext --inplace` 对仓库开发者方便，但用户容器或生产环境只保证有目标 Python 和编译依赖，不保证安装 uv。attach workflow 必须用当前解释器作为最小假设。
 
 2026-06-23 的新增事故把生命周期问题从 attach 建连阶段推进到 agent 退出阶段：`stop()` 不仅要关闭 socket 和清理会话文件，还必须停止资源所有命令、停止 ProbeContext、恢复 injector、清空 observer，并且只恢复 Peeka 自己仍然持有的 `SIGTERM` / `sys.excepthook` 钩子。退出清理合同不完整会让 detach/reset 看似成功，但目标进程中仍残留 wrapper、采样线程或被覆盖的宿主信号处理器。
+
+2026-06-25 的新增事故说明，清理结果不仅要“执行”，还必须“可观测”：`ProbeContext.__exit__` 异常、resource owner 返回的 `errors`、monitor/top 后台线程在 join 超时后仍存活等失败，必须进入 `cleanup_summary` 并在 CLI/TUI 层展示，否则用户无法判断 detach/reset 是否真的干净。
+
+---
+
+## 事故 #10：ProbeContext 退出失败与 monitor/top 停止超时未暴露
+
+> **Tag 范围**：`v0.1.18` → `v0.1.19` | **严重级别**：SEV-2 | **日期**：2026-06-25
+
+### 概要
+
+v0.1.18 把 resource owner、ProbeContext、injector、observer 和 registry sweep 统一接入 `PeekaAgent.stop()`，但清理结果的“失败”仍然只通过异常路径暴露。resource owner 返回的 `errors`、ProbeContext `__exit__` 抛出的异常、monitor/top 后台线程在 join 超时后仍然存活等失败，都被日志吞掉或返回为成功，导致 detach/reset 的 `cleanup_summary` 与真实状态不一致。
+
+### 根因分析
+
+#### 类别
+Resource Management / Integration Error
+
+#### 分析
+
+清理合同有两层：
+
+1. **执行层**：`shutdown_agent_resources()` 和 `ResetCommand._reset()` 调用 resource owner / probe context 的停止接口。
+2. **汇报层**：把这些停止接口返回的错误汇总到 `cleanup_summary`，并让 CLI/TUI 根据 summary 决定退出码和警告。
+
+v0.1.18 的缺口在于：
+
+- `stop_resource_owners_for_detach/reset()` 只把 handler 抛出的异常写入 `errors`，没有读取 handler 返回字典中的 `errors` 字段。
+- `AgentProbeControlMixin.stop_probe_context()` 捕获 `__exit__` 异常后只记录日志，没有把错误返回给调用方。
+- `MonitorCommand` / `TopCommand` 的 `stop_active_resources()` 在 timer/sampling 线程 join 超时后没有报告“线程仍然存活”。
+- `ResetCommand._reset()` 调用 `stop_context(stream_key)` 后没有检查返回值中的 `exit_error`。
+- `cmd_detach` 在收到成功的 detach 响应后，没有检查 `cleanup_summary` 中的错误。
+
+结果是：目标进程里可能残留 wrapper/采样线程，或 ProbeContext 退出异常，但 CLI 仍返回 0 并且不输出任何警告。
+
+#### 致因提交
+
+| 提交 | 作者 | 日期 | 描述 |
+|------|------|------|------|
+| 致因提交无法确定性定位 | - | 2026-06-21 前 | 生命周期清理接口只通过异常暴露失败，未设计返回式错误汇总 |
+
+### 复现
+
+#### 前置条件
+- 目标进程中存在 active watch/trace/stack 或 monitor/top 资源。
+- ProbeContext 的 `__exit__` 实现会抛出异常，或 monitor/top 的 timer/sampling 线程无法在给定超时内退出。
+
+#### 步骤
+1. 启动 monitor 或 top。
+2. 触发 detach 或 reset。
+3. 观察 `cmd_detach` 返回码和 JSONL 输出。
+
+#### 预期行为
+`cleanup_summary` 中应包含 resource owner / probe context 的错误；CLI 在 summary 非空时应返回非零退出码或输出 warning。
+
+#### 实际行为
+`cmd_detach` 返回 0，`cleanup_summary` 中的错误未在 JSONL 中展示；reset 的 `probe_contexts.errors` 为空，即使 `__exit__` 已抛出异常。
+
+### 修复
+
+#### 修复提交
+
+| 提交 | 作者 | 日期 | 描述 |
+|------|------|------|------|
+| [`357f910`](https://github.com/peeka-project/peeka/commit/357f91027f20b17152d85fb644de5d026391352b) | lufeihaidao | 2026-06-25 | fix(lifecycle): correct step_errors type check and tighten T3/T5 test coverage |
+| [`7f53ea6`](https://github.com/peeka-project/peeka/commit/7f53ea6ef8d89325337b6c81512deb7747bc9e7f) | lufeihaidao | 2026-06-25 | fix(core): surface ProbeContext __exit__ failures in cleanup summary |
+| [`380ac88`](https://github.com/peeka-project/peeka/commit/380ac88c95aa9ff40b81c4ffc23c9805bd42df2b) | lufeihaidao | 2026-06-25 | fix(commands): report monitor/top thread still alive after stop timeout |
+
+#### 变更内容
+
+- `stop_resource_owners_for_detach/reset()` 读取并汇总 handler 返回的 `errors`。
+- `stop_probe_context()` 在 `__exit__` 失败时返回 `{"exit_error": ...}`。
+- `ResetCommand._reset()` 检查 `stop_context()` 返回值中的 `exit_error` 并加入 `probe_contexts.errors`。
+- `MonitorCommand.stop_active_resources()` 和 `TopCommand.stop_active_resources()` 在 `timer_thread.join()` / `sampling_thread.join()` 超时后检查 `is_alive()`，存活时返回包含 `"alive"` 的错误。
+
+#### 验证
+
+新增回归测试：
+- `tests/test_detach_cleanup_summary.py`
+- `tests/test_probe_context_exit_observability.py`
+- `tests/test_owner_thread_join_leak.py`
+
+这些测试验证返回式错误、ProbeContext 退出异常和后台线程存活都能进入 `cleanup_summary`。
+
+### 影响
+
+- **受影响用户**：使用 detach/reset 并依赖退出码或 `cleanup_summary` 判断清理状态的用户；使用 monitor/top 的用户。
+- **持续时间**：与 v0.1.18 的生命周期清理缺口同时存在，至 v0.1.19 修复。
+- **数据影响**：无持久数据损坏；风险是清理失败不可见，导致残留 wrapper 或采样线程。
+
+### 时间线
+
+| 时间 | 事件 |
+|------|------|
+| 2026-06-23 | v0.1.18 统一接入 `shutdown_agent_resources()`，但错误暴露仍不完整 |
+| 2026-06-25 | 修复提交 `357f910`、`7f53ea6`、`380ac88` 补全返回式错误和线程存活报告 |
+
+### 经验教训
+
+#### 做得好的方面
+- 在 v0.1.18 统一清理入口的基础上，v0.1.19 快速补齐了结果可观测性，形成完整闭环。
+
+#### 可以改进的方面
+- 清理接口设计应同时支持“异常”和“返回错误”两种失败模式，并在调用点统一汇总。
+- monitor/top 等 resource owner 的线程停止结果应作为一级字段返回，而不是仅依赖日志。
+
+#### 行动项
+
+| 行动 | 优先级 | 状态 |
+|------|--------|------|
+| 为所有 resource owner 的 `stop_active_resources()` 补充返回式 errors 的契约测试 | P1 | 已完成 |
+| 在 CLI/TUI detach/reset 路径中增加 `cleanup_summary` 非空断言测试 | P1 | 已完成 |
+
+### 预防
+
+- **立即执行**：所有新 resource owner 必须在 `stop_active_resources()` 中返回 `{"stopped": [], "errors": []}` 形状，并检查线程 join 超时后的存活状态。
+- **短期**：在集成测试中增加“清理失败必须改变退出码或输出 warning”的端到端断言。
+- **长期**：生命周期 helper 的返回 schema 应通过类型或 schema 测试强制约束，防止新增字段被忽略。
+
+### 参考
+
+- 修复提交：`357f910`, `7f53ea6`, `380ac88`
+- 相关测试：`tests/test_detach_cleanup_summary.py`, `tests/test_probe_context_exit_observability.py`, `tests/test_owner_thread_join_leak.py`
 
 ---
 

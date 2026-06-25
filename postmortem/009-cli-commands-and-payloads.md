@@ -5,13 +5,14 @@
 | **话题** | CLI 到 Agent 的命令分发、参数键和 JSONL payload 契约不一致问题，以及 CLI run 命令实现缺陷 |
 | **受影响组件** | cli/main.py, core/output.py, core/bootstrap.py, core/injector.py, commands/monitor.py, tests/container/ |
 | **最高严重级别** | SEV-1 (High) |
-| **事故次数** | 8 |
-| **时间跨度** | 2026-01-29 至 2026-06-23 |
+| **事故次数** | 9 |
+| **时间跨度** | 2026-01-29 至 2026-06-25 |
 
 ## 案例索引
 
 | # | 事故 | 严重级别 | 日期 |
 |---|------|----------|------|
+| [#9](#事故-9detach-清理摘要警告与本地-marker-回退契约) | detach 清理摘要警告与本地 marker 回退契约 | SEV-2 | 2026-06-25 |
 | [#8](#事故-8streaming-本地限制与-cleanup_summary-可见性契约漂移) | Streaming 本地限制与 cleanup_summary 可见性契约漂移 | SEV-2 | 2026-06-23 |
 | [#7](#事故-7session-control-plane-多目标路由与-probe-契约缺口) | session control-plane 多目标路由与 probe 契约缺口 | SEV-2 | 2026-06-07 |
 | [#6](#事故-6容器诊断-cli-兼容性回归) | 容器诊断 CLI 兼容性回归 | SEV-2 | 2026-05-27 |
@@ -34,6 +35,115 @@
 2026-06-07 新增第七类问题：session/control-plane 重构引入了 target、client、job、probe、consumer 和 dx 等新命名空间，但 CLI 侧 target 解析、agent 侧响应 envelope、probe/job 生命周期和 streaming observation 路由没有一次性用跨命名空间契约测试冻结。问题不是某个单点命令拼错，而是“对象模型扩展后，入口、路由、生命周期和输出 schema 同步不足”。
 
 2026-06-23 新增第八类问题：streaming CLI 的本地 `-n` 限制、active stream filtering、cleanup stop-by-id、`peeka-cli run` 的 stop cleanup、以及 reset 的 `cleanup_summary` 退出码语义在 v0.1.18 生命周期加固中集中漂移。共同模式是“命令成功状态”和“资源清理成功状态”被混为一谈，导致输出条数、停止对象和退出码无法可靠代表真实资源状态。
+
+2026-06-25 新增第九类问题：`peeka-cli detach` 没有把 agent 返回的 `cleanup_summary` 错误转换为用户可见的警告或非零退出码；同时当远程 detach 失败时，CLI 侧提前清除了本地 session marker，导致后续 `attach` 误判为未 attach 或遗留 stale 文件。这两处都是 detach 命令在“本地状态”与“远程状态”之间的契约缺口。
+
+---
+
+## 事故 #9：detach 清理摘要警告与本地 marker 回退契约
+
+> **Tag 范围**：`v0.1.18` → `v0.1.19` | **严重级别**：SEV-2 | **日期**：2026-06-25
+
+### 概要
+
+`peeka-cli detach` 在 v0.1.18 生命周期加固后，agent 端已能通过 `cleanup_summary` 报告 resource owner / probe context 的清理错误，但 CLI 端仍只检查 detach 响应的顶层 `status`，不检查 `cleanup_summary` 内容。因此即使目标进程中残留了 wrapper 或采样线程，detach 仍返回 0 且没有任何 warning。另外，当远程 detach 失败时，CLI 在发送 detach 命令之前就清除了本地 session marker（pid/ready/sock 文件），导致失败后的本地状态与远端状态不一致，用户可能看到“未 attach”误判或遗留 stale 文件。
+
+### 根因分析
+
+#### 类别
+Logic Error / Integration Error
+
+#### 分析
+
+`cmd_detach` 的退出码逻辑存在两个分层错误：
+
+1. **cleanup 错误不可见**：agent 返回的 `cleanup_summary` 包含 `step_errors`、`resource_owners.errors`、`probe_contexts.errors`、`injector.errors` 等多层错误，但 CLI 只看 `response["status"] == "success"`，随后无条件返回 0。
+2. **本地 marker 提前清除**：session marker 文件（`.pid`、`.ready`、`.sock`）在确认远程 detach 成功之前就被 `unlink()`，如果 `send_command` 失败或返回非成功状态，本地已经没有 marker，但 agent 可能仍在运行。
+
+这两处问题共同说明 detach 命令把“发送 detach 请求”和“本地会话结束”两个不同层次的状态混为一谈。
+
+#### 致因提交
+
+| 提交 | 作者 | 日期 | 描述 |
+|------|------|------|------|
+| 致因提交无法确定性定位 | - | 2026-06-23 前 | `cmd_detach` 实现时未把 `cleanup_summary` 纳入退出码决策，且 marker 清理放在远程确认之后但缺少分支保护 |
+
+### 复现
+
+#### 前置条件
+- 已 attach 到目标进程并启动 watch/trace/stack/monitor/top 中的至少一种资源。
+- 让 resource owner 或 probe context 在停止时返回错误但不抛异常；或让远程 detach 响应为失败。
+
+#### 步骤
+1. 执行 `peeka-cli detach`。
+2. 观察返回码和 JSONL 输出。
+
+#### 预期行为
+- 如果 `cleanup_summary` 中存在错误，CLI 应返回非零退出码（2）并输出 warning。
+- 如果远程 detach 失败，本地 session marker 应保留，以便用户排查或重试。
+
+#### 实际行为
+- 即使 `cleanup_summary` 非空，`cmd_detach` 仍返回 0。
+- 远程 detach 失败时，本地 marker 已被删除。
+
+### 修复
+
+#### 修复提交
+
+| 提交 | 作者 | 日期 | 描述 |
+|------|------|------|------|
+| [`b6fc195`](https://github.com/peeka-project/peeka/commit/b6fc195f77e2f2f3419783b1c0930f75bdbb69b7) | lufeihaidao | 2026-06-25 | fix(cli): report cleanup summary warnings on detach |
+| [`4e7fd00`](https://github.com/peeka-project/peeka/commit/4e7fd0033da0d1ee9b9e84309909b8fd7273c9ef) | lufeihaidao | 2026-06-25 | fix(cli): preserve local markers when remote detach fails |
+
+#### 变更内容
+
+- `cmd_detach` 引入 `exit_code` 变量，默认 0；当 `response["status"] == "success"` 且 `_has_cleanup_errors(cleanup_summary)` 为真时，设置 `exit_code = 2` 并输出 JSON warning。
+- marker 文件清理移到 `response["status"] == "success"` 分支内部，仅在远程 detach 成功后才删除本地文件。
+
+#### 验证
+
+新增回归测试：
+- `tests/test_detach_cleanup_summary.py` 验证 `cleanup_summary` 错误导致退出码 2 和 JSON warning。
+- `tests/test_detach_marker_preservation.py` 验证远程 detach 失败时本地 marker 保留。
+
+### 影响
+
+- **受影响用户**：使用 `peeka-cli detach` 并依赖退出码判断清理状态的用户；在 detach 失败时需要排查本地会话状态的用户。
+- **持续时间**：与 v0.1.18 的 cleanup summary 接口同时引入，至 v0.1.19 修复。
+- **数据影响**：无持久数据损坏；风险是自动化脚本误判 detach 成功，或在失败时丢失排查线索。
+
+### 时间线
+
+| 时间 | 事件 |
+|------|------|
+| 2026-06-23 | v0.1.18 在 agent 侧返回 `cleanup_summary`，但 CLI 未消费 |
+| 2026-06-25 | 修复提交 `b6fc195`、`4e7fd00` 补全 CLI 侧的退出码和 marker 保护 |
+
+### 经验教训
+
+#### 做得好的方面
+- agent 侧先把结构化 cleanup summary 返回给 CLI，为后续消费打下基础。
+
+#### 可以改进的方面
+- CLI 命令在修改退出码或副作用顺序时，应同时补充契约测试，确保“成功响应”不等于“无清理错误”。
+
+#### 行动项
+
+| 行动 | 优先级 | 状态 |
+|------|--------|------|
+| 为 detach/reset 等会改变进程状态的 CLI 命令增加 cleanup_summary 非空断言 | P1 | 已完成 |
+| 在 CLI 测试中覆盖远程失败路径的本地副作用 | P1 | 已完成 |
+
+### 预防
+
+- **立即执行**：所有消费 `cleanup_summary` 的 CLI/TUI 入口必须检查 `_has_cleanup_errors()` 并给出用户可见反馈。
+- **短期**：为每个会清理远程资源的 CLI 命令增加“失败时保留本地状态”的测试矩阵。
+- **长期**：CLI 命令的副作用（文件删除、配置写入）应延迟到远程确认成功之后，并在架构文档中明确状态机。
+
+### 参考
+
+- 修复提交：`b6fc195`, `4e7fd00`
+- 相关测试：`tests/test_detach_cleanup_summary.py`, `tests/test_detach_marker_preservation.py`
 
 ---
 

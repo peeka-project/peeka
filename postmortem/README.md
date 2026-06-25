@@ -1,6 +1,6 @@
 # Postmortem 索引
 
-生成日期：2026-06-24
+生成日期：2026-06-25
 
 ## 话题列表
 
@@ -11,10 +11,10 @@
 | [003](./003-tui-autocomplete.md) | TUI 自动补全：缓存、触发、光标、`__main__` | SEV-2 | tui | 5 | 2026-03-05 |
 | [004](./004-streaming-client-concurrency.md) | StreamingAgentClient 并发与 BrokenPipe | SEV-1 | core | 6 | 2026-03-10 |
 | [005](./005-tui-threading-and-lifecycle.md) | TUI 线程模型、主线程阻塞与关机生命周期 | SEV-1 | tui | 9 | 2026-06-23 |
-| [006](./006-attach-and-agent-lifecycle.md) | 进程 Attach 就绪探测与 Agent 生命周期 | SEV-0 | core | 9 | 2026-06-23 |
+| [006](./006-attach-and-agent-lifecycle.md) | 进程 Attach 就绪探测与 Agent 生命周期 | SEV-0 | core | 10 | 2026-06-25 |
 | [007](./007-gdb-injection-and-python38.md) | GDB 注入路径与 Python 3.8 兼容性 | SEV-1 | core | 4 | 2026-03-24 |
 | [008](./008-injector-and-tracing.md) | DecoratorInjector 实例方法、`__main__` 解析与 trace 调用树 | SEV-1 | core, commands | 3 | 2026-02-28 |
-| [009](./009-cli-commands-and-payloads.md) | CLI 命令分发、参数键与 JSONL payload 契约漂移 | SEV-1 | cli, core | 8 | 2026-06-23 |
+| [009](./009-cli-commands-and-payloads.md) | CLI 命令分发、参数键与 JSONL payload 契约漂移 | SEV-1 | cli, core | 9 | 2026-06-25 |
 | [010](./010-top-profiling.md) | Top 命令线程过滤、TopView 并发与 Agent 响应帧竞态 | SEV-1 | core, tui | 5 | 2026-04-26 |
 | [011](./011-docker-build-and-images.md) | Docker 镜像构建、镜像源与容器进程模型 | SEV-2 | docker | 5 | 2026-03-01 |
 | [012](./012-tui-ui-and-textual-api.md) | TUI 样式、DataTable API 与 Textual 兼容 | SEV-1 | tui | 6 | 2026-03-06 |
@@ -26,14 +26,15 @@
 | [018](./018-watch-stacking-and-orphans.md) | Watch 嵌套堆叠与孤立清理 | SEV-1 | core | 4 | 2026-06-15 |
 | [019](./019-trace-sanitization-and-gevent.md) | Trace 数据清理与 Gevent 检测 | SEV-1 | core, commands | 2 | 2026-06-13 |
 | [020](./020-agent-observation-queue.md) | Agent 观测队列与序列化性能 | SEV-1 | core | 2 | 2026-06-13 |
+| [021](./021-process-discovery-and-runtime-environment.md) | 进程发现与运行时环境适应性 | SEV-2 | core, runtime | 1 | 2026-06-24 |
 
 ## 统计
 
-- **话题总数**：20
-- **事故总次数**：99
-- **按最高严重级别**：SEV-0: 3, SEV-1: 13, SEV-2: 3, SEV-3: 1, SEV-4: 0
+- **话题总数**：21
+- **事故总次数**：102
+- **按最高严重级别**：SEV-0: 3, SEV-1: 13, SEV-2: 4, SEV-3: 1, SEV-4: 0
 - **按组件**：
-  - core: 8 个话题（004, 006, 007, 008, 014, 017, 018, 019, 020）
+  - core: 9 个话题（004, 006, 007, 008, 014, 017, 018, 019, 020, 021）
   - tui: 7 个话题（002, 003, 005, 010, 012, 013, 018）
   - cli: 1 个话题（009）
   - docker: 1 个话题（011）
@@ -49,10 +50,11 @@
   - Regression: 话题 001, 003, 012, 013
   - Integration Error: 话题 004, 015
   - Resource Management: 话题 006
-- **最近一次分析范围**：`v0.1.17..v0.1.18`
-- **分析的 fix 提交总数**：47
-- **入选事故组块数**：4
-- **跳过/合并的 fix 提交数**：43
+  - Environment Assumption / Missing Fallback: 话题 021
+- **最近一次分析范围**：`v0.1.18..v0.1.19`
+- **分析的 fix 提交总数**：7
+- **入选事故组块数**：3
+- **跳过/合并的 fix 提交数**：4
 
 ## 共性问题
 
@@ -67,6 +69,9 @@
 
 | 日期 | 话题 | 事故 | 变更说明 |
 |------|------|------|----------|
+| 2026-06-25 | [021](./021-process-discovery-and-runtime-environment.md) | #1 | 新增话题：sudo 环境下 pycache 写入失败与 /proc 不可用时进程发现中断（v0.1.19） |
+| 2026-06-25 | [009](./009-cli-commands-and-payloads.md) | #9 | 新增事故：detach 清理摘要警告与本地 marker 回退契约（v0.1.19） |
+| 2026-06-25 | [006](./006-attach-and-agent-lifecycle.md) | #10 | 新增事故：ProbeContext 退出失败与 monitor/top 停止超时未暴露（v0.1.19） |
 | 2026-06-23 | [006](./006-attach-and-agent-lifecycle.md) | #9 | 新增事故：Agent stop 清理合同与信号钩子恢复漂移（v0.1.18） |
 | 2026-06-23 | [009](./009-cli-commands-and-payloads.md) | #8 | 新增事故：Streaming 本地限制、stop cleanup 与 reset 退出码契约漂移（v0.1.18） |
 | 2026-06-23 | [005](./005-tui-threading-and-lifecycle.md) | #9 | 新增事故：TUI 流式视图退出清理未暴露 nested cleanup_summary 错误（v0.1.18） |
