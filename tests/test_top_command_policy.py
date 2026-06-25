@@ -80,7 +80,10 @@ class TestTopCommandPolicy:
         """Create TopCommand with mock agent."""
         from peeka.commands.top import TopCommand
 
-        return TopCommand(MockAgent())
+        cmd = TopCommand(MockAgent())
+        yield cmd
+        # Ensure any lingering sampling thread is stopped between tests.
+        cmd.stop_active_resources(pattern=None, reason="test teardown")
 
     def test_clean_runtime_start_returns_safe_meta(self, top_command, monkeypatch):
         """Clean runtime top start has safe frame_walk metadata."""

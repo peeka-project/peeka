@@ -48,7 +48,10 @@ class TestTopCommand:
         """Create TopCommand instance with mock agent."""
         from peeka.commands.top import TopCommand
 
-        return TopCommand(mock_agent)
+        cmd = TopCommand(mock_agent)
+        yield cmd
+        # Ensure any lingering sampling thread is stopped between tests.
+        cmd.stop_active_resources(pattern=None, reason="test teardown")
 
     def test_start_creates_sampling_thread(self, top_command):
         """Test that start creates and starts sampling thread."""

@@ -49,7 +49,10 @@ def mock_agent():
 
 @pytest.fixture
 def monitor_cmd(mock_agent):
-    return MonitorCommand(mock_agent)
+    cmd = MonitorCommand(mock_agent)
+    yield cmd
+    # Ensure any lingering monitor timer threads are stopped between tests.
+    cmd.stop_active_resources(pattern=None, reason="test teardown")
 
 
 @pytest.fixture
