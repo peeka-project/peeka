@@ -41,6 +41,9 @@ from peeka.tui.screens.process_selector import ProcessSelectorScreen
 from textual.widgets import Static, RichLog
 
 
+pytestmark = pytest.mark.tui
+
+
 
 
 
