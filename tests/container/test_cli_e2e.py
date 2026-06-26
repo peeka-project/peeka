@@ -355,7 +355,7 @@ class TestCLIWorkflowE2E:
 
         trace_result = run_cli_command(
             container,
-            ["trace", "__main__.Calculator.add", "-n", "2", "-d", "2"],
+            ["trace", "__main__.Calculator.add", "-n", "2"],
             timeout=25,
         )
         assert trace_result["exit_code"] in [0, 124], (
@@ -391,7 +391,7 @@ class TestCLIWorkflowE2E:
 
         trace_result = run_cli_command(
             container,
-            ["trace", "__main__.Calculator.multiply", "-n", "1", "-d", "2"],
+            ["trace", "__main__.Calculator.multiply", "-n", "1"],
             timeout=20,
         )
         assert trace_result["exit_code"] in [0, 124], (

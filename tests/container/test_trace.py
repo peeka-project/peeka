@@ -101,45 +101,6 @@ class TestContainerTrace:
             f"No valid trace events found in output:\n{trace_output}"
         )
 
-    def test_trace_with_depth_limit(self, container_target):
-        """Verify trace respects depth limit parameter."""
-        container = container_target["container"]
-        pid = container_target["pid"]
-
-        # Attach first
-        exit_code, attach_output = exec_in_container(
-            container, f"python -m peeka.cli.main attach {pid}", timeout=30
-        )
-        assert exit_code == 0, f"Attach failed:\n{attach_output}"
-
-        # Trace with depth limit of 2
-        exit_code, trace_output = exec_in_container(
-            container,
-            'python -m peeka.cli.main trace "__main__.Calculator.add" -d 2 -n 1',
-            timeout=30,
-        )
-
-        # Command should complete successfully
-        assert exit_code == 0, f"Trace command failed:\n{trace_output}"
-
-        # Parse observations and verify depth constraint
-        lines = [line for line in trace_output.strip().split("\n") if line.strip()]
-
-        for line in lines:
-            if line.startswith("{"):
-                try:
-                    data = json.loads(line)
-                    if data.get("type") == "observation" and "call_tree" in data:
-                        # Check that all nodes have depth <= 2
-                        call_tree = data["call_tree"]
-                        for node in call_tree:
-                            if "depth" in node:
-                                assert node["depth"] <= 2, (
-                                    f"Node depth {node['depth']} exceeds limit 2: {node}"
-                                )
-                except json.JSONDecodeError:
-                    continue
-
     def test_trace_with_times_limit(self, container_target):
         """Verify trace respects times limit parameter."""
         container = container_target["container"]
@@ -207,25 +168,29 @@ class TestContainerTrace:
                     if data.get("type") == "observation" and "call_tree" in data:
                         call_tree = data["call_tree"]
 
-                        # Verify call_tree is a list
                         assert isinstance(call_tree, list), "call_tree should be a list"
 
-                        # Verify at least one node exists
-                        assert len(call_tree) > 0, "call_tree should not be empty"
+                        for entry in call_tree:
+                            assert "function" in entry, f"Callee missing function: {entry}"
+                            assert "count" in entry, f"Callee missing count: {entry}"
+                            assert "total_ms" in entry, f"Callee missing total_ms: {entry}"
+                            assert "min_ms" in entry, f"Callee missing min_ms: {entry}"
+                            assert "max_ms" in entry, f"Callee missing max_ms: {entry}"
+                            assert "children" not in entry, (
+                                f"Old schema detected: children in callee: {entry}"
+                            )
 
-                        # Verify root node structure
-                        root = call_tree[0]
-                        assert "depth" in root, "Root node should have depth field"
-                        assert root["depth"] == 0, "Root node depth should be 0"
-                        assert "function" in root, "Root node should have function field"
-                        assert "duration_ms" in root, "Root node should have duration_ms field"
+                        if call_tree:
+                            callee_funcs = [e.get("function", "") for e in call_tree]
+                            assert any("_validate" in f for f in callee_funcs), (
+                                f"Expected _validate in callees: {callee_funcs}"
+                            )
 
-                        # Root should be the target function
-                        assert "Calculator.add" in root["function"], (
-                            f"Root function should be Calculator.add: {root['function']}"
-                        )
+                        assert "total_duration_ms" in data, f"Missing total_duration_ms: {data}"
+                        assert "self_time_ms" in data, f"Missing self_time_ms: {data}"
+                        assert "callee_count" in data, f"Missing callee_count: {data}"
 
-                        return  # Test passed
+                        return
 
                 except json.JSONDecodeError:
                     continue
@@ -442,12 +407,10 @@ class TestContainerTrace:
                 try:
                     data = json.loads(line)
                     if data.get("type") == "observation" and "call_tree" in data:
-                        # Should have total_duration_ms
                         assert "total_duration_ms" in data, (
                             f"Missing total_duration_ms: {data}"
                         )
 
-                        # Verify total_duration_ms is a number >= 0
                         duration = data["total_duration_ms"]
                         assert isinstance(duration, (int, float)), (
                             f"total_duration_ms should be numeric: {duration}"
@@ -456,18 +419,20 @@ class TestContainerTrace:
                             f"total_duration_ms should be >= 0: {duration}"
                         )
 
-                        # Each node in call_tree should have duration_ms
+                        assert "self_time_ms" in data, f"Missing self_time_ms: {data}"
+                        assert "callee_count" in data, f"Missing callee_count: {data}"
+
                         call_tree = data["call_tree"]
                         for node in call_tree:
-                            assert "duration_ms" in node, (
-                                f"Node missing duration_ms: {node}"
+                            assert "total_ms" in node, (
+                                f"Node missing total_ms: {node}"
                             )
-                            node_duration = node["duration_ms"]
+                            node_duration = node["total_ms"]
                             assert isinstance(node_duration, (int, float)), (
-                                f"Node duration_ms should be numeric: {node_duration}"
+                                f"total_ms should be numeric: {node_duration}"
                             )
 
-                        return  # Test passed
+                        return
 
                 except json.JSONDecodeError:
                     continue
@@ -498,12 +463,10 @@ class TestContainerTrace:
                 try:
                     data = json.loads(line)
                     if data.get("type") == "observation" and "call_tree" in data:
-                        # Should have node_count
                         assert "node_count" in data, (
                             f"Missing node_count: {data}"
                         )
 
-                        # Verify node_count is a positive integer
                         node_count = data["node_count"]
                         assert isinstance(node_count, int), (
                             f"node_count should be an integer: {node_count}"
@@ -511,8 +474,92 @@ class TestContainerTrace:
                         assert node_count > 0, (
                             f"node_count should be > 0: {node_count}"
                         )
+                        assert node_count == 1 + len(data["call_tree"]), (
+                            f"node_count should equal 1 + len(call_tree): {node_count} vs {1 + len(data['call_tree'])}"
+                        )
 
-                        return  # Test passed
+                        return
 
                 except json.JSONDecodeError:
                     continue
+
+    def test_trace_direct_callees_only(self, container_target):
+        """Verify call_tree contains only direct callees, not grandcallees."""
+        container = container_target["container"]
+        pid = container_target["pid"]
+
+        exit_code, attach_output = exec_in_container(
+            container, f"python -m peeka.cli.main attach {pid}", timeout=30
+        )
+        assert exit_code == 0, f"Attach failed:\n{attach_output}"
+
+        exit_code, trace_output = exec_in_container(
+            container,
+            'python -m peeka.cli.main trace "__main__.Calculator.add" -n 1',
+            timeout=30,
+        )
+        assert exit_code == 0, f"Trace command failed:\n{trace_output}"
+
+        for line in trace_output.strip().splitlines():
+            if not line.strip().startswith("{"):
+                continue
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if data.get("type") == "observation" and "call_tree" in data:
+                call_tree = data["call_tree"]
+                assert isinstance(call_tree, list)
+
+                for entry in call_tree:
+                    assert "Calculator.add" not in entry.get("function", ""), (
+                        f"Traced function should not appear in call_tree: {entry}"
+                    )
+
+                callee_funcs = [e.get("function", "") for e in call_tree]
+                assert any("_validate" in f for f in callee_funcs), (
+                    f"Expected _validate in call_tree callees: {callee_funcs}"
+                )
+                return
+
+        pytest.fail(f"No trace observation found:\n{trace_output}")
+
+    def test_trace_flat_schema(self, container_target):
+        """Verify call_tree entries have flat direct-callee schema (no children)."""
+        container = container_target["container"]
+        pid = container_target["pid"]
+
+        exit_code, _ = exec_in_container(
+            container, f"python -m peeka.cli.main attach {pid}", timeout=30
+        )
+        assert exit_code == 0
+
+        exit_code, trace_output = exec_in_container(
+            container,
+            'python -m peeka.cli.main trace "__main__.Calculator.add" -n 1',
+            timeout=30,
+        )
+        assert exit_code == 0
+
+        for line in trace_output.strip().splitlines():
+            if not line.strip().startswith("{"):
+                continue
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if data.get("type") == "observation" and "call_tree" in data:
+                call_tree = data["call_tree"]
+                for entry in call_tree:
+                    assert "function" in entry, f"Missing function: {entry}"
+                    assert "count" in entry, f"Missing count: {entry}"
+                    assert "total_ms" in entry, f"Missing total_ms: {entry}"
+                    assert "min_ms" in entry, f"Missing min_ms: {entry}"
+                    assert "max_ms" in entry, f"Missing max_ms: {entry}"
+                    assert "children" not in entry, f"Old schema: children in entry: {entry}"
+                assert "self_time_ms" in data, f"Missing self_time_ms: {data}"
+                assert "callee_count" in data, f"Missing callee_count: {data}"
+                assert data["callee_count"] == len(call_tree)
+                return
+
+        pytest.fail(f"No trace observation found:\n{trace_output}")

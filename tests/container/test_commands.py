@@ -528,7 +528,7 @@ class TestDiagnosticCommands:
 
         exit_code, output = exec_in_container(
             container,
-            "python -m peeka.cli.main trace '__main__.Calculator.add' -d 1 -n 1",
+            "python -m peeka.cli.main trace '__main__.Calculator.add' -n 1",
             timeout=30,
         )
 

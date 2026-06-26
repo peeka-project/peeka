@@ -4,7 +4,12 @@ import time
 
 
 class Calculator:
+    def _validate(self, a: int, b: int) -> None:
+        if not isinstance(a, int) or not isinstance(b, int):
+            raise TypeError("Expected int operands")
+
     def add(self, a: int, b: int) -> int:
+        self._validate(a, b)
         return a + b
 
     def multiply(self, a: int, b: int) -> int:
