@@ -1,19 +1,27 @@
 """Tests for trace command gevent compatibility policy integration."""
 
+from __future__ import annotations
+
+from typing import cast
+
 import pytest
 
 from peeka.commands.trace import TraceCommand
 from peeka.core.runtime.compat import get_policy
 from peeka.core.runtime.gevent_probe import GeventState
 
-
 class FakeInjector:
     """Record trace injection calls."""
 
     def __init__(self):
-        self.calls = []
+        self.calls: list[dict[str, object]] = []
 
-    def inject_trace(self, pattern, trace_config, force_backend=None):
+    def inject_trace(
+        self,
+        pattern: str,
+        trace_config: dict[str, object],
+        force_backend: str | None = None,
+    ) -> str:
         """Return a stable trace id and record the backend."""
         self.calls.append(
             {
@@ -29,9 +37,11 @@ class FakeObserver:
     """Record watch registrations."""
 
     def __init__(self):
-        self.registrations = []
+        self.registrations: list[tuple[str, str, dict[str, object]]] = []
 
-    def register_watch(self, watch_id, pattern, config):
+    def register_watch(
+        self, watch_id: str, pattern: str, config: dict[str, object]
+    ) -> None:
         """Record registration calls."""
         self.registrations.append((watch_id, pattern, config))
 
@@ -40,24 +50,24 @@ class FakeAgent:
     """TraceCommand test agent."""
 
     def __init__(self):
-        self.injector = FakeInjector()
-        self.observer = FakeObserver()
+        self.injector: FakeInjector = FakeInjector()
+        self.observer: FakeObserver = FakeObserver()
 
 
 @pytest.mark.unit
 class TestTraceCommandPolicy:
     """Trace command policy tests."""
 
-    def test_clean_runtime_uses_existing_backend_selection(self, monkeypatch):
+    def test_clean_runtime_uses_existing_backend_selection(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         """Clean runtime passes a precise safe backend to injector."""
         monkeypatch.setattr("peeka.commands.trace.probe", lambda: GeventState.NONE)
         agent = FakeAgent()
-        command = TraceCommand(agent)
+        command = TraceCommand(agent)  # pyright: ignore[reportArgumentType]
         expected_backend = get_policy("trace", GeventState.NONE).backend
 
-        result = command.execute(
-            {"action": "start", "pattern": "module.func", "depth": 3}
-        )
+        result = command.execute({"action": "start", "pattern": "module.func"})
 
         assert result["status"] == "success"
         assert agent.injector.calls[0]["force_backend"] == expected_backend
@@ -68,11 +78,11 @@ class TestTraceCommandPolicy:
             "degraded_reason": None,
         }
 
-    def test_patched_runtime_uses_wrapper_only(self, monkeypatch):
+    def test_patched_runtime_uses_wrapper_only(self, monkeypatch: pytest.MonkeyPatch):
         """Patched gevent runtime degrades trace to wrapper_only."""
         monkeypatch.setattr("peeka.commands.trace.probe", lambda: GeventState.PATCHED)
         agent = FakeAgent()
-        command = TraceCommand(agent)
+        command = TraceCommand(agent)  # pyright: ignore[reportArgumentType]
 
         result = command.execute({"action": "start", "pattern": "module.func"})
 
@@ -83,13 +93,15 @@ class TestTraceCommandPolicy:
         assert result["meta"]["greenlet_blind"] is False
         assert isinstance(result["meta"]["degraded_reason"], str)
 
-    def test_active_hub_runtime_uses_wrapper_only(self, monkeypatch):
+    def test_active_hub_runtime_uses_wrapper_only(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         """Active gevent hub gets the same wrapper-only degradation."""
         monkeypatch.setattr(
             "peeka.commands.trace.probe", lambda: GeventState.ACTIVE_HUB
         )
         agent = FakeAgent()
-        command = TraceCommand(agent)
+        command = TraceCommand(agent)  # pyright: ignore[reportArgumentType]
 
         result = command.execute({"action": "start", "pattern": "module.func"})
 
@@ -97,3 +109,21 @@ class TestTraceCommandPolicy:
         assert agent.injector.calls[0]["force_backend"] == "wrapper_only"
         assert result["meta"]["gevent_state"] == "active_hub"
         assert result["meta"]["backend"] == "wrapper_only"
+
+    def test_legacy_depth_param_is_silently_ignored(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """TraceCommand must accept and silently ignore legacy depth param."""
+        monkeypatch.setattr("peeka.commands.trace.probe", lambda: GeventState.NONE)
+        agent = FakeAgent()
+        command = TraceCommand(agent)  # pyright: ignore[reportArgumentType]
+
+        result = command.execute(
+            {"action": "start", "pattern": "module.func", "depth": 3}
+        )
+
+        assert result["status"] == "success"
+        call = agent.injector.calls[0]
+        trace_config = cast(dict[str, object], call["trace_config"])
+        assert "depth" not in trace_config
+        assert "trace_depth" not in trace_config
