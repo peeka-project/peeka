@@ -69,13 +69,6 @@ def _add_trace_arguments(
             "pattern", help='Function pattern to trace (e.g., "mymodule.MyClass.method")'
         )
     parser.add_argument(
-        "-d",
-        "--depth",
-        type=int,
-        default=3,
-        help="Trace depth (max call levels, default: 3)",
-    )
-    parser.add_argument(
         "-n",
         "--times",
         type=int,
