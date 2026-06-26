@@ -280,6 +280,9 @@ class InjectorTraceMixin:
                 "thread_id": threading.get_ident(),
                 "thread_name": threading.current_thread().name,
             }
+            if sanitized_root is not None and "exception" in sanitized_root:
+                observation["exception"] = sanitized_root["exception"]
+
             if runtime_meta is not None:
                 observation["runtime_meta"] = runtime_meta
 

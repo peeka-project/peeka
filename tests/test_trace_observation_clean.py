@@ -70,8 +70,8 @@ class TestTraceObservationClean:
         assert module.sample() == 7
 
         observation = agent._observations[0]
-        node = observation["call_tree"][0]
-        assert not any(key.startswith("_") for key in node)
+        assert not any(key.startswith("_") for key in observation)
+        assert isinstance(observation["call_tree"], list)
 
     def test_observation_json_serializable_with_complex_result(
         self, monkeypatch: pytest.MonkeyPatch
@@ -111,12 +111,13 @@ class TestTraceObservationClean:
             module.sample()
 
         observation: Dict[str, Any] = agent._observations[0]
-        node: Dict[str, Any] = observation["call_tree"][0]
-        assert node["exception"] == {
+        assert "exception" in observation
+        assert observation["exception"] == {
             "type": "ValueError",
             "message": "test error",
         }
-        assert "_exception" not in node
+        assert "_exception" not in observation
+        assert isinstance(observation["call_tree"], list)
 
     def test_return_value_preserved_after_cleanup(
         self, monkeypatch: pytest.MonkeyPatch

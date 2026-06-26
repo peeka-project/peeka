@@ -76,7 +76,6 @@ class MockClientSessionContext:
 def _trace_cli_args(times):
     return argparse.Namespace(
         pattern="module.fn",
-        depth=3,
         times=times,
         condition_express=None,
         skip_builtin=True,
@@ -227,37 +226,36 @@ class TestTraceCommand:
 
         try:
             watch_id = injector.inject_trace(
-                "test_trace_module.sample_function", {"trace_depth": 3, "times": -1}
+                "test_trace_module.sample_function", {"times": -1}
             )
 
             assert watch_id.startswith("trace_")
             result = test_module.sample_function(3, 5)
             assert result == 11
 
-            # Should have one observation
             assert len(mock_agent._observations) == 1
             obs = mock_agent._observations[0]
 
-            # Check observation structure
             assert obs["watch_id"] == watch_id
             assert obs["location"] == "AtExit"
             assert "call_tree" in obs
             assert "total_duration_ms" in obs
             assert "node_count" in obs
+            assert "self_time_ms" in obs
+            assert "callee_count" in obs
 
-            # Check call tree structure
             call_tree = obs["call_tree"]
-            assert len(call_tree) > 0
-            root = call_tree[0]
-            assert root["depth"] == 0
-            assert "sample_function" in root["function"]
-            assert "duration_ms" in root
+            assert isinstance(call_tree, list)
+            assert len(call_tree) >= 1
+            callee = call_tree[0]
+            assert "helper_function" in callee["function"]
+            assert "count" in callee and callee["count"] >= 1
+            assert "total_ms" in callee
 
         finally:
             del sys.modules["test_trace_module"]
 
-    def test_trace_with_depth_limit(self, injector, mock_agent):
-        """Test trace with depth limit"""
+    def test_trace_direct_callee_semantics(self, injector, mock_agent):
 
         def level3(x):
             return x + 1
@@ -279,9 +277,8 @@ class TestTraceCommand:
         sys.modules["test_trace_depth"] = test_module
 
         try:
-            # Trace with depth 2 (should capture root + 2 levels)
             _ = injector.inject_trace(
-                "test_trace_depth.root_function", {"trace_depth": 2, "times": 1}
+                "test_trace_depth.root_function", {"times": 1}
             )
 
             result = test_module.root_function(10)
@@ -290,10 +287,11 @@ class TestTraceCommand:
             assert len(mock_agent._observations) == 1
             obs = mock_agent._observations[0]
 
-            # Root node should be there
-            assert len(obs["call_tree"]) > 0
-            root = obs["call_tree"][0]
-            assert root["depth"] == 0
+            call_tree = obs["call_tree"]
+            assert isinstance(call_tree, list)
+            assert len(call_tree) == 1
+            callee = call_tree[0]
+            assert "level1" in callee["function"]
 
         finally:
             del sys.modules["test_trace_depth"]
@@ -381,7 +379,7 @@ class TestTraceCommand:
         try:
             _ = injector.inject_trace(
                 "test_trace_builtin.sample_function",
-                {"trace_depth": 3, "skip_builtin": True},
+                {"skip_builtin": True},
             )
 
             result = test_module.sample_function([1, 2, 3])
@@ -390,9 +388,8 @@ class TestTraceCommand:
             assert len(mock_agent._observations) == 1
             obs = mock_agent._observations[0]
 
-            # With skip_builtin=True, we shouldn't see len() in the call tree
             call_tree = obs["call_tree"]
-            assert len(call_tree) > 0
+            assert len(call_tree) == 0
 
         finally:
             del sys.modules["test_trace_builtin"]
@@ -818,7 +815,7 @@ class TestTraceIntegration:
 
         try:
             _ = injector.inject_trace(
-                "test_trace_nested.process", {"trace_depth": 5, "skip_builtin": True}
+                "test_trace_nested.process", {"skip_builtin": True}
             )
 
             result = test_module.process(5)
@@ -827,16 +824,14 @@ class TestTraceIntegration:
             assert len(mock_agent._observations) == 1
             obs = mock_agent._observations[0]
 
-            # Should have call tree
             assert "call_tree" in obs
             call_tree = obs["call_tree"]
-            assert len(call_tree) > 0
+            assert len(call_tree) >= 1
 
-            # Root should be process
-            root = call_tree[0]
-            assert "process" in root["function"]
-            assert root["depth"] == 0
-            assert root["duration_ms"] > 0
+            func_names = [c["function"] for c in call_tree]
+            assert any("compute" in f for f in func_names)
+            assert not any("validate" in f for f in func_names)
+            assert not any("process" in f for f in func_names)
 
         finally:
             del sys.modules["test_trace_nested"]

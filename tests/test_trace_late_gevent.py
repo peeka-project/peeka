@@ -52,7 +52,7 @@ class TestTraceLateGevent:
         module = _install_trace_module(monkeypatch, "late_gevent_runtime_module")
 
         watch_id = injector.inject_trace(
-            "late_gevent_runtime_module.root", {"trace_depth": 3, "times": 1}
+            "late_gevent_runtime_module.root", {"times": 1}
         )
 
         fake_monkey = types.ModuleType("gevent.monkey")
@@ -67,7 +67,7 @@ class TestTraceLateGevent:
         assert len(agent._observations) == 1
         observation = agent._observations[0]
         assert observation["watch_id"] == watch_id
-        assert observation["call_tree"][0]["children"] == []
+        assert observation["call_tree"] == []
 
     def test_wrapper_keeps_settrace_when_gevent_not_patched(self, monkeypatch):
         """Clean runtime should keep recursive trace collection."""
@@ -76,14 +76,14 @@ class TestTraceLateGevent:
         module = _install_trace_module(monkeypatch, "late_gevent_clean_module")
 
         watch_id = injector.inject_trace(
-            "late_gevent_clean_module.root", {"trace_depth": 3, "times": 1}
+            "late_gevent_clean_module.root", {"times": 1}
         )
 
         assert module.root() == "outer"
         assert len(agent._observations) == 1
         observation = agent._observations[0]
         assert observation["watch_id"] == watch_id
-        assert len(observation["call_tree"][0]["children"]) > 0
+        assert len(observation["call_tree"]) > 0
 
     def test_gevent_check_cache_works(self, monkeypatch):
         """Runtime gevent detection should cache a patched state once seen."""
@@ -92,7 +92,7 @@ class TestTraceLateGevent:
         module = _install_trace_module(monkeypatch, "late_gevent_cache_module")
 
         watch_id = injector.inject_trace(
-            "late_gevent_cache_module.root", {"trace_depth": 3, "times": 2}
+            "late_gevent_cache_module.root", {"times": 2}
         )
 
         fake_monkey = types.ModuleType("gevent.monkey")
@@ -121,7 +121,7 @@ class TestTraceLateGevent:
         assert len(agent._observations) == 1
         observation = agent._observations[0]
         assert observation["watch_id"] == watch_id
-        assert observation["call_tree"][0]["children"] == []
+        assert observation["call_tree"] == []
         assert counting_modules.gevent_get_calls == 1
 
         assert module.root() == "outer"
