@@ -41,7 +41,7 @@ class TestInjectorForceBackend:
 
         watch_id = injector.inject_trace(
             "test_force_backend_module.sample",
-            {"trace_depth": 3, "times": 1},
+            {"times": 1},
             force_backend="wrapper_only",
         )
 
@@ -50,8 +50,8 @@ class TestInjectorForceBackend:
         assert len(agent._observations) == 1
         observation = agent._observations[0]
         assert observation["watch_id"] == watch_id
-        assert observation["call_tree"][0]["children"] == []
-        assert "sample" in observation["call_tree"][0]["function"]
+        assert observation["call_tree"] == []
+        assert "sample" in observation["func_name"]
 
     def test_default_backend_preserves_config(self, monkeypatch):
         """Default trace injection remains backward compatible."""
@@ -66,7 +66,7 @@ class TestInjectorForceBackend:
         monkeypatch.setitem(sys.modules, "test_default_backend_module", module)
 
         watch_id = injector.inject_trace(
-            "test_default_backend_module.sample", {"trace_depth": 3, "times": 1}
+            "test_default_backend_module.sample", {"times": 1}
         )
 
         assert "_force_backend" not in injector.instrumented[watch_id]["config"]
