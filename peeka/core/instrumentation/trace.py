@@ -100,7 +100,6 @@ class InjectorTraceMixin:
             func: Original function to wrap
             watch_id: Unique watch identifier
             config: Trace configuration with keys:
-                - trace_depth: Max call depth (default: 3)
                 - condition_express: Filter expression
                 - times: Observation limit (-1 for unlimited)
                 - skip_builtin: Skip built-in functions (default: True)
@@ -109,7 +108,6 @@ class InjectorTraceMixin:
         Returns:
             Wrapper function that traces call tree
         """
-        trace_depth = config.get("trace_depth", 3)
         condition_express = config.get("condition_express") or config.get("condition")
         times_limit = config.get("times", -1)
         skip_builtin = config.get("skip_builtin", True)
@@ -186,7 +184,6 @@ class InjectorTraceMixin:
 
             # Build call tree
             call_tree = []
-            call_stack = []
 
             # Runtime gevent check: if gevent was lazy-loaded after injection,
             # force downgrade to wrapper_only to avoid sys.settrace conflicts.
@@ -202,10 +199,8 @@ class InjectorTraceMixin:
                     func,
                     args,
                     kwargs,
-                    trace_depth,
                     skip_builtin,
                     min_duration,
-                    call_stack,
                 )
             else:
                 # Fallback to sys.settrace for older Python versions
@@ -213,10 +208,8 @@ class InjectorTraceMixin:
                     func,
                     args,
                     kwargs,
-                    trace_depth,
                     skip_builtin,
                     min_duration,
-                    call_stack,
                 )
 
             # Calculate total duration
@@ -241,6 +234,9 @@ class InjectorTraceMixin:
             # (strips _result / _exception / _code that must not be serialised).
             # The original call_tree is preserved unchanged for the return/raise below.
             sanitized_root = _sanitize_call_tree_node(call_tree[0]) if call_tree else None
+            direct_callees = (
+                sanitized_root.get("direct_callees", []) if sanitized_root is not None else []
+            )
 
             runtime_meta = None
             gevent_patched_now = (
@@ -269,9 +265,18 @@ class InjectorTraceMixin:
                 "timestamp": time.time(),
                 "location": "AtExit",
                 "func_name": f"{func.__module__}.{func.__qualname__}",
-                "call_tree": [sanitized_root] if sanitized_root is not None else [],
+                "call_tree": direct_callees,
                 "total_duration_ms": round(total_duration, 3),
-                "node_count": injector._count_nodes(call_tree),
+                "self_time_ms": round(
+                    max(
+                        0.0,
+                        total_duration
+                        - sum(c.get("total_ms", 0.0) for c in direct_callees),
+                    ),
+                    3,
+                ),
+                "callee_count": len(direct_callees),
+                "node_count": 1 + len(direct_callees),
                 "thread_id": threading.get_ident(),
                 "thread_name": threading.current_thread().name,
             }
@@ -305,18 +310,7 @@ class InjectorTraceMixin:
         return wrapper
 
     def _count_nodes(self, call_tree: List[Dict[str, Any]]) -> int:
-        """
-        Count total number of nodes in call tree.
-
-        Args:
-            call_tree: Call tree structure
-
-        Returns:
-            Total node count
-        """
-        count = 0
-        for node in call_tree:
-            count += 1
-            if "children" in node:
-                count += self._count_nodes(node["children"])
-        return count
+        """Count nodes in call tree: 1 (root) + number of direct callees."""
+        if not call_tree:
+            return 0
+        return 1 + len(call_tree[0].get("direct_callees", []))
