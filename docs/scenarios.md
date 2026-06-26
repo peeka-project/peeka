@@ -232,7 +232,7 @@ peeka-cli watch '__main__.DatabaseSimulator.search_products' --condition "cost >
 #### 步骤 3: 追踪调用树
 
 ```bash
-peeka-cli trace '__main__.ApiService.handle_product_search' -d 3 -n 2
+peeka-cli trace '__main__.ApiService.handle_product_search' -n 2
 ```
 
 预期输出：
@@ -358,7 +358,7 @@ peeka-cli watch '__main__.DataProcessor.transform_data' -n 5
 #### 步骤 3: 查看调用树
 
 ```bash
-peeka-cli trace '__main__.DataProcessor.process_batch' --depth 2 -n 3
+peeka-cli trace '__main__.DataProcessor.process_batch' -n 3
 ```
 
 预期输出：
@@ -845,7 +845,7 @@ peeka-cli watch '__main__.DatabaseSimulator.search_products' --condition "cost >
 #### 步骤 3：追踪调用树
 
 ```bash
-peeka-cli trace '__main__.ApiService.handle_product_search' -d 3 -n 2
+peeka-cli trace '__main__.ApiService.handle_product_search' -n 2
 ```
 
 输出示例（树形格式）：
@@ -947,7 +947,7 @@ peeka-cli top '__main__.DataProcessor' -n 10 -i 2
 #### 步骤 2：追踪调用树查看时间分布
 
 ```bash
-peeka-cli trace '__main__.DataProcessor.process_batch' --depth 2 -n 3
+peeka-cli trace '__main__.DataProcessor.process_batch' -n 3
 ```
 
 输出示例（树形格式）：
@@ -1524,7 +1524,7 @@ peeka-cli watch '__main__.Database.execute_query' -n 20
 #### 步骤 3：追踪报表服务调用树
 
 ```bash
-peeka-cli trace '__main__.ReportService.generate_daily_report' -d 3 -n 2
+peeka-cli trace '__main__.ReportService.generate_daily_report' -n 2
 ```
 
 输出示例（树形格式）：
@@ -1615,7 +1615,7 @@ kill 78901
 | 命令 | 说明 | 关键参数 |
 |------|------|----------|
 | `watch '<pattern>'` | 观察函数调用 | `-n` 次数, `--condition` 过滤条件 |
-| `trace '<pattern>'` | 追踪调用树 | `-d` 深度, `--min-duration` 最小耗时 |
+| `trace '<pattern>'` | 追踪直接子调用 | `--min-duration` 最小耗时 |
 | `stack '<pattern>'` | 捕获调用栈 | `-n` 次数, `--depth` 栈深度 |
 | `monitor` | 性能监控 | `-i` 间隔, `-n` 次数 |
 | `top '<pattern>'` | 函数性能采样 | `-n` 次数, `-i` 间隔 |

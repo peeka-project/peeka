@@ -85,7 +85,7 @@ peeka-cli attach <pid>
 peeka-cli watch "module.Class.method" -n 5
 
 # Trace a call tree.
-peeka-cli trace "module.func" -d 3
+peeka-cli trace "module.func"
 ```
 
 The CLI emits structured JSONL, so agents and scripts can parse, filter, and persist observations reliably.

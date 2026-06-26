@@ -349,21 +349,20 @@ trace 命令追踪目标函数内部的完整调用链，展示各子调用的�
 
 > **前提**：已附加到 demo 进程，且 demo 应用调用了 `factorial` 或 `fibonacci`
 >
-> **当**：追踪 factorial 函数，设置追踪深度为 5
+> **当**：追踪 factorial 的直接子调用
 >
 > ```bash
-> peeka-cli trace 'demo.factorial' -d 5 -n 1
+> peeka-cli trace 'demo.factorial' -n 1
 > ```
 >
-> **那么**：输出递归调用树，展示每层调用的耗时
+> **那么**：输出直接子调用的平铺列表，展示每个子调用的聚合耗时
 >
 > ```json
-> {"watch_id": "trace_002", "timestamp": 1705586200.456, "location": "AtExit", "func_name": "__main__.factorial", "call_tree": [{"depth": 0, "function": "__main__.factorial", "filename": "demo.py", "lineno": 49, "duration_ms": 0.15, "children": [{"depth": 1, "function": "__main__.factorial", "filename": "demo.py", "lineno": 49, "duration_ms": 0.12, "children": [{"depth": 2, "function": "__main__.factorial", "filename": "demo.py", "lineno": 49, "duration_ms": 0.08, "children": []}]}]}], "total_duration_ms": 0.15, "node_count": 3, "thread_id": 140234567890, "thread_name": "MainThread"}
+> {"watch_id": "trace_002", "timestamp": 1705586200.456, "location": "AtExit", "func_name": "__main__.factorial", "call_tree": [{"function": "__main__.factorial", "filename": "demo.py", "lineno": 49, "count": 1, "total_ms": 0.12, "min_ms": 0.12, "max_ms": 0.12}], "total_duration_ms": 0.15, "self_time_ms": 0.03, "callee_count": 1, "node_count": 2, "thread_id": 140234567890, "thread_name": "MainThread"}
 > ```
 
 **验证要点**：
-- 递归调用以嵌套 `children` 形式展示
-- `-d` 参数控制最大追踪深度，超出部分不展开
+- `call_tree` 是目标函数直接子调用的平铺列表，每个条目包含 `count`/`total_ms`/`min_ms`/`max_ms`
 - 可以直观看到递归调用的层数和各层耗时
 
 ### 场景 3.3：过滤慢调用
