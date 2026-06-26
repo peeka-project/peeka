@@ -2,7 +2,44 @@
 
 import sys
 import time
+from collections import defaultdict
 from typing import Any, Callable, Dict, List, Tuple
+
+
+def _aggregate_callees(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    groups: Dict = defaultdict(list)
+    for entry in entries:
+        key = (entry["function"], entry["filename"], entry["lineno"])
+        groups[key].append(entry["duration_ms"])
+    result = []
+    for (func_name, filename, lineno), durations in groups.items():
+        result.append(
+            {
+                "function": func_name,
+                "filename": filename,
+                "lineno": lineno,
+                "count": len(durations),
+                "total_ms": round(sum(durations), 3),
+                "min_ms": round(min(durations), 3),
+                "max_ms": round(max(durations), 3),
+            }
+        )
+    return result
+
+
+def _is_builtin_or_stdlib(code: Any) -> bool:
+    if code.co_filename.startswith("<"):
+        return True
+    if (
+        "site-packages" not in code.co_filename
+        and "dist-packages" not in code.co_filename
+    ):
+        import os
+
+        py_path = os.path.dirname(os.__file__)
+        if code.co_filename.startswith(py_path):
+            return True
+    return False
 
 
 class InjectorTraceBackendsMixin:
@@ -22,7 +59,7 @@ class InjectorTraceBackendsMixin:
             kwargs: Function keyword arguments
 
         Returns:
-            Single-node call tree containing the root call.
+            Single-node call tree containing the root call with empty direct_callees.
         """
         start_time = time.perf_counter()
         try:
@@ -39,7 +76,7 @@ class InjectorTraceBackendsMixin:
                     if hasattr(func, "__code__")
                     else 0,
                     "duration_ms": round(duration_ms, 3),
-                    "children": [],
+                    "direct_callees": [],
                     "_result": result,
                 }
             ]
@@ -56,7 +93,7 @@ class InjectorTraceBackendsMixin:
                     if hasattr(func, "__code__")
                     else 0,
                     "duration_ms": round(duration_ms, 3),
-                    "children": [],
+                    "direct_callees": [],
                     "_exception": e,
                 }
             ]
@@ -66,32 +103,27 @@ class InjectorTraceBackendsMixin:
         func: Callable[..., Any],
         args: Tuple[Any, ...],
         kwargs: Dict[str, Any],
-        max_depth: int,
         skip_builtin: bool,
         min_duration: float,
-        call_stack: List[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
         """
         Trace function execution using sys.monitoring (Python 3.12+).
 
-        Caller must enforce runtime compatibility before selecting this backend.
+        Captures only direct callees of *func* (depth==2) and aggregates
+        per-execution.
 
         Args:
             func: Function to trace
             args: Function arguments
             kwargs: Function keyword arguments
-            max_depth: Maximum call depth
-            skip_builtin: Whether to skip built-in functions
-            min_duration: Minimum duration in ms to record
-            call_stack: Shared call stack for tracking depth
+            skip_builtin: Whether to skip built-in and stdlib functions
+            min_duration: Minimum duration in ms to record a callee
 
         Returns:
-            Call tree as list of dicts
+            Single-element list containing the root node with direct_callees.
         """
-        import sys
-
-        call_stack = []
-        completed_calls = []
+        call_stack: List[Dict[str, Any]] = []
+        completed_calls: List[Dict[str, Any]] = []
 
         def monitoring_callback(code, instruction_offset, *callback_args):
             """Callback for sys.monitoring events."""
@@ -106,25 +138,17 @@ class InjectorTraceBackendsMixin:
                 event = "return"
 
             if event == "call":
-                # Skip if too deep
-                if len(call_stack) >= max_depth:
+                # Block grandcallees: func is at len==0 before push (depth=1),
+                # direct callees are at len==1 before push (depth=2).
+                # len>=2 means we'd be at depth>=3 → skip.
+                if len(call_stack) >= 2:
                     return
 
                 # Skip built-in and stdlib if requested
-                if skip_builtin:
-                    if code.co_filename.startswith("<"):
-                        return
-                    if (
-                        "site-packages" not in code.co_filename
-                        and "dist-packages" not in code.co_filename
-                    ):
-                        import os
+                if skip_builtin and _is_builtin_or_stdlib(code):
+                    return
 
-                        py_path = os.path.dirname(os.__file__)
-                        if code.co_filename.startswith(py_path):
-                            return
-
-                call_entry = {
+                call_entry: Dict[str, Any] = {
                     "depth": len(call_stack) + 1,
                     "function": func_name,
                     "filename": code.co_filename,
@@ -142,7 +166,7 @@ class InjectorTraceBackendsMixin:
                     return
                 call_entry = call_stack[-1]
                 if call_entry.get("_code") is not code:
-                    # Not the expected return (call was skipped by filter)
+                    # Return for a frame whose call was skipped by a filter
                     return
 
                 call_stack.pop()
@@ -162,7 +186,8 @@ class InjectorTraceBackendsMixin:
                     else:
                         completed_calls.append(call_entry)
                 else:
-                    # Below min_duration: discard but migrate children up
+                    # Below min_duration: discard. Grandcallees are already
+                    # blocked so children is always empty here.
                     if call_entry["children"] and call_stack:
                         call_stack[-1]["children"].extend(call_entry["children"])
 
@@ -178,7 +203,7 @@ class InjectorTraceBackendsMixin:
 
         if tool_id is None:
             return self._trace_with_settrace(
-                func, args, kwargs, max_depth, skip_builtin, min_duration, call_stack
+                func, args, kwargs, skip_builtin, min_duration
             )
 
         try:
@@ -203,11 +228,14 @@ class InjectorTraceBackendsMixin:
                 result = func(*args, **kwargs)
                 duration_ms = (time.perf_counter() - start_time) * 1000
 
-                # Build tree structure from flat list
-                children = list(completed_calls)
+                # completed_calls[0] = func's monitoring entry;
+                # its children list holds the raw direct-callee entries.
+                func_children = (
+                    completed_calls[0]["children"] if completed_calls else []
+                )
+                direct_callees = _aggregate_callees(func_children)
 
-                # Root node
-                root_node = {
+                root_node: Dict[str, Any] = {
                     "depth": 0,
                     "function": f"{func.__module__}.{func.__qualname__}",
                     "filename": func.__code__.co_filename
@@ -217,7 +245,7 @@ class InjectorTraceBackendsMixin:
                     if hasattr(func, "__code__")
                     else 0,
                     "duration_ms": round(duration_ms, 3),
-                    "children": children,
+                    "direct_callees": direct_callees,
                     "_result": result,
                 }
 
@@ -225,7 +253,10 @@ class InjectorTraceBackendsMixin:
 
             except Exception as e:
                 duration_ms = (time.perf_counter() - start_time) * 1000
-                children = list(completed_calls)
+                func_children = (
+                    completed_calls[0]["children"] if completed_calls else []
+                )
+                direct_callees = _aggregate_callees(func_children)
                 root_node = {
                     "depth": 0,
                     "function": f"{func.__module__}.{func.__qualname__}",
@@ -236,7 +267,7 @@ class InjectorTraceBackendsMixin:
                     if hasattr(func, "__code__")
                     else 0,
                     "duration_ms": round(duration_ms, 3),
-                    "children": children,
+                    "direct_callees": direct_callees,
                     "_exception": e,
                 }
                 return [root_node]
@@ -251,81 +282,65 @@ class InjectorTraceBackendsMixin:
         func: Callable[..., Any],
         args: Tuple[Any, ...],
         kwargs: Dict[str, Any],
-        max_depth: int,
         skip_builtin: bool,
         min_duration: float,
-        call_stack: List[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
         """
         Trace function execution using sys.settrace (fallback for Python < 3.12).
 
-        Caller must enforce runtime compatibility before selecting this backend.
+        Captures only direct callees of *func* (depth==2) and aggregates
+        per-execution.
 
         Args:
             func: Function to trace
             args: Function arguments
             kwargs: Function keyword arguments
-            max_depth: Maximum call depth
-            skip_builtin: Whether to skip built-in functions
-            min_duration: Minimum duration in ms to record
-            call_stack: Shared call stack for tracking depth
+            skip_builtin: Whether to skip built-in and stdlib functions
+            min_duration: Minimum duration in ms to record a callee
 
         Returns:
-            Call tree as list of dicts
+            Single-element list containing the root node with direct_callees.
         """
-        call_tree = []
+        direct_callee_stack: List[Dict[str, Any]] = []
+        completed_direct_callees: List[Dict[str, Any]] = []
         current_depth = [0]
 
         def local_trace(frame, event, arg):
-            """Local trace function."""
-            if current_depth[0] >= max_depth:
-                return None
+            """Local trace function tracking depth-2 callees only."""
+            code = frame.f_code
 
             if event == "call":
-                code = frame.f_code
-                func_name = f"{code.co_filename}:{code.co_name}"
-
-                # Skip built-in and stdlib if requested
-                if skip_builtin:
-                    if code.co_filename.startswith("<"):
-                        return None
-                    if (
-                        "site-packages" not in code.co_filename
-                        and "dist-packages" not in code.co_filename
-                    ):
-                        import os
-
-                        py_path = os.path.dirname(os.__file__)
-                        if code.co_filename.startswith(py_path):
-                            return None
-
                 current_depth[0] += 1
-                start_time = time.perf_counter()
 
-                call_tree.append(
-                    {
-                        "depth": current_depth[0],
-                        "function": func_name,
-                        "filename": code.co_filename,
-                        "lineno": frame.f_lineno,
-                        "start_time": start_time,
-                    }
-                )
+                # depth==2 means this is a direct callee of func.
+                # Always return local_trace so all depth changes are tracked.
+                if current_depth[0] == 2:
+                    if not (skip_builtin and _is_builtin_or_stdlib(code)):
+                        func_name = f"{code.co_filename}:{code.co_name}"
+                        direct_callee_stack.append(
+                            {
+                                "function": func_name,
+                                "filename": code.co_filename,
+                                "lineno": code.co_firstlineno,
+                                "start_time": time.perf_counter(),
+                            }
+                        )
+
                 return local_trace
 
             elif event == "return":
-                if call_tree and call_tree[-1]["depth"] == current_depth[0]:
-                    duration_ms = (
-                        time.perf_counter() - call_tree[-1]["start_time"]
-                    ) * 1000
-
-                    # Only keep if above minimum duration
+                if current_depth[0] == 2 and direct_callee_stack:
+                    entry = direct_callee_stack.pop()
+                    duration_ms = (time.perf_counter() - entry["start_time"]) * 1000
                     if duration_ms >= min_duration:
-                        call_tree[-1]["duration_ms"] = round(duration_ms, 3)
-                        del call_tree[-1]["start_time"]
-                    else:
-                        call_tree.pop()
-
+                        completed_direct_callees.append(
+                            {
+                                "function": entry["function"],
+                                "filename": entry["filename"],
+                                "lineno": entry["lineno"],
+                                "duration_ms": round(duration_ms, 3),
+                            }
+                        )
                 current_depth[0] -= 1
 
             return local_trace
@@ -338,8 +353,9 @@ class InjectorTraceBackendsMixin:
             result = func(*args, **kwargs)
             duration_ms = (time.perf_counter() - start_time) * 1000
 
-            # Root node
-            root_node = {
+            direct_callees = _aggregate_callees(completed_direct_callees)
+
+            root_node: Dict[str, Any] = {
                 "depth": 0,
                 "function": f"{func.__module__}.{func.__qualname__}",
                 "filename": func.__code__.co_filename
@@ -349,7 +365,7 @@ class InjectorTraceBackendsMixin:
                 if hasattr(func, "__code__")
                 else 0,
                 "duration_ms": round(duration_ms, 3),
-                "children": call_tree,
+                "direct_callees": direct_callees,
                 "_result": result,
             }
 
@@ -357,6 +373,7 @@ class InjectorTraceBackendsMixin:
 
         except Exception as e:
             duration_ms = (time.perf_counter() - start_time) * 1000
+            direct_callees = _aggregate_callees(completed_direct_callees)
             root_node = {
                 "depth": 0,
                 "function": f"{func.__module__}.{func.__qualname__}",
@@ -367,7 +384,7 @@ class InjectorTraceBackendsMixin:
                 if hasattr(func, "__code__")
                 else 0,
                 "duration_ms": round(duration_ms, 3),
-                "children": call_tree,
+                "direct_callees": direct_callees,
                 "_exception": e,
             }
             return [root_node]
