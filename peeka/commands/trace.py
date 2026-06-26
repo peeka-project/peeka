@@ -21,10 +21,9 @@ class TraceCommand(BaseCommand):
     Trace command - traces function call tree and timing (Arthas-compatible)
 
     Usage:
-        trace <module.class.method> [-d depth] [-n times] [--condition expr] [--skip-builtin] [--min-duration ms]
+        trace <module.class.method> [-n times] [--condition expr] [--skip-builtin] [--min-duration ms]
 
     Parameters:
-        -d, --depth: Trace depth (max call levels, default: 3)
         -n, --times: Observation limit, -1 for unlimited (default: -1)
         --condition: Filter expression (e.g., "cost > 50")
         --skip-builtin: Skip built-in functions and standard library (default: True)
@@ -32,7 +31,7 @@ class TraceCommand(BaseCommand):
 
     Examples:
         trace mymodule.MyClass.my_method
-        trace mymodule.my_function -d 5 -n 10
+        trace mymodule.my_function -n 10
         trace mymodule.func --condition "cost > 50"
         trace mymodule.func --skip-builtin=false
         trace mymodule.func --min-duration 10
@@ -84,12 +83,11 @@ class TraceCommand(BaseCommand):
             return {"status": "error", "error": str(e)}
 
     def _start_trace(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        params.pop("depth", None)  # silently ignore legacy depth param from TUI/old clients
         self.validate_params(params, ["pattern"])
 
         pattern = params["pattern"]
         trace_config = {
-            "depth": params.get("depth", 3),
-            "trace_depth": params.get("depth", 3),  # for trace-specific depth
             "times": params.get("times", -1),
             "condition_express": params.get("condition_express")
                                  or params.get("condition"),
