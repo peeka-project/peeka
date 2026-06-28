@@ -15,6 +15,14 @@ def _attach_module():
     return attach_module
 
 
+def _core_resource_path(name: str) -> str:
+    """Return a resource path from peeka.core, not this mixin package."""
+    path = _attach_module().Path(_attach_module().__file__).with_name(name)
+    if not path.exists():
+        raise FileNotFoundError(f"Attach debugger script not found: {path}")
+    return str(path)
+
+
 class AttachInjectionMixin:
 
     def _attach_pep768(self) -> bool:
@@ -118,7 +126,7 @@ class AttachInjectionMixin:
             if not injector_path:
                 raise RuntimeError("C extension not found")
 
-            gdb_script = os.path.join(os.path.dirname(__file__), "_attach.gdb")
+            gdb_script = _core_resource_path("_attach.gdb")
 
             cmd = ["gdb", "-p", str(self.pid), "-batch", "-q"]
             cmd.extend(["-eval-command", f"set $peeka_port = {notify_port}"])
@@ -222,7 +230,7 @@ class AttachInjectionMixin:
             if not injector_path:
                 raise RuntimeError("C extension not found")
 
-            lldb_script = os.path.join(os.path.dirname(__file__), "_attach.lldb")
+            lldb_script = _core_resource_path("_attach.lldb")
 
             cmd = ["lldb", "-p", str(self.pid), "--batch", "--no-lldbinit"]
             cmd.extend(["--one-line", f"script rtld_default = {_attach_module()._RTLD_DEFAULT}"])

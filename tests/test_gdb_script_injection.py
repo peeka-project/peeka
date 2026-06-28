@@ -8,6 +8,8 @@ for dlopen-based injection (Task 5).
 import os
 from pathlib import Path
 
+from peeka.core.attach_workflow.injectors import _core_resource_path
+
 
 class TestGDBScriptInjection:
     """Tests for _attach.gdb script structure and content"""
@@ -33,6 +35,18 @@ class TestGDBScriptInjection:
         script_path = self._get_script_path()
         assert script_path.exists(), f"Expected {script_path} to exist"
         assert script_path.is_file(), f"Expected {script_path} to be a file"
+
+    def test_injector_resolves_gdb_script_from_core_dir(self):
+        """Attach workflow resolves _attach.gdb from peeka/core after modularization."""
+        script_path = Path(_core_resource_path("_attach.gdb"))
+        assert script_path == self._get_script_path()
+        assert script_path.exists()
+
+    def test_injector_resolves_lldb_script_from_core_dir(self):
+        """Attach workflow resolves _attach.lldb from peeka/core after modularization."""
+        script_path = Path(_core_resource_path("_attach.lldb"))
+        assert script_path == self._get_script_path().with_name("_attach.lldb")
+        assert script_path.exists()
 
     def test_script_readable(self):
         """GDB script is readable"""
