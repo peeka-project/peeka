@@ -50,6 +50,8 @@ class TraceView(Container):
         self._socket_path: Optional[str] = None
         self._current_tree_nodes: Dict[str, TreeNode] = {}  # For tree node management
         self._observations: Deque[dict] = deque(maxlen=self.MAX_OBSERVATIONS)
+        self._observations_by_pattern: Dict[str, List[Dict]] = {}
+        self._selected_pattern: Optional[str] = None
         self._obs_counter: int = 0
         self._auto_follow: bool = True
         self._log = logging.getLogger(__name__)
@@ -103,6 +105,10 @@ class TraceView(Container):
         tree = self.query_one("#call-tree", Tree)
         tree.clear()
         tree.root.expand()
+        obs_table = self.query_one("#trace-obs-table", DataTable)
+        obs_table.clear()
+        self._observations_by_pattern.clear()
+        self._selected_pattern = None
 
     def _get_pattern_completions(self, prefix: str):
         """Get completions for pattern input."""
@@ -190,16 +196,15 @@ class TraceView(Container):
         trace_list = self.query_one("#trace-list", Vertical)
         trace_list.border_title = "Active Traces"
 
-        # Observation history table
         obs_table = self.query_one("#trace-obs-table", DataTable)
+        obs_table.clear(columns=True)
         obs_table.add_columns(
-            ("#", "#"),
-            ("Function", "Function"),
-            ("Duration", "Duration"),
-            ("Nodes", "Nodes"),
+            ("Pattern", "Pattern"),
+            ("Status", "Status"),
+            ("Count", "Count"),
         )
         obs_table.cursor_type = "row"
-        obs_table.border_title = "Observations"
+        obs_table.border_title = "Active Traces"
 
         # Call tree panel
         trace_tree_panel = self.query_one("#trace-tree-panel", Vertical)
@@ -312,29 +317,10 @@ class TraceView(Container):
     def on_data_table_row_highlighted(
         self, event: DataTable.RowHighlighted
     ) -> None:
-        """Update call tree when an observation row is selected."""
         table = event.data_table
-        if table.id != "trace-obs-table":
-            return
-
-        if event.row_key is None:
-            return
-
-        # If user selects a row that is NOT the last one, disable auto-follow.
-        # If user selects the last row, re-enable auto-follow.
-        row_index = event.cursor_row
-        self._auto_follow = (row_index == table.row_count - 1)
-
-        try:
-            row_idx = int(str(event.row_key.value))
-        except (ValueError, TypeError):
-            return
-
-        # Find the observation by row key
-        for obs in self._observations:
-            if obs.get("_row_id") == row_idx:
-                self._show_trace_detail(obs)
-                break
+        if table.id == "trace-obs-table":
+            if event.row_key is not None:
+                self._selected_pattern = str(event.row_key.value)
 
     def _show_trace_detail(self, observation: dict) -> None:
         """Show a stored observation's call tree and stats."""
@@ -438,6 +424,13 @@ class TraceView(Container):
         table = self.query_one("#trace-table", DataTable)
         table.add_row(watch_id[:8], pattern, "0", "Active", key=watch_id)
 
+        obs_table = self.query_one("#trace-obs-table", DataTable)
+        try:
+            obs_table.update_cell(pattern, "Status", "Running")
+        except Exception:
+            obs_table.add_row(pattern, "Running", "0", key=pattern)
+        self._observations_by_pattern.setdefault(pattern, [])
+
         self._active_traces[watch_id] = {
             "pattern": pattern,
             "count": 0,
@@ -499,53 +492,35 @@ class TraceView(Container):
         self._obs_counter += 1
         row_id = self._obs_counter
 
-        # Store observation with metadata
         observation["_row_id"] = row_id
         observation["_count"] = count
         self._observations.append(observation)
 
-        func_name = observation.get("func_name", "unknown")
-        total_duration = observation.get("total_duration_ms", 0)
-        node_count = observation.get("node_count", 0)
-
-        # Shorten module path: __main__.Calculator.add -> Calculator.add
-        display_name = func_name
-        if "." in display_name:
-            parts = display_name.split(".")
-            if parts[0] in ("__main__",) or len(parts) > 3:
-                display_name = (
-                    ".".join(parts[-2:]) if len(parts) >= 2 else parts[-1]
-                )
-
-        # Update active traces table count
         trace_table = self.query_one("#trace-table", DataTable)
         try:
             trace_table.update_cell(watch_id, "Count", str(count))
         except Exception:
             pass
 
-        # Add row to observation history table
-        obs_table = self.query_one("#trace-obs-table", DataTable)
+        pattern = None
+        for wid, info in self._active_traces.items():
+            if wid == watch_id:
+                pattern = info.get("pattern")
+                break
 
-        # Evict oldest row if over limit
-        if obs_table.row_count >= self.MAX_OBSERVATIONS:
+        if pattern:
+            obs_list = self._observations_by_pattern.setdefault(pattern, [])
+            obs_list.insert(0, observation)
+            if len(obs_list) > 100:
+                obs_list.pop()
+
+            obs_table = self.query_one("#trace-obs-table", DataTable)
             try:
-                first_key = list(obs_table.rows.keys())[0]
-                obs_table.remove_row(first_key)
-            except (IndexError, KeyError):
+                obs_table.update_cell(pattern, "Count", str(len(obs_list)))
+            except Exception:
                 pass
 
-        obs_table.add_row(
-            str(row_id),
-            display_name,
-            f"{total_duration:.2f}ms",
-            str(node_count),
-            key=str(row_id),
-        )
-
-        # Auto-scroll and auto-show detail only if following latest
         if self._auto_follow:
-            obs_table.move_cursor(row=obs_table.row_count - 1, animate=False)
             self._show_trace_detail(observation)
 
     def _build_call_tree(
@@ -635,6 +610,12 @@ class TraceView(Container):
                         thread=True,
                     )
                     await reset_worker.wait()
+
+                    obs_table = self.query_one("#trace-obs-table", DataTable)
+                    try:
+                        obs_table.update_cell(pattern, "Status", "Stopped")
+                    except Exception:
+                        pass
 
                 stopped_count += 1
             except Exception:
