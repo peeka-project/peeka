@@ -1,6 +1,7 @@
 """Tests for WatchView - streaming data flow and error handling."""
 
 import pytest
+from textual.containers import Vertical
 from textual.widgets import DataTable, Static
 
 from peeka.tui.app import PeekaApp
@@ -435,3 +436,101 @@ class TestWatchView:
             assert "patched" in text
             assert "wrapper_only" in text
             assert "downgraded: gevent detected" in text
+
+
+class TestWatchViewLayout:
+    """Geometry tests for WatchView layout redesign (T2)."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_watch_list_at_top_height_13(self, mock_client_factory):
+        """#watch-list should render with height=13 at the top of the view."""
+        client = mock_client_factory(responses={})
+        client.connect()
+
+        app = PeekaApp()
+        async with app.run_test(size=(80, 30)) as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            main_screen.action_switch_tab("watch")
+            await pilot.pause()
+
+            watch_view = app.screen.query_one("WatchView", WatchView)
+            watch_list = watch_view.query_one("#watch-list", Vertical)
+            assert watch_list.region.height == 13
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_watch_bottom_panel_2to1_ratio(self, mock_client_factory):
+        """#observations-panel should be ~2x the width of #observation-detail-panel."""
+        client = mock_client_factory(responses={})
+        client.connect()
+
+        app = PeekaApp()
+        async with app.run_test(size=(140, 30)) as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            main_screen.action_switch_tab("watch")
+            await pilot.pause()
+
+            watch_view = app.screen.query_one("WatchView", WatchView)
+            obs = watch_view.query_one("#observations-panel", Vertical)
+            detail = watch_view.query_one("#observation-detail-panel", Vertical)
+
+            assert obs.region.y == detail.region.y
+            assert obs.region.x < detail.region.x
+            assert abs(obs.region.width - 2 * detail.region.width) <= 2
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_watch_runtime_banner_between_controls_and_list(
+        self, mock_client_factory
+    ):
+        """#watch-runtime-banner should sit between #watch-top-controls and #watch-list."""
+        from textual.containers import Container
+
+        client = mock_client_factory(
+            responses={
+                "patch-status": make_patch_status_response(
+                    backend="wrapper_only",
+                    downgraded=True,
+                    degraded_reason="gevent detected",
+                )
+            }
+        )
+        client.connect()
+
+        app = PeekaApp()
+        async with app.run_test(size=(80, 30)) as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            main_screen.action_switch_tab("watch")
+            await pilot.pause()
+
+            watch_view = app.screen.query_one("WatchView", WatchView)
+            watch_view.set_client(client)
+            await pilot.pause()
+            await pilot.pause()
+
+            watch_container = watch_view.query_one("#watch-container", Container)
+            child_ids = [child.id for child in watch_container.children]
+
+            assert "watch-top-controls" in child_ids
+            assert "watch-runtime-banner" in child_ids
+            assert "watch-list" in child_ids
+            controls_idx = child_ids.index("watch-top-controls")
+            banner_idx = child_ids.index("watch-runtime-banner")
+            list_idx = child_ids.index("watch-list")
+            assert controls_idx < banner_idx < list_idx

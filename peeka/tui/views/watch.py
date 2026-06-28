@@ -254,24 +254,21 @@ class WatchView(Container):
                 id="watch-top-controls",
             ),
             Static("", id="watch-runtime-banner"),
+            Vertical(
+                DataTable(id="watch-table"),
+                id="watch-list",
+                classes="panel panel--stream",
+            ),
             Horizontal(
                 Vertical(
-                    DataTable(id="watch-table"),
-                    id="watch-list",
-                    classes="panel panel--stream",
+                    DataTable(id="observations-table"),
+                    id="observations-panel",
+                    classes="panel panel--detail",
                 ),
                 Vertical(
-                    Vertical(
-                        DataTable(id="observations-table"),
-                        id="observations-panel",
-                        classes="panel panel--detail",
-                    ),
-                    Vertical(
-                        Tree("Detail", id="observation-detail"),
-                        id="observation-detail-panel",
-                        classes="panel panel--detail",
-                    ),
-                    id="watch-detail-column",
+                    Tree("Detail", id="observation-detail"),
+                    id="observation-detail-panel",
+                    classes="panel panel--detail",
                 ),
                 id="watch-content",
             ),
