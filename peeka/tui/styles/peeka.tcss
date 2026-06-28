@@ -412,8 +412,8 @@ Input {
     margin-right: 1;
 }
 
-#trace-options-controls #trace-depth {
-    width: 8;
+#trace-options-controls #trace-min-duration {
+    width: 12;
 }
 
 #trace-options-controls #trace-condition {

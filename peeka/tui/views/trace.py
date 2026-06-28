@@ -124,10 +124,10 @@ class TraceView(Container):
                     classes="compact-control",
                 ),
                 Horizontal(
-                    Static("Depth:", classes="input-label"),
+                    Static("Min Duration (ms):", classes="input-label"),
                     Input(
-                        placeholder="3",
-                        id="trace-depth",
+                        placeholder="0",
+                        id="trace-min-duration",
                     ),
                     Static("Condition:", classes="input-label"),
                     Input(
@@ -391,28 +391,28 @@ class TraceView(Container):
         else:
             pattern = pattern_widget.value  # type: ignore
 
-        depth_input = self.query_one("#trace-depth", Input).value
+        min_duration_input = self.query_one("#trace-min-duration", Input).value
         condition = self.query_one("#trace-condition", Input).value
 
         if not pattern:
             self.app.notify("Please enter a pattern", severity="warning")
             return
 
-        # Parse depth, default to 3
+        # Parse min_duration, default to 0
         try:
-            depth = int(depth_input) if depth_input else 3
-            if depth < 1 or depth > 5:
-                self.app.notify("Depth must be between 1 and 5", severity="warning")
+            min_duration_ms = int(min_duration_input) if min_duration_input.strip() else 0
+            if min_duration_ms < 0:
+                self.app.notify("Min duration must be >= 0", severity="warning")
                 return
         except ValueError:
-            self.app.notify("Invalid depth value", severity="warning")
+            self.app.notify("Invalid min duration value", severity="warning")
             return
 
         command = {
             "type": "trace",
             "action": "start",
             "pattern": pattern,
-            "depth": depth,
+            "min_duration": min_duration_ms,
             "times": -1,  # Unlimited observations
             "skip_builtin": True,
             "condition_express": condition if condition else None,
@@ -441,7 +441,6 @@ class TraceView(Container):
         self._active_traces[watch_id] = {
             "pattern": pattern,
             "count": 0,
-            "depth": depth,
             "worker": None,
         }
 
@@ -452,11 +451,11 @@ class TraceView(Container):
         )
         self._active_traces[watch_id]["worker"] = worker
 
-        self.app.notify(f"Tracing: {pattern} (depth={depth})", severity="information")
+        self.app.notify(f"Tracing: {pattern} (min_duration={min_duration_ms}ms)", severity="information")
 
         # Clear inputs
         pattern_widget.value = ""
-        self.query_one("#trace-depth", Input).value = ""
+        self.query_one("#trace-min-duration", Input).value = ""
         self.query_one("#trace-condition", Input).value = ""
 
     def _stream_trace_observations(self, watch_id: str, pattern: str):
