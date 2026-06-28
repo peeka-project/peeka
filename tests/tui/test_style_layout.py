@@ -726,13 +726,13 @@ class TestTraceViewStyles:
             await pilot.pause()
 
             pattern = app.screen.query_one("#trace-pattern", AutoCompleteInput)
-            depth = app.screen.query_one("#trace-depth", Input)
+            min_duration = app.screen.query_one("#trace-min-duration", Input)
             condition = app.screen.query_one("#trace-condition", Input)
             actions = app.screen.query_one("#trace-action-controls", Horizontal)
             trace_btn = app.screen.query_one("#trace-btn", Button)
 
             assert pattern.region.width >= 30
-            assert depth.region.width >= 8
+            assert min_duration.region.width >= 8
             assert condition.region.width >= 20
             assert trace_btn.region.x + trace_btn.region.width <= 80
             assert actions.region.y > condition.region.y
@@ -834,6 +834,73 @@ class TestTraceViewStyles:
             assert trace_tree_panel.region.x == stats_panel.region.x
             assert trace_tree_panel.region.width == stats_panel.region.width
             assert trace_tree_panel.region.y + trace_tree_panel.region.height < stats_panel.region.y
+
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_trace_min_duration_visible_and_sized_wide(self):
+        """#trace-min-duration is visible with width >= 8 on a 140-column terminal."""
+        app = PeekaApp()
+        async with app.run_test(size=(140, 24)) as pilot:
+            main_screen = MainScreen(pid=12345, session_id="test-session", socket_path="/tmp/test.sock")
+            await app.push_screen(main_screen)
+            await pilot.pause()
+            main_screen.action_switch_tab("trace")
+            await pilot.pause()
+
+            min_duration = app.screen.query_one("#trace-min-duration", Input)
+            assert min_duration.region.width >= 8
+            assert min_duration.region.x >= 0
+            assert min_duration.region.x + min_duration.region.width <= 140
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_trace_min_duration_visible_and_sized_narrow(self):
+        """#trace-min-duration is accessible on an 80-column terminal."""
+        app = PeekaApp()
+        async with app.run_test(size=(80, 24)) as pilot:
+            main_screen = MainScreen(pid=12345, session_id="test-session", socket_path="/tmp/test.sock")
+            await app.push_screen(main_screen)
+            await pilot.pause()
+            main_screen.action_switch_tab("trace")
+            await pilot.pause()
+
+            min_duration = app.screen.query_one("#trace-min-duration", Input)
+            assert min_duration.region.width >= 8
+            assert min_duration.region.x + min_duration.region.width <= 80
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_trace_tab_focus_chain_covers_key_controls(self):
+        """Pressing Tab from #trace-pattern reaches #trace-min-duration, condition, and buttons."""
+        app = PeekaApp()
+        async with app.run_test(size=(140, 30)) as pilot:
+            main_screen = MainScreen(pid=12345, session_id="test-session", socket_path="/tmp/test.sock")
+            await app.push_screen(main_screen)
+            await pilot.pause()
+            main_screen.action_switch_tab("trace")
+            await pilot.pause()
+
+            pattern = app.screen.query_one("#trace-pattern")
+            pattern.focus()
+            await pilot.pause()
+
+            visited_ids = set()
+            if app.focused:
+                visited_ids.add(app.focused.id)
+            for _ in range(10):
+                await pilot.press("tab")
+                await pilot.pause()
+                if app.focused:
+                    visited_ids.add(app.focused.id)
+
+            assert "trace-min-duration" in visited_ids, f"#trace-min-duration not in focus chain: {visited_ids}"
+            assert "trace-condition" in visited_ids, f"#trace-condition not in focus chain: {visited_ids}"
+            assert (
+                "trace-btn" in visited_ids
+                or "stop-trace-btn" in visited_ids
+                or "clear-trace-btn" in visited_ids
+            ), f"No trace action button in focus chain: {visited_ids}"
 
 
 class TestStackViewStyles:
