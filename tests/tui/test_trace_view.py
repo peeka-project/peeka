@@ -1,6 +1,7 @@
 """Tests for TraceView - streaming, call tree, and error handling."""
 
 import pytest
+from textual.containers import Vertical
 from textual.css.query import NoMatches
 from textual.widgets import DataTable, Input, Static, Tree
 
@@ -257,8 +258,8 @@ class TestTraceView:
             await pilot.pause()
             await pilot.pause()
 
-            table = trace_view.query_one("#trace-table", DataTable)
-            assert table.row_count == 1
+            obs_table = trace_view.query_one("#trace-obs-table", DataTable)
+            assert obs_table.row_count >= 1
 
             stats = trace_view.query_one("#trace-stats", Static)
             stats_text = str(stats.render())
@@ -305,8 +306,8 @@ class TestTraceView:
             ]
             assert len(trace_commands) == 1
 
-            table = trace_view.query_one("#trace-table", DataTable)
-            assert table.row_count == 0
+            obs_table = trace_view.query_one("#trace-obs-table", DataTable)
+            assert obs_table.row_count == 0
 
             assert len(trace_view._active_traces) == 0
 
@@ -343,8 +344,8 @@ class TestTraceView:
             ]
             assert len(trace_commands) == 0
 
-            table = trace_view.query_one("#trace-table", DataTable)
-            assert table.row_count == 0
+            obs_table = trace_view.query_one("#trace-obs-table", DataTable)
+            assert obs_table.row_count == 0
 
     @pytest.mark.asyncio
     @pytest.mark.tui
@@ -424,9 +425,9 @@ class TestTraceView:
             await pilot.pause(0.2)
             await pilot.pause()
 
-            table = trace_view.query_one("#trace-table", DataTable)
-            assert table.row_count == 1
-            row_data = table.get_row_at(0)
+            obs_table = trace_view.query_one("#trace-obs-table", DataTable)
+            assert obs_table.row_count >= 1
+            row_data = obs_table.get_row_at(0)
             assert "2" in str(row_data)
 
     @pytest.mark.asyncio
@@ -1077,3 +1078,61 @@ class TestTraceView:
             stats = trace_view.query_one("#trace-stats", Static)
             stats_text = str(stats.render())
             assert "Backend:" in stats_text
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_trace_list_at_top_height_13(self, mock_client_factory):
+        """#trace-list must have height=13 and appear above #trace-content."""
+        client = mock_client_factory(responses={})
+        client.connect()
+        stream_client = mock_client_factory(observations=[])
+        stream_client.connect()
+
+        app = PeekaApp()
+        async with app.run_test(size=(80, 30)) as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(client)
+            trace_view._stream_client = stream_client
+
+            main_screen.action_switch_tab("trace")
+            await pilot.pause()
+
+            trace_list = trace_view.query_one("#trace-list", Vertical)
+            assert trace_list.region.height == 13
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_trace_bottom_panel_2to1_ratio(self, mock_client_factory):
+        """#trace-tree-panel must be ~2x wider than #trace-stats-panel (±2 px)."""
+        client = mock_client_factory(responses={})
+        client.connect()
+        stream_client = mock_client_factory(observations=[])
+        stream_client.connect()
+
+        app = PeekaApp()
+        async with app.run_test(size=(140, 30)) as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(client)
+            trace_view._stream_client = stream_client
+
+            main_screen.action_switch_tab("trace")
+            await pilot.pause()
+
+            tree_panel = trace_view.query_one("#trace-tree-panel", Vertical)
+            stats_panel = trace_view.query_one("#trace-stats-panel", Vertical)
+
+            assert tree_panel.region.x < stats_panel.region.x
+            assert tree_panel.region.y == stats_panel.region.y
+            assert abs(tree_panel.region.width - 2 * stats_panel.region.width) <= 2

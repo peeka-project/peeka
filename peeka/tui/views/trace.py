@@ -152,25 +152,21 @@ class TraceView(Container):
                 ),
                 id="trace-top-controls",
             ),
+            Vertical(
+                DataTable(id="trace-obs-table"),
+                id="trace-list",
+                classes="panel panel--stream",
+            ),
             Horizontal(
                 Vertical(
-                    DataTable(id="trace-table"),
-                    DataTable(id="trace-obs-table"),
-                    id="trace-list",
-                    classes="panel panel--stream",
+                    Tree("Call Tree", id="call-tree"),
+                    id="trace-tree-panel",
+                    classes="panel panel--detail",
                 ),
                 Vertical(
-                    Vertical(
-                        Tree("Call Tree", id="call-tree"),
-                        id="trace-tree-panel",
-                        classes="panel panel--detail",
-                    ),
-                    Vertical(
-                        Static(id="trace-stats"),
-                        id="trace-stats-panel",
-                        classes="panel panel--detail",
-                    ),
-                    id="trace-detail-column",
+                    Static(id="trace-stats"),
+                    id="trace-stats-panel",
+                    classes="panel panel--detail",
                 ),
                 id="trace-content",
             ),
@@ -178,19 +174,9 @@ class TraceView(Container):
         )
 
     def on_mount(self) -> None:
-        """Initialize trace table, observations table, and tree."""
+        """Initialize observations table and tree."""
         container = self.query_one("#trace-container", Container)
         container.border_title = "Trace"
-
-        # Active traces table
-        table = self.query_one("#trace-table", DataTable)
-        table.add_columns(
-            ("ID", "ID"),
-            ("Pattern", "Pattern"),
-            ("Count", "Count"),
-            ("Status", "Status"),
-        )
-        table.cursor_type = "row"
 
         trace_list = self.query_one("#trace-list", Vertical)
         trace_list.border_title = "Active Traces"
@@ -464,9 +450,6 @@ class TraceView(Container):
             self.app.notify("No watch_id returned", severity="error")
             return
 
-        table = self.query_one("#trace-table", DataTable)
-        table.add_row(watch_id[:8], pattern, "0", "Active", key=watch_id)
-
         obs_table = self.query_one("#trace-obs-table", DataTable)
         try:
             obs_table.update_cell(pattern, "Status", "Running")
@@ -538,12 +521,6 @@ class TraceView(Container):
         observation["_row_id"] = row_id
         observation["_count"] = count
         self._observations.append(observation)
-
-        trace_table = self.query_one("#trace-table", DataTable)
-        try:
-            trace_table.update_cell(watch_id, "Count", str(count))
-        except Exception:
-            pass
 
         pattern = None
         for wid, info in self._active_traces.items():
@@ -633,8 +610,5 @@ class TraceView(Container):
                 pass
 
         self._active_traces.clear()
-
-        table = self.query_one("#trace-table", DataTable)
-        table.clear()
 
         self.app.notify(f"Stopped {stopped_count} trace(s)", severity="information")
