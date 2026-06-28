@@ -679,9 +679,9 @@ class TestWatchViewStyles:
             assert "panel--detail" in observations_panel.classes
             assert "panel" in detail_panel.classes
             assert "panel--detail" in detail_panel.classes
-            assert observations_panel.region.x == detail_panel.region.x
-            assert observations_panel.region.width == detail_panel.region.width
-            assert observations_panel.region.y + observations_panel.region.height < detail_panel.region.y
+            assert observations_panel.region.x < detail_panel.region.x
+            assert observations_panel.region.y == detail_panel.region.y
+            assert observations_panel.region.width == pytest.approx(2 * detail_panel.region.width, abs=2)
 
 
 class TestTraceViewStyles:
@@ -831,9 +831,9 @@ class TestTraceViewStyles:
             assert "panel--detail" in trace_tree_panel.classes
             assert "panel" in stats_panel.classes
             assert "panel--detail" in stats_panel.classes
-            assert trace_tree_panel.region.x == stats_panel.region.x
-            assert trace_tree_panel.region.width == stats_panel.region.width
-            assert trace_tree_panel.region.y + trace_tree_panel.region.height < stats_panel.region.y
+            assert trace_tree_panel.region.x < stats_panel.region.x
+            assert trace_tree_panel.region.y == stats_panel.region.y
+            assert trace_tree_panel.region.width == pytest.approx(2 * stats_panel.region.width, abs=2)
 
 
     @pytest.mark.asyncio
@@ -974,8 +974,30 @@ class TestStreamViewGeometry:
 
     @pytest.mark.asyncio
     @pytest.mark.tui
-    async def test_watch_trace_stack_split_widths_match(self):
-        """Watch, Trace, and Stack left/right panes use the same geometry."""
+    async def test_stack_view_split_unchanged(self):
+
+        class ProbeApp(App[None]):
+            CSS_PATH = STYLE_PATH
+
+            def compose(self) -> ComposeResult:
+                with Container(id="main-container"):
+                    yield StackView(pid=12345)
+
+        app = ProbeApp()
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause()
+
+            stack_left = app.query_one("#stack-list", Vertical)
+            stack_right = app.query_one("#stack-panel", Vertical)
+
+            assert stack_left.region.x < stack_right.region.x
+            assert stack_left.region.y == stack_right.region.y
+            assert stack_left.region.width == pytest.approx(64, abs=4)
+            assert stack_right.region.width == pytest.approx(96, abs=4)
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_watch_trace_new_top_bottom_layout(self):
 
         class ProbeApp(App[None]):
             CSS_PATH = STYLE_PATH
@@ -984,22 +1006,25 @@ class TestStreamViewGeometry:
                 with Container(id="main-container"):
                     yield WatchView(pid=12345)
                     yield TraceView(pid=12345)
-                    yield StackView(pid=12345)
 
         app = ProbeApp()
         async with app.run_test(size=(160, 40)) as pilot:
             await pilot.pause()
 
-            watch_left = app.query_one("#watch-list", Vertical).region.width
-            trace_left = app.query_one("#trace-list", Vertical).region.width
-            stack_left = app.query_one("#stack-list", Vertical).region.width
+            watch_list = app.query_one("#watch-list", Vertical)
+            trace_list = app.query_one("#trace-list", Vertical)
+            assert watch_list.region.height == 13
+            assert trace_list.region.height == 13
 
-            watch_right = app.query_one("#observations-panel", Vertical).region.width
-            trace_right = app.query_one("#trace-detail-column", Vertical).region.width
-            stack_right = app.query_one("#stack-panel", Vertical).region.width
+            obs_panel = app.query_one("#observations-panel", Vertical)
+            detail_panel = app.query_one("#observation-detail-panel", Vertical)
+            assert obs_panel.region.x < detail_panel.region.x
+            assert obs_panel.region.width == pytest.approx(2 * detail_panel.region.width, abs=2)
 
-            assert trace_left == watch_left == stack_left
-            assert trace_right == watch_right == stack_right
+            tree_panel = app.query_one("#trace-tree-panel", Vertical)
+            stats_panel = app.query_one("#trace-stats-panel", Vertical)
+            assert tree_panel.region.x < stats_panel.region.x
+            assert tree_panel.region.width == pytest.approx(2 * stats_panel.region.width, abs=2)
 
 
 class TestMonitorViewStyles:
