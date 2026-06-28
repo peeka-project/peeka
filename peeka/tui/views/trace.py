@@ -543,18 +543,6 @@ class TraceView(Container):
             if self._selected_pattern == pattern:
                 self._build_observation_tree(pattern)
 
-    def _format_duration(self, duration_ms: float) -> str:
-        """Format duration with color coding based on time taken."""
-        if duration_ms >= 100:
-            # Red for slow (>=100ms)
-            return f"[red bold]{duration_ms:.2f}ms[/red bold]"
-        elif duration_ms >= 10:
-            # Yellow for medium (>=10ms)
-            return f"[yellow]{duration_ms:.2f}ms[/yellow]"
-        else:
-            # Green for fast (<10ms)
-            return f"[green]{duration_ms:.2f}ms[/green]"
-
     async def _stop_all_traces(self) -> None:
         """Stop all active traces."""
         if not self._client:
