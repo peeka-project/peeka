@@ -12,7 +12,6 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Button, DataTable, Input, Static, Tree
-from textual.widgets.tree import TreeNode
 from textual.worker import get_current_worker
 
 from peeka.tui.activity import make_activity_reporter, make_client_info
@@ -48,12 +47,10 @@ class TraceView(Container):
         self._stream_client: Optional["StreamingAgentClient"] = None
         self._stream_client_lock: threading.Lock = threading.Lock()
         self._socket_path: Optional[str] = None
-        self._current_tree_nodes: Dict[str, TreeNode] = {}  # For tree node management
         self._observations: Deque[dict] = deque(maxlen=self.MAX_OBSERVATIONS)
         self._observations_by_pattern: Dict[str, List[Dict]] = {}
         self._selected_pattern: Optional[str] = None
         self._obs_counter: int = 0
-        self._auto_follow: bool = True
         self._log = logging.getLogger(__name__)
 
     def set_client(self, client: "StreamingAgentClient") -> None:
@@ -109,6 +106,8 @@ class TraceView(Container):
         obs_table.clear()
         self._observations_by_pattern.clear()
         self._selected_pattern = None
+        stats = self.query_one("#trace-stats", Static)
+        stats.update("[dim]No trace data yet[/dim]")
 
     def _get_pattern_completions(self, prefix: str):
         """Get completions for pattern input."""
@@ -320,35 +319,77 @@ class TraceView(Container):
         table = event.data_table
         if table.id == "trace-obs-table":
             if event.row_key is not None:
-                self._selected_pattern = str(event.row_key.value)
+                pattern = str(event.row_key.value)
+                self._selected_pattern = pattern
+                self._build_observation_tree(pattern)
 
-    def _show_trace_detail(self, observation: dict) -> None:
-        """Show a stored observation's call tree and stats."""
-        call_tree = observation.get("call_tree", [])
-        total_duration = observation.get("total_duration_ms", 0)
-        node_count = observation.get("node_count", 0)
-        func_name = observation.get("func_name", "unknown")
-        count = observation.get("_count", 0)
-
-        # Rebuild tree
+    def _build_observation_tree(self, pattern: str) -> None:
         tree = self.query_one("#call-tree", Tree)
         tree.clear()
-        tree.root.label = f"[bold cyan]#{count} {func_name}[/bold cyan]"
+        tree.root.label = f"[bold cyan]{pattern}[/bold cyan]"
         tree.root.expand()
 
-        if call_tree:
-            self._build_call_tree(tree.root, call_tree)
+        observations = self._observations_by_pattern.get(pattern, [])
+        if not observations:
+            stats = self.query_one("#trace-stats", Static)
+            stats.update("[dim]No observations yet[/dim]")
+            return
 
-        # Update stats
+        for idx, obs in enumerate(observations):
+            n = obs.get("_count", idx + 1)
+            total_ms = obs.get("total_duration_ms", 0.0)
+            self_ms = obs.get("self_time_ms", 0.0)
+            obs_label = f"obs #{n}  total={total_ms:.3f}ms  self={self_ms:.3f}ms"
+            obs_node = tree.root.add(obs_label, expand=(idx == 0))
+            obs_node.data = {"type": "observation", "obs": obs}
+
+            for callee in obs.get("call_tree", []):
+                func = callee.get("function", "unknown")
+                count = callee.get("count", 0)
+                t_ms = callee.get("total_ms", 0.0)
+                mn_ms = callee.get("min_ms", 0.0)
+                mx_ms = callee.get("max_ms", 0.0)
+                filename = callee.get("filename", "")
+                lineno = callee.get("lineno", 0)
+                short_fn = filename.split("/")[-1] if filename else ""
+                loc = f" @ {short_fn}:{lineno}" if short_fn else ""
+                callee_label = (
+                    f"{func}  count={count}  total={t_ms:.3f}ms"
+                    f"  min={mn_ms:.3f}ms  max={mx_ms:.3f}ms{loc}"
+                )
+                callee_node = obs_node.add(callee_label)
+                callee_node.data = {"type": "callee", "callee": callee, "obs": obs}
+
+    def on_tree_node_highlighted(self, event: Tree.NodeHighlighted) -> None:
+        node = event.node
+        if node.data is None:
+            return
+        data = node.data
+        if data.get("type") == "observation":
+            obs = data["obs"]
+        elif data.get("type") == "callee":
+            obs = data["obs"]  # show parent observation's stats
+        else:
+            return
+        self._update_stats_panel(obs)
+
+    def _update_stats_panel(self, obs: Dict[str, Any]) -> None:
         stats = self.query_one("#trace-stats", Static)
+        n = obs.get("_count", "?")
+        func_name = obs.get("func_name", "unknown")
+        total_ms = obs.get("total_duration_ms", 0.0)
+        self_ms = obs.get("self_time_ms", 0.0)
+        callee_count = obs.get("callee_count", 0)
+        node_count = obs.get("node_count", 0)
         stats_text = (
-            f"[cyan]Observation #{count}[/cyan]\n"
-            f"Total Duration: {self._format_duration(total_duration)}\n"
-            f"Node Count: {node_count}\n"
+            f"[cyan]Observation #{n}[/cyan]\n"
+            f"total_duration_ms: {total_ms:.3f}\n"
+            f"self_time_ms: {self_ms:.3f}\n"
+            f"callee_count: {callee_count}\n"
+            f"node_count: {node_count}\n"
             f"Function: [yellow]{func_name}[/yellow]"
         )
-
-        runtime_meta = observation.get("runtime_meta")
+        runtime_meta = obs.get("runtime_meta")
         if isinstance(runtime_meta, dict):
             trace_meta = runtime_meta.get("trace")
             if isinstance(trace_meta, dict):
@@ -362,7 +403,6 @@ class TraceView(Container):
             stats_text += f"\nBackend: {backend}  Gevent: {gevent_state}"
         else:
             stats_text += "\nBackend: profiler (full)"
-
         stats.update(stats_text)
 
     async def _start_trace(self) -> None:
@@ -520,40 +560,8 @@ class TraceView(Container):
             except Exception:
                 pass
 
-        if self._auto_follow:
-            self._show_trace_detail(observation)
-
-    def _build_call_tree(
-        self, parent_node: TreeNode, call_tree: List[Dict[str, Any]]
-    ) -> None:
-        """Recursively build the tree visualization from call_tree data."""
-        if not call_tree:
-            return
-
-        for node_data in call_tree:
-            depth = node_data.get("depth", 0)
-            function = node_data.get("function", "unknown")
-            duration_ms = node_data.get("duration_ms", 0)
-            filename = node_data.get("filename", "")
-            lineno = node_data.get("lineno", 0)
-            children = node_data.get("children", [])
-
-            # Format the label with duration and location
-            duration_str = self._format_duration(duration_ms)
-            location_str = ""
-            if filename and lineno:
-                # Show only the filename, not full path
-                short_filename = filename.split("/")[-1]
-                location_str = f" [dim]({short_filename}:{lineno})[/dim]"
-
-            label = f"{duration_str} {function}{location_str}"
-
-            # Add node to tree
-            child_node = parent_node.add(label, expand=depth < 2)
-
-            # Recursively add children
-            if children:
-                self._build_call_tree(child_node, children)
+            if self._selected_pattern == pattern:
+                self._build_observation_tree(pattern)
 
     def _format_duration(self, duration_ms: float) -> str:
         """Format duration with color coding based on time taken."""
