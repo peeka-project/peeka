@@ -360,6 +360,9 @@ class TraceView(Container):
                 callee_node = obs_node.add(callee_label)
                 callee_node.data = {"type": "callee", "callee": callee, "obs": obs}
 
+        if observations:
+            self._update_stats_panel(observations[0])
+
     def on_tree_node_highlighted(self, event: Tree.NodeHighlighted) -> None:
         node = event.node
         if node.data is None:
