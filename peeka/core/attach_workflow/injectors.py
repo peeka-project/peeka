@@ -6,6 +6,7 @@ import signal
 import subprocess
 from typing import Optional
 
+from peeka.core.resources import require_core_resource
 from peeka.core.runtime import primitives as _rpl
 
 
@@ -13,15 +14,6 @@ def _attach_module():
     from peeka.core import attach as attach_module
 
     return attach_module
-
-
-def _core_resource_path(name: str) -> str:
-    """Return a resource path from peeka.core, not this mixin package."""
-    path = _attach_module().Path(_attach_module().__file__).with_name(name)
-    if not path.exists():
-        raise FileNotFoundError(f"Attach debugger script not found: {path}")
-    return str(path)
-
 
 class AttachInjectionMixin:
 
@@ -126,7 +118,7 @@ class AttachInjectionMixin:
             if not injector_path:
                 raise RuntimeError("C extension not found")
 
-            gdb_script = _core_resource_path("_attach.gdb")
+            gdb_script = str(require_core_resource("_attach.gdb"))
 
             cmd = ["gdb", "-p", str(self.pid), "-batch", "-q"]
             cmd.extend(["-eval-command", f"set $peeka_port = {notify_port}"])
@@ -230,7 +222,7 @@ class AttachInjectionMixin:
             if not injector_path:
                 raise RuntimeError("C extension not found")
 
-            lldb_script = _core_resource_path("_attach.lldb")
+            lldb_script = str(require_core_resource("_attach.lldb"))
 
             cmd = ["lldb", "-p", str(self.pid), "--batch", "--no-lldbinit"]
             cmd.extend(["--one-line", f"script rtld_default = {_attach_module()._RTLD_DEFAULT}"])

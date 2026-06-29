@@ -8,7 +8,7 @@ for dlopen-based injection (Task 5).
 import os
 from pathlib import Path
 
-from peeka.core.attach_workflow.injectors import _core_resource_path
+from peeka.core.resources import require_core_resource as _core_resource_path
 
 
 class TestGDBScriptInjection:
