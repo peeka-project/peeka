@@ -78,6 +78,45 @@ jobs:
       - name: Run container tests
         run: pytest tests/container/ -v --timeout=180
         continue-on-error: true
+
+  attach-smoke:
+    name: Attach Smoke (GDB/Python 3.8)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          allow-prereleases: true
+
+      - name: Check for attach-relevant changes
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            attach:
+              - 'peeka/core/attach*'
+              - 'peeka/core/attach_workflow/**'
+              - 'peeka/core/_attach.gdb'
+              - 'peeka/core/_attach.lldb'
+              - 'peeka/core/_inject.c'
+              - 'peeka/core/resources.py'
+              - 'pyproject.toml'
+              - 'tests/container/test_attach_smoke_py38.py'
+
+      - name: Install dependencies
+        if: steps.filter.outputs.attach == 'true'
+        run: |
+          pip install pytest pytest-timeout docker testcontainers
+          pip install -e .
+
+      - name: Run attach smoke
+        if: steps.filter.outputs.attach == 'true'
+        run: pytest tests/container/test_attach_smoke_py38.py -v -m container --timeout=180
+        continue-on-error: true
   
   e2e-py314-test:
     name: E2E Python 3.14 (PEP 768)
