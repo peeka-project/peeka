@@ -2,6 +2,8 @@
 
 import os
 import platform
+from pathlib import Path
+import shutil
 import signal
 import subprocess
 from typing import Optional
@@ -14,6 +16,39 @@ def _attach_module():
     from peeka.core import attach as attach_module
 
     return attach_module
+
+
+def _preflight_debugger_injection(
+    *,
+    debugger: str,
+    debugger_script: Path,
+    injector_path: str,
+) -> None:
+    """Fail fast before launching the debugger subprocess.
+
+    Raises RuntimeError with an actionable message if any resource is missing
+    or the debugger executable is unavailable.
+    """
+    from pathlib import Path as _Path
+
+    if not shutil.which(debugger):
+        raise RuntimeError(
+            f"Debugger not found in PATH: {debugger!r}. "
+            "Install GDB (Linux) or LLDB (macOS) before attaching."
+        )
+    if not isinstance(debugger_script, _Path):
+        debugger_script = _Path(debugger_script)
+    if not debugger_script.exists():
+        raise RuntimeError(
+            f"Attach debugger script not found: {debugger_script}. "
+            "This is a packaging issue — the script should ship with peeka."
+        )
+    if not injector_path or not _Path(injector_path).exists():
+        raise RuntimeError(
+            f"C extension injector not found: {injector_path!r}. "
+            "Rebuild the peeka C extension for your platform."
+        )
+
 
 class AttachInjectionMixin:
 
@@ -118,7 +153,13 @@ class AttachInjectionMixin:
             if not injector_path:
                 raise RuntimeError("C extension not found")
 
-            gdb_script = str(require_core_resource("_attach.gdb"))
+            gdb_script_path = require_core_resource("_attach.gdb")
+            _preflight_debugger_injection(
+                debugger="gdb",
+                debugger_script=gdb_script_path,
+                injector_path=injector_path or "",
+            )
+            gdb_script = str(gdb_script_path)
 
             cmd = ["gdb", "-p", str(self.pid), "-batch", "-q"]
             cmd.extend(["-eval-command", f"set $peeka_port = {notify_port}"])
@@ -153,6 +194,12 @@ class AttachInjectionMixin:
             combined_output = f"{result.stderr}\n{result.stdout}"
             if "permission denied" in stderr or "operation not permitted" in stderr:
                 raise PermissionError("GDB attach failed: permission denied")
+            if _attach_module()._looks_like_debugger_script_error(combined_output, "gdb"):
+                raise RuntimeError(
+                    "GDB injection failed: debugger script error detected "
+                    f"(exit code {result.returncode}).\n"
+                    f"stderr: {result.stderr}\nstdout: {result.stdout}"
+                )
             if _attach_module()._looks_like_gdb_symbol_resolution_error(combined_output):
                 raise _attach_module().GDBSymbolResolutionError(
                     _attach_module()._format_gdb_symbol_error(
@@ -222,7 +269,13 @@ class AttachInjectionMixin:
             if not injector_path:
                 raise RuntimeError("C extension not found")
 
-            lldb_script = str(require_core_resource("_attach.lldb"))
+            lldb_script_path = require_core_resource("_attach.lldb")
+            _preflight_debugger_injection(
+                debugger="lldb",
+                debugger_script=lldb_script_path,
+                injector_path=injector_path or "",
+            )
+            lldb_script = str(lldb_script_path)
 
             cmd = ["lldb", "-p", str(self.pid), "--batch", "--no-lldbinit"]
             cmd.extend(["--one-line", f"script rtld_default = {_attach_module()._RTLD_DEFAULT}"])
@@ -262,6 +315,13 @@ class AttachInjectionMixin:
             stderr = result.stderr.lower()
             if "permission denied" in stderr or "operation not permitted" in stderr:
                 raise PermissionError("LLDB attach failed: permission denied")
+            combined_output = f"{result.stderr}\n{result.stdout}"
+            if _attach_module()._looks_like_debugger_script_error(combined_output, "lldb"):
+                raise RuntimeError(
+                    "LLDB injection failed: debugger script error detected "
+                    f"(exit code {result.returncode}).\n"
+                    f"stderr: {result.stderr}\nstdout: {result.stdout}"
+                )
             if result.returncode != 0:
                 raise RuntimeError(
                     f"LLDB dlopen injection failed (exit code {result.returncode}):\n"

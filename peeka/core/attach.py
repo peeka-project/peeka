@@ -108,6 +108,57 @@ def _looks_like_gdb_symbol_resolution_error(output: str) -> bool:
     return any(marker in lowered for marker in symbol_error_markers)
 
 
+_DEBUGGER_SCRIPT_ERROR_PATTERNS = [
+    r"no such file or directory",
+    r"warning:.*_attach\.(gdb|lldb)",
+    r"error:.*_attach\.(gdb|lldb)",
+    r"undefined command",
+    r"error in sourced command file",
+    r"command file not found",
+    r"cannot open.*for reading",
+    r"command source.*failed",
+    r"no commands in script",
+]
+
+_BENIGN_WARNING_PATTERNS = [
+    r"ptrace",
+    r"libthread_db",
+    r"reading symbols",
+    r"no debugging symbols",
+    r"inferior",
+    r"\[thread",
+]
+
+
+def _looks_like_debugger_script_error(output: str, debugger: str = "gdb") -> bool:
+    """Return True if the output indicates a debugger script/source failure.
+
+    Only escalates errors directly related to loading the debugger script,
+    NOT benign warnings about symbols, ptrace, or threads.
+
+    Args:
+        output: Combined stdout+stderr from the debugger subprocess.
+        debugger: "gdb" or "lldb" (reserved for future specialisation).
+    """
+    import re
+
+    lowered = output.lower()
+    debugger = debugger.lower()
+
+    has_script_error = any(
+        re.search(pattern, lowered) for pattern in _DEBUGGER_SCRIPT_ERROR_PATTERNS
+    )
+    if has_script_error:
+        return True
+
+    if debugger in {"gdb", "lldb"} and any(
+        re.search(pattern, lowered) for pattern in _BENIGN_WARNING_PATTERNS
+    ):
+        return False
+
+    return False
+
+
 def _format_gdb_symbol_error(method: str, stderr: str, stdout: str) -> str:
     """Build an actionable error for GDB symbol-resolution failures."""
     return (

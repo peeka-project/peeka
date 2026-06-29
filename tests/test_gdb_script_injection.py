@@ -8,6 +8,10 @@ for dlopen-based injection (Task 5).
 import os
 from pathlib import Path
 
+import pytest
+
+from peeka.core import attach
+from peeka.core.attach_workflow.injectors import _preflight_debugger_injection
 from peeka.core.resources import require_core_resource as _core_resource_path
 
 
@@ -198,3 +202,66 @@ class TestGDBScriptInjection:
         assert scheduler_off_idx < continue_idx, (
             "scheduler-locking off should come before continue"
         )
+
+
+class TestDebuggerInjectionPreflight:
+    def test_missing_debugger_fails_before_subprocess(self, monkeypatch, tmp_path):
+        injector_path = tmp_path / "_inject.so"
+        injector_path.write_text("placeholder", encoding="utf-8")
+        debugger_script = tmp_path / "_attach.gdb"
+        debugger_script.write_text("continue\n", encoding="utf-8")
+        monkeypatch.setattr("peeka.core.attach_workflow.injectors.shutil.which", lambda _: None)
+
+        with pytest.raises(RuntimeError, match="Debugger not found in PATH"):
+            _preflight_debugger_injection(
+                debugger="gdb",
+                debugger_script=debugger_script,
+                injector_path=str(injector_path),
+            )
+
+    def test_missing_debugger_script_is_actionable(self, monkeypatch, tmp_path):
+        injector_path = tmp_path / "_inject.so"
+        injector_path.write_text("placeholder", encoding="utf-8")
+        monkeypatch.setattr("peeka.core.attach_workflow.injectors.shutil.which", lambda _: "/usr/bin/gdb")
+
+        with pytest.raises(RuntimeError, match="Attach debugger script not found"):
+            _preflight_debugger_injection(
+                debugger="gdb",
+                debugger_script=tmp_path / "missing.gdb",
+                injector_path=str(injector_path),
+            )
+
+    def test_missing_injector_is_actionable(self, monkeypatch, tmp_path):
+        debugger_script = tmp_path / "_attach.gdb"
+        debugger_script.write_text("continue\n", encoding="utf-8")
+        monkeypatch.setattr("peeka.core.attach_workflow.injectors.shutil.which", lambda _: "/usr/bin/gdb")
+
+        with pytest.raises(RuntimeError, match="C extension injector not found"):
+            _preflight_debugger_injection(
+                debugger="gdb",
+                debugger_script=debugger_script,
+                injector_path=str(tmp_path / "missing.so"),
+            )
+
+    @pytest.mark.parametrize(
+        "output,debugger",
+        [
+            ("warning: /wheel/peeka/core/_attach.gdb: No such file or directory", "gdb"),
+            ("error in sourced command file:\nUndefined command: peeka", "gdb"),
+            ("error: command source failed: cannot open _attach.lldb for reading", "lldb"),
+            ("command file not found: /wheel/peeka/core/_attach.lldb", "lldb"),
+        ],
+    )
+    def test_debugger_script_errors_are_detected(self, output, debugger):
+        assert attach._looks_like_debugger_script_error(output, debugger)
+
+    @pytest.mark.parametrize(
+        "output,debugger",
+        [
+            ("warning: Could not load libthread_db; no debugging symbols found", "gdb"),
+            ("ptrace: Operation not permitted.\n[Thread debugging using libthread_db enabled]", "gdb"),
+            ("Process 123 stopped\n* thread #1, stop reason = signal SIGSTOP", "lldb"),
+        ],
+    )
+    def test_benign_debugger_warnings_are_not_script_errors(self, output, debugger):
+        assert not attach._looks_like_debugger_script_error(output, debugger)
