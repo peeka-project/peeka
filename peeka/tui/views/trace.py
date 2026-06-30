@@ -346,14 +346,24 @@ class TraceView(Container):
                 lineno = callee.get("lineno", 0)
                 short_fn = filename.split("/")[-1] if filename else ""
                 loc = f" @ {short_fn}:{lineno}" if short_fn else ""
+                parent_total_ms = obs.get("total_duration_ms", 0.0)
+                pct = (t_ms / parent_total_ms * 100.0) if parent_total_ms > 0 else 0.0
+                if pct >= 50:
+                    pct_style = "red bold"
+                elif pct >= 10:
+                    pct_style = "yellow"
+                else:
+                    pct_style = "green"
                 exc = callee.get("exception")
-                callee_label = Text(
-                    f"{func}  count={count}  total={t_ms:.3f}ms"
-                    f"  min={mn_ms:.3f}ms  max={mx_ms:.3f}ms{loc}"
-                )
+                exc_marker = ""
                 if exc:
                     exc_type = _extract_exception_type(exc)
-                    callee_label.append(f" [throws {exc_type}]", style="red bold")
+                    exc_marker = f" [throws {exc_type}]"
+                callee_label = Text(
+                    f"{func}  count={count}  total={t_ms:.3f}ms"
+                    f"  min={mn_ms:.3f}ms  max={mx_ms:.3f}ms{loc}{exc_marker}"
+                )
+                callee_label.append(f"  pct={pct:.1f}%", style=pct_style)
                 callee_node = obs_node.add(callee_label)
                 callee_node.data = {"type": "callee", "callee": callee, "obs": obs}
 

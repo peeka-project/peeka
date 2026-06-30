@@ -201,6 +201,154 @@ class TestTraceView:
 
     @pytest.mark.asyncio
     @pytest.mark.tui
+    async def test_callee_shows_percentage_of_parent(self, mock_client_factory):
+        """Callee node label shows percentage relative to parent observation."""
+        client = mock_client_factory(
+            responses={
+                "trace": {
+                    "status": "success",
+                    "watch_id": "trace_001",
+                }
+            }
+        )
+        client.connect()
+
+        stream_client = mock_client_factory(
+            observations=[
+                {
+                    "watch_id": "trace_001",
+                    "func_name": "calculator.compute",
+                    "total_duration_ms": 10.0,
+                    "self_time_ms": 1.0,
+                    "callee_count": 1,
+                    "node_count": 2,
+                    "call_tree": [
+                        {
+                            "function": "calculator.helper",
+                            "filename": "calc.py",
+                            "lineno": 20,
+                            "count": 1,
+                            "total_ms": 3.0,
+                            "min_ms": 3.0,
+                            "max_ms": 3.0,
+                        }
+                    ],
+                }
+            ]
+        )
+        stream_client.connect()
+
+        app = PeekaApp()
+        async with app.run_test(size=(120, 32)) as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(client)
+            trace_view._stream_client = stream_client
+            trace_view._selected_pattern = "calculator.compute"
+
+            pattern_input = trace_view.query_one("#trace-pattern", AutoCompleteInput)
+            pattern_input.value = "calculator.compute"
+
+            await trace_view._start_trace()
+            await pilot.pause()
+            await pilot.pause()
+
+            tree = trace_view.query_one("#call-tree", Tree)
+            obs_node = list(tree.root.children)[0]
+            callee_node = list(obs_node.children)[0]
+            label_text = getattr(callee_node.label, "plain", str(callee_node.label))
+            assert "pct=30.0%" in label_text
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_callee_percentage_color_thresholds(self, mock_client_factory):
+        """Callee percentage label uses red and green threshold styling."""
+        client = mock_client_factory(
+            responses={
+                "trace": {
+                    "status": "success",
+                    "watch_id": "trace_001",
+                }
+            }
+        )
+        client.connect()
+
+        stream_client = mock_client_factory(
+            observations=[
+                {
+                    "watch_id": "trace_001",
+                    "func_name": "calculator.compute",
+                    "total_duration_ms": 100.0,
+                    "self_time_ms": 1.0,
+                    "callee_count": 2,
+                    "node_count": 3,
+                    "call_tree": [
+                        {
+                            "function": "slow_helper",
+                            "filename": "calc.py",
+                            "lineno": 20,
+                            "count": 1,
+                            "total_ms": 60.0,
+                            "min_ms": 60.0,
+                            "max_ms": 60.0,
+                        },
+                        {
+                            "function": "fast_helper",
+                            "filename": "calc.py",
+                            "lineno": 21,
+                            "count": 1,
+                            "total_ms": 2.0,
+                            "min_ms": 2.0,
+                            "max_ms": 2.0,
+                        },
+                    ],
+                }
+            ]
+        )
+        stream_client.connect()
+
+        app = PeekaApp()
+        async with app.run_test(size=(120, 32)) as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(client)
+            trace_view._stream_client = stream_client
+            trace_view._selected_pattern = "calculator.compute"
+
+            pattern_input = trace_view.query_one("#trace-pattern", AutoCompleteInput)
+            pattern_input.value = "calculator.compute"
+
+            await trace_view._start_trace()
+            await pilot.pause()
+            await pilot.pause()
+
+            tree = trace_view.query_one("#call-tree", Tree)
+            obs_node = list(tree.root.children)[0]
+            slow_node = list(obs_node.children)[0]
+            fast_node = list(obs_node.children)[1]
+
+            slow_label = getattr(slow_node.label, "plain", str(slow_node.label))
+            slow_spans = getattr(slow_node.label, "spans", [])
+            assert "pct=60.0%" in slow_label
+            assert any("red" in str(span.style).lower() for span in slow_spans)
+
+            fast_label = getattr(fast_node.label, "plain", str(fast_node.label))
+            fast_spans = getattr(fast_node.label, "spans", [])
+            assert "pct=2.0%" in fast_label
+            assert any("green" in str(span.style).lower() for span in fast_spans)
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
     async def test_trace_exception_nodes_are_highlighted(self, mock_client_factory):
         """Exception-bearing observation and callee nodes show throws markers."""
         client = mock_client_factory(
