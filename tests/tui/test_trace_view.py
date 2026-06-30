@@ -1555,3 +1555,130 @@ class TestTraceView:
             assert not any(
                 str(n.label) == "Aggregated Callees" for n in tree.root.children
             )
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_drill_trace_from_callee_node(self, mock_client_factory):
+        client = mock_client_factory(
+            responses={
+                "trace": {"status": "success", "watch_id": "trace_drill_001"},
+            }
+        )
+        client.connect()
+        stream_client = mock_client_factory(observations=[])
+        stream_client.connect()
+
+        app = PeekaApp()
+        async with app.run_test(size=(120, 32)) as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+            main_screen.action_switch_tab("trace")
+            await pilot.pause()
+
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(client)
+            trace_view._stream_client = stream_client
+            trace_view._selected_pattern = "calculator.compute"
+            trace_view._observations_by_pattern["calculator.compute"] = [
+                {
+                    "_count": 1,
+                    "func_name": "calculator.compute",
+                    "total_duration_ms": 10.0,
+                    "self_time_ms": 1.0,
+                    "callee_count": 1,
+                    "node_count": 2,
+                    "call_tree": [
+                        {
+                            "function": "calculator.helper",
+                            "filename": "calc.py",
+                            "lineno": 20,
+                            "count": 1,
+                            "total_ms": 3.0,
+                            "min_ms": 3.0,
+                            "max_ms": 3.0,
+                        }
+                    ],
+                }
+            ]
+            trace_view._build_observation_tree("calculator.compute")
+            await pilot.pause()
+
+            tree = app.screen.query_one("#call-tree", Tree)
+            obs_node = next(
+                n for n in tree.root.children if "obs #" in str(n.label)
+            )
+            callee_node = list(obs_node.children)[0]
+            trace_view._last_highlighted_node = callee_node
+
+            await trace_view.action_drill_trace()
+            await pilot.pause()
+
+            trace_commands = [
+                c
+                for c in client.commands_received
+                if c.get("type") == "trace" and c.get("action") == "start"
+            ]
+            assert len(trace_commands) == 1
+            assert trace_commands[0]["pattern"] == "calculator.helper"
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_drill_trace_from_observation_node_warns(self, mock_client_factory):
+        client = mock_client_factory(responses={})
+        client.connect()
+        stream_client = mock_client_factory(observations=[])
+        stream_client.connect()
+
+        app = PeekaApp()
+        async with app.run_test(size=(120, 32)) as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+            main_screen.action_switch_tab("trace")
+            await pilot.pause()
+
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(client)
+            trace_view._stream_client = stream_client
+            trace_view._selected_pattern = "calculator.compute"
+            trace_view._observations_by_pattern["calculator.compute"] = [
+                {
+                    "_count": 1,
+                    "func_name": "calculator.compute",
+                    "total_duration_ms": 10.0,
+                    "self_time_ms": 1.0,
+                    "callee_count": 1,
+                    "node_count": 2,
+                    "call_tree": [
+                        {
+                            "function": "calculator.helper",
+                            "filename": "calc.py",
+                            "lineno": 20,
+                            "count": 1,
+                            "total_ms": 3.0,
+                            "min_ms": 3.0,
+                            "max_ms": 3.0,
+                        }
+                    ],
+                }
+            ]
+            trace_view._build_observation_tree("calculator.compute")
+            await pilot.pause()
+
+            tree = app.screen.query_one("#call-tree", Tree)
+            obs_node = next(
+                n for n in tree.root.children if "obs #" in str(n.label)
+            )
+            trace_view._last_highlighted_node = obs_node
+
+            before_count = len(client.commands_received)
+            await trace_view.action_drill_trace()
+            await pilot.pause()
+            after_count = len(client.commands_received)
+
+            assert after_count == before_count

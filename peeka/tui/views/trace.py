@@ -33,6 +33,7 @@ class TraceView(Container):
         Binding("enter", "start_trace", "Trace"),
         Binding("delete", "stop_traces", "Stop All"),
         Binding("c", "clear_tree", "Clear Tree"),
+        Binding("t", "drill_trace", "Drill Trace"),
     ]
 
     MAX_OBSERVATIONS = 1000
@@ -52,6 +53,7 @@ class TraceView(Container):
         self._observations_by_pattern: Dict[str, List[Dict[str, Any]]] = {}
         self._selected_pattern: Optional[str] = None
         self._obs_counter: int = 0
+        self._last_highlighted_node: Optional[Any] = None
         self._log = logging.getLogger(__name__)
 
     def set_client(self, client: "StreamingAgentClient") -> None:
@@ -109,6 +111,36 @@ class TraceView(Container):
         self._selected_pattern = None
         stats = self.query_one("#trace-stats", Static)
         stats.update("[dim]No trace data yet[/dim]")
+
+    async def action_drill_trace(self) -> None:
+        """Start a new trace for the function at the current tree cursor."""
+        node = self._last_highlighted_node
+        if node is None or node.data is None:
+            self.app.notify("Select a callee node to drill down", severity="warning")
+            return
+
+        data = node.data
+        node_type = data.get("type")
+        if node_type == "callee":
+            callee = data.get("callee", {})
+            pattern = callee.get("function")
+        elif node_type == "aggregated":
+            agg = data.get("aggregate", {})
+            pattern = agg.get("function")
+        else:
+            self.app.notify("Select a callee node to drill down", severity="warning")
+            return
+
+        if not pattern:
+            self.app.notify(
+                "No function name available for drill-down", severity="warning"
+            )
+            return
+
+        pattern_widget = self.query_one("#trace-pattern", AutoCompleteInput)
+        pattern_widget.value = pattern
+        self.app.notify(f"Drilling trace: {pattern}", severity="information")
+        await self._start_trace()
 
     def _get_pattern_completions(self, prefix: str):
         """Get completions for pattern input."""
@@ -440,6 +472,7 @@ class TraceView(Container):
         self, event: Tree.NodeHighlighted[Any]
     ) -> None:
         node = event.node
+        self._last_highlighted_node = node
         if node.data is None:
             return
         data = node.data
