@@ -1611,7 +1611,7 @@ class TestTraceView:
                 n for n in tree.root.children if "obs #" in str(n.label)
             )
             callee_node = list(obs_node.children)[0]
-            trace_view._last_highlighted_node = callee_node
+            tree.select_node(callee_node)
 
             await trace_view.action_drill_trace()
             await pilot.pause()
@@ -1674,7 +1674,7 @@ class TestTraceView:
             obs_node = next(
                 n for n in tree.root.children if "obs #" in str(n.label)
             )
-            trace_view._last_highlighted_node = obs_node
+            tree.select_node(obs_node)
 
             before_count = len(client.commands_received)
             await trace_view.action_drill_trace()

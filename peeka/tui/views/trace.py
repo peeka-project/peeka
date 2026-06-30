@@ -53,7 +53,6 @@ class TraceView(Container):
         self._observations_by_pattern: Dict[str, List[Dict[str, Any]]] = {}
         self._selected_pattern: Optional[str] = None
         self._obs_counter: int = 0
-        self._last_highlighted_node: Optional[Any] = None
         self._log = logging.getLogger(__name__)
 
     def set_client(self, client: "StreamingAgentClient") -> None:
@@ -114,7 +113,8 @@ class TraceView(Container):
 
     async def action_drill_trace(self) -> None:
         """Start a new trace for the function at the current tree cursor."""
-        node = self._last_highlighted_node
+        tree = self.query_one("#call-tree", Tree)
+        node = tree.cursor_node
         if node is None or node.data is None:
             self.app.notify("Select a callee node to drill down", severity="warning")
             return
@@ -124,7 +124,7 @@ class TraceView(Container):
         if node_type == "callee":
             callee = data.get("callee", {})
             pattern = callee.get("function")
-        elif node_type == "aggregated":
+        elif node_type == "aggregated_callee":
             agg = data.get("aggregate", {})
             pattern = agg.get("function")
         else:
@@ -388,15 +388,14 @@ class TraceView(Container):
                     pct_style = "yellow"
                 else:
                     pct_style = "green"
-                exc = callee.get("exception")
-                exc_marker = ""
-                if exc:
-                    exc_type = _extract_exception_type(exc)
-                    exc_marker = f" [throws {exc_type}]"
                 callee_label = Text(
                     f"{func}  count={count}  total={t_ms:.3f}ms"
-                    f"  min={mn_ms:.3f}ms  max={mx_ms:.3f}ms{loc}{exc_marker}"
+                    f"  min={mn_ms:.3f}ms  max={mx_ms:.3f}ms{loc}"
                 )
+                exc = callee.get("exception")
+                if exc:
+                    exc_type = _extract_exception_type(exc)
+                    callee_label.append(f" [throws {exc_type}]", style="red bold")
                 callee_label.append(f"  pct={pct:.1f}%", style=pct_style)
                 callee_node = obs_node.add(callee_label)
                 callee_node.data = {"type": "callee", "callee": callee, "obs": obs}
@@ -446,7 +445,10 @@ class TraceView(Container):
 
         tree = self.query_one("#call-tree", Tree)
         aggregate_root = tree.root.add("Aggregated Callees", expand=False)
-        aggregate_root.data = {"type": "aggregated_root"}
+        aggregate_root.data = {
+            "type": "aggregated",
+            "aggregates": list(aggregates.values()),
+        }
 
         for key, agg in aggregates.items():
             func = agg["function"]
@@ -464,7 +466,7 @@ class TraceView(Container):
                 f"  total={total:.3f}ms  min={mn:.3f}ms  max={mx:.3f}ms{loc}"
             )
             node = aggregate_root.add(label)
-            node.data = {"type": "aggregated", "aggregate": agg}
+            node.data = {"type": "aggregated_callee", "aggregate": agg}
 
         return aggregate_root
 
@@ -472,7 +474,6 @@ class TraceView(Container):
         self, event: Tree.NodeHighlighted[Any]
     ) -> None:
         node = event.node
-        self._last_highlighted_node = node
         if node.data is None:
             return
         data = node.data
