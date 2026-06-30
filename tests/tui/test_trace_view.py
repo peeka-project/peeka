@@ -201,6 +201,202 @@ class TestTraceView:
 
     @pytest.mark.asyncio
     @pytest.mark.tui
+    async def test_trace_exception_nodes_are_highlighted(self, mock_client_factory):
+        """Exception-bearing observation and callee nodes show throws markers."""
+        client = mock_client_factory(
+            responses={
+                "trace": {
+                    "status": "success",
+                    "watch_id": "trace_001",
+                }
+            }
+        )
+        client.connect()
+
+        stream_client = mock_client_factory(
+            observations=[
+                {
+                    "watch_id": "trace_001",
+                    "func_name": "calculator.compute",
+                    "total_duration_ms": 11.0,
+                    "self_time_ms": 1.0,
+                    "callee_count": 1,
+                    "node_count": 2,
+                    "exception": {
+                        "type": "ValueError",
+                        "message": "invalid input",
+                    },
+                    "call_tree": [
+                        {
+                            "function": "helper",
+                            "filename": "calc.py",
+                            "lineno": 60,
+                            "count": 1,
+                            "total_ms": 10.0,
+                            "min_ms": 10.0,
+                            "max_ms": 10.0,
+                            "exception": {
+                                "class": "builtins.KeyError",
+                                "message": "missing key",
+                            },
+                        }
+                    ],
+                }
+            ]
+        )
+        stream_client.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(client)
+            trace_view._stream_client = stream_client
+            trace_view._selected_pattern = "calculator.compute"
+
+            pattern_input = trace_view.query_one("#trace-pattern", AutoCompleteInput)
+            pattern_input.value = "calculator.compute"
+
+            await trace_view._start_trace()
+            await pilot.pause()
+            await pilot.pause()
+
+            tree = trace_view.query_one("#call-tree", Tree)
+            obs_node = list(tree.root.children)[0]
+            obs_label = getattr(obs_node.label, "plain", str(obs_node.label))
+            assert "throws ValueError" in obs_label
+            obs_spans = getattr(obs_node.label, "spans", [])
+            assert any(
+                "red" in str(span.style).lower() and "bold" in str(span.style).lower()
+                for span in obs_spans
+            )
+
+            callee_node = list(obs_node.children)[0]
+            callee_label = getattr(callee_node.label, "plain", str(callee_node.label))
+            assert "throws KeyError" in callee_label
+            callee_spans = getattr(callee_node.label, "spans", [])
+            assert any(
+                "red" in str(span.style).lower() and "bold" in str(span.style).lower()
+                for span in callee_spans
+            )
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_trace_stats_show_exception_details(self, mock_client_factory):
+        """Stats panel shows exception type and message when present."""
+        client = mock_client_factory(
+            responses={
+                "trace": {
+                    "status": "success",
+                    "watch_id": "trace_001",
+                }
+            }
+        )
+        client.connect()
+
+        stream_client = mock_client_factory(
+            observations=[
+                {
+                    "watch_id": "trace_001",
+                    "func_name": "calculator.compute",
+                    "total_duration_ms": 25.5,
+                    "self_time_ms": 0.5,
+                    "callee_count": 1,
+                    "node_count": 2,
+                    "exception": {
+                        "type": "ValueError",
+                        "message": "invalid input",
+                    },
+                    "call_tree": [],
+                }
+            ]
+        )
+        stream_client.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(client)
+            trace_view._stream_client = stream_client
+            trace_view._selected_pattern = "calculator.compute"
+
+            pattern_input = trace_view.query_one("#trace-pattern", AutoCompleteInput)
+            pattern_input.value = "calculator.compute"
+
+            await trace_view._start_trace()
+            await pilot.pause()
+            await pilot.pause()
+
+            stats = trace_view.query_one("#trace-stats", Static)
+            stats_text = str(stats.render())
+            assert "Exception: ValueError: invalid input" in stats_text
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_trace_stats_show_no_exception_state(self, mock_client_factory):
+        """Stats panel shows a green dash when no exception is present."""
+        client = mock_client_factory(
+            responses={
+                "trace": {
+                    "status": "success",
+                    "watch_id": "trace_001",
+                }
+            }
+        )
+        client.connect()
+
+        stream_client = mock_client_factory(
+            observations=[
+                {
+                    "watch_id": "trace_001",
+                    "func_name": "calculator.compute",
+                    "total_duration_ms": 25.5,
+                    "self_time_ms": 0.5,
+                    "callee_count": 1,
+                    "node_count": 2,
+                    "call_tree": [],
+                }
+            ]
+        )
+        stream_client.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(client)
+            trace_view._stream_client = stream_client
+            trace_view._selected_pattern = "calculator.compute"
+
+            pattern_input = trace_view.query_one("#trace-pattern", AutoCompleteInput)
+            pattern_input.value = "calculator.compute"
+
+            await trace_view._start_trace()
+            await pilot.pause()
+            await pilot.pause()
+
+            stats = trace_view.query_one("#trace-stats", Static)
+            stats_text = str(stats.render())
+            assert "Exception: -" in stats_text
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
     async def test_trace_summary_stats(self, mock_client_factory):
         """Verify DataTable shows trace entry; stats shows node_count and duration."""
         client = mock_client_factory(

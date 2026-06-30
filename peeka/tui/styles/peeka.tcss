@@ -609,6 +609,8 @@ Input {
 #trace-stats {
     height: 100%;
     padding: 0 1;
+    min-height: 6;
+    overflow-y: auto;
 }
 /* ============================================================================
    STACK VIEW

@@ -7,6 +7,7 @@ import threading
 from collections import deque
 from typing import TYPE_CHECKING, Any, Deque, Dict, List, Optional
 
+from rich.text import Text
 from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -40,15 +41,15 @@ class TraceView(Container):
         super().__init__()
         self.pid = pid
         self._active_traces: Dict[
-            str, dict
+            str, Dict[str, Any]
         ] = {}  # trace_id -> {pattern, count, worker}
         self._completion_source: Optional[CompletionSource] = None
         self._client: Optional["StreamingAgentClient"] = None
         self._stream_client: Optional["StreamingAgentClient"] = None
         self._stream_client_lock: threading.Lock = threading.Lock()
         self._socket_path: Optional[str] = None
-        self._observations: Deque[dict] = deque(maxlen=self.MAX_OBSERVATIONS)
-        self._observations_by_pattern: Dict[str, List[Dict]] = {}
+        self._observations: Deque[Dict[str, Any]] = deque(maxlen=self.MAX_OBSERVATIONS)
+        self._observations_by_pattern: Dict[str, List[Dict[str, Any]]] = {}
         self._selected_pattern: Optional[str] = None
         self._obs_counter: int = 0
         self._log = logging.getLogger(__name__)
@@ -325,7 +326,13 @@ class TraceView(Container):
             n = obs.get("_count", idx + 1)
             total_ms = obs.get("total_duration_ms", 0.0)
             self_ms = obs.get("self_time_ms", 0.0)
-            obs_label = f"obs #{n}  total={total_ms:.3f}ms  self={self_ms:.3f}ms"
+            exc = obs.get("exception")
+            obs_label = Text(
+                f"obs #{n}  total={total_ms:.3f}ms  self={self_ms:.3f}ms"
+            )
+            if exc:
+                exc_type = _extract_exception_type(exc)
+                obs_label.append(f" [throws {exc_type}]", style="red bold")
             obs_node = tree.root.add(obs_label, expand=(idx == 0))
             obs_node.data = {"type": "observation", "obs": obs}
 
@@ -339,17 +346,23 @@ class TraceView(Container):
                 lineno = callee.get("lineno", 0)
                 short_fn = filename.split("/")[-1] if filename else ""
                 loc = f" @ {short_fn}:{lineno}" if short_fn else ""
-                callee_label = (
+                exc = callee.get("exception")
+                callee_label = Text(
                     f"{func}  count={count}  total={t_ms:.3f}ms"
                     f"  min={mn_ms:.3f}ms  max={mx_ms:.3f}ms{loc}"
                 )
+                if exc:
+                    exc_type = _extract_exception_type(exc)
+                    callee_label.append(f" [throws {exc_type}]", style="red bold")
                 callee_node = obs_node.add(callee_label)
                 callee_node.data = {"type": "callee", "callee": callee, "obs": obs}
 
         if observations:
             self._update_stats_panel(observations[0])
 
-    def on_tree_node_highlighted(self, event: Tree.NodeHighlighted) -> None:
+    def on_tree_node_highlighted(
+        self, event: Tree.NodeHighlighted[Any]
+    ) -> None:
         node = event.node
         if node.data is None:
             return
@@ -378,6 +391,15 @@ class TraceView(Container):
             f"node_count: {node_count}\n"
             f"Function: [yellow]{func_name}[/yellow]"
         )
+        exception = obs.get("exception")
+        if isinstance(exception, dict):
+            exc_type = _extract_exception_type(exception)
+            exc_message = exception.get("message", exception.get("msg", ""))
+            stats_text += (
+                f"\nException: [red bold]{exc_type}: {exc_message}[/red bold]"
+            )
+        else:
+            stats_text += "\nException: [green]-[/green]"
         runtime_meta = obs.get("runtime_meta")
         if isinstance(runtime_meta, dict):
             trace_meta = runtime_meta.get("trace")
@@ -400,11 +422,8 @@ class TraceView(Container):
             self.app.notify("Not connected to agent", severity="error")
             return
 
-        pattern_widget = self.query_one("#trace-pattern")
-        if isinstance(pattern_widget, AutoCompleteInput):
-            pattern = pattern_widget.value
-        else:
-            pattern = pattern_widget.value  # type: ignore
+        pattern_widget = self.query_one("#trace-pattern", AutoCompleteInput)
+        pattern = pattern_widget.value
 
         min_duration_input = self.query_one("#trace-min-duration", Input).value
         condition = self.query_one("#trace-condition", Input).value
@@ -433,12 +452,10 @@ class TraceView(Container):
             "condition_express": condition if condition else None,
         }
 
-        worker = self.run_worker(
-            lambda: self._client.send_command(command),
-            thread=True,
-        )
+        client = self._client
+        worker = self.run_worker(lambda: client.send_command(command), thread=True)
         await worker.wait()
-        response = worker.result
+        response = worker.result or {}
 
         if response.get("status") != "success":
             error_msg = response.get("error", "Trace start failed")
@@ -470,7 +487,10 @@ class TraceView(Container):
         )
         self._active_traces[watch_id]["worker"] = worker
 
-        self.app.notify(f"Tracing: {pattern} (min_duration={min_duration_ms}ms)", severity="information")
+        self.app.notify(
+            f"Tracing: {pattern} (min_duration={min_duration_ms}ms)",
+            severity="information",
+        )
 
         # Clear inputs
         pattern_widget.value = ""
@@ -512,7 +532,7 @@ class TraceView(Container):
             )
 
     def _add_trace_observation(
-        self, watch_id: str, count: int, observation: dict
+        self, watch_id: str, count: int, observation: Dict[str, Any]
     ) -> None:
         """Store observation and update UI (called from main thread)."""
         self._obs_counter += 1
@@ -555,6 +575,7 @@ class TraceView(Container):
 
         stopped_count = 0
 
+        client = self._client
         for watch_id, trace_info in list(self._active_traces.items()):
             stream_worker = trace_info.get("worker")
             if stream_worker:
@@ -562,7 +583,7 @@ class TraceView(Container):
 
             try:
                 stop_worker = self.run_worker(
-                    lambda wid=watch_id: self._client.send_command(
+                    lambda wid=watch_id: client.send_command(  # type: ignore[union-attr]
                         {
                             "type": "trace",
                             "action": "stop",
@@ -576,7 +597,7 @@ class TraceView(Container):
                 pattern = trace_info.get("pattern")
                 if pattern:
                     reset_worker = self.run_worker(
-                        lambda pat=pattern: self._client.send_command(
+                        lambda pat=pattern: client.send_command(  # type: ignore[union-attr]
                             {
                                 "type": "reset",
                                 "action": "reset",
@@ -600,3 +621,12 @@ class TraceView(Container):
         self._active_traces.clear()
 
         self.app.notify(f"Stopped {stopped_count} trace(s)", severity="information")
+
+
+def _extract_exception_type(exc: Any) -> str:
+    if isinstance(exc, dict):
+        for key in ("type", "class", "__class__"):
+            val = exc.get(key)
+            if val:
+                return str(val).split(".")[-1]
+    return "Exception"
