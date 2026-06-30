@@ -5,7 +5,7 @@ Trace View - Function call tree tracing interface.
 import logging
 import threading
 from collections import deque
-from typing import TYPE_CHECKING, Any, Deque, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Deque, Dict, List, Optional, Tuple
 
 from rich.text import Text
 from textual import events
@@ -322,6 +322,8 @@ class TraceView(Container):
             stats.update("[dim]No observations yet[/dim]")
             return
 
+        self._build_aggregated_callees_node(pattern)
+
         for idx, obs in enumerate(observations):
             n = obs.get("_count", idx + 1)
             total_ms = obs.get("total_duration_ms", 0.0)
@@ -369,6 +371,70 @@ class TraceView(Container):
 
         if observations:
             self._update_stats_panel(observations[0])
+
+    def _build_aggregated_callees_node(
+        self, pattern: str
+    ) -> Optional[Any]:
+        observations = self._observations_by_pattern.get(pattern, [])
+        if not observations:
+            return None
+
+        aggregates: Dict[Tuple[str, str, int], Dict[str, Any]] = {}
+        for obs in observations:
+            for callee in obs.get("call_tree", []):
+                func = callee.get("function", "unknown")
+                filename = callee.get("filename", "")
+                lineno = callee.get("lineno", 0)
+                key = (func, filename, lineno)
+                agg = aggregates.setdefault(
+                    key,
+                    {
+                        "function": func,
+                        "filename": filename,
+                        "lineno": lineno,
+                        "count": 0,
+                        "total_ms": 0.0,
+                        "min_ms": float("inf"),
+                        "max_ms": 0.0,
+                    },
+                )
+                count = callee.get("count", 0)
+                total = callee.get("total_ms", 0.0)
+                mn = callee.get("min_ms", 0.0)
+                mx = callee.get("max_ms", 0.0)
+                agg["count"] += count
+                agg["total_ms"] += total
+                agg["min_ms"] = (
+                    min(agg["min_ms"], mn) if mn > 0 else agg["min_ms"]
+                )
+                agg["max_ms"] = max(agg["max_ms"], mx)
+
+        if not aggregates:
+            return None
+
+        tree = self.query_one("#call-tree", Tree)
+        aggregate_root = tree.root.add("Aggregated Callees", expand=False)
+        aggregate_root.data = {"type": "aggregated_root"}
+
+        for key, agg in aggregates.items():
+            func = agg["function"]
+            filename = agg["filename"]
+            lineno = agg["lineno"]
+            count = agg["count"]
+            total = agg["total_ms"]
+            mn = agg["min_ms"] if agg["min_ms"] != float("inf") else 0.0
+            mx = agg["max_ms"]
+            avg = total / count if count > 0 else 0.0
+            short_fn = filename.split("/")[-1] if filename else ""
+            loc = f" @ {short_fn}:{lineno}" if short_fn else ""
+            label = (
+                f"{func}  count={count}  avg={avg:.3f}ms"
+                f"  total={total:.3f}ms  min={mn:.3f}ms  max={mx:.3f}ms{loc}"
+            )
+            node = aggregate_root.add(label)
+            node.data = {"type": "aggregated", "aggregate": agg}
+
+        return aggregate_root
 
     def on_tree_node_highlighted(
         self, event: Tree.NodeHighlighted[Any]

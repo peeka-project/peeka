@@ -126,7 +126,7 @@ class TestTraceView:
             assert tree.root.children
             assert len(list(tree.root.children)) >= 1
 
-            first_node = list(tree.root.children)[0]
+            first_node = next(n for n in tree.root.children if "obs #" in str(n.label))
             node_label = str(first_node.label)
             assert "obs #" in node_label
             assert "total=" in node_label
@@ -191,7 +191,7 @@ class TestTraceView:
             await pilot.pause()
 
             tree = trace_view.query_one("#call-tree", Tree)
-            first_node = list(tree.root.children)[0]
+            first_node = next(n for n in tree.root.children if "obs #" in str(n.label))
             node_label = str(first_node.label)
             assert "150.250" in node_label or "150." in node_label
 
@@ -259,7 +259,7 @@ class TestTraceView:
             await pilot.pause()
 
             tree = trace_view.query_one("#call-tree", Tree)
-            obs_node = list(tree.root.children)[0]
+            obs_node = next(n for n in tree.root.children if "obs #" in str(n.label))
             callee_node = list(obs_node.children)[0]
             label_text = getattr(callee_node.label, "plain", str(callee_node.label))
             assert "pct=30.0%" in label_text
@@ -333,7 +333,7 @@ class TestTraceView:
             await pilot.pause()
 
             tree = trace_view.query_one("#call-tree", Tree)
-            obs_node = list(tree.root.children)[0]
+            obs_node = next(n for n in tree.root.children if "obs #" in str(n.label))
             slow_node = list(obs_node.children)[0]
             fast_node = list(obs_node.children)[1]
 
@@ -415,7 +415,7 @@ class TestTraceView:
             await pilot.pause()
 
             tree = trace_view.query_one("#call-tree", Tree)
-            obs_node = list(tree.root.children)[0]
+            obs_node = next(n for n in tree.root.children if "obs #" in str(n.label))
             obs_label = getattr(obs_node.label, "plain", str(obs_node.label))
             assert "throws ValueError" in obs_label
             obs_spans = getattr(obs_node.label, "spans", [])
@@ -1110,7 +1110,7 @@ class TestTraceView:
 
             tree = trace_view.query_one("#call-tree", Tree)
             assert tree.root.children
-            obs_node = list(tree.root.children)[0]
+            obs_node = next(n for n in tree.root.children if "obs #" in str(n.label))
             assert "obs #" in str(obs_node.label)
 
             callee_nodes = list(obs_node.children)
@@ -1178,7 +1178,7 @@ class TestTraceView:
             await pilot.pause()
 
             tree = trace_view.query_one("#call-tree", Tree)
-            obs_node = list(tree.root.children)[0]
+            obs_node = next(n for n in tree.root.children if "obs #" in str(n.label))
             callee_node = list(obs_node.children)[0]
             assert len(list(callee_node.children)) == 0
 
@@ -1233,7 +1233,7 @@ class TestTraceView:
 
             tree = trace_view.query_one("#call-tree", Tree)
             assert tree.root.children
-            obs_node = list(tree.root.children)[0]
+            obs_node = next(n for n in tree.root.children if "obs #" in str(n.label))
             assert "obs #" in str(obs_node.label)
             assert len(list(obs_node.children)) == 0
 
@@ -1480,3 +1480,78 @@ class TestTraceView:
             assert tree_panel.region.x < stats_panel.region.x
             assert tree_panel.region.y == stats_panel.region.y
             assert abs(tree_panel.region.width - 2 * stats_panel.region.width) <= 2
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_aggregated_callees_group_same_function(self, mock_client):
+        mock_client.connect()
+        app = PeekaApp()
+        async with app.run_test(size=(120, 32)) as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+            main_screen.action_switch_tab("trace")
+            await pilot.pause()
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(mock_client)
+            trace_view._selected_pattern = "calculator.compute"
+            trace_view._observations_by_pattern["calculator.compute"] = [
+                {
+                    "_count": i,
+                    "func_name": "calculator.compute",
+                    "total_duration_ms": 10.0,
+                    "self_time_ms": 1.0,
+                    "callee_count": 1,
+                    "node_count": 2,
+                    "call_tree": [
+                        {
+                            "function": "calculator.helper",
+                            "filename": "calc.py",
+                            "lineno": 20,
+                            "count": 1,
+                            "total_ms": total,
+                            "min_ms": total,
+                            "max_ms": total,
+                        }
+                    ],
+                }
+                for i, total in enumerate([1.0, 2.0, 3.0], start=1)
+            ]
+            trace_view._build_observation_tree("calculator.compute")
+            await pilot.pause()
+            tree = app.screen.query_one("#call-tree", Tree)
+            agg_root = next(
+                n for n in tree.root.children if str(n.label) == "Aggregated Callees"
+            )
+            agg_root.expand()
+            await pilot.pause()
+            agg_node = agg_root.children[0]
+            label_text = str(agg_node.label)
+            assert "count=3" in label_text
+            assert "total=6.000ms" in label_text
+            assert "avg=2.000ms" in label_text
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_no_aggregated_callees_without_observations(self, mock_client):
+        mock_client.connect()
+        app = PeekaApp()
+        async with app.run_test(size=(120, 32)) as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+            main_screen.action_switch_tab("trace")
+            await pilot.pause()
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(mock_client)
+            trace_view._selected_pattern = "calculator.compute"
+            trace_view._build_observation_tree("calculator.compute")
+            await pilot.pause()
+            tree = app.screen.query_one("#call-tree", Tree)
+            assert not any(
+                str(n.label) == "Aggregated Callees" for n in tree.root.children
+            )
