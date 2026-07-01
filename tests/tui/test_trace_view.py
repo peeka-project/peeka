@@ -1712,15 +1712,100 @@ class TestTraceView:
             )
 
             # Simulate selecting the aggregated root node
-            from textual.widgets import Tree as TextualTree
-
-            event = TextualTree.NodeHighlighted(agg_root)
+            event = Tree.NodeHighlighted(agg_root)
             trace_view.on_tree_node_highlighted(event)
             await pilot.pause()
 
             stats = trace_view.query_one("#trace-stats", Static)
             stats_text = str(stats.render())
             assert "Select a callee" in stats_text
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_aggregated_callee_selection_updates_stats_panel(self, mock_client):
+        """Selecting an aggregated-callee child node updates Stats with full aggregate details."""
+        mock_client.connect()
+
+        obs1 = {
+            "watch_id": "trace_001",
+            "func_name": "calculator.compute",
+            "total_duration_ms": 10.0,
+            "self_time_ms": 0.0,
+            "callee_count": 1,
+            "node_count": 1,
+            "_count": 1,
+            "call_tree": [
+                {
+                    "function": "examples.demo.calculator.add",
+                    "filename": "calculator.py",
+                    "lineno": 42,
+                    "count": 2,
+                    "total_ms": 4.0,
+                    "min_ms": 1.5,
+                    "max_ms": 2.5,
+                }
+            ],
+        }
+        obs2 = {
+            "watch_id": "trace_001",
+            "func_name": "calculator.compute",
+            "total_duration_ms": 10.0,
+            "self_time_ms": 0.0,
+            "callee_count": 1,
+            "node_count": 1,
+            "_count": 2,
+            "call_tree": [
+                {
+                    "function": "examples.demo.calculator.add",
+                    "filename": "calculator.py",
+                    "lineno": 42,
+                    "count": 1,
+                    "total_ms": 2.0,
+                    "min_ms": 2.0,
+                    "max_ms": 2.0,
+                }
+            ],
+        }
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(mock_client)
+            trace_view._selected_pattern = "calculator.compute"
+            trace_view._observations_by_pattern["calculator.compute"] = [obs1, obs2]
+            trace_view._build_observation_tree("calculator.compute")
+            await pilot.pause()
+
+            tree = trace_view.query_one("#call-tree", Tree)
+            agg_root = next(
+                n for n in tree.root.children if str(n.label) == "Aggregated Callees"
+            )
+            agg_root.expand()
+            await pilot.pause()
+
+            agg_child = agg_root.children[0]
+            assert agg_child.data is not None
+            assert agg_child.data.get("type") == "aggregated_callee"
+
+            aggregate = agg_child.data["aggregate"]
+            observations = trace_view._observations_by_pattern["calculator.compute"]
+            trace_view._update_stats_panel_for_aggregate(aggregate, observations)
+            await pilot.pause()
+
+            stats = trace_view.query_one("#trace-stats", Static)
+            stats_text = str(stats.render())
+
+            assert "examples.demo.calculator.add" in stats_text
+            assert "Count" in stats_text
+            assert "Total" in stats_text and "6.000" in stats_text
+            assert "30.0" in stats_text
+            assert "Location" in stats_text and "calculator.py" in stats_text
 
     @pytest.mark.asyncio
     @pytest.mark.tui

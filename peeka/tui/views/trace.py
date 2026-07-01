@@ -399,7 +399,7 @@ class TraceView(Container):
                 else:
                     pct_style = "green"
                 abbr_func = _abbreviate_function_name(func)
-                callee_label = Text(f"{abbr_func}")
+                callee_label = Text(abbr_func)
                 exc = callee.get("exception")
                 if exc:
                     exc_type = _extract_exception_type(exc)
@@ -459,12 +459,13 @@ class TraceView(Container):
             "aggregates": list(aggregates.values()),
         }
 
+        pattern_total_ms = sum(
+            obs.get("total_duration_ms", 0.0) for obs in observations
+        )
+
         for key, agg in aggregates.items():
             func = agg["function"]
             total = agg["total_ms"]
-            pattern_total_ms = sum(
-                obs.get("total_duration_ms", 0.0) for obs in observations
-            )
             abbr_func = _abbreviate_function_name(func)
             agg_pct = (total / pattern_total_ms * 100.0) if pattern_total_ms > 0 else 0.0
             label = f"{abbr_func}  pct={agg_pct:.1f}%  total={total:.3f}ms"
