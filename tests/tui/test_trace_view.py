@@ -1648,8 +1648,18 @@ class TestTraceView:
             trace_view._selected_pattern = "calculator.compute"
             trace_view._observations_by_pattern["calculator.compute"] = [obs_data]
 
-            # Directly call the stats update method
-            trace_view._update_stats_panel_for_callee(callee_data, obs_data)
+            trace_view._build_observation_tree("calculator.compute")
+            await pilot.pause()
+
+            tree = trace_view.query_one("#call-tree", Tree)
+            obs_node = next(
+                n for n in tree.root.children if n.data and n.data.get("type") == "observation"
+            )
+            callee_node = next(
+                n for n in obs_node.children if n.data and n.data.get("type") == "callee"
+            )
+            event = Tree.NodeHighlighted(callee_node)
+            trace_view.on_tree_node_highlighted(event)
             await pilot.pause()
 
             stats = trace_view.query_one("#trace-stats", Static)
