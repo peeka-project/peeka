@@ -1793,9 +1793,9 @@ class TestTraceView:
             assert agg_child.data is not None
             assert agg_child.data.get("type") == "aggregated_callee"
 
-            aggregate = agg_child.data["aggregate"]
-            observations = trace_view._observations_by_pattern["calculator.compute"]
-            trace_view._update_stats_panel_for_aggregate(aggregate, observations)
+            # Trigger via the full event dispatch chain
+            event = Tree.NodeHighlighted(agg_child)
+            trace_view.on_tree_node_highlighted(event)
             await pilot.pause()
 
             stats = trace_view.query_one("#trace-stats", Static)
