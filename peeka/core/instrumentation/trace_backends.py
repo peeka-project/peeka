@@ -1,9 +1,48 @@
 """Trace backend implementations."""
 
+import os
 import sys
 import time
 from collections import defaultdict
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+
+def _format_trace_function(code: Any, frame: Optional[Any] = None) -> str:
+    """Return a module-qualified function name for a trace callee.
+
+    The returned string is a valid ``module.qualname`` pattern that can be
+    passed back to the trace command (via ``_resolve_target``). The original
+    ``filename``/``lineno`` are preserved separately in the callee record,
+    so this function only needs to produce a dotted import path.
+
+    Args:
+        code: The code object of the callee.
+        frame: Optional frame (available in sys.settrace backend). When
+            provided, the exact module name is read from ``frame.f_globals``.
+
+    Returns:
+        Dotted function name such as ``module.func`` or ``__main__.func``.
+    """
+    func_name = getattr(code, "co_qualname", code.co_name)
+
+    if frame is not None:
+        module_name = frame.f_globals.get("__name__", "__main__")
+        return f"{module_name}.{func_name}"
+
+    # sys.monitoring callback does not receive a frame. Infer the module from
+    # code.co_filename by matching against loaded modules' __file__ paths.
+    target_file = os.path.abspath(code.co_filename)
+    for mod in list(sys.modules.values()):
+        mod_file = getattr(mod, "__file__", None)
+        if mod_file and os.path.abspath(mod_file) == target_file:
+            module_name = getattr(mod, "__name__", "__main__")
+            return f"{module_name}.{func_name}"
+
+    # Fallback: derive a pseudo-module from the filename basename.
+    base = os.path.basename(code.co_filename)
+    if base.endswith(".py"):
+        base = base[:-3]
+    return f"{base}.{func_name}"
 
 
 def _aggregate_callees(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -127,7 +166,7 @@ class InjectorTraceBackendsMixin:
 
         def monitoring_callback(code, instruction_offset, *callback_args):
             """Callback for sys.monitoring events."""
-            func_name = f"{code.co_filename}:{code.co_name}"
+            func_name = _format_trace_function(code)
 
             # Determine event type based on callback args
             if len(callback_args) == 0:
@@ -316,7 +355,7 @@ class InjectorTraceBackendsMixin:
                 # Always return local_trace so all depth changes are tracked.
                 if current_depth[0] == 2:
                     if not (skip_builtin and _is_builtin_or_stdlib(code)):
-                        func_name = f"{code.co_filename}:{code.co_name}"
+                        func_name = _format_trace_function(code, frame)
                         direct_callee_stack.append(
                             {
                                 "function": func_name,

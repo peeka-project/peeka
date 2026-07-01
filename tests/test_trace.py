@@ -249,6 +249,7 @@ class TestTraceCommand:
             assert len(call_tree) >= 1
             callee = call_tree[0]
             assert "helper_function" in callee["function"]
+            assert "." in callee["function"]
             assert "count" in callee and callee["count"] >= 1
             assert "total_ms" in callee
 
@@ -292,6 +293,7 @@ class TestTraceCommand:
             assert len(call_tree) == 1
             callee = call_tree[0]
             assert "level1" in callee["function"]
+            assert "." in callee["function"]
 
         finally:
             del sys.modules["test_trace_depth"]
