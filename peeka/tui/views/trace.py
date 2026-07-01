@@ -26,6 +26,23 @@ if TYPE_CHECKING:
 _WIDE_TRACE_CONTROLS_MIN_WIDTH = 120
 
 
+def _abbreviate_function_name(func: str) -> str:
+    """Abbreviate a dotted function name logback-style.
+
+    Keeps the last two segments intact; replaces earlier segments
+    with their first letter. Examples:
+      examples.demo.calculator.add -> e.d.calculator.add
+      mod.sub.func                  -> m.s.func
+      slow_func                     -> slow_func
+      a.b                           -> a.b
+    """
+    parts = func.split(".")
+    if len(parts) <= 2:
+        return func
+    prefix = ".".join(p[0] for p in parts[:-2])
+    return f"{prefix}.{'.'.join(parts[-2:])}"
+
+
 class TraceView(Container):
     """Trace view for visualizing function call trees with timing."""
 
@@ -372,14 +389,7 @@ class TraceView(Container):
 
             for callee in obs.get("call_tree", []):
                 func = callee.get("function", "unknown")
-                count = callee.get("count", 0)
                 t_ms = callee.get("total_ms", 0.0)
-                mn_ms = callee.get("min_ms", 0.0)
-                mx_ms = callee.get("max_ms", 0.0)
-                filename = callee.get("filename", "")
-                lineno = callee.get("lineno", 0)
-                short_fn = filename.split("/")[-1] if filename else ""
-                loc = f" @ {short_fn}:{lineno}" if short_fn else ""
                 parent_total_ms = obs.get("total_duration_ms", 0.0)
                 pct = (t_ms / parent_total_ms * 100.0) if parent_total_ms > 0 else 0.0
                 if pct >= 50:
@@ -388,15 +398,14 @@ class TraceView(Container):
                     pct_style = "yellow"
                 else:
                     pct_style = "green"
-                callee_label = Text(
-                    f"{func}  count={count}  total={t_ms:.3f}ms"
-                    f"  min={mn_ms:.3f}ms  max={mx_ms:.3f}ms{loc}"
-                )
+                abbr_func = _abbreviate_function_name(func)
+                callee_label = Text(f"{abbr_func}")
                 exc = callee.get("exception")
                 if exc:
                     exc_type = _extract_exception_type(exc)
                     callee_label.append(f" [throws {exc_type}]", style="red bold")
                 callee_label.append(f"  pct={pct:.1f}%", style=pct_style)
+                callee_label.append(f"  total={t_ms:.3f}ms")
                 callee_node = obs_node.add(callee_label)
                 callee_node.data = {"type": "callee", "callee": callee, "obs": obs}
 
@@ -452,19 +461,13 @@ class TraceView(Container):
 
         for key, agg in aggregates.items():
             func = agg["function"]
-            filename = agg["filename"]
-            lineno = agg["lineno"]
-            count = agg["count"]
             total = agg["total_ms"]
-            mn = agg["min_ms"] if agg["min_ms"] != float("inf") else 0.0
-            mx = agg["max_ms"]
-            avg = total / count if count > 0 else 0.0
-            short_fn = filename.split("/")[-1] if filename else ""
-            loc = f" @ {short_fn}:{lineno}" if short_fn else ""
-            label = (
-                f"{func}  count={count}  avg={avg:.3f}ms"
-                f"  total={total:.3f}ms  min={mn:.3f}ms  max={mx:.3f}ms{loc}"
+            pattern_total_ms = sum(
+                obs.get("total_duration_ms", 0.0) for obs in observations
             )
+            abbr_func = _abbreviate_function_name(func)
+            agg_pct = (total / pattern_total_ms * 100.0) if pattern_total_ms > 0 else 0.0
+            label = f"{abbr_func}  pct={agg_pct:.1f}%  total={total:.3f}ms"
             node = aggregate_root.add(label)
             node.data = {"type": "aggregated_callee", "aggregate": agg}
 
@@ -477,13 +480,82 @@ class TraceView(Container):
         if node.data is None:
             return
         data = node.data
-        if data.get("type") == "observation":
-            obs = data["obs"]
-        elif data.get("type") == "callee":
-            obs = data["obs"]  # show parent observation's stats
-        else:
-            return
-        self._update_stats_panel(obs)
+        node_type = data.get("type")
+        if node_type == "observation":
+            self._update_stats_panel(data["obs"])
+        elif node_type == "callee":
+            self._update_stats_panel_for_callee(data["callee"], data["obs"])
+        elif node_type == "aggregated_callee":
+            pattern = self._selected_pattern or ""
+            observations = self._observations_by_pattern.get(pattern, [])
+            self._update_stats_panel_for_aggregate(data["aggregate"], observations)
+        elif node_type == "aggregated":
+            stats = self.query_one("#trace-stats", Static)
+            stats.update("[dim]Select a callee to see details[/dim]")
+        # root node (no data type) — ignore
+
+    def _update_stats_panel_for_callee(
+        self, callee: Dict[str, Any], obs: Dict[str, Any]
+    ) -> None:
+        """Update stats panel with full details for a selected callee node."""
+        stats = self.query_one("#trace-stats", Static)
+        func = callee.get("function", "unknown")
+        count = callee.get("count", 0)
+        total_ms = callee.get("total_ms", 0.0)
+        min_ms = callee.get("min_ms", 0.0)
+        max_ms = callee.get("max_ms", 0.0)
+        filename = callee.get("filename", "")
+        lineno = callee.get("lineno", 0)
+        location = f"{filename}:{lineno}" if filename else "-"
+        parent_total = obs.get("total_duration_ms", 0.0)
+        pct = (total_ms / parent_total * 100.0) if parent_total > 0 else 0.0
+        text = (
+            f"[cyan]Callee[/cyan]\n"
+            f"Function: [yellow]{func}[/yellow]\n"
+            f"Count: {count}\n"
+            f"Total: {total_ms:.3f}ms\n"
+            f"Min: {min_ms:.3f}ms\n"
+            f"Max: {max_ms:.3f}ms\n"
+            f"Location: {location}\n"
+            f"Percentage: {pct:.1f}%"
+        )
+        exception = callee.get("exception")
+        if isinstance(exception, dict):
+            exc_type = _extract_exception_type(exception)
+            exc_msg = exception.get("message", exception.get("msg", ""))
+            text += f"\nException: [red bold]{exc_type}: {exc_msg}[/red bold]"
+        stats.update(text)
+
+    def _update_stats_panel_for_aggregate(
+        self, aggregate: Dict[str, Any], observations: List[Dict[str, Any]]
+    ) -> None:
+        """Update stats panel with full details for a selected aggregated-callee node."""
+        stats = self.query_one("#trace-stats", Static)
+        func = aggregate.get("function", "unknown")
+        count = aggregate.get("count", 0)
+        total_ms = aggregate.get("total_ms", 0.0)
+        min_ms = aggregate.get("min_ms", 0.0)
+        if min_ms == float("inf"):
+            min_ms = 0.0
+        max_ms = aggregate.get("max_ms", 0.0)
+        avg_ms = total_ms / count if count > 0 else 0.0
+        filename = aggregate.get("filename", "")
+        lineno = aggregate.get("lineno", 0)
+        location = f"{filename}:{lineno}" if filename else "-"
+        pattern_total = sum(o.get("total_duration_ms", 0.0) for o in observations)
+        pct = (total_ms / pattern_total * 100.0) if pattern_total > 0 else 0.0
+        text = (
+            f"[cyan]Aggregated Callee[/cyan]\n"
+            f"Function: [yellow]{func}[/yellow]\n"
+            f"Count: {count}\n"
+            f"Total: {total_ms:.3f}ms\n"
+            f"Avg: {avg_ms:.3f}ms\n"
+            f"Min: {min_ms:.3f}ms\n"
+            f"Max: {max_ms:.3f}ms\n"
+            f"Location: {location}\n"
+            f"Percentage: {pct:.1f}%"
+        )
+        stats.update(text)
 
     def _update_stats_panel(self, obs: Dict[str, Any]) -> None:
         stats = self.query_one("#trace-stats", Static)

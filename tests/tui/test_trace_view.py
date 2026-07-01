@@ -1115,8 +1115,80 @@ class TestTraceView:
 
             callee_nodes = list(obs_node.children)
             assert len(callee_nodes) == 1
-            assert "count=" in str(callee_nodes[0].label)
+            label_str = str(callee_nodes[0].label)
+            assert "pct=" in label_str
+            assert "total=" in label_str
+            assert "count=" not in label_str
             assert len(list(callee_nodes[0].children)) == 0
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_callee_label_is_compact_and_abbreviated(self, mock_client_factory):
+        """Callee label uses logback-style abbreviated name, pct, total only."""
+        client = mock_client_factory(
+            responses={"trace": {"status": "success", "watch_id": "trace_001"}}
+        )
+        client.connect()
+
+        stream_client = mock_client_factory(
+            observations=[
+                {
+                    "watch_id": "trace_001",
+                    "func_name": "calculator.compute",
+                    "total_duration_ms": 10.0,
+                    "self_time_ms": 0.0,
+                    "callee_count": 1,
+                    "node_count": 1,
+                    "call_tree": [
+                        {
+                            "function": "examples.demo.calculator.add",
+                            "filename": "calculator.py",
+                            "lineno": 42,
+                            "count": 1,
+                            "total_ms": 5.0,
+                            "min_ms": 5.0,
+                            "max_ms": 5.0,
+                        }
+                    ],
+                }
+            ]
+        )
+        stream_client.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(client)
+            trace_view._stream_client = stream_client
+            trace_view._selected_pattern = "calculator.compute"
+
+            pattern_input = trace_view.query_one("#trace-pattern", AutoCompleteInput)
+            pattern_input.value = "calculator.compute"
+
+            await trace_view._start_trace()
+            await pilot.pause()
+            await pilot.pause()
+
+            tree = trace_view.query_one("#call-tree", Tree)
+            obs_node = next(n for n in tree.root.children if "obs #" in str(n.label))
+            callee_node = list(obs_node.children)[0]
+            label_text = getattr(callee_node.label, "plain", str(callee_node.label))
+
+            # abbreviated: examples.demo.calculator.add -> e.d.calculator.add
+            assert "e.d.calculator.add" in label_text
+            assert "pct=50.0%" in label_text
+            assert "total=5.000ms" in label_text
+            # old verbose fields must NOT be present
+            assert "count=" not in label_text
+            assert "min=" not in label_text
+            assert "max=" not in label_text
+            assert "examples.demo." not in label_text
 
     @pytest.mark.asyncio
     @pytest.mark.tui
@@ -1529,9 +1601,126 @@ class TestTraceView:
             await pilot.pause()
             agg_node = agg_root.children[0]
             label_text = str(agg_node.label)
-            assert "count=3" in label_text
+            assert "pct=" in label_text
             assert "total=6.000ms" in label_text
-            assert "avg=2.000ms" in label_text
+            assert "count=3" not in label_text
+            assert "avg=2.000ms" not in label_text
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_callee_selection_updates_stats_panel(self, mock_client_factory):
+        """Selecting a callee node updates Stats panel with full details."""
+        client = mock_client_factory(
+            responses={"trace": {"status": "success", "watch_id": "trace_001"}}
+        )
+        client.connect()
+
+        callee_data = {
+            "function": "examples.demo.calculator.add",
+            "filename": "calculator.py",
+            "lineno": 42,
+            "count": 2,
+            "total_ms": 5.0,
+            "min_ms": 1.0,
+            "max_ms": 4.0,
+        }
+        obs_data = {
+            "watch_id": "trace_001",
+            "func_name": "calculator.compute",
+            "total_duration_ms": 10.0,
+            "self_time_ms": 0.0,
+            "callee_count": 1,
+            "node_count": 1,
+            "_count": 1,
+            "call_tree": [callee_data],
+        }
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(client)
+            trace_view._selected_pattern = "calculator.compute"
+            trace_view._observations_by_pattern["calculator.compute"] = [obs_data]
+
+            # Directly call the stats update method
+            trace_view._update_stats_panel_for_callee(callee_data, obs_data)
+            await pilot.pause()
+
+            stats = trace_view.query_one("#trace-stats", Static)
+            stats_text = str(stats.render())
+
+            assert "examples.demo.calculator.add" in stats_text
+            assert "Count" in stats_text and "2" in stats_text
+            assert "Total" in stats_text and "5.000" in stats_text
+            assert "Min" in stats_text and "1.000" in stats_text
+            assert "Max" in stats_text and "4.000" in stats_text
+            assert "calculator.py:42" in stats_text
+            assert "50.0" in stats_text  # percentage
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_aggregated_callee_root_selection_clears_stats(self, mock_client):
+        """Selecting the Aggregated Callees root node shows a selection hint."""
+        mock_client.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(mock_client)
+
+            # Build tree with aggregated callees node
+            obs = {
+                "watch_id": "trace_001",
+                "func_name": "calculator.compute",
+                "total_duration_ms": 10.0,
+                "self_time_ms": 0.0,
+                "callee_count": 1,
+                "node_count": 1,
+                "_count": 1,
+                "call_tree": [
+                    {
+                        "function": "calculator.add",
+                        "filename": "calc.py",
+                        "lineno": 10,
+                        "count": 1,
+                        "total_ms": 5.0,
+                        "min_ms": 5.0,
+                        "max_ms": 5.0,
+                    }
+                ],
+            }
+            trace_view._selected_pattern = "calculator.compute"
+            trace_view._observations_by_pattern["calculator.compute"] = [obs]
+            trace_view._build_observation_tree("calculator.compute")
+            await pilot.pause()
+
+            tree = trace_view.query_one("#call-tree", Tree)
+            agg_root = next(
+                n for n in tree.root.children if str(n.label) == "Aggregated Callees"
+            )
+
+            # Simulate selecting the aggregated root node
+            from textual.widgets import Tree as TextualTree
+
+            event = TextualTree.NodeHighlighted(agg_root)
+            trace_view.on_tree_node_highlighted(event)
+            await pilot.pause()
+
+            stats = trace_view.query_one("#trace-stats", Static)
+            stats_text = str(stats.render())
+            assert "Select a callee" in stats_text
 
     @pytest.mark.asyncio
     @pytest.mark.tui
