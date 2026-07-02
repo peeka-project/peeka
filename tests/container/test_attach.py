@@ -13,7 +13,7 @@ import textwrap
 
 import pytest
 
-from tests.container.conftest import exec_in_container, cleanup_peeka_files_in_container
+from tests.container.conftest import exec_in_container
 
 pytestmark = [pytest.mark.container]
 
@@ -32,8 +32,8 @@ class TestContainerAttach:
         )
 
         # Parse JSONL output
-        lines = [l for l in output.strip().split("\n") if l.strip()]
-        json_lines = [l for l in lines if l.startswith("{")]
+        lines = [line for line in output.strip().split("\n") if line.strip()]
+        json_lines = [line for line in lines if line.startswith("{")]
 
         success_line = None
         for line in json_lines:
@@ -170,8 +170,8 @@ class TestContainerAttach:
         assert exit_code == 0, "Attach failed"
 
         # Parse socket path from output
-        lines = [l for l in output.strip().split("\n") if l.strip()]
-        json_lines = [l for l in lines if l.startswith("{")]
+        lines = [line for line in output.strip().split("\n") if line.strip()]
+        json_lines = [line for line in lines if line.startswith("{")]
 
         socket_path = None
         for line in json_lines:
