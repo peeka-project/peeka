@@ -7,7 +7,10 @@ Tests core attach/detach operations in Docker containers against:
 - Python 3.14 (PEP 768 native attachment)
 """
 
+import base64
 import json
+import textwrap
+
 import pytest
 
 from tests.container.conftest import exec_in_container, cleanup_peeka_files_in_container
@@ -197,4 +200,101 @@ class TestContainerAttach:
         # ls should fail (socket removed) OR return "No such file"
         assert exit_code != 0 or "No such file" in ls_output, (
             f"Socket file {socket_path} still exists after detach"
+        )
+
+
+@pytest.mark.container
+class TestModuleCacheRefresh:
+    """Regression: re-attach must load fresh peeka modules, not stale cached ones."""
+
+    def test_reattach_evicts_stale_peeka_modules(self, py314_target):
+        """After detach and re-attach, peeka.* modules must be free of stale attributes."""
+        container = py314_target["container"]
+        pid = py314_target["pid"]
+
+        exit_code, attach_output = exec_in_container(
+            container, f"python -m peeka.cli.main attach {pid}", timeout=30
+        )
+        assert exit_code == 0, f"First attach failed:\n{attach_output}"
+
+        inject_py = textwrap.dedent(
+            """
+            import sys, os
+            for _n, _m in list(sys.modules.items()):
+                if _n == "peeka" or _n.startswith("peeka."):
+                    _m._STALE_SENTINEL = True
+            with open("/tmp/peeka_sentinel_injected.flag", "w") as _f:
+                _f.write("ok")
+            """
+        ).strip()
+        inject_b64 = base64.b64encode(inject_py.encode()).decode()
+        exec_in_container(
+            container,
+            f"echo {inject_b64} | base64 -d > /tmp/inject_sentinel.py",
+            timeout=5,
+        )
+        run_inject_cmd = (
+            f"python3 -c \"import sys, time, os; "
+            f"sys.remote_exec({pid}, '/tmp/inject_sentinel.py'); "
+            "time.sleep(2); "
+            "print('INJECTED' if os.path.exists('/tmp/peeka_sentinel_injected.flag') else 'TIMEOUT')\""
+        )
+        exit_code, inject_output = exec_in_container(
+            container, run_inject_cmd, timeout=15
+        )
+        if exit_code != 0 or "INJECTED" not in inject_output:
+            pytest.skip(
+                f"Could not inject sentinel via PEP 768 sys.remote_exec — "
+                f"skipping (output: {inject_output!r})"
+            )
+
+        exec_in_container(
+            container, "python -m peeka.cli.main detach", timeout=15
+        )
+        exec_in_container(
+            container,
+            "rm -f /tmp/peeka_*.sock /tmp/peeka_*.ready /tmp/peeka_agent_*.py 2>/dev/null; true",
+            timeout=5,
+        )
+
+        exit_code, reattach_output = exec_in_container(
+            container, f"python -m peeka.cli.main attach {pid}", timeout=30
+        )
+        assert exit_code == 0, f"Re-attach failed:\n{reattach_output}"
+
+        check_py = textwrap.dedent(
+            """
+            import sys, os
+            found_stale = any(
+                hasattr(_m, "_STALE_SENTINEL")
+                for _n, _m in sys.modules.items()
+                if _n == "peeka" or _n.startswith("peeka.")
+            )
+            with open("/tmp/peeka_sentinel_check.result", "w") as _f:
+                _f.write("STALE" if found_stale else "FRESH")
+            """
+        ).strip()
+        check_b64 = base64.b64encode(check_py.encode()).decode()
+        exec_in_container(
+            container,
+            f"echo {check_b64} | base64 -d > /tmp/check_sentinel.py",
+            timeout=5,
+        )
+        run_check_cmd = (
+            f"python3 -c \"import sys, time, os; "
+            f"sys.remote_exec({pid}, '/tmp/check_sentinel.py'); "
+            "time.sleep(2); "
+            "result = open('/tmp/peeka_sentinel_check.result').read().strip() "
+            "if os.path.exists('/tmp/peeka_sentinel_check.result') else 'TIMEOUT'; "
+            "print(result)\""
+        )
+        exit_code, check_output = exec_in_container(
+            container, run_check_cmd, timeout=15
+        )
+        result = check_output.strip()
+
+        assert result == "FRESH", (
+            f"After re-attach, peeka.* modules still carry the stale sentinel. "
+            f"Expected FRESH, got: {result!r}. "
+            f"This means the module cache cleanup in _create_agent_script() is NOT working."
         )
