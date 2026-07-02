@@ -298,6 +298,11 @@ Python 可能使用代码更改前缓存的 `.pyc` 文件：
 docker exec peeka-test-<version> find /app -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null
 ```
 
+### 模块缓存（sys.modules）
+当目标进程长时间运行时，Python 会在 `sys.modules` 中缓存来自首次 attach 会话的 `peeka.*` 模块。**Peeka 的 agent bootstrap 现已在每次新 attach 时自动清除这些缓存**，因此挂载卷上的源码改动无需重启目标进程即可生效。
+
+如果 detach 后重新 attach 仍观察到旧行为，请确认 detach 已完整执行后再重新 attach。此清理仅针对 `peeka.*` 命名空间，不会影响目标应用的其他模块。
+
 ### Socket 消失
 Agent socket 在进程重启或清理后会过期。重新附加：
 ```bash

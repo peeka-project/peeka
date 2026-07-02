@@ -875,3 +875,52 @@ class TestTargetPythonVersionProbeCommand:
         assert calls[1][1] == "-c"
         assert "sys.version_info" in calls[1][2]
         assert "_attach_module" not in calls[1][2]
+
+
+class TestAgentScriptBootstrap:
+    """Verify _create_agent_script() injects module cleanup before agent code."""
+
+    def test_bootstrap_contains_module_cleanup_snippet(self, monkeypatch):
+        """Generated agent script must contain the peeka module eviction loop."""
+        attacher = ProcessAttacher(12345)
+        monkeypatch.setattr(attacher, "session_id", "test-session")
+
+        # Use a minimal agent code placeholder
+        agent_code = "# agent placeholder"
+        script_path = attacher._create_agent_script(agent_code)
+
+        try:
+            with open(script_path) as f:
+                content = f.read()
+        finally:
+            import os
+
+            os.unlink(script_path)
+
+        assert "for _peeka_mod in list(sys.modules.keys()):" in content
+        assert "sys.modules.pop(_peeka_mod, None)" in content
+
+    def test_bootstrap_cleanup_precedes_agent_code(self, monkeypatch):
+        """Module cleanup must appear before the injected agent code."""
+        attacher = ProcessAttacher(12345)
+        monkeypatch.setattr(attacher, "session_id", "test-session")
+
+        agent_code = "import peeka.core.agent  # sentinel"
+        script_path = attacher._create_agent_script(agent_code)
+
+        try:
+            with open(script_path) as f:
+                content = f.read()
+        finally:
+            import os
+
+            os.unlink(script_path)
+
+        cleanup_pos = content.find("for _peeka_mod in list(sys.modules.keys()):")
+        agent_pos = content.find("import peeka.core.agent  # sentinel")
+
+        assert cleanup_pos != -1, "Cleanup snippet not found in script"
+        assert agent_pos != -1, "Agent code sentinel not found in script"
+        assert cleanup_pos < agent_pos, (
+            f"Cleanup (pos={cleanup_pos}) must appear before agent code (pos={agent_pos})"
+        )
