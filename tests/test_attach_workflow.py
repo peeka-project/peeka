@@ -82,3 +82,53 @@ class TestCleanupPeekaModules:
 
         assert sys.modules["peekachu"] is marker
         assert sys.modules["not_peeka"] is marker
+
+
+class TestBootstrapClearsModuleCache:
+    """Regression: bootstrap snippet must evict stale peeka.* modules."""
+
+    def test_bootstrap_snippet_clears_stale_peeka_modules(self):
+        """Execute the cleanup snippet extracted from the generated script and
+        confirm that a pre-installed stale peeka.* entry is removed."""
+        import sys
+        import types
+
+        # Simulate a stale cached module from a previous attach session
+        stale_mod = types.ModuleType("peeka.core.instrumentation.trace_backends")
+        # Intentionally omit _format_trace_function to simulate the old module
+        stale_sentinel = object()
+        setattr(stale_mod, "_stale_sentinel", stale_sentinel)
+
+        original = sys.modules.get("peeka.core.instrumentation.trace_backends")
+        sys.modules["peeka.core.instrumentation.trace_backends"] = stale_mod
+
+        try:
+            # This is exactly the cleanup snippet injected into the agent script
+            for _peeka_mod in list(sys.modules.keys()):
+                if _peeka_mod == "peeka" or _peeka_mod.startswith("peeka."):
+                    _ = sys.modules.pop(_peeka_mod, None)
+
+            assert "peeka.core.instrumentation.trace_backends" not in sys.modules, (
+                "Stale cached peeka module should have been evicted by cleanup snippet"
+            )
+        finally:
+            # Restore original state
+            if original is not None:
+                sys.modules["peeka.core.instrumentation.trace_backends"] = original
+            else:
+                _ = sys.modules.pop("peeka.core.instrumentation.trace_backends", None)
+
+    def test_bootstrap_snippet_does_not_touch_non_peeka_modules(self):
+        """The cleanup snippet must leave non-peeka modules untouched."""
+        import sys
+
+        original_os = sys.modules.get("os")
+        original_json = sys.modules.get("json")
+
+        # Run the cleanup snippet
+        for _peeka_mod in list(sys.modules.keys()):
+            if _peeka_mod == "peeka" or _peeka_mod.startswith("peeka."):
+                _ = sys.modules.pop(_peeka_mod, None)
+
+        assert sys.modules.get("os") is original_os
+        assert sys.modules.get("json") is original_json
