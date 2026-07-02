@@ -15,6 +15,20 @@ def _attach_module():
     return attach_module
 
 
+def _cleanup_peeka_modules() -> None:
+    """Remove all cached peeka.* modules from sys.modules.
+
+    Evicts the bare 'peeka' key and every key starting with 'peeka.'
+    so that the next import loads fresh code from disk. Iterates over
+    a snapshot of keys to avoid mutation-during-iteration errors.
+    """
+    import sys
+
+    for _mod_name in list(sys.modules.keys()):
+        if _mod_name == "peeka" or _mod_name.startswith("peeka."):
+            sys.modules.pop(_mod_name, None)
+
+
 class AttachReadinessMixin:
 
     def _serve_agent_code(self, agent_code: str, timeout: int = 30):
