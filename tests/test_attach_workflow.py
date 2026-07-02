@@ -8,6 +8,20 @@ import pytest
 from peeka.core.attach_workflow.readiness import _cleanup_peeka_modules  # pyright: ignore[reportPrivateUsage]
 
 
+@pytest.fixture(autouse=True)
+def _restore_peeka_sys_modules():  # pyright: ignore[reportUnusedFunction]
+    original_peeka_modules = {
+        name: module
+        for name, module in sys.modules.items()
+        if name == "peeka" or name.startswith("peeka.")
+    }
+    yield
+    for name in list(sys.modules.keys()):
+        if name == "peeka" or name.startswith("peeka."):
+            _ = sys.modules.pop(name, None)
+    sys.modules.update(original_peeka_modules)
+
+
 def _make_module(name: str) -> ModuleType:
     module = ModuleType(name)
     return module

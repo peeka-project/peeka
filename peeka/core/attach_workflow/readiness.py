@@ -123,10 +123,15 @@ class AttachReadinessMixin:
 
         peeka_root = str(_attach_module().Path(__file__).parent.parent.parent.resolve())
         path_bootstrap = f"import sys; sys.path.insert(0, {peeka_root!r}) if {peeka_root!r} not in sys.path else None\n"
+        module_cleanup = (
+            "for _peeka_mod in list(sys.modules.keys()):\n"
+            "    if _peeka_mod == 'peeka' or _peeka_mod.startswith('peeka.'):\n"
+            "        sys.modules.pop(_peeka_mod, None)\n"
+        )
 
         with open(agent_path, "w") as f:
             _attach_module().logger.debug("Creating agent script at %s", agent_path)
-            f.write(path_bootstrap + agent_code_injected)
+            f.write(path_bootstrap + module_cleanup + agent_code_injected)
 
         return str(agent_path)
 
