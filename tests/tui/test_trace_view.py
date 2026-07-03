@@ -2120,3 +2120,59 @@ class TestTraceView:
             assert len(trace_view._observations_by_pattern[pattern]) == 100, (
                 "obs_list should still be capped at 100 entries"
             )
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_aggregate_preserves_min_ms_zero(self, mock_client_factory):
+        """_build_aggregated_callees_node preserves min_ms=0.0 as valid minimum."""
+        client = mock_client_factory(responses={})
+        client.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(client)
+
+            pattern = "some.func"
+            callee_key = {
+                "function": "child.fn",
+                "filename": "child.py",
+                "lineno": 10,
+            }
+
+            obs1 = {
+                "total_duration_ms": 1.0,
+                "self_time_ms": 0.0,
+                "func_name": pattern,
+                "call_tree": [
+                    {**callee_key, "count": 1, "total_ms": 0.0, "min_ms": 0.0, "max_ms": 0.0},
+                ],
+            }
+            obs2 = {
+                "total_duration_ms": 6.0,
+                "self_time_ms": 0.0,
+                "func_name": pattern,
+                "call_tree": [
+                    {**callee_key, "count": 1, "total_ms": 5.0, "min_ms": 5.0, "max_ms": 5.0},
+                ],
+            }
+
+            trace_view._observations_by_pattern[pattern] = [obs1, obs2]
+
+            aggregate_root = trace_view._build_aggregated_callees_node(pattern)
+            await pilot.pause()
+
+            assert aggregate_root is not None, "_build_aggregated_callees_node returned None"
+            aggregates = aggregate_root.data["aggregates"]
+            assert len(aggregates) == 1, f"Expected 1 aggregate, got {len(aggregates)}"
+            agg = aggregates[0]
+            assert agg["min_ms"] == 0.0, (
+                f"Expected min_ms=0.0, got {agg['min_ms']} — "
+                "min_ms=0.0 must not be treated as 'no data' and discarded"
+            )

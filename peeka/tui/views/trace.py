@@ -446,9 +446,7 @@ class TraceView(Container):
                 mx = callee.get("max_ms", 0.0)
                 agg["count"] += count
                 agg["total_ms"] += total
-                agg["min_ms"] = (
-                    min(agg["min_ms"], mn) if mn > 0 else agg["min_ms"]
-                )
+                agg["min_ms"] = min(agg["min_ms"], mn)
                 agg["max_ms"] = max(agg["max_ms"], mx)
 
         if not aggregates:
