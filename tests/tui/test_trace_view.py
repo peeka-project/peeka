@@ -1426,7 +1426,7 @@ class TestTraceView:
             obs_table = trace_view.query_one("#trace-obs-table", DataTable)
             assert obs_table.row_count >= 1
 
-            trace_view.action_clear_tree()
+            await trace_view.action_clear_tree()
             await pilot.pause()
 
             obs_table = trace_view.query_one("#trace-obs-table", DataTable)
@@ -1966,3 +1966,108 @@ class TestTraceView:
             after_count = len(client.commands_received)
 
             assert after_count == before_count
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_clear_action_stops_active_trace(self, mock_client_factory):
+        """action_clear_tree stops running trace, empties obs_table and _active_traces."""
+        client = mock_client_factory(
+            responses={
+                "trace": {"status": "success", "watch_id": "trace_001"},
+                "reset": {"status": "success"},
+            }
+        )
+        client.connect()
+        stream_client = mock_client_factory(observations=[])
+        stream_client.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(client)
+            trace_view._stream_client = stream_client
+
+            pattern_input = trace_view.query_one("#trace-pattern", AutoCompleteInput)
+            pattern_input.value = "module.func"
+
+            await trace_view._start_trace()
+            await pilot.pause()
+
+            obs_table = trace_view.query_one("#trace-obs-table", DataTable)
+            assert obs_table.row_count >= 1
+            assert len(trace_view._active_traces) >= 1
+
+            await trace_view.action_clear_tree()
+            await pilot.pause()
+
+            assert trace_view._active_traces == {}
+            obs_table = trace_view.query_one("#trace-obs-table", DataTable)
+            assert obs_table.row_count == 0
+            assert trace_view._observations_by_pattern == {}
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_clear_action_stops_active_trace_c_key_binding_present(self, mock_client_factory):
+        """'c' key binding maps to action_clear_tree on TraceView."""
+        client = mock_client_factory(responses={})
+        client.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(client)
+
+            bindings = {b.key: b.action for b in trace_view.BINDINGS}
+            assert "c" in bindings, "Expected 'c' key binding on TraceView"
+            assert bindings["c"] == "clear_tree", (
+                f"Expected 'c' → 'clear_tree', got {bindings['c']!r}"
+            )
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_clear_with_empty_traces_no_stop_command(self, mock_client_factory):
+        """Clear on empty _active_traces clears UI without sending any stop command."""
+        client = mock_client_factory(responses={})
+        client.connect()
+        stream_client = mock_client_factory(observations=[])
+        stream_client.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(client)
+            trace_view._stream_client = stream_client
+
+            assert trace_view._active_traces == {}
+
+            await pilot.press("c")
+            await pilot.pause()
+
+            stop_commands = [
+                cmd for cmd in client.commands_received
+                if cmd.get("type") in ("trace", "reset")
+            ]
+            assert stop_commands == []
+
+            obs_table = trace_view.query_one("#trace-obs-table", DataTable)
+            assert obs_table.row_count == 0
+            assert trace_view._selected_pattern is None
+

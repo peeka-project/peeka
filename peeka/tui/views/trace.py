@@ -116,8 +116,10 @@ class TraceView(Container):
         """Stop all traces (triggered by Delete key)."""
         await self._stop_all_traces()
 
-    def action_clear_tree(self) -> None:
+    async def action_clear_tree(self) -> None:
         """Clear the call tree display."""
+        if self._active_traces:
+            await self._stop_all_traces()
         tree = self.query_one("#call-tree", Tree)
         tree.clear()
         tree.root.expand()
@@ -347,7 +349,7 @@ class TraceView(Container):
         elif event.button.id == "stop-trace-btn":
             await self._stop_all_traces()
         elif event.button.id == "clear-trace-btn":
-            self.action_clear_tree()
+            await self.action_clear_tree()
 
     def on_data_table_row_highlighted(
         self, event: DataTable.RowHighlighted
