@@ -2071,3 +2071,52 @@ class TestTraceView:
             assert obs_table.row_count == 0
             assert trace_view._selected_pattern is None
 
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_count_exceeds_obs_list_cap(self, mock_client_factory):
+        """Count in obs_table reflects real cumulative count, not capped obs_list length."""
+        client = mock_client_factory(responses={})
+        client.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(client)
+
+            pattern = "some.func"
+            watch_id = "wid_count_test"
+            obs_table = trace_view.query_one("#trace-obs-table", DataTable)
+            obs_table.add_row(pattern, "Running", "0", key=pattern)
+            trace_view._active_traces[watch_id] = {
+                "pattern": pattern,
+                "worker": None,
+                "count": 0,
+            }
+
+            obs_template = {
+                "call_tree": [],
+                "total_duration_ms": 1.0,
+                "self_time_ms": 0.0,
+                "func_name": pattern,
+            }
+            for i in range(1, 151):
+                trace_view._add_trace_observation(
+                    watch_id, i, dict(obs_template)
+                )
+
+            await pilot.pause()
+
+            cell_value = obs_table.get_cell(pattern, "Count")
+            assert cell_value == "150", (
+                f"Expected Count='150', got '{cell_value}' — "
+                "obs_list cap must not limit the displayed count"
+            )
+            assert len(trace_view._observations_by_pattern[pattern]) == 100, (
+                "obs_list should still be capped at 100 entries"
+            )

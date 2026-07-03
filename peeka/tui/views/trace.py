@@ -741,7 +741,7 @@ class TraceView(Container):
 
             obs_table = self.query_one("#trace-obs-table", DataTable)
             try:
-                obs_table.update_cell(pattern, "Count", str(len(obs_list)))
+                obs_table.update_cell(pattern, "Count", str(count))
             except Exception:
                 pass
 
