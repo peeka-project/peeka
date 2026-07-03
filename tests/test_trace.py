@@ -4,6 +4,7 @@ import json
 import sys
 import time
 from types import ModuleType
+from unittest.mock import patch
 
 import pytest
 
@@ -866,3 +867,72 @@ class TestTraceIntegration:
 
         finally:
             del sys.modules["test_trace_exception"]
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 12),
+    reason="sys.monitoring requires Python 3.12+",
+)
+class TestMonitoringCallbackLazyFormatting:
+
+    def test_format_not_called_when_depth_exceeded(self):
+        import peeka.core.instrumentation.trace_backends as _mod
+        from peeka.core.instrumentation.trace_backends import (
+            InjectorTraceBackendsMixin,
+            _format_trace_function,
+        )
+
+        called_for = []
+
+        def _recording_format(code, frame=None):
+            called_for.append(code.co_name)
+            return _format_trace_function(code, frame)
+
+        class _B(InjectorTraceBackendsMixin):
+            pass
+
+        backend = _B()
+
+        def grandcallee():
+            return 42
+
+        def callee():
+            return grandcallee()
+
+        def target():
+            return callee()
+
+        with patch.object(_mod, "_format_trace_function", side_effect=_recording_format):
+            backend._trace_with_monitoring(target, (), {}, skip_builtin=False, min_duration=0.0)
+
+        assert "target" in called_for
+        assert "callee" in called_for
+        assert "grandcallee" not in called_for
+
+    def test_format_not_called_for_stdlib_with_skip_builtin(self):
+        import peeka.core.instrumentation.trace_backends as _mod
+        from peeka.core.instrumentation.trace_backends import (
+            InjectorTraceBackendsMixin,
+            _format_trace_function,
+        )
+
+        called_for = []
+
+        def _recording_format(code, frame=None):
+            called_for.append(code.co_filename)
+            return _format_trace_function(code, frame)
+
+        class _B(InjectorTraceBackendsMixin):
+            pass
+
+        backend = _B()
+
+        def target():
+            return json.dumps({"x": 1})
+
+        with patch.object(_mod, "_format_trace_function", side_effect=_recording_format):
+            backend._trace_with_monitoring(target, (), {}, skip_builtin=True, min_duration=0.0)
+
+        assert any("test_trace" in f for f in called_for)
+        stdlib_calls = [f for f in called_for if "json" in f.lower() or f.startswith("<")]
+        assert stdlib_calls == []

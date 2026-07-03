@@ -166,8 +166,6 @@ class InjectorTraceBackendsMixin:
 
         def monitoring_callback(code, instruction_offset, *callback_args):
             """Callback for sys.monitoring events."""
-            func_name = _format_trace_function(code)
-
             # Determine event type based on callback args
             if len(callback_args) == 0:
                 # PY_START event
@@ -187,6 +185,7 @@ class InjectorTraceBackendsMixin:
                 if skip_builtin and _is_builtin_or_stdlib(code):
                     return
 
+                func_name = _format_trace_function(code)
                 call_entry: Dict[str, Any] = {
                     "depth": len(call_stack) + 1,
                     "function": func_name,
