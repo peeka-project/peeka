@@ -247,7 +247,7 @@ class TestDebuggerInjectionPreflight:
         "output,debugger",
         [
             ("warning: /wheel/peeka/core/_attach.gdb: No such file or directory", "gdb"),
-            ("error in sourced command file:\nUndefined command: peeka", "gdb"),
+            ("error in sourced command file: /wheel/peeka/core/_attach.gdb\nUndefined command: peeka", "gdb"),
             ("error: command source failed: cannot open _attach.lldb for reading", "lldb"),
             ("command file not found: /wheel/peeka/core/_attach.lldb", "lldb"),
         ],
@@ -261,6 +261,7 @@ class TestDebuggerInjectionPreflight:
             ("warning: Could not load libthread_db; no debugging symbols found", "gdb"),
             ("ptrace: Operation not permitted.\n[Thread debugging using libthread_db enabled]", "gdb"),
             ("Process 123 stopped\n* thread #1, stop reason = signal SIGSTOP", "lldb"),
+            ("No such file or directory: /proc/12345/mem\nMemory read failed", "gdb"),
         ],
     )
     def test_benign_debugger_warnings_are_not_script_errors(self, output, debugger):

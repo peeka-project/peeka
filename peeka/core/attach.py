@@ -148,15 +148,15 @@ def _looks_like_debugger_script_error(output: str, debugger: str = "gdb") -> boo
     has_script_error = any(
         re.search(pattern, lowered) for pattern in _DEBUGGER_SCRIPT_ERROR_PATTERNS
     )
-    if has_script_error:
-        return True
-
-    if debugger in {"gdb", "lldb"} and any(
-        re.search(pattern, lowered) for pattern in _BENIGN_WARNING_PATTERNS
-    ):
+    if not has_script_error:
         return False
 
-    return False
+    # Path-anchor: require the output to also reference the actual attach
+    # script (_attach.gdb or _attach.lldb).  Broad patterns such as
+    # "no such file or directory" appear in many unrelated subprocess outputs;
+    # the script name anchors detection to real _attach.* failures only.
+    script_anchor = f"_attach.{debugger}"
+    return script_anchor in lowered
 
 
 def _format_gdb_symbol_error(method: str, stderr: str, stdout: str) -> str:
