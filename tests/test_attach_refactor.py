@@ -897,8 +897,10 @@ class TestAgentScriptBootstrap:
 
             os.unlink(script_path)
 
-        assert "for _peeka_mod in list(sys.modules.keys()):" in content
-        assert "sys.modules.pop(_peeka_mod, None)" in content
+        assert "def _cleanup_peeka_modules():" in content
+        assert "for _mod_name in list(sys.modules.keys()):" in content
+        assert "sys.modules.pop(_mod_name, None)" in content
+        assert "try:\n    _cleanup_peeka_modules()\nfinally:\n    del _cleanup_peeka_modules" in content
 
     def test_bootstrap_cleanup_precedes_agent_code(self, monkeypatch):
         """Module cleanup must appear before the injected agent code."""
@@ -916,7 +918,7 @@ class TestAgentScriptBootstrap:
 
             os.unlink(script_path)
 
-        cleanup_pos = content.find("for _peeka_mod in list(sys.modules.keys()):")
+        cleanup_pos = content.find("def _cleanup_peeka_modules():")
         agent_pos = content.find("import peeka.core.agent  # sentinel")
 
         assert cleanup_pos != -1, "Cleanup snippet not found in script"
