@@ -3,7 +3,7 @@
 import pytest
 from textual.containers import Vertical
 from textual.css.query import NoMatches
-from textual.widgets import Button, DataTable, Input, Static, Tree
+from textual.widgets import DataTable, Input, Static, Tree
 
 from peeka.tui.app import PeekaApp
 from peeka.tui.screens.main import MainScreen
@@ -2047,18 +2047,8 @@ class TestTraceView:
             obs_table = trace_view.query_one("#trace-obs-table", DataTable)
             assert obs_table.row_count >= 1
 
-            clear_button = trace_view.query_one("#clear-trace-btn", Button)
-            region = clear_button.region
-            await pilot.click(
-                None,
-                offset=(region.x + region.width // 2, region.y + region.height // 2),
-            )
-
-            await trace_view.on_button_pressed(Button.Pressed(clear_button))
-            for _ in range(20):
-                if trace_view._active_traces == {}:
-                    break
-                await pilot.pause()
+            await pilot.click("#clear-trace-btn")
+            await pilot.pause()
 
             assert trace_view._active_traces == {}
             obs_table = trace_view.query_one("#trace-obs-table", DataTable)
