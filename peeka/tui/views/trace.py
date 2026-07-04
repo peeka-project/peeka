@@ -617,7 +617,7 @@ class TraceView(Container):
 
         # Parse min_duration, default to 0
         try:
-            min_duration_ms = int(min_duration_input) if min_duration_input.strip() else 0
+            min_duration_ms = float(min_duration_input) if min_duration_input.strip() else 0.0
             if min_duration_ms < 0:
                 self.app.notify("Min duration must be >= 0", severity="warning")
                 return

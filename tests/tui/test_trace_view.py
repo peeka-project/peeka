@@ -2176,3 +2176,90 @@ class TestTraceView:
                 f"Expected min_ms=0.0, got {agg['min_ms']} — "
                 "min_ms=0.0 must not be treated as 'no data' and discarded"
             )
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_float_min_duration_accepted(self, mock_client_factory):
+        """Input '2.5' must produce min_duration == 2.5 (float) in the trace command."""
+        client = mock_client_factory(
+            responses={
+                "trace": {
+                    "status": "success",
+                    "watch_id": "trace_float_001",
+                }
+            }
+        )
+        client.connect()
+        stream_client = mock_client_factory(observations=[])
+        stream_client.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(client)
+            trace_view._stream_client = stream_client
+
+            pattern_input = trace_view.query_one("#trace-pattern", AutoCompleteInput)
+            pattern_input.value = "module.func"
+
+            min_dur_input = trace_view.query_one("#trace-min-duration", Input)
+            min_dur_input.value = "2.5"
+
+            await trace_view._start_trace()
+            await pilot.pause()
+
+            trace_commands = [
+                c for c in client.commands_received if c.get("type") == "trace"
+            ]
+            assert len(trace_commands) == 1
+            assert trace_commands[0]["min_duration"] == 2.5
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_negative_float_min_duration_rejected(self, mock_client_factory):
+        """Input '-0.5' must not start a trace (negative float still rejected)."""
+        client = mock_client_factory(
+            responses={
+                "trace": {
+                    "status": "success",
+                    "watch_id": "trace_neg_001",
+                }
+            }
+        )
+        client.connect()
+        stream_client = mock_client_factory(observations=[])
+        stream_client.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(client)
+            trace_view._stream_client = stream_client
+
+            pattern_input = trace_view.query_one("#trace-pattern", AutoCompleteInput)
+            pattern_input.value = "module.func"
+
+            min_dur_input = trace_view.query_one("#trace-min-duration", Input)
+            min_dur_input.value = "-0.5"
+
+            await trace_view._start_trace()
+            await pilot.pause()
+
+            trace_commands = [
+                c for c in client.commands_received if c.get("type") == "trace"
+            ]
+            assert len(trace_commands) == 0, (
+                "No trace command should be sent for negative min_duration"
+            )
