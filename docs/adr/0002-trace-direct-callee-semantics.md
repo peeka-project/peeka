@@ -1,6 +1,6 @@
 # ADR 0002: Trace 命令直接子调用（Direct-Callee）语义
 
-- 状态：Accepted
+- 状态：Accepted（已修订 2026-07-04）
 - 日期：2026-06-26
 - 决策者：peeka 维护者
 - 相关计划：`.sisyphus/plans/trace-single-layer.md`
@@ -17,7 +17,7 @@
 
 随着使用积累，该设计暴露出三类问题：
 
-**1. API 复杂度**：`--depth` 参数影响输出形状，同一命令在不同 depth 下产生结构完全不同的 JSON，给 CLI 客户端和 TUI 解析带来额外负担。
+**1. API 复杂度**：`--depth` 参数影响输出形状，同一命令在不同 depth 下产生结构完全不同的 JSON，给 CLI 客户端和前端解析带来额外负担。
 
 **2. 后端行为不对齐**：gevent 路径在检测到 monkey-patch 时静默降级为 `wrapper_only`，返回 `call_tree = []`，但 `depth` 参数依然被接受，造成"参数存在但无效"的语义缺口。
 
@@ -83,9 +83,9 @@ def _record_call(frame, event, depth_remaining):
 | `callee_count` | `call_tree` 列表长度（去重后的直接子调用种数） |
 | `node_count` | `1 + callee_count`（目标函数本身 + 直接子调用数，为兼容性保留） |
 
-### 5. TUI 兼容：静默忽略 `depth` 参数
+### 5. TUI 已完成适配（2026-07-04 修订）
 
-TUI 当前仍向 agent 发送 `depth` 字段（`streaming_config.py` 构建的请求体）。`TraceCommand.execute()` 在构建 `trace_config` 前通过 `params.pop("depth", None)` 丢弃该字段，不报错、不警告。TUI 侧的 `#trace-depth` 控件重构属于独立计划，不在本 ADR 范围。
+界面端的 `#trace-depth` 输入控件已在后续重构中删除，界面不再向 agent 发送 `depth` 字段。`TraceCommand` 中的 `params.pop("depth", None)` 兼容垫片也已随之移除。当前界面使用 `#trace-obs-table` 展示活跃 trace 列表，并通过 `min_duration` 参数控制过滤阈值。
 
 ### 6. Gevent 路径不变
 
@@ -99,15 +99,13 @@ gevent monkey-patch 环境下，`wrapper_only` 后端继续返回 `call_tree = [
 | `trace.py` | 从 `direct_callees` 构建 observation，计算 `self_time_ms`、`callee_count` |
 | `trace_backends.py` | `_is_builtin_or_stdlib()` 共享过滤器，统一 skip-builtin 行为 |
 | `parsers/observe.py` | trace 子命令移除 `-d/--depth` 参数声明 |
-| `streaming_config.py` | 不再向 agent 命令传递 `depth` |
-| `commands/trace.py` | `params.pop("depth", None)` 前置清理 |
 
 ## 边界（哪些**没**纳入本次变更）
 
 | 范围 | 原因 |
 |---|---|
 | `watch --depth` / `stack --depth` | 与 trace 无关，语义不同，保持现状 |
-| TUI `#trace-depth` 输入控件 | 属于独立 TUI 重构计划，本次只做静默忽略，不删除控件 |
+| `#trace-depth` 输入控件 | 已在后续重构中删除（2026-07-04），界面改用 `#trace-obs-table` 和 `min_duration` 参数 |
 | 观测数据迁移工具 | `call_tree` 值语义为破坏性变更，明确接受；不提供数据迁移 |
 | gevent `wrapper_only` 后端实现 | 行为不变，仅移除 depth 参数接受路径 |
 
@@ -124,7 +122,7 @@ gevent monkey-patch 环境下，`wrapper_only` 后端继续返回 `call_tree = [
 
 - **破坏性变更**：`call_tree` 的值从嵌套树变为扁平列表；消费旧格式（存在 `children` 字段）的代码必须更新
 - **多层分析需多次 trace**：需要分析深层调用链时，用户需在不同入口分别执行 trace（这是有意为之的设计边界，而非限制）
-- **TUI depth 控件暂时失效**：控件保留但参数被忽略，存在短暂的"控件可见但无效"状态，直到 TUI 重构计划落地
+- **深度控件已删除**：`#trace-depth` 控件已在后续重构中移除，不再存在"控件可见但无效"的状态。
 
 ### 中性
 
@@ -136,7 +134,7 @@ gevent monkey-patch 环境下，`wrapper_only` 后端继续返回 `call_tree = [
 如果未来需要多层调用树分析，可以考虑：
 
 1. 新增独立命令（如 `calltree`），明确以递归树为一等公民，与 `trace` 的单层语义共存
-2. TUI 重构计划落地后，`#trace-depth` 控件可用于控制其他参数（如采样率或过滤阈值）
+2. 当前 `min_duration` 参数已在 `#trace-obs-table` 视图中作为过滤阈值生效，`#trace-depth` 控件不再适用。
 
 但目前单层语义已满足主流诊断需求，**不**应预先引入复杂度。
 
