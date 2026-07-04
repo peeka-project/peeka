@@ -10,6 +10,7 @@ Tests core attach/detach operations in Docker containers against:
 import base64
 import json
 import textwrap
+from typing import Dict
 
 import pytest
 
@@ -315,7 +316,7 @@ class TestModuleCacheSignalRestoration:
         container = py314_target["container"]
         pid = py314_target["pid"]
 
-        def capture_handlers(label: str) -> dict:
+        def capture_handlers(label: str) -> Dict[str, str]:
             script = textwrap.dedent(f"""
                 import sys, signal, os, json
                 def _handler_name(h):
@@ -417,6 +418,11 @@ class TestModuleCacheSignalRestoration:
             f"  baseline={baseline['SIGTERM']!r}\n"
             f"  after_detach1={after_detach1['SIGTERM']!r}"
         )
+        assert after_detach1["SIGINT"] == baseline["SIGINT"], (
+            f"P2 BUG after first detach: SIGINT handler not restored.\n"
+            f"  baseline={baseline['SIGINT']!r}\n"
+            f"  after_detach1={after_detach1['SIGINT']!r}"
+        )
         assert after_detach1["excepthook"] == baseline["excepthook"], (
             f"P2 BUG after first detach: excepthook not restored.\n"
             f"  baseline={baseline['excepthook']!r}\n"
@@ -429,10 +435,22 @@ class TestModuleCacheSignalRestoration:
             f"  baseline={baseline['SIGTERM']!r}\n"
             f"  after_detach2={after_detach2['SIGTERM']!r}"
         )
+        assert after_detach2["SIGINT"] == baseline["SIGINT"], (
+            f"P2 BUG after re-attach+detach: SIGINT handler not restored.\n"
+            f"  baseline={baseline['SIGINT']!r}\n"
+            f"  after_detach2={after_detach2['SIGINT']!r}"
+        )
         assert after_detach2["excepthook"] == baseline["excepthook"], (
             f"P2 BUG after re-attach+detach: excepthook not restored.\n"
             f"  baseline={baseline['excepthook']!r}\n"
             f"  after_detach2={after_detach2['excepthook']!r}"
+        )
+
+        # We intentionally do not SIGTERM the fixture-owned target process.
+        # The baseline restoration assertions above are the safe validation for
+        # verifying the target is ready to accept SIGTERM normally.
+        assert "peeka" not in after_detach2["SIGTERM"].lower(), (
+            f"SIGTERM handler after detach still references Peeka: {after_detach2['SIGTERM']!r}"
         )
 
 

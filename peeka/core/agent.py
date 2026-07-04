@@ -73,6 +73,10 @@ def _schedule_signal_restore_on_main_thread(
     try:
         import ctypes
     except Exception:
+        print(
+            f"[peeka Agent] Warning: could not schedule signal {signum} restoration on main thread (ctypes unavailable).",
+            flush=True,
+        )
         return False
 
     callback_type = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p)
@@ -104,12 +108,19 @@ def _schedule_signal_restore_on_main_thread(
         if py_add_pending_call(callback_ref, None) == 0:
             return True
     except Exception:
-        pass
+        print(
+            f"[peeka Agent] Warning: _schedule_signal_restore_on_main_thread failed for signum={signum}.",
+            flush=True,
+        )
     with _pending_signal_restore_lock:
         try:
             _pending_signal_restore_callbacks.remove(callback_ref)
         except ValueError:
             pass
+    print(
+        f"[peeka Agent] Warning: could not schedule signal {signum} restoration on main thread (Py_AddPendingCall unavailable or failed).",
+        flush=True,
+    )
     return False
 
 
