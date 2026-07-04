@@ -301,6 +301,142 @@ class TestModuleCacheRefresh:
 
 
 @pytest.mark.container
+class TestModuleCacheSignalRestoration:
+    """P2 validation: signal/excepthook handlers must restore after each detach.
+
+    Even after a re-attach cycle that triggers sys.modules eviction and class reload,
+    SIGTERM/SIGINT/sys.excepthook must return to their pre-attach state after detach.
+    """
+
+    def test_signal_handlers_restored_after_reattach(self, py314_target):
+        import base64 as _b64
+        import time
+
+        container = py314_target["container"]
+        pid = py314_target["pid"]
+
+        def capture_handlers(label: str) -> dict:
+            script = textwrap.dedent(f"""
+                import sys, signal, os, json
+                def _handler_name(h):
+                    if h is None:
+                        return "None"
+                    if h == signal.SIG_DFL:
+                        return "SIG_DFL"
+                    if h == signal.SIG_IGN:
+                        return "SIG_IGN"
+                    return getattr(h, '__qualname__', getattr(h, '__name__', repr(h)))
+                info = {{
+                    "SIGTERM": _handler_name(signal.getsignal(signal.SIGTERM)),
+                    "SIGINT":  _handler_name(signal.getsignal(signal.SIGINT)),
+                    "excepthook": getattr(sys.excepthook, '__qualname__',
+                                         getattr(sys.excepthook, '__name__', repr(sys.excepthook))),
+                }}
+                with open('/tmp/peeka_handler_check_{label}.json', 'w') as _f:
+                    _f.write(json.dumps(info))
+            """).strip()
+            b64 = _b64.b64encode(script.encode()).decode()
+            exec_in_container(
+                container,
+                f"echo {b64} | base64 -d > /tmp/check_handlers_{label}.py",
+                timeout=5,
+            )
+            rc, _ = exec_in_container(
+                container,
+                (
+                    f"python3 -c \"import sys, time; "
+                    f"sys.remote_exec({pid}, '/tmp/check_handlers_{label}.py'); "
+                    f"time.sleep(1.5)\""
+                ),
+                timeout=10,
+            )
+            if rc != 0:
+                pytest.skip("sys.remote_exec unavailable — cannot inspect signal handlers")
+            rc2, raw = exec_in_container(
+                container,
+                f"cat /tmp/peeka_handler_check_{label}.json",
+                timeout=5,
+            )
+            assert rc2 == 0, f"Could not read handler check {label}"
+            import json as _json
+
+            return _json.loads(raw.strip())
+
+        # ── Baseline: capture handlers before ANY attach ──────────────────────
+        baseline = capture_handlers("baseline")
+
+        # ── First attach ───────────────────────────────────────────────────────
+        rc, out = exec_in_container(
+            container, f"python -m peeka.cli.main attach {pid}", timeout=30
+        )
+        assert rc == 0, f"First attach failed:\n{out}"
+        time.sleep(1)
+
+        # Handlers during attach — should be peeka-installed
+        during_attach1 = capture_handlers("during_attach1")
+
+        # ── First detach ───────────────────────────────────────────────────────
+        exec_in_container(container, "python -m peeka.cli.main detach", timeout=15)
+        exec_in_container(
+            container,
+            "rm -f /tmp/peeka_*.sock /tmp/peeka_*.ready /tmp/peeka_agent_*.py 2>/dev/null; true",
+            timeout=5,
+        )
+        time.sleep(1)
+
+        after_detach1 = capture_handlers("after_detach1")
+
+        # ── Re-attach (triggers sys.modules eviction + module reload) ──────────
+        rc, out2 = exec_in_container(
+            container, f"python -m peeka.cli.main attach {pid}", timeout=30
+        )
+        assert rc == 0, f"Re-attach failed:\n{out2}"
+        time.sleep(1)
+
+        # ── Second detach ──────────────────────────────────────────────────────
+        exec_in_container(container, "python -m peeka.cli.main detach", timeout=15)
+        exec_in_container(
+            container,
+            "rm -f /tmp/peeka_*.sock /tmp/peeka_*.ready /tmp/peeka_agent_*.py 2>/dev/null; true",
+            timeout=5,
+        )
+        time.sleep(1)
+
+        after_detach2 = capture_handlers("after_detach2")
+
+        # ── Assertions ─────────────────────────────────────────────────────────
+        # During attach, peeka should have installed its handlers
+        assert (
+            during_attach1["SIGTERM"] != baseline["SIGTERM"]
+            or during_attach1["excepthook"] != baseline["excepthook"]
+        ), "Peeka did not install signal/excepthook handlers after attach — test may be invalid"
+
+        # After first detach: handlers must be restored to baseline
+        assert after_detach1["SIGTERM"] == baseline["SIGTERM"], (
+            f"P2 BUG after first detach: SIGTERM handler not restored.\n"
+            f"  baseline={baseline['SIGTERM']!r}\n"
+            f"  after_detach1={after_detach1['SIGTERM']!r}"
+        )
+        assert after_detach1["excepthook"] == baseline["excepthook"], (
+            f"P2 BUG after first detach: excepthook not restored.\n"
+            f"  baseline={baseline['excepthook']!r}\n"
+            f"  after_detach1={after_detach1['excepthook']!r}"
+        )
+
+        # After second detach (post re-attach): handlers must still be baseline
+        assert after_detach2["SIGTERM"] == baseline["SIGTERM"], (
+            f"P2 BUG after re-attach+detach: SIGTERM handler not restored.\n"
+            f"  baseline={baseline['SIGTERM']!r}\n"
+            f"  after_detach2={after_detach2['SIGTERM']!r}"
+        )
+        assert after_detach2["excepthook"] == baseline["excepthook"], (
+            f"P2 BUG after re-attach+detach: excepthook not restored.\n"
+            f"  baseline={baseline['excepthook']!r}\n"
+            f"  after_detach2={after_detach2['excepthook']!r}"
+        )
+
+
+@pytest.mark.container
 class TestModuleCacheResourceOwnerCleanup:
     """P1 validation: resource-owning command handlers must clean up after module reload.
 
