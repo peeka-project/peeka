@@ -261,14 +261,21 @@ class TestLifecycleHelper:
 
         old_instance = _FakeOwner()
 
-        for module_name in list(sys.modules.keys()):
-            if module_name.startswith("peeka."):
+        saved_modules = {
+            module_name: module
+            for module_name, module in sys.modules.items()
+            if module_name == "peeka" or module_name.startswith("peeka.")
+        }
+        try:
+            for module_name in list(saved_modules):
                 del sys.modules[module_name]
 
-        from peeka.core.agent_control.lifecycle import _is_resource_owner as reloaded_predicate
+            from peeka.core.agent_control.lifecycle import _is_resource_owner as reloaded_predicate
 
-        assert _is_resource_owner(old_instance) is True
-        assert reloaded_predicate(old_instance) is True
+            assert _is_resource_owner(old_instance) is True
+            assert reloaded_predicate(old_instance) is True
+        finally:
+            sys.modules.update(saved_modules)
 
     def test_detach_one_handler_exception_does_not_abort_other(self) -> None:
         class _RaisingFake(ResourceOwningCommand):

@@ -2,9 +2,12 @@
 Unit tests for attach.py RTLD constants and injector utility functions.
 """
 
+# pyright: reportAttributeAccessIssue=false, reportOptionalMemberAccess=false, reportUninitializedInstanceVariable=false
+
 import json
 import logging
 from types import SimpleNamespace
+from typing import Dict
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -926,6 +929,27 @@ class TestAgentScriptBootstrap:
         assert cleanup_pos < agent_pos, (
             f"Cleanup (pos={cleanup_pos}) must appear before agent code (pos={agent_pos})"
         )
+
+    def test_cleanup_block_does_not_leak_variables(self, monkeypatch):
+        """Executing the cleanup block must not leave helper names in globals."""
+        from pathlib import Path
+
+        attacher = ProcessAttacher(12345)
+        monkeypatch.setattr(attacher, "session_id", "test-leak")
+
+        agent_code = 'print("hello")'
+        script_path = attacher._create_agent_script(agent_code)
+
+        try:
+            content = Path(script_path).read_text(encoding="utf-8")
+            cleanup_part = content.split(agent_code)[0]
+            ns: Dict[str, object] = {}
+            exec(cleanup_part, ns)
+            assert "_peeka_mod" not in ns, f"_peeka_mod leaked into namespace: {list(ns.keys())}"
+            assert "_cleanup_peeka_modules" not in ns, f"_cleanup_peeka_modules leaked: {list(ns.keys())}"
+            assert "_mod_name" not in ns, f"_mod_name leaked: {list(ns.keys())}"
+        finally:
+            Path(script_path).unlink(missing_ok=True)
 
     def test_create_agent_script_cleans_partial_file_on_write_failure(self, monkeypatch):
         """Partial agent scripts must be removed when write fails."""

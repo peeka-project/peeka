@@ -6,7 +6,7 @@ Similar to Arthas 'reset' command
 from __future__ import annotations
 
 import logging
-from typing import ClassVar, TYPE_CHECKING, cast
+from typing import Any, ClassVar, Dict, List, Optional, TYPE_CHECKING, cast
 
 from peeka.commands.base import BaseCommand
 from peeka.core.agent_control.lifecycle import (
@@ -47,7 +47,7 @@ class ResetCommand(BaseCommand):
         super().__init__()
         self.agent = agent
 
-    def execute(self, params: dict[str, object]) -> dict[str, object]:
+    def execute(self, params: Dict[str, object]) -> Dict[str, object]:
         try:
             action = str(params.get("action", "reset"))
 
@@ -61,11 +61,11 @@ class ResetCommand(BaseCommand):
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
-    def _reset(self, params: dict[str, object]) -> dict[str, object]:
+    def _reset(self, params: Dict[str, object]) -> Dict[str, object]:
         import fnmatch
 
         pattern_obj = params.get("pattern")
-        pattern = pattern_obj if isinstance(pattern_obj, str) else None
+        pattern: Optional[str] = pattern_obj if isinstance(pattern_obj, str) else None
 
         # CLEANUP CONTRACT:
         # 1) Command-level monitor resources own real runtime state and must be cleaned first.
@@ -77,15 +77,15 @@ class ResetCommand(BaseCommand):
 
         stop_context = getattr(self.agent, "stop_probe_context", None)
         probe_context_lock = getattr(self.agent, "_probe_context_lock", None)
-        probe_context_types = cast(dict[str, object], getattr(self.agent, "_probe_context_types", {}))
-        probe_contexts = cast(dict[str, object], getattr(self.agent, "_probe_contexts", {}))
+        probe_context_types = cast(Dict[str, object], getattr(self.agent, "_probe_context_types", {}))
+        probe_contexts = cast(Dict[str, object], getattr(self.agent, "_probe_contexts", {}))
 
-        probe_context_stopped: list[str] = []
-        probe_context_errors: list[dict[str, object]] = []
+        probe_context_stopped: List[str] = []
+        probe_context_errors: List[Dict[str, Any]] = []
 
         if callable(stop_context) and probe_context_lock is not None:
             command_handlers = getattr(self.agent, "command_handlers", {}) or {}
-            stream_keys: list[str] = []
+            stream_keys: List[str] = []
             with probe_context_lock:
                 for stream_key in list(probe_context_types.keys()):
                     probe_type = probe_context_types.get(stream_key)
@@ -113,10 +113,10 @@ class ResetCommand(BaseCommand):
                 except Exception as exc:
                     probe_context_errors.append({"stream_key": stream_key, "error": str(exc)})
 
-        injector_errors: list[dict[str, object]] = []
-        result: dict[str, object]
+        injector_errors: List[Dict[str, Any]] = []
+        result: Dict[str, Any]
         try:
-            result = cast(dict[str, object], self.agent.injector.reset(pattern))
+            result = cast(Dict[str, object], self.agent.injector.reset(pattern))
         except Exception as exc:
             injector_errors.append({"error": str(exc)})
             result = {"status": "error", "error": str(exc)}
@@ -131,10 +131,10 @@ class ResetCommand(BaseCommand):
         }
         return result
 
-    def _list_enhanced(self, _params: dict[str, object]) -> dict[str, object]:
+    def _list_enhanced(self, _params: Dict[str, object]) -> Dict[str, object]:
         """List all current enhancements (deduplicated)."""
         result = self.agent.injector.list_enhanced()
-        enhanced = cast(list[dict[str, object]], result["enhanced"])
+        enhanced = cast(List[Dict[str, object]], result["enhanced"])
 
         # Build seen set from injector entries to dedupe watch/trace/stack
         # (those commands register in BOTH injector AND probe_context_types with same watch_id)
@@ -145,8 +145,8 @@ class ResetCommand(BaseCommand):
         }
 
         probe_context_lock = getattr(self.agent, "_probe_context_lock", None)
-        probe_context_types = cast(dict[str, object], getattr(self.agent, "_probe_context_types", {}))
-        probe_contexts = cast(dict[str, object], getattr(self.agent, "_probe_contexts", {}))
+        probe_context_types = cast(Dict[str, object], getattr(self.agent, "_probe_context_types", {}))
+        probe_contexts = cast(Dict[str, object], getattr(self.agent, "_probe_contexts", {}))
 
         if probe_context_lock is not None:
             with probe_context_lock:
