@@ -17,6 +17,7 @@ import os as _os_module
 import signal
 import sys
 import threading
+import time as _time
 from typing import Any, Dict, List
 
 import pytest
@@ -53,7 +54,7 @@ class _MockProbeRegistry:
 
 
 class _TestAgent(PeekaAgent):  # pyright: ignore[reportMissingSuperCall]
-    def __init__(
+    def __init__(  # pyright: ignore[reportMissingSuperCall]
         self, session_id: str, *, install_sigterm: bool = True
     ) -> None:
         # Bypass PeekaAgent.__init__ entirely — only set what stop() accesses.
@@ -120,6 +121,30 @@ class TestExitHookChaining:
 
             agent.stop()
 
+            assert signal.getsignal(signal.SIGINT) is agent._prev_sigint_handler
+        finally:
+            signal.signal(signal.SIGINT, pre_test_sigint)
+
+    def test_sigint_guard_restores_when_stop_runs_off_main_thread(self) -> None:
+        pre_test_sigint = signal.getsignal(signal.SIGINT)
+        agent = _TestAgent("test_sigint_restore_thread_11")
+        handler_ref = agent._handle_sigint
+        try:
+            agent._sigint_handler_ref = handler_ref
+            agent._prev_sigint_handler = signal.signal(signal.SIGINT, handler_ref)
+
+            worker = threading.Thread(target=agent.stop, name="peeka-test-stop")
+            worker.start()
+            worker.join(timeout=2)
+
+            deadline = _time.monotonic() + 2
+            while (
+                signal.getsignal(signal.SIGINT) is handler_ref
+                and _time.monotonic() < deadline
+            ):
+                _time.sleep(0.01)
+
+            assert not worker.is_alive()
             assert signal.getsignal(signal.SIGINT) is agent._prev_sigint_handler
         finally:
             signal.signal(signal.SIGINT, pre_test_sigint)

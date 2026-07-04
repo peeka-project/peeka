@@ -39,6 +39,78 @@ from peeka.core.runtime import primitives as _rpl
 _client_registry = None
 _consumer_registry = None
 _dx_case_registry = None
+_pending_signal_restore_callbacks: List[Any] = []
+_pending_signal_restore_lock = threading.Lock()
+
+
+def _restore_signal_handler_if_current(
+    signum: int,
+    previous_handler: Any,
+    expected_handler: Any,
+) -> bool:
+    """Restore a signal handler only if Peeka's handler is still installed."""
+    if previous_handler is None or expected_handler is None:
+        return False
+    if signal.getsignal(signum) is not expected_handler:
+        return False
+    signal.signal(signum, previous_handler)
+    return True
+
+
+def _schedule_signal_restore_on_main_thread(
+    signum: int,
+    previous_handler: Any,
+    expected_handler: Any,
+) -> bool:
+    """Schedule signal restoration for the main thread.
+
+    Python only permits signal.signal() from the main thread. Agent.stop() can
+    run on a socket client thread during detach, so use Py_AddPendingCall to run
+    the identity-guarded restoration at the next main-thread bytecode boundary.
+    """
+    if previous_handler is None or expected_handler is None:
+        return False
+    try:
+        import ctypes
+    except Exception:
+        return False
+
+    callback_type = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p)
+    callback_ref: Any = None
+
+    def _pending_restore(_arg: Any) -> int:
+        try:
+            try:
+                _restore_signal_handler_if_current(
+                    signum, previous_handler, expected_handler
+                )
+            except Exception:
+                pass
+            return 0
+        finally:
+            with _pending_signal_restore_lock:
+                try:
+                    _pending_signal_restore_callbacks.remove(callback_ref)
+                except ValueError:
+                    pass
+
+    callback_ref = callback_type(_pending_restore)
+    try:
+        py_add_pending_call = ctypes.pythonapi.Py_AddPendingCall
+        py_add_pending_call.argtypes = [callback_type, ctypes.c_void_p]
+        py_add_pending_call.restype = ctypes.c_int
+        with _pending_signal_restore_lock:
+            _pending_signal_restore_callbacks.append(callback_ref)
+        if py_add_pending_call(callback_ref, None) == 0:
+            return True
+    except Exception:
+        pass
+    with _pending_signal_restore_lock:
+        try:
+            _pending_signal_restore_callbacks.remove(callback_ref)
+        except ValueError:
+            pass
+    return False
 
 
 def _get_client_registry():
@@ -1241,35 +1313,39 @@ class PeekaAgent(
         sighup_handler_ref = getattr(self, "_sighup_handler_ref", None)
         prev_excepthook = getattr(self, "_prev_excepthook", None)
         peeka_excepthook_ref = getattr(self, "_peeka_excepthook_ref", None)
-        if (
-            prev_sigterm_handler is not None
-            and threading.current_thread() is threading.main_thread()
-            and signal.getsignal(signal.SIGTERM) is sigterm_handler_ref
-        ):
+        if threading.current_thread() is threading.main_thread():
             try:
-                signal.signal(signal.SIGTERM, prev_sigterm_handler)
+                _restore_signal_handler_if_current(
+                    signal.SIGTERM, prev_sigterm_handler, sigterm_handler_ref
+                )
             except (ValueError, OSError):
                 pass
-        if (
-            prev_sigint_handler is not None
-            and threading.current_thread() is threading.main_thread()
-            and signal.getsignal(signal.SIGINT) is sigint_handler_ref
-        ):
             try:
-                signal.signal(signal.SIGINT, prev_sigint_handler)
+                _restore_signal_handler_if_current(
+                    signal.SIGINT, prev_sigint_handler, sigint_handler_ref
+                )
             except (ValueError, OSError):
                 pass
+        else:
+            _schedule_signal_restore_on_main_thread(
+                signal.SIGTERM, prev_sigterm_handler, sigterm_handler_ref
+            )
+            _schedule_signal_restore_on_main_thread(
+                signal.SIGINT, prev_sigint_handler, sigint_handler_ref
+            )
         _sighup = getattr(signal, "SIGHUP", None)
-        if (
-            _sighup is not None
-            and prev_sighup_handler is not None
-            and threading.current_thread() is threading.main_thread()
-            and signal.getsignal(_sighup) is sighup_handler_ref
-        ):
-            try:
-                signal.signal(_sighup, prev_sighup_handler)
-            except (ValueError, OSError):
-                pass
+        if _sighup is not None:
+            if threading.current_thread() is threading.main_thread():
+                try:
+                    _restore_signal_handler_if_current(
+                        _sighup, prev_sighup_handler, sighup_handler_ref
+                    )
+                except (ValueError, OSError):
+                    pass
+            else:
+                _schedule_signal_restore_on_main_thread(
+                    _sighup, prev_sighup_handler, sighup_handler_ref
+                )
         if (
             prev_excepthook is not None
             and peeka_excepthook_ref is not None
