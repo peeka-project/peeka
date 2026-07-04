@@ -932,6 +932,7 @@ class TestAgentScriptBootstrap:
 
     def test_cleanup_block_does_not_leak_variables(self, monkeypatch):
         """Executing the cleanup block must not leave helper names in globals."""
+        import sys
         from pathlib import Path
 
         attacher = ProcessAttacher(12345)
@@ -944,7 +945,14 @@ class TestAgentScriptBootstrap:
             content = Path(script_path).read_text(encoding="utf-8")
             cleanup_part = content.split(agent_code)[0]
             ns: Dict[str, object] = {}
-            exec(cleanup_part, ns)
+            # The cleanup block evicts peeka modules from sys.modules. Isolate
+            # sys.modules itself so later tests are not affected.
+            original_modules = sys.modules
+            try:
+                sys.modules = dict(sys.modules)
+                exec(cleanup_part, ns)
+            finally:
+                sys.modules = original_modules
             assert "_peeka_mod" not in ns, f"_peeka_mod leaked into namespace: {list(ns.keys())}"
             assert "_cleanup_peeka_modules" not in ns, f"_cleanup_peeka_modules leaked: {list(ns.keys())}"
             assert "_mod_name" not in ns, f"_mod_name leaked: {list(ns.keys())}"
