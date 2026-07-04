@@ -926,3 +926,39 @@ class TestAgentScriptBootstrap:
         assert cleanup_pos < agent_pos, (
             f"Cleanup (pos={cleanup_pos}) must appear before agent code (pos={agent_pos})"
         )
+
+    def test_create_agent_script_cleans_partial_file_on_write_failure(self, monkeypatch):
+        """Partial agent scripts must be removed when write fails."""
+        import builtins
+        import tempfile
+        from pathlib import Path
+
+        attacher = ProcessAttacher(12345)
+        monkeypatch.setattr(attacher, "session_id", "test-session")
+
+        agent_script_path = Path(tempfile.gettempdir()) / "peeka_agent_test-session.py"
+        agent_script_path.write_text("partial", encoding="utf-8")
+
+        real_open = builtins.open
+
+        class FailingWriter:
+            def write(self, _data):
+                raise OSError("disk full")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        def fake_open(path, mode="r", *args, **kwargs):
+            if path == agent_script_path and mode == "w":
+                return FailingWriter()
+            return real_open(path, mode, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "open", fake_open)
+
+        with pytest.raises(OSError):
+            attacher._create_agent_script("print('hello')")
+
+        assert not agent_script_path.exists()

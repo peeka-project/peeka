@@ -135,9 +135,13 @@ class AttachReadinessMixin:
             "    del _cleanup_peeka_modules\n"
         )
 
-        with open(agent_path, "w") as f:
-            _attach_module().logger.debug("Creating agent script at %s", agent_path)
-            f.write(path_bootstrap + module_cleanup + agent_code_injected)
+        try:
+            with open(agent_path, "w") as f:
+                _attach_module().logger.debug("Creating agent script at %s", agent_path)
+                f.write(path_bootstrap + module_cleanup + agent_code_injected)
+        except Exception:
+            agent_path.unlink(missing_ok=True)
+            raise
 
         return str(agent_path)
 
