@@ -2,16 +2,17 @@
 
 | 字段 | 值 |
 |------|-----|
-| **话题** | TUI 样式可用性、Textual API 兼容及 DataTable/交互细节缺陷 |
-| **受影响组件** | tui/views, tui/screens, tui/app CSS |
+| **话题** | TUI 样式可用性、Textual API 兼容、DataTable/TraceView 交互细节缺陷 |
+| **受影响组件** | tui/views, tui/screens, tui/app CSS, tui/views/trace.py |
 | **最高严重级别** | SEV-1 (High) |
-| **事故次数** | 6 |
-| **时间跨度** | 2026-02-07 至 2026-03-06 |
+| **事故次数** | 7 |
+| **时间跨度** | 2026-02-07 至 2026-07-04 |
 
 ## 案例索引
 
 | # | 事故 | 严重级别 | 日期 |
 |---|------|----------|------|
+| [#7](#事故-7traceview-活动追踪状态选择与参数语义漂移) | TraceView 活动追踪状态、选择与参数语义漂移 | SEV-2 | 2026-07-04 |
 | [#6](#事故-6自动滚动抢占光标用户无法稳定浏览历史) | 自动滚动抢占光标，用户无法稳定浏览历史 | SEV-2 | 2026-03-06 |
 | [#5](#事故-5helpwatchtrace-残留-lsp-错误签名api-未同步) | help/watch/trace 残留 LSP 错误（签名/API 未同步） | SEV-3 | 2026-02-14 |
 | [#4](#事故-4monitor-视图存在-7-处-update_cell_at-参数误用) | Monitor 视图存在 7 处 `update_cell_at` 参数误用 | SEV-3 | 2026-02-09 |
@@ -23,7 +24,133 @@
 
 ## 话题概述
 
-该话题涵盖 TUI 维度的三类问题：其一，Textual API 升级导致的兼容性断裂；其二，DataTable 更新 API 误用引发渲染异常；其三，UI/交互细节（样式、自动滚动）降低可用性。问题具有“跨视图复制扩散”特征，说明组件级模式沉淀与回归测试覆盖仍需加强。
+该话题涵盖 TUI 维度的四类问题：其一，Textual API 升级导致的兼容性断裂；其二，DataTable 更新 API 误用引发渲染异常；其三，UI/交互细节（样式、自动滚动）降低可用性；其四，TraceView 在活动追踪状态、表格选择、聚合节点数据和命令参数语义上的契约漂移。问题具有“跨视图复制扩散”和“UI 状态与 Agent 资源状态分离不足”的特征，说明组件级模式沉淀与回归测试覆盖仍需加强。
+
+2026-07-04 的新增事故说明，流式 TUI 不仅要渲染 observation，还要把用户选择、后台 worker、Agent resource、表格行状态和快捷键行为作为同一个状态机验证。否则 Clear 看似只是清 UI，实际没有停止 trace；新 trace 启动后没有自动选中，用户看不到第一条 observation；`min_duration` 还会因 `int()` 解析而拒绝合法小数。
+
+---
+
+## 事故 #7：TraceView 活动追踪状态、选择与参数语义漂移
+
+> **Tag 范围**：`v0.1.19` → `HEAD` | **严重级别**：SEV-2 | **日期**：2026-07-04
+
+### 概要
+
+TraceView 在 v0.1.20 开发周期内集中暴露多处交互状态漂移：Clear 按钮/快捷键只清空树和表格而不停止运行中的 trace；Active Traces 显示的计数与真实 stream 数不一致；新 trace 启动时如果没有选中 pattern，第一条 observation 不会自动渲染；`min_duration` 输入用 `int()` 解析，拒绝 `2.5ms` 这类合法阈值；聚合 callee 的 `min_ms=0.0` 还曾被当作“无数据”丢弃。
+
+### 根因分析
+
+#### 类别
+Logic Error / Missing Validation
+
+#### 分析
+
+TraceView 的状态实际分为五层：Agent 端 trace resource、TUI `_active_traces`、observation 表、call tree 选中 pattern、后台 stream worker。修复前，Clear 只操作 UI 层：
+
+```python
+def action_clear_tree(self) -> None:
+    tree.clear()
+    obs_table.clear()
+    self._observations_by_pattern.clear()
+```
+
+这会让用户误以为 trace 已停止，但 Agent 端仍继续采样。`9d5f27d` 将 `action_clear_tree()` 改为 async，并先停止 active traces，再清理 UI 状态。
+
+另一个状态缺口是“启动后可见”：`_start_trace()` 已经向 agent 发送 start 并添加 obs table 行，但 `_selected_pattern` 为 `None` 时，后续 observation 不会进入当前 tree。`2ebdd04` 在 start 成功后自动设置 `_selected_pattern` 并移动表格光标。
+
+参数语义方面，TraceView 输入标签写的是毫秒，backend 支持 float，但 UI 使用 `int(min_duration_input)`，导致 `2.5` 报 “Invalid min duration value”。`56f55f9` 改为 `float()` 并保留负数拒绝。
+
+聚合展示方面，`80621e7` 修复了 `min_ms=0.0` 被 `mn > 0` 过滤掉的问题；`ab0f3cc` 修正 aggregated node 的 data type 和 `tree.cursor_node` 使用，避免 drill-down 依赖陈旧 `_last_highlighted_node`；`39a5fb2` 让 Active Traces 展示真实 `_active_traces` 数量。
+
+#### 致因提交
+
+| 提交 | 作者 | 日期 | 描述 |
+|------|------|------|------|
+| 致因提交无法确定性定位 | - | 2026-06-30 前 | TraceView UI 状态、stream worker 和 Agent resource 生命周期分别演化，缺少端到端交互状态机测试 |
+
+### 复现
+
+#### 前置条件
+- TUI 已连接 agent。
+- TraceView 中至少启动一个 trace。
+
+#### 步骤
+1. 启动 `module.func` trace，然后按 `c` 或点击 Clear。
+2. 检查 Agent 是否仍有 active trace resource。
+3. 在没有选中任何 pattern 的状态下启动新 trace，并等待第一条 observation。
+4. 在 Min Duration 输入 `2.5` 后启动 trace。
+5. 构造 callee 聚合中 `min_ms=0.0` 的 observation。
+
+#### 预期行为
+Clear 同时停止 active trace 和清 UI；新 trace 自动选中并渲染 observation；小数 min duration 被透传；`0.0ms` 最小耗时被保留。
+
+#### 实际行为
+修复前 Clear 仅清 UI；未选中 pattern 时 tree 为空；`2.5` 被拒绝；`min_ms=0.0` 被丢弃；部分 drill-down 使用陈旧选中节点。
+
+### 修复
+
+#### 修复提交
+
+| 提交 | 作者 | 日期 | 描述 |
+|------|------|------|------|
+| [`ab0f3cc`](https://github.com/peeka-project/peeka/commit/ab0f3ccc6cb031faac8c5b7b0010a9bf8771f1c6) | lufeihaidao | 2026-06-30 | fix(tui): address F4 review feedback on exception styling, aggregate node data, and drill-down cursor |
+| [`9d5f27d`](https://github.com/peeka-project/peeka/commit/9d5f27d336107e63f505c78b471c92cb8fe04f58) | lufeihaidao | 2026-07-03 | fix(tui): Clear stops running traces (button + key + test) |
+| [`39a5fb2`](https://github.com/peeka-project/peeka/commit/39a5fb285c1825b9b1eb582c9e9c60a2a4866538) | lufeihaidao | 2026-07-03 | fix(tui): show real stream count in Active Traces |
+| [`80621e7`](https://github.com/peeka-project/peeka/commit/80621e751611820a07f5bb3af0f7143d3ad96145) | lufeihaidao | 2026-07-03 | fix(tui): keep min_ms=0.0 in aggregated callee stats |
+| [`56f55f9`](https://github.com/peeka-project/peeka/commit/56f55f919d2a780f45b951b011ef5838ab80c0dc) | lufeihaidao | 2026-07-04 | fix(tui): parse min_duration as float in trace view |
+| [`2ebdd04`](https://github.com/peeka-project/peeka/commit/2ebdd0462b68211591edcdea17d2d80289098647) | lufeihaidao | 2026-07-04 | fix(tui): auto-select first trace pattern on start when none selected |
+
+#### 变更内容
+- `action_clear_tree()` 改为 async，并调用 `_stop_all_traces()` 后再清空 tree、obs table、`_observations_by_pattern` 和 `_selected_pattern`。
+- Clear 按钮和 `c` key binding 都走同一 action，避免按钮/快捷键行为分叉。
+- `_start_trace()` 成功后在无选中 pattern 时自动选中新 row 并移动 DataTable cursor。
+- `min_duration` 改用 `float()`，默认值保持 `0.0`，负数继续拒绝。
+- aggregated callee 节点写入可 drill-down 的 `aggregated_callee` data，统计中的 `min_ms=0.0` 被视为有效值。
+
+#### 验证
+`tests/tui/test_trace_view.py` 新增回归测试，覆盖 Clear 停止 active trace、`c` key binding、空 active trace 不发送 stop、真实 stream count、`min_ms=0.0`、float min duration、negative float rejection、start 后自动渲染第一条 observation。
+
+### 影响
+
+- **受影响用户**：使用 TUI TraceView 进行持续 trace、drill-down、聚合查看或小数阈值过滤的用户。
+- **持续时间**：TraceView 聚合与交互重构后至 2026-07-04。
+- **数据影响**：无持久数据损坏；风险是目标进程继续运行用户以为已停止的 trace，或 UI 展示缺失/误导。
+
+### 时间线
+
+| 时间 | 事件 |
+|------|------|
+| 2026-06-30 | `ab0f3cc` 修复 aggregated node data 和 drill-down cursor |
+| 2026-07-03 | `9d5f27d`、`39a5fb2`、`80621e7` 修复 Clear、active count 和 `min_ms` |
+| 2026-07-04 | `56f55f9`、`2ebdd04` 修复 float min duration 和启动后自动选择 |
+
+### 经验教训
+
+#### 做得好的方面
+- 修复将按钮、快捷键和直接 action 调用统一到同一路径，降低交互分叉。
+- 回归测试覆盖了用户可见行为，而不仅是内部字段存在。
+
+#### 可以改进的方面
+- 流式视图必须把“清 UI”和“停止远端资源”作为一个事务测试。
+- TUI 输入类型应与 backend/CLI 契约共享，不应由 view 层自行假设 int/float。
+
+#### 行动项
+
+| 行动 | 优先级 | 状态 |
+|------|--------|------|
+| 为所有流式 TUI view 增加 Clear/Stop/退出时 resource cleanup 交互测试 | P0 | 待处理 |
+| 将 trace 参数类型（如 `min_duration: float`）写入共享命令契约并由 TUI/CLI 共同引用 | P1 | 待处理 |
+| 保留 TraceView 的 key binding 与按钮同路径测试 | P1 | 已完成 |
+
+### 预防
+
+- **立即执行**：流式 TUI 的 Clear 必须先停止远端 resource，再清本地 UI。
+- **短期**：为 TraceView 建立状态机测试矩阵：start/observe/select/drill/clear/stop。
+- **长期**：抽象 reusable streaming view controller，统一 active resource、selected row 和 cleanup 行为。
+
+### 参考
+
+- 修复提交：`ab0f3cc`, `9d5f27d`, `39a5fb2`, `80621e7`, `56f55f9`, `2ebdd04`
 
 ---
 

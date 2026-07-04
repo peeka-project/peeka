@@ -1,6 +1,6 @@
 # Postmortem 索引
 
-生成日期：2026-06-25
+生成日期：2026-07-05
 
 ## 话题列表
 
@@ -13,11 +13,11 @@
 | [005](./005-tui-threading-and-lifecycle.md) | TUI 线程模型、主线程阻塞与关机生命周期 | SEV-1 | tui | 9 | 2026-06-23 |
 | [006](./006-attach-and-agent-lifecycle.md) | 进程 Attach 就绪探测与 Agent 生命周期 | SEV-0 | core | 10 | 2026-06-25 |
 | [007](./007-gdb-injection-and-python38.md) | GDB 注入路径与 Python 3.8 兼容性 | SEV-1 | core | 4 | 2026-03-24 |
-| [008](./008-injector-and-tracing.md) | DecoratorInjector 实例方法、`__main__` 解析与 trace 调用树 | SEV-1 | core, commands | 3 | 2026-02-28 |
+| [008](./008-injector-and-tracing.md) | DecoratorInjector 实例方法、`__main__` 解析与 trace 调用树 | SEV-1 | core, commands | 4 | 2026-07-04 |
 | [009](./009-cli-commands-and-payloads.md) | CLI 命令分发、参数键与 JSONL payload 契约漂移 | SEV-1 | cli, core | 9 | 2026-06-25 |
 | [010](./010-top-profiling.md) | Top 命令线程过滤、TopView 并发与 Agent 响应帧竞态 | SEV-1 | core, tui | 5 | 2026-04-26 |
 | [011](./011-docker-build-and-images.md) | Docker 镜像构建、镜像源与容器进程模型 | SEV-2 | docker | 5 | 2026-03-01 |
-| [012](./012-tui-ui-and-textual-api.md) | TUI 样式、DataTable API 与 Textual 兼容 | SEV-1 | tui | 6 | 2026-03-06 |
+| [012](./012-tui-ui-and-textual-api.md) | TUI 样式、DataTable API 与 Textual 兼容 | SEV-1 | tui | 7 | 2026-07-04 |
 | [013](./013-tests-and-examples.md) | 测试期望、demo 日志与测试维护 | SEV-2 | tests | 4 | 2026-06-07 |
 | [014](./014-security-safeeval.md) | simpleeval 异常处理与 fail-closed 安全机制 | SEV-0 | core | 1 | 2026-01-29 |
 | [015](./015-basecommand-and-command-system.md) | BaseCommand 缺少 agent 参数 | SEV-1 | commands | 1 | 2026-02-05 |
@@ -31,7 +31,7 @@
 ## 统计
 
 - **话题总数**：21
-- **事故总次数**：102
+- **事故总次数**：104
 - **按最高严重级别**：SEV-0: 3, SEV-1: 13, SEV-2: 4, SEV-3: 1, SEV-4: 0
 - **按组件**：
   - core: 9 个话题（004, 006, 007, 008, 014, 017, 018, 019, 020, 021）
@@ -51,10 +51,10 @@
   - Integration Error: 话题 004, 015
   - Resource Management: 话题 006
   - Environment Assumption / Missing Fallback: 话题 021
-- **最近一次分析范围**：`v0.1.18..v0.1.19`
-- **分析的 fix 提交总数**：7
-- **入选事故组块数**：3
-- **跳过/合并的 fix 提交数**：4
+- **最近一次分析范围**：`v0.1.19..HEAD`
+- **分析的 fix 提交总数**：18
+- **入选事故组块数**：2
+- **跳过/合并的 fix 提交数**：16
 
 ## 共性问题
 
@@ -64,11 +64,15 @@
 - **数据序列化安全与边界清理**（话题 019）— 诊断数据在流向输出层前必须彻底清理内部字段（如 raw results/exceptions），否则不可序列化对象会破坏整个通信链路。
 - **动态运行时环境适应性**（话题 019）— 诊断工具必须具备“热切换”策略的能力，以适应 gevent 补丁等延迟加载的环境变化。
 - **TUI ↔ Agent 契约稳定性**（话题 009, 015）— 命令参数与输出契约漂移仍是回归主因。
+- **Trace 输出模型迁移的跨层契约同步**（话题 008）— `children` → `direct_callees` 的 schema 变更需要同时收敛 backend、CLI、TUI drill-down 和文档示例，否则会出现公开字段漂移和深度栈不变量缺口。
+- **流式 TUI 资源与选择状态一致性**（话题 012）— Clear、自动选择、参数解析等交互不能只操作 UI 层，必须和 Agent 端 active resource、后台 stream worker 作为同一状态机验证。
 
 ## 最近更新
 
 | 日期 | 话题 | 事故 | 变更说明 |
 |------|------|------|----------|
+| 2026-07-04 | [012](./012-tui-ui-and-textual-api.md) | #7 | 新增事故：TraceView 活动追踪状态、选择与参数语义漂移（v0.1.20） |
+| 2026-07-04 | [008](./008-injector-and-tracing.md) | #4 | 新增事故：Trace 直接被调函数聚合与 stdlib 跳过栈不变量漂移（v0.1.20） |
 | 2026-06-25 | [021](./021-process-discovery-and-runtime-environment.md) | #1 | 新增话题：sudo 环境下 pycache 写入失败与 /proc 不可用时进程发现中断（v0.1.19） |
 | 2026-06-25 | [009](./009-cli-commands-and-payloads.md) | #9 | 新增事故：detach 清理摘要警告与本地 marker 回退契约（v0.1.19） |
 | 2026-06-25 | [006](./006-attach-and-agent-lifecycle.md) | #10 | 新增事故：ProbeContext 退出失败与 monitor/top 停止超时未暴露（v0.1.19） |
