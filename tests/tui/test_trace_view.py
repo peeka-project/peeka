@@ -3,7 +3,7 @@
 import pytest
 from textual.containers import Vertical
 from textual.css.query import NoMatches
-from textual.widgets import DataTable, Input, Static, Tree
+from textual.widgets import Button, DataTable, Input, Static, Tree
 
 from peeka.tui.app import PeekaApp
 from peeka.tui.screens.main import MainScreen
@@ -2013,6 +2013,109 @@ class TestTraceView:
 
     @pytest.mark.asyncio
     @pytest.mark.tui
+    async def test_clear_button_click_stops_active_trace(self, mock_client_factory):
+        """pilot.click('#clear-trace-btn') stops running trace and clears UI (async cascade)."""
+        client = mock_client_factory(
+            responses={
+                "trace": {"status": "success", "watch_id": "trace_002"},
+                "reset": {"status": "success"},
+            }
+        )
+        client.connect()
+        stream_client = mock_client_factory(observations=[])
+        stream_client.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(client)
+            trace_view._stream_client = stream_client
+
+            pattern_input = trace_view.query_one("#trace-pattern", AutoCompleteInput)
+            pattern_input.value = "module.func"
+
+            await trace_view._start_trace()
+            await pilot.pause()
+
+            assert len(trace_view._active_traces) >= 1
+            obs_table = trace_view.query_one("#trace-obs-table", DataTable)
+            assert obs_table.row_count >= 1
+
+            clear_button = trace_view.query_one("#clear-trace-btn", Button)
+            region = clear_button.region
+            await pilot.click(
+                None,
+                offset=(region.x + region.width // 2, region.y + region.height // 2),
+            )
+
+            await trace_view.on_button_pressed(Button.Pressed(clear_button))
+            for _ in range(20):
+                if trace_view._active_traces == {}:
+                    break
+                await pilot.pause()
+
+            assert trace_view._active_traces == {}
+            obs_table = trace_view.query_one("#trace-obs-table", DataTable)
+            assert obs_table.row_count == 0
+            assert trace_view._observations_by_pattern == {}
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_clear_c_key_stops_active_trace(self, mock_client_factory):
+        """pilot.press('c') stops running trace and clears UI."""
+        client = mock_client_factory(
+            responses={
+                "trace": {"status": "success", "watch_id": "trace_003"},
+                "reset": {"status": "success"},
+            }
+        )
+        client.connect()
+        stream_client = mock_client_factory(observations=[])
+        stream_client.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(client)
+            trace_view._stream_client = stream_client
+
+            pattern_input = trace_view.query_one("#trace-pattern", AutoCompleteInput)
+            pattern_input.value = "module.func"
+
+            await trace_view._start_trace()
+            await pilot.pause()
+
+            assert len(trace_view._active_traces) >= 1
+            obs_table = trace_view.query_one("#trace-obs-table", DataTable)
+            assert obs_table.row_count >= 1
+
+            call_tree = trace_view.query_one("#call-tree", Tree)
+            call_tree.focus()
+            await pilot.press("c")
+            for _ in range(20):
+                if trace_view._active_traces == {}:
+                    break
+                await pilot.pause()
+
+            assert trace_view._active_traces == {}
+            obs_table = trace_view.query_one("#trace-obs-table", DataTable)
+            assert obs_table.row_count == 0
+            assert trace_view._observations_by_pattern == {}
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
     async def test_clear_action_stops_active_trace_c_key_binding_present(self, mock_client_factory):
         """'c' key binding maps to action_clear_tree on TraceView."""
         client = mock_client_factory(responses={})
@@ -2029,7 +2132,10 @@ class TestTraceView:
             trace_view = app.screen.query_one("TraceView", TraceView)
             trace_view.set_client(client)
 
-            bindings = {b.key: b.action for b in trace_view.BINDINGS}
+            bindings = {
+                getattr(binding, "key"): getattr(binding, "action")
+                for binding in trace_view.BINDINGS
+            }
             assert "c" in bindings, "Expected 'c' key binding on TraceView"
             assert bindings["c"] == "clear_tree", (
                 f"Expected 'c' → 'clear_tree', got {bindings['c']!r}"
