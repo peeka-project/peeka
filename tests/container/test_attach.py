@@ -298,3 +298,105 @@ class TestModuleCacheRefresh:
             f"Expected FRESH, got: {result!r}. "
             f"This means the module cache cleanup in _create_agent_script() is NOT working."
         )
+
+
+@pytest.mark.container
+class TestModuleCacheResourceOwnerCleanup:
+    """P1 validation: resource-owning command handlers must clean up after module reload.
+
+    Scenario: attach → start monitor (ResourceOwningCommand) → detach →
+              re-attach to same PID (triggers sys.modules eviction + class reload) →
+              detach → assert no leaked peeka threads or sockets.
+    """
+
+    def test_resource_owners_cleaned_after_reattach(self, py314_target):
+        import time
+
+        container = py314_target["container"]
+        pid = py314_target["pid"]
+
+        # ── Step 1: First attach ────────────────────────────────────────────
+        exit_code, out = exec_in_container(
+            container, f"python -m peeka.cli.main attach {pid}", timeout=30
+        )
+        assert exit_code == 0, f"First attach failed:\n{out}"
+
+        # ── Step 2: Start monitor (ResourceOwningCommand) for 2 seconds ────
+        # Run in background via timeout, let it register and then get killed
+        exec_in_container(
+            container,
+            "timeout 3 python -m peeka.cli.main monitor '__main__.Calculator.add' || true",
+            timeout=10,
+        )
+
+        # ── Step 3: Detach cleanly ──────────────────────────────────────────
+        exec_in_container(container, "python -m peeka.cli.main detach", timeout=15)
+        exec_in_container(
+            container,
+            "rm -f /tmp/peeka_*.sock /tmp/peeka_*.ready /tmp/peeka_agent_*.py 2>/dev/null; true",
+            timeout=5,
+        )
+        time.sleep(1)
+
+        # ── Step 4: Re-attach to SAME PID (triggers module reload) ──────────
+        exit_code, out2 = exec_in_container(
+            container, f"python -m peeka.cli.main attach {pid}", timeout=30
+        )
+        assert exit_code == 0, f"Re-attach failed:\n{out2}"
+
+        # ── Step 5: Detach again ─────────────────────────────────────────────
+        exec_in_container(container, "python -m peeka.cli.main detach", timeout=15)
+        exec_in_container(
+            container,
+            "rm -f /tmp/peeka_*.sock /tmp/peeka_*.ready /tmp/peeka_agent_*.py 2>/dev/null; true",
+            timeout=5,
+        )
+        time.sleep(1)
+
+        # ── Step 6: Inspect target process for leaks via sys.remote_exec ────
+        inspect_py = textwrap.dedent("""
+            import sys, threading, os, json
+            peeka_threads = [t.name for t in threading.enumerate()
+                             if 'peeka' in t.name.lower() or 'Peeka' in t.name]
+            peeka_socks   = [f for f in os.listdir('/tmp')
+                             if f.startswith('peeka_') and f.endswith('.sock')]
+            result = json.dumps({"threads": peeka_threads, "sockets": peeka_socks})
+            with open('/tmp/peeka_leak_check.json', 'w') as _f:
+                _f.write(result)
+        """).strip()
+        b64 = base64.b64encode(inspect_py.encode()).decode()
+        exec_in_container(
+            container,
+            f"echo {b64} | base64 -d > /tmp/inspect_leaks.py",
+            timeout=5,
+        )
+
+        run_cmd = (
+            f"python3 -c \"import sys, time, os; "
+            f"sys.remote_exec({pid}, '/tmp/inspect_leaks.py'); "
+            "time.sleep(2)\""
+        )
+        rc, _ = exec_in_container(container, run_cmd, timeout=15)
+        if rc != 0:
+            pytest.skip("Could not inspect target via sys.remote_exec")
+
+        rc, result_raw = exec_in_container(
+            container, "cat /tmp/peeka_leak_check.json", timeout=5
+        )
+        assert rc == 0, "Could not read leak check result"
+
+        import json as _json
+
+        result = _json.loads(result_raw.strip())
+        leaked_threads = result.get("threads", [])
+        leaked_socks = result.get("sockets", [])
+
+        assert not leaked_threads, (
+            f"P1 BUG CONFIRMED: {len(leaked_threads)} peeka thread(s) leaked after re-attach+detach: "
+            f"{leaked_threads}\n"
+            f"This means ResourceOwningCommand cleanup failed due to class identity mismatch "
+            f"after module reload."
+        )
+        assert not leaked_socks, (
+            f"P1 BUG: {len(leaked_socks)} peeka socket(s) leaked after detach: {leaked_socks}"
+        )
