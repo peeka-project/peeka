@@ -164,7 +164,7 @@ class InjectorTraceBackendsMixin:
         call_stack: List[Dict[str, Any]] = []
         completed_calls: List[Dict[str, Any]] = []
 
-        def monitoring_callback(code, instruction_offset, *callback_args):
+        def monitoring_callback(code, instruction_offset, *callback_args, is_unwind=False):
             """Callback for sys.monitoring events."""
             # Determine event type based on callback args
             if len(callback_args) == 0:
@@ -217,6 +217,10 @@ class InjectorTraceBackendsMixin:
                     return
 
                 call_stack.pop()
+                # On PY_UNWIND (exception exit), discard: pop prevents stale
+                # depth but don't record an incomplete call.
+                if is_unwind:
+                    return
                 duration_ms = (time.perf_counter() - call_entry["start_time"]) * 1000
 
                 # Clean up internal keys
@@ -256,7 +260,9 @@ class InjectorTraceBackendsMixin:
         try:
             sys.monitoring.set_events(
                 tool_id,
-                sys.monitoring.events.PY_START | sys.monitoring.events.PY_RETURN,
+                sys.monitoring.events.PY_START
+                | sys.monitoring.events.PY_RETURN
+                | sys.monitoring.events.PY_UNWIND,
             )
             sys.monitoring.register_callback(
                 tool_id,
@@ -267,6 +273,13 @@ class InjectorTraceBackendsMixin:
                 tool_id,
                 sys.monitoring.events.PY_RETURN,
                 lambda code, offset, retval: monitoring_callback(code, offset, retval),
+            )
+            sys.monitoring.register_callback(
+                tool_id,
+                sys.monitoring.events.PY_UNWIND,
+                lambda code, offset, exc: monitoring_callback(
+                    code, offset, exc, is_unwind=True
+                ),
             )
 
             # Execute function

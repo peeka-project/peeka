@@ -749,7 +749,7 @@ class TestTraceCommand:
         sys.modules["test_trace_alias_live_wrapper"] = wrapper_module
 
         try:
-            watch_id = injector.inject(
+            _watch_id = injector.inject(
                 "test_trace_alias_live.handler", {"depth": 2, "times": -1}
             )
             watch_wrapper = app_module.handler
@@ -990,4 +990,38 @@ class TestMonitoringCallbackLazyFormatting:
         direct_callee_names = [c["function"] for c in result[0]["direct_callees"]]
         assert any("user_helper" in name for name in direct_callee_names), (
             f"user_helper must appear as direct callee; got: {direct_callee_names}"
+        )
+
+    @pytest.mark.skipif(
+        sys.version_info < (3, 12), reason="sys.monitoring requires Python 3.12+"
+    )
+    def test_unwind_does_not_block_subsequent_direct_callee(self):
+        """PY_UNWIND must pop skipped stdlib markers so that a user function
+        called after catching a stdlib exception still appears as a direct callee.
+        """
+        from peeka.core.instrumentation.trace_backends import InjectorTraceBackendsMixin
+
+        class _B(InjectorTraceBackendsMixin):
+            pass
+
+        backend = _B()
+
+        def user_helper():
+            return 42
+
+        def target():
+            try:
+                json.loads("bad json")
+            except Exception:
+                pass
+            return user_helper()
+
+        result = backend._trace_with_monitoring(
+            target, (), {}, skip_builtin=True, min_duration=0.0
+        )
+
+        direct_callee_names = [c["function"] for c in result[0]["direct_callees"]]
+        assert any("user_helper" in name for name in direct_callee_names), (
+            f"user_helper must appear as direct callee after stdlib exception unwind; "
+            f"got: {direct_callee_names}"
         )
