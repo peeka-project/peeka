@@ -300,6 +300,105 @@ class TestModuleCacheRefresh:
             f"This means the module cache cleanup in _create_agent_script() is NOT working."
         )
 
+    def test_reattach_thread_command_works(self, py314_target):
+        """After module-cache reload on re-attach, non-streaming thread command must return data."""
+        container = py314_target["container"]
+        pid = py314_target["pid"]
+
+        # ── Step 1: First attach ────────────────────────────────────────────
+        exit_code, attach_output = exec_in_container(
+            container, f"python -m peeka.cli.main attach {pid}", timeout=30
+        )
+        assert exit_code == 0, f"First attach failed:\n{attach_output}"
+
+        # ── Step 2: Inject _STALE_SENTINEL to simulate stale module cache ───
+        inject_py = textwrap.dedent(
+            """
+            import sys, os
+            for _n, _m in list(sys.modules.items()):
+                if _n == "peeka" or _n.startswith("peeka."):
+                    _m._STALE_SENTINEL = True
+            with open("/tmp/peeka_sentinel_injected_t4.flag", "w") as _f:
+                _f.write("ok")
+            """
+        ).strip()
+        inject_b64 = base64.b64encode(inject_py.encode()).decode()
+        exec_in_container(
+            container,
+            f"echo {inject_b64} | base64 -d > /tmp/inject_sentinel_t4.py",
+            timeout=5,
+        )
+        run_inject_cmd = (
+            f"python3 -c \"import sys, time, os; "
+            f"sys.remote_exec({pid}, '/tmp/inject_sentinel_t4.py'); "
+            "time.sleep(2); "
+            "print('INJECTED' if os.path.exists('/tmp/peeka_sentinel_injected_t4.flag') else 'TIMEOUT')\""
+        )
+        exit_code, inject_output = exec_in_container(
+            container, run_inject_cmd, timeout=15
+        )
+        if exit_code != 0 or "INJECTED" not in inject_output:
+            pytest.skip(
+                f"Could not inject sentinel via PEP 768 sys.remote_exec — "
+                f"skipping (output: {inject_output!r})"
+            )
+
+        # ── Step 3: Detach and clean up temp files ──────────────────────────
+        exec_in_container(
+            container, "python -m peeka.cli.main detach", timeout=15
+        )
+        exec_in_container(
+            container,
+            "rm -f /tmp/peeka_*.sock /tmp/peeka_*.ready /tmp/peeka_agent_*.py 2>/dev/null; true",
+            timeout=5,
+        )
+
+        # ── Step 4: Re-attach same PID (triggers module-cache reload) ───────
+        exit_code, reattach_output = exec_in_container(
+            container, f"python -m peeka.cli.main attach {pid}", timeout=30
+        )
+        assert exit_code == 0, f"Re-attach failed:\n{reattach_output}"
+
+        # ── Step 5: Run non-streaming thread command ─────────────────────────
+        exit_code, thread_output = exec_in_container(
+            container, "python -m peeka.cli.main thread", timeout=20
+        )
+
+        # ── Step 6: Parse JSONL and assert success with non-empty thread list ─
+        json_lines = [
+            line
+            for line in thread_output.strip().split("\n")
+            if line.strip() and line.startswith("{")
+        ]
+        result_data = None
+        for line in json_lines:
+            try:
+                parsed = json.loads(line)
+                if parsed.get("type") == "result" and parsed.get("command") == "thread":
+                    result_data = parsed.get("data", {})
+                    break
+            except json.JSONDecodeError:
+                continue
+
+        assert result_data is not None, (
+            f"No 'result' line for thread command found after module reload.\n"
+            f"thread output:\n{thread_output}"
+        )
+        assert result_data.get("status") == "success", (
+            f"Thread command returned non-success after module reload.\n"
+            f"data={result_data}\nfull output:\n{thread_output}"
+        )
+        threads = result_data.get("threads", [])
+        assert len(threads) > 0, (
+            f"Thread command returned empty thread list after module reload.\n"
+            f"data={result_data}"
+        )
+
+        # ── Step 7: Detach cleanly ───────────────────────────────────────────
+        exec_in_container(
+            container, "python -m peeka.cli.main detach", timeout=15
+        )
+
 
 @pytest.mark.container
 class TestModuleCacheSignalRestoration:
