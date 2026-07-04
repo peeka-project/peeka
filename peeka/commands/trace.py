@@ -83,7 +83,6 @@ class TraceCommand(BaseCommand):
             return {"status": "error", "error": str(e)}
 
     def _start_trace(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        params.pop("depth", None)  # silently ignore legacy depth param from TUI/old clients
         self.validate_params(params, ["pattern"])
 
         pattern = params["pattern"]

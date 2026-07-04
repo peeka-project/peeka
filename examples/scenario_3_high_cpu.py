@@ -13,7 +13,7 @@ Bug location: DataProcessor.transform_data()
 Peeka workflow:
   peeka-cli attach <PID>
   peeka-cli top '__main__.DataProcessor' -n 10
-  peeka-cli trace '__main__.DataProcessor.process_batch' --depth 2 -n 3
+  peeka-cli trace '__main__.DataProcessor.process_batch' -n 3
   peeka-cli watch '__main__.DataProcessor.transform_data' -n 5
 """
 

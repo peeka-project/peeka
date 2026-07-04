@@ -14,7 +14,7 @@ Peeka workflow:
   peeka-cli attach <PID>
   peeka-cli stack '__main__.Database.execute_query' -n 10
   peeka-cli watch '__main__.Database.execute_query' -n 20
-  peeka-cli trace '__main__.ReportService.generate_daily_report' -d 3 -n 2
+  peeka-cli trace '__main__.ReportService.generate_daily_report' -n 2
 """
 
 import argparse

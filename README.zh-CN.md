@@ -85,7 +85,7 @@ peeka-cli attach <pid>
 peeka-cli watch "module.Class.method" -n 5
 
 # 追踪调用链
-peeka-cli trace "module.func" -d 3
+peeka-cli trace "module.func"
 ```
 
 CLI 输出结构化 JSONL，agent 和脚本可以稳定解析、过滤和保存观测结果。

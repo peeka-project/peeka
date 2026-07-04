@@ -395,7 +395,7 @@ stack 命令捕获函数被调用时的完整调用栈，用于回答"这个函�
 > **当**：捕获 Calculator.add 的调用栈
 >
 > ```bash
-> peeka-cli stack 'demo.Calculator.add' -n 1 --depth 5
+> peeka-cli stack 'demo.Calculator.add' -n 1
 > ```
 >
 > **那么**：输出带有 `stack` 字段的 AtEnter 观测数据
@@ -414,7 +414,7 @@ stack 命令捕获函数被调用时的完整调用栈，用于回答"这个函�
 | `stack[].name` | 函数名 |
 | `stack[].line` | 对应的源代码行 |
 
-- `--depth` 控制回溯的栈帧数量
+- 默认输出足够的回溯栈帧用于定位调用来源
 - 栈的第一项是**直接调用位置**（`demo_loop` 中的 `calc.add(...)` 行）
 - 可以追踪完整的调用路径：`<module>` → `main()` → `demo_loop()` → `calc.add()`
 
@@ -425,7 +425,7 @@ stack 命令捕获函数被调用时的完整调用栈，用于回答"这个函�
 > **当**：只捕获参数满足条件的调用栈
 >
 > ```bash
-> peeka-cli stack 'demo.Calculator.divide' --condition 'params[1] == 0' -n 1 --depth 10
+> peeka-cli stack 'demo.Calculator.divide' --condition 'params[1] == 0' -n 1
 > ```
 >
 > **那么**：只捕获除数为 0 的调用栈，帮助定位异常调用来源
@@ -906,13 +906,13 @@ logger 命令可以在不重启进程的情况下查看和修改 Python 日志�
 ### 调用追踪（trace）
 
 - [ ] 调用树结构正确，包含 `function`、`duration_ms`、`children`
-- [ ] `-d` 控制追踪深度
+- [ ] 使用 `-n` 和 `--min-duration` 控制追踪输出
 - [ ] `--min-duration` 过滤慢调用
 
 ### 调用栈（stack）
 
 - [ ] `stack` 字段包含调用栈帧，每帧有 `filename`、`lineno`、`name`、`line`
-- [ ] `--depth` 控制栈帧数量
+- [ ] 栈帧输出可用于定位调用来源
 
 ### 性能统计（monitor）
 

@@ -190,13 +190,16 @@ class DecoratorInjector(
         Args:
             pattern: Dotted path to target function (e.g., "mymodule.MyClass.method")
             trace_config: Configuration dict with keys:
-                - trace_depth: int, max call depth to trace (default: 3)
                 - condition_express: str, optional condition expression
                 - times: int, max observations (-1 for infinite)
                 - skip_builtin: bool, skip built-in and stdlib functions (default: True)
-                - min_duration: float, minimum duration in ms to record (default: 0)
+                - min_duration: float, minimum duration in ms for direct-callee
+                  aggregation (default: 0)
             force_backend: Optional backend override. ``wrapper_only`` avoids
                 sys.monitoring/sys.settrace and records only the traced root call.
+
+        Trace output aggregates direct callees and their timings instead of
+        enforcing a trace-depth limit.
 
         Returns:
             watch_id: Unique identifier for this trace

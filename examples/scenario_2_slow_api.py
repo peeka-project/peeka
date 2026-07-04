@@ -14,7 +14,7 @@ Peeka workflow:
   peeka-cli attach <PID>
   peeka-cli monitor '__main__.DatabaseSimulator' --interval 2
   peeka-cli watch '__main__.DatabaseSimulator.search_products' --condition "cost > 200" -n 3
-  peeka-cli trace '__main__.ApiService.handle_product_search' -d 3 -n 2
+  peeka-cli trace '__main__.ApiService.handle_product_search' -n 2 --min-duration 10
 """
 
 import argparse

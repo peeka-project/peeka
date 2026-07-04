@@ -56,7 +56,7 @@ class Calculator:
         """Compound calculation - good for trace demo.
 
         Calls multiple sub-methods with varying cost, then returns.
-        Use: peeka-cli trace 'demo.Calculator.calculate' --depth 2
+        Use: peeka-cli trace 'demo.Calculator.calculate' -n 2
         """
         calc_logger.info("calculate(%d, %d) started", a, b)
         sum_result = self.add(a, b)
