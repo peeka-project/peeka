@@ -2,16 +2,26 @@
 
 from typing import Any, Dict, List, Optional
 
-from peeka.commands.resource_owning import CleanupScope, ResourceOwningCommand
-
-
 __all__ = [
     "shutdown_agent_resources",
     "stop_resource_owners_for_detach",
     "stop_resource_owners_for_reset",
+    "_is_resource_owner",
     "_has_cleanup_errors",
     "_collect_cleanup_errors",
 ]
+
+
+def _is_resource_owner(handler: object) -> bool:
+    """Return True for reload-safe resource-owner command handlers."""
+    scope = getattr(handler, "cleanup_scope", None)
+    scope_value = getattr(scope, "value", None)
+    return (
+        getattr(handler, "is_resource_owner", False) is True
+        and scope_value in ("detach_only", "detach_and_reset")
+        and callable(getattr(handler, "stop_active_resources", None))
+        and callable(getattr(handler, "list_active_resources", None))
+    )
 
 
 def shutdown_agent_resources(
@@ -102,12 +112,7 @@ def stop_resource_owners_for_detach(agent: Any, logger: Any) -> Dict[str, Any]:
     snapshot = list(handlers.values())
 
     for handler in snapshot:
-        if not isinstance(handler, ResourceOwningCommand):
-            continue
-        if handler.cleanup_scope not in (
-            CleanupScope.DETACH_ONLY,
-            CleanupScope.DETACH_AND_RESET,
-        ):
+        if not _is_resource_owner(handler):
             continue
         handler_name = type(handler).__name__
 
@@ -155,9 +160,10 @@ def stop_resource_owners_for_reset(
     snapshot = list(handlers.values())
 
     for handler in snapshot:
-        if not isinstance(handler, ResourceOwningCommand):
+        if not _is_resource_owner(handler):
             continue
-        if handler.cleanup_scope != CleanupScope.DETACH_AND_RESET:
+        scope = getattr(handler, "cleanup_scope", None)
+        if getattr(scope, "value", None) != "detach_and_reset":
             continue
         handler_name = type(handler).__name__
 

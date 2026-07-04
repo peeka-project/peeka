@@ -9,7 +9,10 @@ import logging
 from typing import ClassVar, TYPE_CHECKING, cast
 
 from peeka.commands.base import BaseCommand
-from peeka.core.agent_control.lifecycle import stop_resource_owners_for_reset
+from peeka.core.agent_control.lifecycle import (
+    _is_resource_owner,
+    stop_resource_owners_for_reset,
+)
 
 if TYPE_CHECKING:
     from peeka.core.agent import PeekaAgent
@@ -81,8 +84,6 @@ class ResetCommand(BaseCommand):
         probe_context_errors: list[dict[str, object]] = []
 
         if callable(stop_context) and probe_context_lock is not None:
-            from peeka.commands.resource_owning import CleanupScope, ResourceOwningCommand
-
             command_handlers = getattr(self.agent, "command_handlers", {}) or {}
             stream_keys: list[str] = []
             with probe_context_lock:
@@ -90,9 +91,10 @@ class ResetCommand(BaseCommand):
                     probe_type = probe_context_types.get(stream_key)
                     if isinstance(probe_type, str):
                         handler = command_handlers.get(probe_type)
+                        scope = getattr(handler, "cleanup_scope", None)
                         if (
-                            isinstance(handler, ResourceOwningCommand)
-                            and handler.cleanup_scope == CleanupScope.DETACH_ONLY
+                            _is_resource_owner(handler)
+                            and getattr(scope, "value", None) == "detach_only"
                         ):
                             continue
                     probe_context = probe_contexts.get(stream_key)
@@ -112,8 +114,9 @@ class ResetCommand(BaseCommand):
                     probe_context_errors.append({"stream_key": stream_key, "error": str(exc)})
 
         injector_errors: list[dict[str, object]] = []
+        result: dict[str, object]
         try:
-            result = self.agent.injector.reset(pattern)
+            result = cast(dict[str, object], self.agent.injector.reset(pattern))
         except Exception as exc:
             injector_errors.append({"error": str(exc)})
             result = {"status": "error", "error": str(exc)}

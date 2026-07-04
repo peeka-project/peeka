@@ -1,4 +1,5 @@
 import logging
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -8,6 +9,7 @@ from peeka.commands.resource_owning import CleanupScope, ResourceOwningCommand
 from peeka.core.agent_control.lifecycle import (
     _collect_cleanup_errors,
     _has_cleanup_errors,
+    _is_resource_owner,
     shutdown_agent_resources,
     stop_resource_owners_for_detach,
     stop_resource_owners_for_reset,
@@ -235,6 +237,38 @@ class TestLifecycleHelper:
         assert result["handlers_stopped"] == []
         assert result["errors"] == []
         assert fake.stop_calls == []
+
+    def test_resource_owner_predicate_survives_module_eviction(self) -> None:
+        class _FakeOwner(ResourceOwningCommand):
+            cleanup_scope = CleanupScope.DETACH_AND_RESET
+            is_resource_owner = True
+            category = "probe"
+            allows_concurrent = False
+
+            def __init__(self, agent: Any = None) -> None:
+                super().__init__(agent=agent)
+
+            def execute(self, params: Dict[str, Any]) -> Dict[str, Any]:
+                return {"status": "success"}
+
+            def stop_active_resources(
+                self, pattern: Optional[str], reason: str
+            ) -> Dict[str, Any]:
+                return {"stopped": []}
+
+            def list_active_resources(self) -> Any:
+                return []
+
+        old_instance = _FakeOwner()
+
+        for module_name in list(sys.modules.keys()):
+            if module_name.startswith("peeka."):
+                del sys.modules[module_name]
+
+        from peeka.core.agent_control.lifecycle import _is_resource_owner as reloaded_predicate
+
+        assert _is_resource_owner(old_instance) is True
+        assert reloaded_predicate(old_instance) is True
 
     def test_detach_one_handler_exception_does_not_abort_other(self) -> None:
         class _RaisingFake(ResourceOwningCommand):
