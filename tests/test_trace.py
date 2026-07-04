@@ -936,3 +936,58 @@ class TestMonitoringCallbackLazyFormatting:
         assert any("test_trace" in f for f in called_for)
         stdlib_calls = [f for f in called_for if "json" in f.lower() or f.startswith("<")]
         assert stdlib_calls == []
+
+    @pytest.mark.skipif(
+        sys.version_info < (3, 12), reason="sys.monitoring requires Python 3.12+"
+    )
+    def test_stdlib_callback_not_recorded_as_direct_callee(self):
+        from peeka.core.instrumentation.trace_backends import InjectorTraceBackendsMixin
+
+        class _B(InjectorTraceBackendsMixin):
+            pass
+
+        backend = _B()
+
+        def user_cb(obj):
+            return repr(obj)
+
+        class _Unserializable:
+            pass
+
+        def target():
+            return json.dumps({"x": _Unserializable()}, default=user_cb)
+
+        result = backend._trace_with_monitoring(
+            target, (), {}, skip_builtin=True, min_duration=0.0
+        )
+
+        direct_callee_names = [c["function"] for c in result[0]["direct_callees"]]
+        assert not any("user_cb" in name for name in direct_callee_names), (
+            f"user_cb must not appear as direct callee; got: {direct_callee_names}"
+        )
+
+    @pytest.mark.skipif(
+        sys.version_info < (3, 12), reason="sys.monitoring requires Python 3.12+"
+    )
+    def test_normal_direct_callee_still_captured(self):
+        from peeka.core.instrumentation.trace_backends import InjectorTraceBackendsMixin
+
+        class _B(InjectorTraceBackendsMixin):
+            pass
+
+        backend = _B()
+
+        def user_helper():
+            return 42
+
+        def target():
+            return user_helper()
+
+        result = backend._trace_with_monitoring(
+            target, (), {}, skip_builtin=True, min_duration=0.0
+        )
+
+        direct_callee_names = [c["function"] for c in result[0]["direct_callees"]]
+        assert any("user_helper" in name for name in direct_callee_names), (
+            f"user_helper must appear as direct callee; got: {direct_callee_names}"
+        )

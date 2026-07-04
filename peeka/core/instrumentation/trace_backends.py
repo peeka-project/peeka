@@ -181,8 +181,13 @@ class InjectorTraceBackendsMixin:
                 if len(call_stack) >= 2:
                     return
 
-                # Skip built-in and stdlib if requested
+                # Skip built-in and stdlib if requested.
+                # Push a skipped marker to keep depth accurate so that
+                # callbacks invoked from inside a stdlib frame
+                # (e.g. json.dumps(..., default=user_cb)) are correctly
+                # blocked by the depth guard above on their call event.
                 if skip_builtin and _is_builtin_or_stdlib(code):
+                    call_stack.append({"_code": code, "_skipped": True})
                     return
 
                 func_name = _format_trace_function(code)
@@ -205,6 +210,10 @@ class InjectorTraceBackendsMixin:
                 call_entry = call_stack[-1]
                 if call_entry.get("_code") is not code:
                     # Return for a frame whose call was skipped by a filter
+                    return
+
+                if call_entry.get("_skipped"):
+                    call_stack.pop()
                     return
 
                 call_stack.pop()
