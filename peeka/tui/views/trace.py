@@ -663,6 +663,14 @@ class TraceView(Container):
             "worker": None,
         }
 
+        if self._selected_pattern is None:
+            self._selected_pattern = pattern
+            try:
+                row_idx = obs_table.get_row_index(pattern)
+                obs_table.move_cursor(row=row_idx)
+            except Exception:
+                pass
+
         worker = self.run_worker(
             lambda: self._stream_trace_observations(watch_id, pattern),
             thread=True,

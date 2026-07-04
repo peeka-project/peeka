@@ -2263,3 +2263,61 @@ class TestTraceView:
             assert len(trace_commands) == 0, (
                 "No trace command should be sent for negative min_duration"
             )
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_start_trace_auto_render_when_none_selected(self, mock_client_factory):
+        """When _selected_pattern is None, starting a new trace auto-selects it and renders observations."""
+        client = mock_client_factory(
+            responses={
+                "trace": {
+                    "status": "success",
+                    "watch_id": "trace_001",
+                }
+            }
+        )
+        client.connect()
+
+        stream_client = mock_client_factory(
+            observations=[
+                {
+                    "watch_id": "trace_001",
+                    "func_name": "module.func",
+                    "total_duration_ms": 10.5,
+                    "self_time_ms": 1.23,
+                    "callee_count": 0,
+                    "node_count": 1,
+                    "call_tree": [],
+                }
+            ]
+        )
+        stream_client.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(client)
+            trace_view._stream_client = stream_client
+            
+            # Start with no selected pattern
+            trace_view._selected_pattern = None
+
+            pattern_input = trace_view.query_one("#trace-pattern", AutoCompleteInput)
+            pattern_input.value = "module.func"
+
+            await trace_view._start_trace()
+            await pilot.pause()
+            await pilot.pause()
+
+            assert trace_view._selected_pattern == "module.func"
+            
+            tree = trace_view.query_one("#call-tree", Tree)
+            assert tree.root.children, "Tree should have children (observation rendered) because it was auto-selected"
+            obs_node = next(n for n in tree.root.children if "obs #" in str(n.label))
+            assert "obs #" in str(obs_node.label)
