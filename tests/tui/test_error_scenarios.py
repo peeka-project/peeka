@@ -1,9 +1,7 @@
 """Tests for cross-cutting error handling - connection failures, malformed data, concurrent streams."""
 
-import asyncio
-
 import pytest
-from textual.widgets import DataTable, Input, RichLog, Static, Tree
+from textual.widgets import DataTable, Input, Tree
 
 from peeka.tui.app import PeekaApp
 from peeka.tui.screens.main import MainScreen
@@ -79,7 +77,7 @@ class TestErrorScenarios:
             assert len(client_trace.commands_received) == 0
 
             # Verify no trace entry created
-            table = trace_view.query_one("#trace-table", DataTable)
+            table = trace_view.query_one("#trace-obs-table", DataTable)
             assert table.row_count == 0
 
     @pytest.mark.asyncio
