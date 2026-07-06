@@ -59,8 +59,8 @@ def _attach(container, pid: str) -> None:
 class TestTraceGeventDataPlane:
     """Trace command gevent metadata tests."""
 
-    def test_trace_gevent_returns_wrapper_only_meta(self, gdb_container):
-        """Trace degrades to wrapper_only and keeps the agent alive."""
+    def test_trace_gevent_returns_sys_monitoring_meta(self, gdb_container):
+        """Trace uses sys.monitoring (non-degraded) under gevent on Python 3.12+."""
         container = gdb_container
         pid = _start_gevent_target(container)
 
@@ -87,13 +87,16 @@ class TestTraceGeventDataPlane:
             meta = trace_started.get("meta")
             assert isinstance(meta, dict), f"Missing trace meta:\n{trace_started}"
             assert meta["gevent_state"] in ("patched", "active_hub")
-            assert meta["backend"] == "wrapper_only"
-            assert isinstance(meta["degraded_reason"], str)
+            assert meta["backend"] == "sys_monitoring"
+            assert meta["degraded_reason"] is None
 
             observations = [
                 record for record in records if record.get("type") == "observation"
             ]
             assert observations, f"No trace observations:\n{output}"
+            for obs in observations:
+                assert "call_tree" in obs, f"Observation missing call_tree:\n{obs}"
+                assert isinstance(obs["call_tree"], list), f"call_tree not a list:\n{obs}"
 
             exit_code, status_output = exec_in_container(
                 container, "python -m peeka.cli.main patch-status", timeout=10
@@ -116,8 +119,8 @@ class TestTraceGeventDataPlane:
 class TestTraceGeventPy314DataPlane:
     """Trace command gevent metadata tests on Python 3.14 (PEP 768 attach)."""
 
-    def test_trace_wrapper_only_backend_py314_gevent(self, py314_container):
-        """Trace degrades to wrapper_only under gevent on Python 3.14 (PEP 768)."""
+    def test_trace_sys_monitoring_backend_py314_gevent(self, py314_container):
+        """Trace uses sys.monitoring (non-degraded) under gevent on Python 3.14 (PEP 768)."""
         container = py314_container
         pid = _start_gevent_target(container)
 
@@ -144,14 +147,17 @@ class TestTraceGeventPy314DataPlane:
             meta = trace_started.get("meta")
             assert isinstance(meta, dict), f"Missing trace meta:\n{trace_started}"
             assert meta["gevent_state"] in ("patched", "active_hub")
-            assert meta["backend"] == "wrapper_only"
+            assert meta["backend"] == "sys_monitoring"
             assert meta["greenlet_blind"] is False
-            assert isinstance(meta["degraded_reason"], str)
+            assert meta["degraded_reason"] is None
 
             observations = [
                 record for record in records if record.get("type") == "observation"
             ]
             assert observations, f"No trace observations:\n{output}"
+            for obs in observations:
+                assert "call_tree" in obs, f"Observation missing call_tree:\n{obs}"
+                assert isinstance(obs["call_tree"], list), f"call_tree not a list:\n{obs}"
 
             exit_code, status_output = exec_in_container(
                 container, "python -m peeka.cli.main patch-status", timeout=10
