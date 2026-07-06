@@ -87,9 +87,16 @@ def _record_call(frame, event, depth_remaining):
 
 界面端的 `#trace-depth` 输入控件已在后续重构中删除，界面不再向 agent 发送 `depth` 字段。`TraceCommand` 中的 `params.pop("depth", None)` 兼容垫片也已随之移除。当前界面使用 `#trace-obs-table` 展示活跃 trace 列表，并通过 `min_duration` 参数控制过滤阈值。
 
-### 6. Gevent 路径不变
+### 6. Gevent 路径：按 Python 版本分级
 
-gevent monkey-patch 环境下，`wrapper_only` 后端继续返回 `call_tree = []` 并附加降级元数据，行为与之前一致。`--depth` 移除后，该路径也不再接受无意义的深度参数。
+gevent monkey-patch 环境下，`trace` 的后端策略由 Python 版本决定：
+
+- **Python 3.12+**：使用 `sys.monitoring` 后端。`sys.monitoring` 是 per-tool-ID 的事件驱动机制，不安装全局 tracer，因此与 gevent 的 greenlet hub 不冲突。`direct_callees` 正常填充，不产生降级 `runtime_meta`。
+- **Python <3.12**：继续使用 `wrapper_only` 后端（只记录根函数总耗时，`call_tree = []`），并附加降级元数据。原因：`sys.settrace` 是线程级全局 tracer，会与 gevent 的内部 greenlet tracer 冲突，可导致进程挂起（参见 postmortem 019）。
+
+该策略通过 `peeka/core/runtime/compat.py` 中的 `_SAFE_MONITORING_ONLY` 常量实现——在 Python 3.12+ 返回 `BACKEND_SYS_MONITORING` 策略，否则返回 `_DEGRADED_TRACE`。
+
+运行时兜底：`peeka/core/instrumentation/trace.py` 仍保留延迟加载 gevent 的动态降级逻辑，但仅在实际后端为 `BACKEND_SETTRACE` 时生效（Python <3.12 的安全网）；`BACKEND_SYS_MONITORING` 路径不受此降级影响。
 
 ### 实现拆分
 
@@ -107,7 +114,7 @@ gevent monkey-patch 环境下，`wrapper_only` 后端继续返回 `call_tree = [
 | `watch --depth` / `stack --depth` | 与 trace 无关，语义不同，保持现状 |
 | `#trace-depth` 输入控件 | 已在后续重构中删除（2026-07-04），界面改用 `#trace-obs-table` 和 `min_duration` 参数 |
 | 观测数据迁移工具 | `call_tree` 值语义为破坏性变更，明确接受；不提供数据迁移 |
-| gevent `wrapper_only` 后端实现 | 行为不变，仅移除 depth 参数接受路径 |
+| gevent trace 策略 | Python 3.12+ 使用 `sys.monitoring`（安全）；Python <3.12 保持 `wrapper_only`（`sys.settrace` 与 gevent 冲突，见 postmortem 019） |
 
 ## 后果
 
