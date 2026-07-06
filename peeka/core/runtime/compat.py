@@ -21,8 +21,9 @@ BACKEND_INSPECT_STACK = "inspect_stack"
 
 
 TRACE_GEVENT_REASON = (
-    "sys.settrace under gevent can violate frame stack invariants; "
-    "using wrapper-only tracing without recursive call tree"
+    "On Python <3.12, sys.settrace under gevent can interfere with the "
+    "greenlet hub, so wrapper-only tracing is used; on Python 3.12+, "
+    "sys.monitoring is per-tool and does not install a global tracer"
 )
 TOP_GEVENT_REASON = (
     "Frame sampling under gevent only sees the active greenlet per OS thread. "
@@ -41,6 +42,8 @@ class Policy:
 
 
 _SAFE_WRAPPER = Policy(DECISION_SAFE, BACKEND_WRAPPER, None, False)
+
+
 def _select_safe_trace_backend() -> str:
     """Return the precise trace backend available in this interpreter."""
     if sys.version_info >= (3, 12) and hasattr(sys, "monitoring"):
@@ -51,6 +54,13 @@ def _select_safe_trace_backend() -> str:
 _SAFE_TRACE = Policy(DECISION_SAFE, _select_safe_trace_backend(), None, False)
 _SAFE_TOP = Policy(DECISION_SAFE, BACKEND_FRAME_WALK, None, False)
 _SAFE_STACK = Policy(DECISION_SAFE, BACKEND_INSPECT_STACK, None, False)
+
+
+def _select_monitoring_only_trace_policy() -> Policy:
+    """Return gevent-safe trace policy that prefers sys.monitoring."""
+    if sys.version_info >= (3, 12) and hasattr(sys, "monitoring"):
+        return Policy(DECISION_SAFE, BACKEND_SYS_MONITORING, None, False)
+    return _DEGRADED_TRACE
 _DEGRADED_TRACE = Policy(
     DECISION_DEGRADED,
     BACKEND_WRAPPER_ONLY,
@@ -63,6 +73,9 @@ _DEGRADED_TOP = Policy(
     TOP_GEVENT_REASON,
     True,
 )
+
+
+_SAFE_MONITORING_ONLY = _select_monitoring_only_trace_policy()
 
 _MATRIX: Dict[str, Dict[GeventState, Policy]] = {
     "watch": {
@@ -86,8 +99,8 @@ _MATRIX: Dict[str, Dict[GeventState, Policy]] = {
     "trace": {
         GeventState.NONE: _SAFE_TRACE,
         GeventState.IMPORTED: _SAFE_TRACE,
-        GeventState.PATCHED: _DEGRADED_TRACE,
-        GeventState.ACTIVE_HUB: _DEGRADED_TRACE,
+        GeventState.PATCHED: _SAFE_MONITORING_ONLY,
+        GeventState.ACTIVE_HUB: _SAFE_MONITORING_ONLY,
     },
     "top": {
         GeventState.NONE: _SAFE_TOP,
