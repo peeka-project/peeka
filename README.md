@@ -127,23 +127,28 @@ Peeka separates its gevent support into two layers:
 | `watch` | safe | safe | safe |
 | `monitor` | safe | safe | safe |
 | `stack` | safe | safe | safe |
-| `trace` | full trace backend | full trace backend | degraded to `wrapper_only` |
+| `trace` | full trace backend | full trace backend | `sys_monitoring` (Python 3.12+); `wrapper_only` (Python <3.12) |
 | `top` | frame-walk sampling | frame-walk sampling | `greenlet_aware_sampling` with `greenlet_blind` meta |
 
-When Peeka detects gevent monkey patching, affected JSONL records include metadata such as:
+When Peeka detects gevent monkey patching, `trace` behavior depends on the Python version:
+
+- **Python 3.12+**: Uses `sys.monitoring` (per-tool, no global tracer) — full direct-callee tracing available under gevent.
+- **Python <3.12**: Falls back to `wrapper_only` tracing (root duration only, no callees) — `sys.settrace` would interfere with gevent's greenlet hub.
+
+Example metadata on Python 3.12+ under gevent:
 
 ```json
 {
   "meta": {
     "gevent_state": "patched",
-    "backend": "wrapper_only",
+    "backend": "sys_monitoring",
     "greenlet_blind": false,
-    "degraded_reason": "sys.settrace under gevent can violate frame stack invariants; using wrapper-only tracing without recursive call tree"
+    "degraded_reason": null
   }
 }
 ```
 
-For gevent targets, prefer `watch` when wrapper-level entry/exit observations are enough. `trace` remains available, but under patched gevent it uses wrapper-only tracing instead of recursive `sys.settrace` call trees. `top` remains available through a chained `greenlet.settrace` backend that preserves any existing greenlet tracer, while still marking `greenlet_blind` because suspended greenlets cannot be fully enumerated.
+For gevent targets, prefer `watch` when wrapper-level entry/exit observations are enough. On Python 3.12+, `trace` provides full direct-callee diagnostics even under gevent. On older Python, `trace` falls back to timing the root call only. `top` remains available through a chained `greenlet.settrace` backend that preserves any existing greenlet tracer, while still marking `greenlet_blind` because suspended greenlets cannot be fully enumerated.
 
 ## Read More
 
