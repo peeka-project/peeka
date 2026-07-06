@@ -185,10 +185,16 @@ class InjectorTraceMixin:
             # Build call tree
             call_tree = []
 
-            # Runtime gevent check: if gevent was lazy-loaded after injection,
-            # force downgrade to wrapper_only to avoid sys.settrace conflicts.
+            # Runtime gevent check: if gevent was lazy-loaded after injection and
+            # we are using the global sys.settrace tracer, force downgrade to
+            # wrapper_only to avoid sys.settrace / greenlet hub conflicts.
+            # sys.monitoring is per-tool and does not need this protection.
             effective_backend = force_backend
-            if effective_backend != BACKEND_WRAPPER_ONLY and _is_gevent_patched_now():
+            if (
+                not use_monitoring
+                and effective_backend != BACKEND_WRAPPER_ONLY
+                and _is_gevent_patched_now()
+            ):
                 effective_backend = BACKEND_WRAPPER_ONLY
 
             if effective_backend == BACKEND_WRAPPER_ONLY:
@@ -239,10 +245,12 @@ class InjectorTraceMixin:
             )
 
             runtime_meta = None
-            gevent_patched_now = (
-                effective_backend == BACKEND_WRAPPER_ONLY and _is_gevent_patched_now()
+            dynamic_settrace_downgrade = (
+                effective_backend == BACKEND_WRAPPER_ONLY
+                and force_backend == BACKEND_SETTRACE
+                and _is_gevent_patched_now()
             )
-            if gevent_patched_now:
+            if dynamic_settrace_downgrade:
                 runtime_meta = {
                     "trace": {
                         "startup_backend": force_backend if force_backend else "auto",
