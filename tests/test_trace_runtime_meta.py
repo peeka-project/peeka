@@ -116,9 +116,13 @@ class TestTraceRuntimeMeta:
         assert module.root() == "outer"
         observation = agent._observations[0]
 
-        assert observation["runtime_meta"]["trace"]["downgraded"] is True
-        assert observation["runtime_meta"]["trace"]["effective_backend"] == "wrapper_only"
-        assert observation["runtime_meta"]["trace"]["gevent_patched_now"] is True
+        if sys.version_info >= (3, 12):
+            runtime_meta = observation.get("runtime_meta")
+            assert runtime_meta is None or not runtime_meta.get("trace", {}).get("downgraded", False)
+        else:
+            assert observation["runtime_meta"]["trace"]["downgraded"] is True
+            assert observation["runtime_meta"]["trace"]["effective_backend"] == "wrapper_only"
+            assert observation["runtime_meta"]["trace"]["gevent_patched_now"] is True
 
     def test_observation_runtime_meta_absent_when_no_downgrade(self, monkeypatch):
         """Clean runtime should not report downgrade metadata."""
@@ -156,9 +160,12 @@ class TestTraceRuntimeMeta:
         result = command.execute({"action": "start", "pattern": "module.func"})
 
         assert result["status"] == "success"
-        assert result["runtime_meta"]["trace"]["downgraded"] is True
-        assert result["runtime_meta"]["trace"]["effective_backend"] == "wrapper_only"
-        assert result["runtime_meta"]["trace"]["gevent_patched_now"] is True
+        if sys.version_info >= (3, 12):
+            assert "runtime_meta" not in result or result["runtime_meta"] in (None, False)
+        else:
+            assert result["runtime_meta"]["trace"]["downgraded"] is True
+            assert result["runtime_meta"]["trace"]["effective_backend"] == "wrapper_only"
+            assert result["runtime_meta"]["trace"]["gevent_patched_now"] is True
 
     def test_observation_runtime_meta_present_when_prepatched_at_startup(self, monkeypatch):
         """Pre-patched gevent startup should still emit trace observation runtime meta."""
@@ -182,12 +189,19 @@ class TestTraceRuntimeMeta:
         )
 
         assert result["status"] == "success"
-        assert result["runtime_meta"]["trace"]["effective_backend"] == "wrapper_only"
+        if sys.version_info >= (3, 12):
+            assert "runtime_meta" not in result or result["runtime_meta"] in (None, False)
+        else:
+            assert result["runtime_meta"]["trace"]["effective_backend"] == "wrapper_only"
 
         assert module.root() == "outer"
         observation = agent._observations[0]
 
-        assert observation["runtime_meta"]["trace"]["effective_backend"] == "wrapper_only"
+        if sys.version_info >= (3, 12):
+            runtime_meta = observation.get("runtime_meta")
+            assert runtime_meta is None or not runtime_meta.get("trace", {}).get("downgraded", False)
+        else:
+            assert observation["runtime_meta"]["trace"]["effective_backend"] == "wrapper_only"
 
     def test_observation_runtime_meta_schema(self, monkeypatch):
         """Runtime trace metadata should expose the full schema on downgrade."""
@@ -208,18 +222,23 @@ class TestTraceRuntimeMeta:
         monkeypatch.setitem(sys.modules, "gevent.monkey", fake_monkey)
 
         assert module.root() == "outer"
-        trace_meta = agent._observations[0]["runtime_meta"]["trace"]
 
-        assert isinstance(trace_meta, dict)
-        assert set(trace_meta) >= {
-            "startup_backend",
-            "effective_backend",
-            "downgraded",
-            "downgrade_reason",
-            "gevent_patched_now",
-        }
-        assert isinstance(trace_meta["startup_backend"], str)
-        assert isinstance(trace_meta["effective_backend"], str)
-        assert isinstance(trace_meta["downgraded"], bool)
-        assert trace_meta["downgrade_reason"] is None or isinstance(trace_meta["downgrade_reason"], str)
-        assert isinstance(trace_meta["gevent_patched_now"], bool)
+        if sys.version_info >= (3, 12):
+            runtime_meta = agent._observations[0].get("runtime_meta")
+            assert runtime_meta is None or not runtime_meta.get("trace", {}).get("downgraded", False)
+        else:
+            trace_meta = agent._observations[0]["runtime_meta"]["trace"]
+
+            assert isinstance(trace_meta, dict)
+            assert set(trace_meta) >= {
+                "startup_backend",
+                "effective_backend",
+                "downgraded",
+                "downgrade_reason",
+                "gevent_patched_now",
+            }
+            assert isinstance(trace_meta["startup_backend"], str)
+            assert isinstance(trace_meta["effective_backend"], str)
+            assert isinstance(trace_meta["downgraded"], bool)
+            assert trace_meta["downgrade_reason"] is None or isinstance(trace_meta["downgrade_reason"], str)
+            assert isinstance(trace_meta["gevent_patched_now"], bool)

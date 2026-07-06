@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from typing import cast
 
 import pytest
@@ -79,7 +80,7 @@ class TestTraceCommandPolicy:
         }
 
     def test_patched_runtime_uses_wrapper_only(self, monkeypatch: pytest.MonkeyPatch):
-        """Patched gevent runtime degrades trace to wrapper_only."""
+        """Patched gevent degrades trace to wrapper_only on <3.12; sys_monitoring on 3.12+."""
         monkeypatch.setattr("peeka.commands.trace.probe", lambda: GeventState.PATCHED)
         agent = FakeAgent()
         command = TraceCommand(agent)  # pyright: ignore[reportArgumentType]
@@ -87,16 +88,21 @@ class TestTraceCommandPolicy:
         result = command.execute({"action": "start", "pattern": "module.func"})
 
         assert result["status"] == "success"
-        assert agent.injector.calls[0]["force_backend"] == "wrapper_only"
         assert result["meta"]["gevent_state"] == "patched"
-        assert result["meta"]["backend"] == "wrapper_only"
         assert result["meta"]["greenlet_blind"] is False
-        assert isinstance(result["meta"]["degraded_reason"], str)
+        if sys.version_info >= (3, 12):
+            assert agent.injector.calls[0]["force_backend"] == "sys_monitoring"
+            assert result["meta"]["backend"] == "sys_monitoring"
+            assert result["meta"]["degraded_reason"] is None
+        else:
+            assert agent.injector.calls[0]["force_backend"] == "wrapper_only"
+            assert result["meta"]["backend"] == "wrapper_only"
+            assert isinstance(result["meta"]["degraded_reason"], str)
 
     def test_active_hub_runtime_uses_wrapper_only(
         self, monkeypatch: pytest.MonkeyPatch
     ):
-        """Active gevent hub gets the same wrapper-only degradation."""
+        """Active gevent hub degrades trace to wrapper_only on <3.12; sys_monitoring on 3.12+."""
         monkeypatch.setattr(
             "peeka.commands.trace.probe", lambda: GeventState.ACTIVE_HUB
         )
@@ -106,9 +112,13 @@ class TestTraceCommandPolicy:
         result = command.execute({"action": "start", "pattern": "module.func"})
 
         assert result["status"] == "success"
-        assert agent.injector.calls[0]["force_backend"] == "wrapper_only"
         assert result["meta"]["gevent_state"] == "active_hub"
-        assert result["meta"]["backend"] == "wrapper_only"
+        if sys.version_info >= (3, 12):
+            assert agent.injector.calls[0]["force_backend"] == "sys_monitoring"
+            assert result["meta"]["backend"] == "sys_monitoring"
+        else:
+            assert agent.injector.calls[0]["force_backend"] == "wrapper_only"
+            assert result["meta"]["backend"] == "wrapper_only"
 
     def test_legacy_depth_param_is_silently_ignored(
         self, monkeypatch: pytest.MonkeyPatch

@@ -1,5 +1,7 @@
 """Tests for data-plane compatibility policy matrix."""
 
+import sys
+
 import pytest
 
 from peeka.core.runtime.compat import (
@@ -47,13 +49,19 @@ class TestRuntimeCompat:
             get_policy("unknown", GeventState.NONE)
 
     def test_trace_degrades_to_wrapper_only_when_patched(self):
-        """trace avoids tracing APIs in patched gevent states."""
+        """trace uses sys_monitoring on Python 3.12+; wrapper_only on older Python."""
         for state in (GeventState.PATCHED, GeventState.ACTIVE_HUB):
             policy = get_policy("trace", state)
-            assert policy.decision == DECISION_DEGRADED
-            assert policy.backend == BACKEND_WRAPPER_ONLY
-            assert policy.greenlet_blind is False
-            assert policy.reason
+            if sys.version_info >= (3, 12):
+                assert policy.decision == DECISION_SAFE
+                assert policy.backend == BACKEND_SYS_MONITORING
+                assert policy.greenlet_blind is False
+                assert policy.reason is None
+            else:
+                assert policy.decision == DECISION_DEGRADED
+                assert policy.backend == BACKEND_WRAPPER_ONLY
+                assert policy.greenlet_blind is False
+                assert policy.reason
 
     def test_trace_safe_for_none_and_imported_states(self):
         """trace reports the precise safe backend when gevent is not patched."""
@@ -103,14 +111,16 @@ class TestRuntimeCompat:
         safe_trace_backend = get_policy("trace", GeventState.NONE).backend
         assert decisions == {DECISION_SAFE, DECISION_DEGRADED}
         assert DECISION_REFUSE == "refuse"
-        assert backends == {
+        expected_backends = {
             BACKEND_FRAME_WALK,
             BACKEND_GREENLET_AWARE_SAMPLING,
             BACKEND_INSPECT_STACK,
             safe_trace_backend,
             BACKEND_WRAPPER,
-            BACKEND_WRAPPER_ONLY,
         }
+        if sys.version_info < (3, 12):
+            expected_backends.add(BACKEND_WRAPPER_ONLY)
+        assert backends == expected_backends
 
     def test_policy_meta_shape(self):
         """Policy metadata serializes to stable JSONL keys."""
