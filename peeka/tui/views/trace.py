@@ -4,6 +4,7 @@ Trace View - Function call tree tracing interface.
 
 import logging
 import threading
+import time
 from collections import deque
 from typing import TYPE_CHECKING, Any, Deque, Dict, List, Optional, Tuple
 
@@ -41,6 +42,14 @@ def _abbreviate_function_name(func: str) -> str:
         return func
     prefix = ".".join(p[0] for p in parts[:-2])
     return f"{prefix}.{'.'.join(parts[-2:])}"
+
+
+def _format_elapsed(seconds: float) -> str:
+    if seconds < 60:
+        return f"{seconds:.0f}s"
+    minutes = int(seconds // 60)
+    secs = int(seconds % 60)
+    return f"{minutes}m{secs:02d}s"
 
 
 class TraceView(Container):
@@ -235,11 +244,16 @@ class TraceView(Container):
 
         obs_table = self.query_one("#trace-obs-table", DataTable)
         obs_table.clear(columns=True)
-        obs_table.add_columns(
-            ("Pattern", "Pattern"),
-            ("Status", "Status"),
-            ("Count", "Count"),
-        )
+        obs_table.add_column("Pattern", key="Pattern", width=28)
+        obs_table.add_column("Status", key="Status", width=10)
+        obs_table.add_column("Obs", key="Obs", width=5)
+        obs_table.add_column("Running Time", key="Running Time", width=14)
+        obs_table.add_column("Errors", key="Errors", width=7)
+        obs_table.add_column("Last Total", key="Last Total", width=12)
+        obs_table.add_column("Last Self", key="Last Self", width=11)
+        obs_table.add_column("Callees", key="Callees", width=9)
+        obs_table.add_column("Backend", key="Backend", width=16)
+        obs_table.add_column("Runtime", key="Runtime", width=12)
         obs_table.cursor_type = "row"
         obs_table.border_title = "Active Traces"
 
@@ -650,17 +664,40 @@ class TraceView(Container):
             self.app.notify("No watch_id returned", severity="error")
             return
 
+        meta = response.get("meta", {})
+        trace_meta = meta.get("trace", {})
+        if trace_meta:
+            backend = trace_meta.get("effective_backend", "—")
+            runtime = "patched" if trace_meta.get("gevent_patched_now") else "none"
+        else:
+            backend = meta.get("backend", "—")
+            runtime = meta.get("gevent_state", "—")
+
         obs_table = self.query_one("#trace-obs-table", DataTable)
         try:
             obs_table.update_cell(pattern, "Status", "Running")
+            obs_table.update_cell(pattern, "Backend", backend)
+            obs_table.update_cell(pattern, "Runtime", runtime)
         except Exception:
-            obs_table.add_row(pattern, "Running", "0", key=pattern)
+            obs_table.add_row(
+                pattern, "Running", "0",
+                "0s", "0", "—", "—", "—",
+                backend, runtime,
+                key=pattern,
+            )
         self._observations_by_pattern.setdefault(pattern, [])
 
         self._active_traces[watch_id] = {
             "pattern": pattern,
             "count": 0,
             "worker": None,
+            "start_time": time.time(),
+            "errors": 0,
+            "last_total": "—",
+            "last_self": "—",
+            "last_callees": "—",
+            "backend": backend,
+            "runtime": runtime,
         }
 
         if self._selected_pattern is None:
@@ -746,10 +783,23 @@ class TraceView(Container):
                 obs_list.pop()
 
             obs_table = self.query_one("#trace-obs-table", DataTable)
-            try:
-                obs_table.update_cell(pattern, "Count", str(count))
-            except Exception:
-                pass
+            info = self._active_traces.get(watch_id, {})
+            if info:
+                info["errors"] += 1 if observation.get("exception") else 0
+                info["last_total"] = f'{observation.get("total_duration_ms", 0):.1f}ms'
+                info["last_self"] = f'{observation.get("self_time_ms", 0):.1f}ms'
+                info["last_callees"] = str(observation.get("callee_count", 0))
+                elapsed = time.time() - info.get("start_time", time.time())
+                running_time_str = _format_elapsed(elapsed)
+                try:
+                    obs_table.update_cell(pattern, "Obs", str(count))
+                    obs_table.update_cell(pattern, "Running Time", running_time_str)
+                    obs_table.update_cell(pattern, "Errors", str(info["errors"]))
+                    obs_table.update_cell(pattern, "Last Total", info["last_total"])
+                    obs_table.update_cell(pattern, "Last Self", info["last_self"])
+                    obs_table.update_cell(pattern, "Callees", info["last_callees"])
+                except Exception:
+                    pass
 
             if self._selected_pattern == pattern:
                 self._build_observation_tree(pattern)
