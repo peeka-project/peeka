@@ -902,6 +902,49 @@ class TestTraceViewStyles:
                 or "clear-trace-btn" in visited_ids
             ), f"No trace action button in focus chain: {visited_ids}"
 
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_active_traces_table_visible_wide(self, mock_client_factory):
+        """#trace-obs-table is visible and fits within screen at 140x24."""
+        from textual.widgets import DataTable
+        app = PeekaApp()
+        mock_client = mock_client_factory()
+        mock_client.connect()
+        async with app.run_test(size=(140, 24)) as pilot:
+            main_screen = MainScreen(pid=12345, session_id="test-session", socket_path="/tmp/test.sock")
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(mock_client)
+            main_screen.action_switch_tab("trace")
+            await pilot.pause()
+
+            obs_table = trace_view.query_one("#trace-obs-table", DataTable)
+            assert obs_table.region.width > 0, "Table must have positive width at 140x24"
+            assert obs_table.region.x + obs_table.region.width <= 140, "Table must fit within screen"
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_active_traces_table_visible_narrow(self, mock_client_factory):
+        """#trace-obs-table has positive width at 80x24 (narrow screen)."""
+        from textual.widgets import DataTable
+        app = PeekaApp()
+        mock_client = mock_client_factory()
+        mock_client.connect()
+        async with app.run_test(size=(80, 24)) as pilot:
+            main_screen = MainScreen(pid=12345, session_id="test-session", socket_path="/tmp/test.sock")
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(mock_client)
+            main_screen.action_switch_tab("trace")
+            await pilot.pause()
+
+            obs_table = trace_view.query_one("#trace-obs-table", DataTable)
+            assert obs_table.region.width > 0, "Table must have positive width at 80x24"
+
 
 class TestStackViewStyles:
     """Verify stack view compact controls and panel variants (T6, T8)."""
