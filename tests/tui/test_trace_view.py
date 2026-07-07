@@ -2032,6 +2032,8 @@ class TestTraceView:
             )
             await app.push_screen(main_screen)
             await pilot.pause()
+            main_screen.action_switch_tab("trace")
+            await pilot.pause()
 
             trace_view = app.screen.query_one("TraceView", TraceView)
             trace_view.set_client(client)
@@ -2048,7 +2050,10 @@ class TestTraceView:
             assert obs_table.row_count >= 1
 
             await pilot.click("#clear-trace-btn")
-            await pilot.pause()
+            for _ in range(20):
+                if trace_view._active_traces == {}:
+                    break
+                await pilot.pause()
 
             assert trace_view._active_traces == {}
             obs_table = trace_view.query_one("#trace-obs-table", DataTable)
@@ -2188,11 +2193,17 @@ class TestTraceView:
             pattern = "some.func"
             watch_id = "wid_count_test"
             obs_table = trace_view.query_one("#trace-obs-table", DataTable)
-            obs_table.add_row(pattern, "Running", "0", key=pattern)
+            obs_table.add_row(pattern, "Running", "0", "0s", "0", "—", "—", "—", "—", "—", key=pattern)
             trace_view._active_traces[watch_id] = {
                 "pattern": pattern,
                 "worker": None,
                 "count": 0,
+                "errors": 0,
+                "last_total": "—",
+                "last_self": "—",
+                "last_callees": "—",
+                "backend": "—",
+                "runtime": "—",
             }
 
             obs_template = {
@@ -2208,9 +2219,9 @@ class TestTraceView:
 
             await pilot.pause()
 
-            cell_value = obs_table.get_cell(pattern, "Count")
+            cell_value = obs_table.get_cell(pattern, "Obs")
             assert cell_value == "150", (
-                f"Expected Count='150', got '{cell_value}' — "
+                f"Expected Obs='150', got '{cell_value}' — "
                 "obs_list cap must not limit the displayed count"
             )
             assert len(trace_view._observations_by_pattern[pattern]) == 100, (
@@ -2417,3 +2428,178 @@ class TestTraceView:
             assert tree.root.children, "Tree should have children (observation rendered) because it was auto-selected"
             obs_node = next(n for n in tree.root.children if "obs #" in str(n.label))
             assert "obs #" in str(obs_node.label)
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_active_traces_column_keys(self, mock_client_factory):
+        """Active traces table has exactly 10 specified columns."""
+        client = mock_client_factory(responses={})
+        client.connect()
+        stream_client = mock_client_factory(observations=[])
+        stream_client.connect()
+
+        app = PeekaApp()
+        async with app.run_test(size=(140, 24)) as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(client)
+            trace_view._stream_client = stream_client
+
+            obs_table = trace_view.query_one("#trace-obs-table", DataTable)
+            col_keys = {col.key.value for col in obs_table.columns.values()}
+            assert col_keys == {
+                "Pattern", "Status", "Obs", "Running Time", "Errors",
+                "Last Total", "Last Self", "Callees", "Backend", "Runtime"
+            }
+            assert len(list(obs_table.columns.values())) == 10
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_backend_runtime_populated_from_start_meta(self, mock_client_factory):
+        """Backend and Runtime columns in obs table are populated from the trace start response meta."""
+        client = mock_client_factory(
+            responses={
+                "trace": {
+                    "status": "success",
+                    "watch_id": "trace_meta_001",
+                    "meta": {
+                        "trace": {
+                            "effective_backend": "wrapper_only",
+                            "gevent_patched_now": True,
+                        }
+                    },
+                }
+            }
+        )
+        client.connect()
+        stream_client = mock_client_factory(observations=[])
+        stream_client.connect()
+
+        app = PeekaApp()
+        async with app.run_test(size=(140, 24)) as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(client)
+            trace_view._stream_client = stream_client
+
+            pattern_input = trace_view.query_one("#trace-pattern", AutoCompleteInput)
+            pattern_input.value = "module.func"
+
+            await trace_view._start_trace()
+            await pilot.pause()
+
+            obs_table = trace_view.query_one("#trace-obs-table", DataTable)
+            assert obs_table.get_cell("module.func", "Backend") == "wrapper_only"
+            assert obs_table.get_cell("module.func", "Runtime") == "patched"
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_performance_columns_update_after_observation(self, mock_client_factory):
+        """Obs, Last Total, Last Self, Callees columns update correctly after an observation."""
+        client = mock_client_factory(
+            responses={
+                "trace": {
+                    "status": "success",
+                    "watch_id": "trace_perf_001",
+                }
+            }
+        )
+        client.connect()
+        stream_client = mock_client_factory(observations=[])
+        stream_client.connect()
+
+        app = PeekaApp()
+        async with app.run_test(size=(140, 24)) as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(client)
+            trace_view._stream_client = stream_client
+
+            pattern_input = trace_view.query_one("#trace-pattern", AutoCompleteInput)
+            pattern_input.value = "module.func"
+
+            await trace_view._start_trace()
+            await pilot.pause()
+
+            observation = {
+                "watch_id": "trace_perf_001",
+                "func_name": "module.func",
+                "total_duration_ms": 12.3,
+                "self_time_ms": 8.1,
+                "callee_count": 2,
+                "node_count": 3,
+                "call_tree": [],
+            }
+            trace_view._add_trace_observation("trace_perf_001", 1, observation)
+            await pilot.pause()
+
+            obs_table = trace_view.query_one("#trace-obs-table", DataTable)
+            assert obs_table.get_cell("module.func", "Obs") == "1"
+            assert obs_table.get_cell("module.func", "Last Total") == "12.3ms"
+            assert obs_table.get_cell("module.func", "Last Self") == "8.1ms"
+            assert obs_table.get_cell("module.func", "Callees") == "2"
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_errors_increments_on_exception_observation(self, mock_client_factory):
+        """Errors column increments to 1 when an observation carries an exception."""
+        client = mock_client_factory(
+            responses={
+                "trace": {
+                    "status": "success",
+                    "watch_id": "trace_err_001",
+                }
+            }
+        )
+        client.connect()
+        stream_client = mock_client_factory(observations=[])
+        stream_client.connect()
+
+        app = PeekaApp()
+        async with app.run_test(size=(140, 24)) as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(client)
+            trace_view._stream_client = stream_client
+
+            pattern_input = trace_view.query_one("#trace-pattern", AutoCompleteInput)
+            pattern_input.value = "module.func"
+
+            await trace_view._start_trace()
+            await pilot.pause()
+
+            observation = {
+                "watch_id": "trace_err_001",
+                "func_name": "module.func",
+                "total_duration_ms": 5.0,
+                "self_time_ms": 2.0,
+                "callee_count": 0,
+                "node_count": 1,
+                "exception": {"type": "ValueError", "message": "x"},
+                "call_tree": [],
+            }
+            trace_view._add_trace_observation("trace_err_001", 1, observation)
+            await pilot.pause()
+
+            obs_table = trace_view.query_one("#trace-obs-table", DataTable)
+            assert obs_table.get_cell("module.func", "Errors") == "1"
