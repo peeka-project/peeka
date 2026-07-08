@@ -438,6 +438,293 @@ class TestWatchView:
             assert "downgraded: gevent detected" in text
 
 
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_watch_table_has_ten_columns(self, mock_client_factory):
+        """Active watches table has exactly 10 specified columns."""
+        client = mock_client_factory(responses={})
+        client.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            watch_view = app.screen.query_one("WatchView", WatchView)
+            obs_table = watch_view.query_one("#watch-table", DataTable)
+            col_keys = {col.key.value for col in obs_table.columns.values()}
+            assert col_keys == {
+                "ID", "Pattern", "Status", "Obs", "Running Time",
+                "Errors", "Last ms", "Async", "Backend", "Runtime",
+            }
+            assert len(list(obs_table.columns.values())) == 10
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_backend_runtime_default_dash_when_no_runtime_meta(
+        self, mock_client_factory
+    ):
+        """Backend and Runtime default to '—' when runtime_meta is absent."""
+        client = mock_client_factory(
+            responses={"watch": {"status": "success", "watch_id": "w1"}},
+        )
+        client.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            watch_view = app.screen.query_one("WatchView", WatchView)
+            watch_view.set_client(client)
+
+            pattern_input = watch_view.query_one("#watch-pattern", AutoCompleteInput)
+            pattern_input.value = "module.func"
+
+            await watch_view._start_watch()
+            await pilot.pause()
+
+            watch_table = watch_view.query_one("#watch-table", DataTable)
+            assert watch_table.get_cell("w1", "Backend") == "—"
+            assert watch_table.get_cell("w1", "Runtime") == "—"
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_async_column_shows_check_and_dash(self, mock_client_factory):
+        """Async column shows '✦' when is_coroutine_function=True, '—' otherwise."""
+        client_async = mock_client_factory(
+            responses={
+                "watch": {
+                    "status": "success",
+                    "watch_id": "w1",
+                    "target": {"is_coroutine_function": True},
+                }
+            },
+        )
+        client_async.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            watch_view = app.screen.query_one("WatchView", WatchView)
+            watch_view.set_client(client_async)
+
+            pattern_input = watch_view.query_one("#watch-pattern", AutoCompleteInput)
+            pattern_input.value = "module.async_func"
+
+            await watch_view._start_watch()
+            await pilot.pause()
+
+            watch_table = watch_view.query_one("#watch-table", DataTable)
+            assert watch_table.get_cell("w1", "Async") == "✦"
+
+        client_sync = mock_client_factory(
+            responses={
+                "watch": {
+                    "status": "success",
+                    "watch_id": "w2",
+                    "target": {"is_coroutine_function": False},
+                }
+            },
+        )
+        client_sync.connect()
+
+        app2 = PeekaApp()
+        async with app2.run_test() as pilot2:
+            main_screen2 = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app2.push_screen(main_screen2)
+            await pilot2.pause()
+
+            watch_view2 = app2.screen.query_one("WatchView", WatchView)
+            watch_view2.set_client(client_sync)
+
+            pattern_input2 = watch_view2.query_one("#watch-pattern", AutoCompleteInput)
+            pattern_input2.value = "module.sync_func"
+
+            await watch_view2._start_watch()
+            await pilot2.pause()
+
+            watch_table2 = watch_view2.query_one("#watch-table", DataTable)
+            assert watch_table2.get_cell("w2", "Async") == "—"
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_perf_columns_update_after_observation(self, mock_client_factory):
+        """Obs, Last ms, Errors and Running Time update after _add_observation."""
+        client = mock_client_factory(
+            responses={"watch": {"status": "success", "watch_id": "w1"}},
+        )
+        client.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            watch_view = app.screen.query_one("WatchView", WatchView)
+            watch_view.set_client(client)
+
+            pattern_input = watch_view.query_one("#watch-pattern", AutoCompleteInput)
+            pattern_input.value = "module.func"
+
+            await watch_view._start_watch()
+            await pilot.pause()
+
+            observation = {
+                "watch_id": "w1",
+                "func_name": "module.func",
+                "params": [42],
+                "kwargs": {},
+                "returnObj": 84,
+                "cost": 7.5,
+                "success": True,
+                "count": 1,
+            }
+            watch_view._add_observation("w1", 1, observation)
+            await pilot.pause()
+
+            watch_table = watch_view.query_one("#watch-table", DataTable)
+            assert watch_table.get_cell("w1", "Obs") == "1"
+            assert watch_table.get_cell("w1", "Last ms") == "7.5ms"
+            assert watch_table.get_cell("w1", "Errors") == "0"
+            running_time = watch_table.get_cell("w1", "Running Time")
+            assert str(running_time).endswith("s")
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_errors_increments_on_failed_observation(self, mock_client_factory):
+        """Errors column increments when success=False observation arrives."""
+        client = mock_client_factory(
+            responses={"watch": {"status": "success", "watch_id": "w1"}},
+        )
+        client.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            watch_view = app.screen.query_one("WatchView", WatchView)
+            watch_view.set_client(client)
+
+            pattern_input = watch_view.query_one("#watch-pattern", AutoCompleteInput)
+            pattern_input.value = "module.func"
+
+            await watch_view._start_watch()
+            await pilot.pause()
+
+            failed_obs = {
+                "watch_id": "w1",
+                "func_name": "module.func",
+                "params": [],
+                "kwargs": {},
+                "returnObj": None,
+                "throwExp": "ValueError: bad input",
+                "cost": 1.0,
+                "success": False,
+                "count": 1,
+            }
+            watch_view._add_observation("w1", 1, failed_obs)
+            await pilot.pause()
+
+            watch_table = watch_view.query_one("#watch-table", DataTable)
+            assert watch_table.get_cell("w1", "Errors") == "1"
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_stop_all_watches_sets_status_stopped(self, mock_client_factory):
+        """_stop_all_watches sets Status='Stopped' and row persists in the table."""
+        client = mock_client_factory(
+            responses={
+                "watch": {"status": "success", "watch_id": "w1"},
+            },
+        )
+        client.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            watch_view = app.screen.query_one("WatchView", WatchView)
+            watch_view.set_client(client)
+
+            pattern_input = watch_view.query_one("#watch-pattern", AutoCompleteInput)
+            pattern_input.value = "module.func"
+
+            await watch_view._start_watch()
+            await pilot.pause()
+
+            await watch_view._stop_all_watches()
+            await pilot.pause()
+
+            watch_table = watch_view.query_one("#watch-table", DataTable)
+            assert watch_table.row_count >= 1
+            assert watch_table.get_cell("w1", "Status") == "Stopped"
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_restart_same_pattern_evicts_stopped_row(self, mock_client_factory):
+        """Re-starting the same pattern after stop removes the old Stopped row."""
+        client = mock_client_factory(
+            responses={
+                "watch": {"status": "success", "watch_id": "w1"},
+            },
+        )
+        client.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            watch_view = app.screen.query_one("WatchView", WatchView)
+            watch_view.set_client(client)
+
+            pattern_input = watch_view.query_one("#watch-pattern", AutoCompleteInput)
+            pattern_input.value = "same.pattern"
+            await watch_view._start_watch()
+            await pilot.pause()
+
+            await watch_view._stop_all_watches()
+            await pilot.pause()
+
+            watch_table = watch_view.query_one("#watch-table", DataTable)
+            assert watch_table.get_cell("w1", "Status") == "Stopped"
+
+            pattern_input.value = "same.pattern"
+            await watch_view._start_watch()
+            await pilot.pause()
+
+            assert watch_table.row_count == 1
+            assert watch_table.get_cell("w1", "Status") == "Running"
+
+
 class TestWatchViewLayout:
     """Geometry tests for WatchView layout redesign (T2)."""
 
