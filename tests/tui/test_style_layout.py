@@ -683,6 +683,48 @@ class TestWatchViewStyles:
             assert observations_panel.region.y == detail_panel.region.y
             assert observations_panel.region.width == pytest.approx(2 * detail_panel.region.width, abs=2)
 
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_active_watches_table_visible_wide(self, mock_client_factory):
+        """#watch-table is visible and fits within screen at 140x24."""
+        from textual.widgets import DataTable
+        app = PeekaApp()
+        mock_client = mock_client_factory()
+        mock_client.connect()
+        async with app.run_test(size=(140, 24)) as pilot:
+            main_screen = MainScreen(pid=12345, session_id="test-session", socket_path="/tmp/test.sock")
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            watch_view = app.screen.query_one("WatchView", WatchView)
+            watch_view.set_client(mock_client)
+            main_screen.action_switch_tab("watch")
+            await pilot.pause()
+
+            watch_table = watch_view.query_one("#watch-table", DataTable)
+            assert watch_table.region.width > 0, "Table must have positive width at 140x24"
+            assert watch_table.region.x + watch_table.region.width <= 140, "Table must fit within screen"
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_active_watches_table_visible_narrow(self, mock_client_factory):
+        """#watch-table has positive width at 80x24 (narrow screen)."""
+        from textual.widgets import DataTable
+        app = PeekaApp()
+        mock_client = mock_client_factory()
+        mock_client.connect()
+        async with app.run_test(size=(80, 24)) as pilot:
+            main_screen = MainScreen(pid=12345, session_id="test-session", socket_path="/tmp/test.sock")
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            watch_view = app.screen.query_one("WatchView", WatchView)
+            watch_view.set_client(mock_client)
+            main_screen.action_switch_tab("watch")
+            await pilot.pause()
+
+            watch_table = watch_view.query_one("#watch-table", DataTable)
+            assert watch_table.region.width > 0, "Table must have positive width at 80x24"
 
 class TestTraceViewStyles:
     """Verify trace view compact controls and panel variants (T6, T8)."""
