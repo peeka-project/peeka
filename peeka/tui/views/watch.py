@@ -586,13 +586,24 @@ class WatchView(Container):
         async_str = "✦" if is_async else "—"
 
         table = self.query_one("#watch-table", DataTable)
-        for wid, info in list(self._active_watches.items()):
-            if info.get("pattern") == pattern:
-                try:
-                    if table.get_cell(wid, "Status") == "Stopped":
-                        table.remove_row(wid)
-                except Exception:
-                    pass
+        rows_to_evict = []
+        for row_key in list(table.rows):
+            rk = row_key.value
+            if rk is None:
+                continue
+            try:
+                if (
+                    table.get_cell(rk, "Pattern") == pattern
+                    and table.get_cell(rk, "Status") == "Stopped"
+                ):
+                    rows_to_evict.append(rk)
+            except Exception:
+                pass
+        for rk in rows_to_evict:
+            try:
+                table.remove_row(rk)
+            except Exception:
+                pass
 
         try:
             table.update_cell(watch_id, "Status", "Running")
