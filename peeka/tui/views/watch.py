@@ -5,6 +5,7 @@ Watch View - Function observation interface.
 import json
 import logging
 import threading
+import time
 from collections import deque
 from typing import TYPE_CHECKING, Any, Deque, Dict, Optional
 
@@ -114,6 +115,14 @@ def _populate_value_node(
                 node.add_leaf(f"[{idx}]: {_format_leaf(val)}")
     else:
         node.add_leaf(_format_leaf(value))
+
+
+def _format_elapsed(seconds: float) -> str:
+    if seconds < 60:
+        return f"{seconds:.0f}s"
+    minutes = int(seconds // 60)
+    secs = int(seconds % 60)
+    return f"{minutes}m{secs:02d}s"
 
 
 class WatchView(Container):
@@ -282,12 +291,16 @@ class WatchView(Container):
 
         # Active watches table
         table = self.query_one("#watch-table", DataTable)
-        table.add_columns(
-            ("ID", "ID"),
-            ("Pattern", "Pattern"),
-            ("Count", "Count"),
-            ("Status", "Status"),
-        )
+        table.add_column("ID", key="ID", width=10)
+        table.add_column("Pattern", key="Pattern", width=24)
+        table.add_column("Status", key="Status", width=10)
+        table.add_column("Obs", key="Obs", width=5)
+        table.add_column("Running Time", key="Running Time", width=12)
+        table.add_column("Errors", key="Errors", width=7)
+        table.add_column("Last ms", key="Last ms", width=10)
+        table.add_column("Async", key="Async", width=6)
+        table.add_column("Backend", key="Backend", width=14)
+        table.add_column("Runtime", key="Runtime", width=10)
         table.cursor_type = "row"
 
         watch_list = self.query_one("#watch-list", Vertical)
@@ -566,13 +579,42 @@ class WatchView(Container):
             self.app.notify("No watch_id returned", severity="error")
             return
 
+        runtime_meta = response.get("runtime_meta") or {}
+        backend = runtime_meta.get("backend", "—") if runtime_meta else "—"
+        runtime = runtime_meta.get("gevent_state", "—") if runtime_meta else "—"
+        is_async = response.get("target", {}).get("is_coroutine_function", False)
+        async_str = "✦" if is_async else "—"
+
         table = self.query_one("#watch-table", DataTable)
-        table.add_row(watch_id[:8], pattern, "0", "Active", key=watch_id)
+        for wid, info in list(self._active_watches.items()):
+            if info.get("pattern") == pattern:
+                try:
+                    if table.get_cell(wid, "Status") == "Stopped":
+                        table.remove_row(wid)
+                except Exception:
+                    pass
+
+        try:
+            table.update_cell(watch_id, "Status", "Running")
+            table.update_cell(watch_id, "Backend", backend)
+            table.update_cell(watch_id, "Runtime", runtime)
+            table.update_cell(watch_id, "Async", async_str)
+        except Exception:
+            table.add_row(
+                watch_id[:8], pattern, "Running", "0",
+                "0s", "0", "—", async_str, backend, runtime,
+                key=watch_id,
+            )
 
         self._active_watches[watch_id] = {
             "pattern": pattern,
             "count": 0,
             "worker": None,
+            "start_time": time.time(),
+            "errors": 0,
+            "async_fn": is_async,
+            "backend": backend,
+            "runtime": runtime,
         }
 
         worker = self.run_worker(
@@ -671,12 +713,23 @@ class WatchView(Container):
         if self._auto_follow:
             obs_table.move_cursor(row=obs_table.row_count - 1, animate=False)
 
-        # Update active watches table count
         watch_table = self.query_one("#watch-table", DataTable)
-        try:
-            watch_table.update_cell(watch_id, "Count", str(count))
-        except Exception:
-            pass
+        info = self._active_watches.get(watch_id, {})
+        if info:
+            cost = observation.get("cost", 0) or 0
+            success = observation.get("success", True)
+            if not success:
+                info["errors"] += 1
+            last_ms = f"{float(cost):.1f}ms"
+            elapsed = time.time() - info.get("start_time", time.time())
+            running_time_str = _format_elapsed(elapsed)
+            try:
+                watch_table.update_cell(watch_id, "Obs", str(count))
+                watch_table.update_cell(watch_id, "Running Time", running_time_str)
+                watch_table.update_cell(watch_id, "Errors", str(info["errors"]))
+                watch_table.update_cell(watch_id, "Last ms", last_ms)
+            except Exception:
+                pass
 
         # Auto-show detail for latest observation only if following
         if self._auto_follow:
@@ -730,9 +783,12 @@ class WatchView(Container):
             except Exception:
                 pass
 
-        self._active_watches.clear()
-
         table = self.query_one("#watch-table", DataTable)
-        table.clear()
+        for watch_id in self._active_watches:
+            try:
+                table.update_cell(watch_id, "Status", "Stopped")
+            except Exception:
+                pass
+        self._active_watches.clear()
 
         self.app.notify(f"Stopped {stopped_count} watch(es)", severity="information")
