@@ -2881,3 +2881,186 @@ class TestTraceView:
 
             obs_table = trace_view.query_one("#trace-obs-table", DataTable)
             assert obs_table.get_cell("module.func", "Errors") == "1"
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_highlight_observation_node_updates_stats_with_new_fields(self, mock_client_factory):
+        client = mock_client_factory(
+            responses={"trace": {"status": "success", "watch_id": "trace_001"}}
+        )
+        client.connect()
+
+        obs_data = {
+            "watch_id": "trace_001",
+            "func_name": "calculator.compute",
+            "total_duration_ms": 20.5,
+            "self_time_ms": 0.3,
+            "callee_count": 1,
+            "node_count": 2,
+            "_count": 1,
+            "timestamp": 1752096181.5,
+            "thread_id": 12345,
+            "thread_name": "MainThread",
+            "call_tree": []
+        }
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(client)
+            trace_view._selected_pattern = "calculator.compute"
+            trace_view._observations_by_pattern["calculator.compute"] = [obs_data]
+
+            trace_view._build_observation_tree("calculator.compute")
+            await pilot.pause()
+
+            tree = trace_view.query_one("#call-tree", Tree)
+            obs_node = next(
+                n for n in tree.root.children if n.data and n.data.get("type") == "observation"
+            )
+            event = Tree.NodeHighlighted(obs_node)
+            trace_view.on_tree_node_highlighted(event)
+            await pilot.pause()
+
+            stats = trace_view.query_one("#trace-stats", Static)
+            stats_text = str(stats.render())
+
+            assert "Timestamp:" in stats_text
+            assert "Thread:" in stats_text
+
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_highlight_callee_node_updates_stats_with_avg(self, mock_client_factory):
+        client = mock_client_factory(
+            responses={"trace": {"status": "success", "watch_id": "trace_001"}}
+        )
+        client.connect()
+
+        callee_data = {
+            "function": "examples.Calculator.add",
+            "filename": "calculator.py",
+            "lineno": 42,
+            "count": 3,
+            "total_ms": 5.0,
+            "min_ms": 1.0,
+            "max_ms": 9.0,
+        }
+        obs_data = {
+            "watch_id": "trace_001",
+            "func_name": "__main__.Calculator.calculate",
+            "total_duration_ms": 20.5,
+            "self_time_ms": 0.3,
+            "callee_count": 1,
+            "node_count": 2,
+            "_count": 1,
+            "timestamp": 1752096181.5,
+            "thread_id": 12345,
+            "thread_name": "MainThread",
+            "call_tree": [callee_data],
+        }
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(client)
+            trace_view._selected_pattern = "__main__.Calculator.calculate"
+            trace_view._observations_by_pattern["__main__.Calculator.calculate"] = [obs_data]
+
+            trace_view._build_observation_tree("__main__.Calculator.calculate")
+            await pilot.pause()
+
+            tree = trace_view.query_one("#call-tree", Tree)
+            obs_node = next(
+                n for n in tree.root.children if n.data and n.data.get("type") == "observation"
+            )
+            callee_node = next(
+                n for n in obs_node.children if n.data and n.data.get("type") == "callee"
+            )
+            event = Tree.NodeHighlighted(callee_node)
+            trace_view.on_tree_node_highlighted(event)
+            await pilot.pause()
+
+            stats = trace_view.query_one("#trace-stats", Static)
+            stats_text = str(stats.render())
+
+            assert "Avg:" in stats_text
+
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_highlight_aggregated_callee_node_updates_stats(self, mock_client_factory):
+        client = mock_client_factory(
+            responses={"trace": {"status": "success", "watch_id": "trace_001"}}
+        )
+        client.connect()
+
+        callee_data = {
+            "function": "examples.Calculator.add",
+            "filename": "calculator.py",
+            "lineno": 42,
+            "count": 3,
+            "total_ms": 5.0,
+            "min_ms": 1.0,
+            "max_ms": 9.0,
+        }
+        obs_data = {
+            "watch_id": "trace_001",
+            "func_name": "__main__.Calculator.calculate",
+            "total_duration_ms": 20.5,
+            "self_time_ms": 0.3,
+            "callee_count": 1,
+            "node_count": 2,
+            "_count": 1,
+            "timestamp": 1752096181.5,
+            "thread_id": 12345,
+            "thread_name": "MainThread",
+            "call_tree": [callee_data],
+        }
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(client)
+            trace_view._selected_pattern = "__main__.Calculator.calculate"
+            trace_view._observations_by_pattern["__main__.Calculator.calculate"] = [obs_data]
+
+            # Build aggregated tree
+            trace_view._build_observation_tree("__main__.Calculator.calculate")
+            await pilot.pause()
+
+            tree = trace_view.query_one("#call-tree", Tree)
+            # The root is Pattern node, next is AggregatedRoot ("Aggregated Call Tree"), then AggregatedCallee
+            aggregated_node = next(
+                n for n in tree.root.children if n.data and n.data.get("type") == "aggregated"
+            )
+            agg_callee_node = next(
+                n for n in aggregated_node.children if n.data and n.data.get("type") == "aggregated_callee"
+            )
+            
+            event = Tree.NodeHighlighted(agg_callee_node)
+            trace_view.on_tree_node_highlighted(event)
+            await pilot.pause()
+
+            stats = trace_view.query_one("#trace-stats", Static)
+            stats_text = str(stats.render())
+
+            assert "Aggregated Callee" in stats_text
