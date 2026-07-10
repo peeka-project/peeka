@@ -612,6 +612,79 @@ class TestTraceView:
 
     @pytest.mark.asyncio
     @pytest.mark.tui
+    async def test_observation_stats_shows_timestamp_and_thread(self, mock_client_factory):
+        client = mock_client_factory()
+        client.connect()
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(client)
+            
+            obs_data = {
+                "watch_id": "trace_001",
+                "func_name": "calculator.compute",
+                "total_duration_ms": 10.0,
+                "self_time_ms": 0.0,
+                "callee_count": 0,
+                "node_count": 0,
+                "_count": 1,
+                "timestamp": 1752096181.5,
+                "thread_id": 12345,
+                "thread_name": "MainThread",
+                "call_tree": [],
+            }
+            trace_view._update_stats_panel(obs_data)
+            await pilot.pause()
+
+            stats = trace_view.query_one("#trace-stats", Static)
+            stats_text = str(stats.render())
+            
+            assert "2025-" in stats_text or "2026-" in stats_text
+            assert "Thread: MainThread (12345)" in stats_text
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_observation_stats_handles_missing_timestamp_and_thread(self, mock_client_factory):
+        client = mock_client_factory()
+        client.connect()
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(client)
+            
+            obs_data = {
+                "watch_id": "trace_001",
+                "func_name": "calculator.compute",
+                "total_duration_ms": 10.0,
+                "self_time_ms": 0.0,
+                "callee_count": 0,
+                "node_count": 0,
+                "_count": 1,
+                "call_tree": [],
+            }
+            trace_view._update_stats_panel(obs_data)
+            await pilot.pause()
+
+            stats = trace_view.query_one("#trace-stats", Static)
+            stats_text = str(stats.render())
+            
+            assert "Timestamp: -" in stats_text
+            assert "Thread: -" in stats_text
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
     async def test_trace_error_response(self, mock_client_factory):
         """Mock returns error, verify error shown and no worker started."""
         client = mock_client_factory(
@@ -901,6 +974,9 @@ class TestTraceView:
             assert "Backend: wrapper_only" in stats_text
             assert "Backend: profiler (full)" not in stats_text
             assert "Gevent: patched" in stats_text
+            assert "Runtime Meta:" in stats_text
+            assert "effective_backend: wrapper_only" in stats_text
+            assert "downgraded: True" in stats_text
 
         stream_client_no_meta = mock_client_factory(
             observations=[
@@ -940,6 +1016,51 @@ class TestTraceView:
             stats = trace_view.query_one("#trace-stats", Static)
             stats_text = str(stats.render())
             assert "Backend: profiler (full)" in stats_text
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_observation_stats_shows_full_runtime_meta(self, mock_client_factory):
+        client = mock_client_factory(responses={"trace": {"status": "success", "watch_id": "trace_001"}})
+        client.connect()
+        stream_client = mock_client_factory(
+            observations=[
+                {
+                    "watch_id": "trace_001",
+                    "func_name": "calculator.compute",
+                    "call_tree": [],
+                    "total_duration_ms": 25.5,
+                    "self_time_ms": 0.0,
+                    "callee_count": 0,
+                    "node_count": 2,
+                    "runtime_meta": {
+                        "trace": {
+                            "startup_backend": "settrace",
+                            "effective_backend": "sys_monitoring",
+                            "downgraded": False
+                        }
+                    },
+                }
+            ]
+        )
+        stream_client.connect()
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(pid=12345, session_id="test", socket_path="/tmp/test.sock")
+            await app.push_screen(main_screen)
+            await pilot.pause()
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(client)
+            trace_view._stream_client = stream_client
+            trace_view._selected_pattern = "calculator.compute"
+            trace_view.query_one("#trace-pattern", AutoCompleteInput).value = "calculator.compute"
+            await trace_view._start_trace()
+            await pilot.pause()
+            await pilot.pause()
+            stats = trace_view.query_one("#trace-stats", Static)
+            stats_text = str(stats.render())
+            assert "Runtime Meta:" in stats_text
+            assert "startup_backend: settrace" in stats_text
+            assert "effective_backend: sys_monitoring" in stats_text
 
     @pytest.mark.asyncio
     @pytest.mark.tui
@@ -1668,6 +1789,7 @@ class TestTraceView:
             assert "examples.demo.calculator.add" in stats_text
             assert "Count" in stats_text and "2" in stats_text
             assert "Total" in stats_text and "5.000" in stats_text
+            assert "Avg" in stats_text and "2.500" in stats_text
             assert "Min" in stats_text and "1.000" in stats_text
             assert "Max" in stats_text and "4.000" in stats_text
             assert "calculator.py:42" in stats_text

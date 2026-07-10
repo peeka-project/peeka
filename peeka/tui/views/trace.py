@@ -6,6 +6,7 @@ import logging
 import threading
 import time
 from collections import deque
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Deque, Dict, List, Optional, Tuple
 
 from rich.text import Text
@@ -519,6 +520,7 @@ class TraceView(Container):
         total_ms = callee.get("total_ms", 0.0)
         min_ms = callee.get("min_ms", 0.0)
         max_ms = callee.get("max_ms", 0.0)
+        avg_ms = total_ms / count if count > 0 else 0.0
         filename = callee.get("filename", "")
         lineno = callee.get("lineno", 0)
         location = f"{filename}:{lineno}" if filename else "-"
@@ -529,6 +531,7 @@ class TraceView(Container):
             f"Function: [yellow]{func}[/yellow]\n"
             f"Count: {count}\n"
             f"Total: {total_ms:.3f}ms\n"
+            f"Avg: {avg_ms:.3f}ms\n"
             f"Min: {min_ms:.3f}ms\n"
             f"Max: {max_ms:.3f}ms\n"
             f"Location: {location}\n"
@@ -580,12 +583,30 @@ class TraceView(Container):
         self_ms = obs.get("self_time_ms", 0.0)
         callee_count = obs.get("callee_count", 0)
         node_count = obs.get("node_count", 0)
+
+        timestamp_val = obs.get("timestamp")
+        if timestamp_val is not None:
+            ts_formatted = datetime.fromtimestamp(timestamp_val).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        else:
+            ts_formatted = "-"
+
+        thread_name = obs.get("thread_name")
+        thread_id = obs.get("thread_id")
+        if thread_name and thread_id is not None:
+            thread_formatted = f"{thread_name} ({thread_id})"
+        elif thread_name:
+            thread_formatted = thread_name
+        else:
+            thread_formatted = "-"
+
         stats_text = (
             f"[cyan]Observation #{n}[/cyan]\n"
             f"total_duration_ms: {total_ms:.3f}\n"
             f"self_time_ms: {self_ms:.3f}\n"
             f"callee_count: {callee_count}\n"
             f"node_count: {node_count}\n"
+            f"Timestamp: {ts_formatted}\n"
+            f"Thread: {thread_formatted}\n"
             f"Function: [yellow]{func_name}[/yellow]"
         )
         exception = obs.get("exception")
@@ -609,6 +630,16 @@ class TraceView(Container):
                 backend = runtime_meta.get("backend", "unknown")
                 gevent_state = runtime_meta.get("gevent_state", "unknown")
             stats_text += f"\nBackend: {backend}  Gevent: {gevent_state}"
+            stats_text += "\nRuntime Meta:"
+            for k, v in runtime_meta.items():
+                if isinstance(v, dict):
+                    stats_text += f"\n  {k}:"
+                    for sub_k, sub_v in v.items():
+                        v_str = str(sub_v).replace("[", "\\[").replace("]", "\\]")
+                        stats_text += f"\n    {sub_k}: {v_str}"
+                else:
+                    v_str = str(v).replace("[", "\\[").replace("]", "\\]")
+                    stats_text += f"\n  {k}: {v_str}"
         else:
             stats_text += "\nBackend: profiler (full)"
         stats.update(stats_text)
