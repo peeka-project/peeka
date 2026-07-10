@@ -1313,6 +1313,79 @@ class TestTraceView:
 
     @pytest.mark.asyncio
     @pytest.mark.tui
+    async def test_callee_label_shows_count_suffix(self, mock_client_factory):
+        """Callee label shows (×N) when count != 1, and no suffix when count == 1."""
+        client = mock_client_factory(
+            responses={"trace": {"status": "success", "watch_id": "trace_001"}}
+        )
+        client.connect()
+
+        stream_client = mock_client_factory(
+            observations=[
+                {
+                    "watch_id": "trace_001",
+                    "func_name": "calculator.compute",
+                    "total_duration_ms": 10.0,
+                    "self_time_ms": 0.0,
+                    "callee_count": 2,
+                    "node_count": 2,
+                    "call_tree": [
+                        {
+                            "function": "examples.demo.calculator.add",
+                            "filename": "calculator.py",
+                            "lineno": 42,
+                            "count": 3,
+                            "total_ms": 5.0,
+                            "min_ms": 1.0,
+                            "max_ms": 2.0,
+                        },
+                        {
+                            "function": "examples.demo.calculator.sub",
+                            "filename": "calculator.py",
+                            "lineno": 43,
+                            "count": 1,
+                            "total_ms": 5.0,
+                            "min_ms": 5.0,
+                            "max_ms": 5.0,
+                        }
+                    ],
+                }
+            ]
+        )
+        stream_client.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(client)
+            trace_view._stream_client = stream_client
+            trace_view._selected_pattern = "calculator.compute"
+
+            pattern_input = trace_view.query_one("#trace-pattern", AutoCompleteInput)
+            pattern_input.value = "calculator.compute"
+
+            await trace_view._start_trace()
+            await pilot.pause()
+            await pilot.pause()
+
+            tree = trace_view.query_one("#call-tree", Tree)
+            obs_node = next(n for n in tree.root.children if "obs #" in str(n.label))
+            
+            callee_nodes = list(obs_node.children)
+            label_text_1 = getattr(callee_nodes[0].label, "plain", str(callee_nodes[0].label))
+            label_text_2 = getattr(callee_nodes[1].label, "plain", str(callee_nodes[1].label))
+
+            assert "(×3)" in label_text_1
+            assert "(×" not in label_text_2
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
     async def test_callee_flat_schema_no_children(self, mock_client_factory):
         """call_tree entries use flat schema: function/count/total_ms — no children."""
         client = mock_client_factory(
@@ -1720,12 +1793,95 @@ class TestTraceView:
             )
             agg_root.expand()
             await pilot.pause()
+        agg_node = agg_root.children[0]
+        label_text = str(agg_node.label)
+        assert "pct=" in label_text
+        assert "total=6.000ms" in label_text
+        assert "count=3" not in label_text
+        assert "avg=2.000ms" not in label_text
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_aggregated_callee_label_shows_count_suffix(self, mock_client):
+        mock_client.connect()
+        app = PeekaApp()
+        async with app.run_test(size=(120, 32)) as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+            main_screen.action_switch_tab("trace")
+            await pilot.pause()
+            trace_view = app.screen.query_one("TraceView", TraceView)
+            trace_view.set_client(mock_client)
+            trace_view._selected_pattern = "calculator.compute"
+            trace_view._observations_by_pattern["calculator.compute"] = [
+                {
+                    "_count": i,
+                    "func_name": "calculator.compute",
+                    "total_duration_ms": 10.0,
+                    "self_time_ms": 1.0,
+                    "callee_count": 1,
+                    "node_count": 2,
+                    "call_tree": [
+                        {
+                            "function": "calculator.helper",
+                            "filename": "calc.py",
+                            "lineno": 20,
+                            "count": 1,
+                            "total_ms": 5.0,
+                            "min_ms": 5.0,
+                            "max_ms": 5.0,
+                        }
+                    ],
+                }
+                for i in range(2)
+            ]
+            trace_view._build_observation_tree("calculator.compute")
+            await pilot.pause()
+            tree = app.screen.query_one("#call-tree", Tree)
+            agg_root = next(
+                n for n in tree.root.children if str(n.label) == "Aggregated Callees"
+            )
+            agg_root.expand()
+            await pilot.pause()
             agg_node = agg_root.children[0]
             label_text = str(agg_node.label)
-            assert "pct=" in label_text
-            assert "total=6.000ms" in label_text
-            assert "count=3" not in label_text
-            assert "avg=2.000ms" not in label_text
+            assert "(×2)" in label_text
+            
+            trace_view._observations_by_pattern["calculator.compute"] = [
+                {
+                    "_count": 1,
+                    "func_name": "calculator.compute",
+                    "total_duration_ms": 10.0,
+                    "self_time_ms": 1.0,
+                    "callee_count": 1,
+                    "node_count": 2,
+                    "call_tree": [
+                        {
+                            "function": "calculator.helper",
+                            "filename": "calc.py",
+                            "lineno": 20,
+                            "count": 1,
+                            "total_ms": 5.0,
+                            "min_ms": 5.0,
+                            "max_ms": 5.0,
+                        }
+                    ],
+                }
+            ]
+            tree.clear()
+            trace_view._build_observation_tree("calculator.compute")
+            await pilot.pause()
+            agg_root = next(
+                n for n in tree.root.children if str(n.label) == "Aggregated Callees"
+            )
+            agg_root.expand()
+            await pilot.pause()
+            agg_node = agg_root.children[0]
+            label_text = str(agg_node.label)
+            assert "(×1)" not in label_text
 
     @pytest.mark.asyncio
     @pytest.mark.tui

@@ -416,7 +416,9 @@ class TraceView(Container):
                 else:
                     pct_style = "green"
                 abbr_func = _abbreviate_function_name(func)
-                callee_label = Text(abbr_func)
+                count = callee.get("count", 1)
+                count_suffix = f" (×{count})" if count != 1 else ""
+                callee_label = Text(f"{abbr_func}{count_suffix}")
                 exc = callee.get("exception")
                 if exc:
                     exc_type = _extract_exception_type(exc)
@@ -482,8 +484,10 @@ class TraceView(Container):
             func = agg["function"]
             total = agg["total_ms"]
             abbr_func = _abbreviate_function_name(func)
+            count = agg["count"]
+            count_suffix = f" (×{count})" if count != 1 else ""
             agg_pct = (total / pattern_total_ms * 100.0) if pattern_total_ms > 0 else 0.0
-            label = f"{abbr_func}  pct={agg_pct:.1f}%  total={total:.3f}ms"
+            label = f"{abbr_func}{count_suffix}  pct={agg_pct:.1f}%  total={total:.3f}ms"
             node = aggregate_root.add(label)
             node.data = {"type": "aggregated_callee", "aggregate": agg}
 
