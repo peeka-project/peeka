@@ -458,16 +458,16 @@ class TestWatchView:
             col_keys = {col.key.value for col in obs_table.columns.values()}
             assert col_keys == {
                 "ID", "Pattern", "Status", "Obs", "Running Time",
-                "Errors", "Last ms", "Async", "Backend", "Runtime",
+                "Errors", "Last ms", "Async", "Runtime",
             }
-            assert len(list(obs_table.columns.values())) == 10
+            assert len(list(obs_table.columns.values())) == 9
 
     @pytest.mark.asyncio
     @pytest.mark.tui
-    async def test_backend_runtime_default_dash_when_no_runtime_meta(
+    async def test_runtime_default_dash_when_no_runtime_meta(
         self, mock_client_factory
     ):
-        """Backend and Runtime default to '—' when runtime_meta is absent."""
+        """Runtime defaults to '—' when runtime_meta is absent."""
         client = mock_client_factory(
             responses={"watch": {"status": "success", "watch_id": "w1"}},
         )
@@ -491,7 +491,6 @@ class TestWatchView:
             await pilot.pause()
 
             watch_table = watch_view.query_one("#watch-table", DataTable)
-            assert watch_table.get_cell("w1", "Backend") == "—"
             assert watch_table.get_cell("w1", "Runtime") == "—"
 
     @pytest.mark.asyncio

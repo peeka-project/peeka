@@ -299,7 +299,6 @@ class WatchView(Container):
         table.add_column("Errors", key="Errors", width=7)
         table.add_column("Last ms", key="Last ms", width=10)
         table.add_column("Async", key="Async", width=6)
-        table.add_column("Backend", key="Backend", width=14)
         table.add_column("Runtime", key="Runtime", width=10)
         table.cursor_type = "row"
 
@@ -580,7 +579,6 @@ class WatchView(Container):
             return
 
         runtime_meta = response.get("runtime_meta") or {}
-        backend = runtime_meta.get("backend", "—") if runtime_meta else "—"
         runtime = runtime_meta.get("gevent_state", "—") if runtime_meta else "—"
         is_async = response.get("target", {}).get("is_coroutine_function", False)
         async_str = "✦" if is_async else "—"
@@ -607,13 +605,12 @@ class WatchView(Container):
 
         try:
             table.update_cell(watch_id, "Status", "Running")
-            table.update_cell(watch_id, "Backend", backend)
             table.update_cell(watch_id, "Runtime", runtime)
             table.update_cell(watch_id, "Async", async_str)
         except Exception:
             table.add_row(
                 watch_id[:8], pattern, "Running", "0",
-                "0s", "0", "—", async_str, backend, runtime,
+                "0s", "0", "—", async_str, runtime,
                 key=watch_id,
             )
 
@@ -624,7 +621,6 @@ class WatchView(Container):
             "start_time": time.time(),
             "errors": 0,
             "async_fn": is_async,
-            "backend": backend,
             "runtime": runtime,
         }
 
