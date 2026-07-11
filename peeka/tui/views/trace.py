@@ -250,11 +250,10 @@ class TraceView(Container):
         obs_table.add_column("Obs", key="Obs", width=5)
         obs_table.add_column("Running Time", key="Running Time", width=14)
         obs_table.add_column("Errors", key="Errors", width=7)
-        obs_table.add_column("Last Total", key="Last Total", width=12)
-        obs_table.add_column("Last Self", key="Last Self", width=11)
+        obs_table.add_column("Last (Total/Self)", key="Last (Total/Self)", width=18)
         obs_table.add_column("Callees", key="Callees", width=9)
         obs_table.add_column("Backend", key="Backend", width=16)
-        obs_table.add_column("Runtime", key="Runtime", width=12)
+        obs_table.add_column("Patch", key="Patch", width=12)
         obs_table.cursor_type = "row"
         obs_table.border_title = "Active Traces"
 
@@ -712,12 +711,12 @@ class TraceView(Container):
         try:
             obs_table.update_cell(pattern, "Status", "Running")
             obs_table.update_cell(pattern, "Backend", backend)
-            obs_table.update_cell(pattern, "Runtime", runtime)
+            obs_table.update_cell(pattern, "Patch", runtime)
         except Exception:
             abbr_pattern = _abbreviate_function_name(pattern)
             obs_table.add_row(
                 abbr_pattern, "Running", "0",
-                "0s", "0", "—", "—", "—",
+                "0s", "0", "—", "—",
                 backend, runtime,
                 key=pattern,
             )
@@ -731,6 +730,7 @@ class TraceView(Container):
             "errors": 0,
             "last_total": "—",
             "last_self": "—",
+            "last_combined": "—",
             "last_callees": "—",
             "backend": backend,
             "runtime": runtime,
@@ -822,8 +822,11 @@ class TraceView(Container):
             info = self._active_traces.get(watch_id, {})
             if info:
                 info["errors"] += 1 if observation.get("exception") else 0
-                info["last_total"] = f'{observation.get("total_duration_ms", 0):.1f}ms'
-                info["last_self"] = f'{observation.get("self_time_ms", 0):.1f}ms'
+                total_str = f'{observation.get("total_duration_ms", 0):.1f}ms'
+                self_str = f'{observation.get("self_time_ms", 0):.1f}ms'
+                info["last_total"] = total_str
+                info["last_self"] = self_str
+                info["last_combined"] = f"{total_str} / {self_str}"
                 info["last_callees"] = str(observation.get("callee_count", 0))
                 elapsed = time.time() - info.get("start_time", time.time())
                 running_time_str = _format_elapsed(elapsed)
@@ -831,8 +834,9 @@ class TraceView(Container):
                     obs_table.update_cell(pattern, "Obs", str(count))
                     obs_table.update_cell(pattern, "Running Time", running_time_str)
                     obs_table.update_cell(pattern, "Errors", str(info["errors"]))
-                    obs_table.update_cell(pattern, "Last Total", info["last_total"])
-                    obs_table.update_cell(pattern, "Last Self", info["last_self"])
+                    obs_table.update_cell(
+                        pattern, "Last (Total/Self)", info["last_combined"]
+                    )
                     obs_table.update_cell(pattern, "Callees", info["last_callees"])
                 except Exception:
                     pass

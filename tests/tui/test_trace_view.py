@@ -2471,7 +2471,7 @@ class TestTraceView:
             pattern = "some.func"
             watch_id = "wid_count_test"
             obs_table = trace_view.query_one("#trace-obs-table", DataTable)
-            obs_table.add_row(pattern, "Running", "0", "0s", "0", "—", "—", "—", "—", "—", key=pattern)
+            obs_table.add_row(pattern, "Running", "0", "0s", "0", "—", "—", "—", "—", key=pattern)
             trace_view._active_traces[watch_id] = {
                 "pattern": pattern,
                 "worker": None,
@@ -2479,6 +2479,7 @@ class TestTraceView:
                 "errors": 0,
                 "last_total": "—",
                 "last_self": "—",
+                "last_combined": "—",
                 "last_callees": "—",
                 "backend": "—",
                 "runtime": "—",
@@ -2732,14 +2733,14 @@ class TestTraceView:
             col_keys = {col.key.value for col in obs_table.columns.values()}
             assert col_keys == {
                 "Pattern", "Status", "Obs", "Running Time", "Errors",
-                "Last Total", "Last Self", "Callees", "Backend", "Runtime"
+                "Last (Total/Self)", "Callees", "Backend", "Patch"
             }
-            assert len(list(obs_table.columns.values())) == 10
+            assert len(list(obs_table.columns.values())) == 9
 
     @pytest.mark.asyncio
     @pytest.mark.tui
-    async def test_backend_runtime_populated_from_start_meta(self, mock_client_factory):
-        """Backend and Runtime columns in obs table are populated from the trace start response meta."""
+    async def test_backend_patch_populated_from_start_meta(self, mock_client_factory):
+        """Backend and Patch columns in obs table are populated from the trace start response meta."""
         client = mock_client_factory(
             responses={
                 "trace": {
@@ -2780,12 +2781,12 @@ class TestTraceView:
             obs_table = trace_view.query_one("#trace-obs-table", DataTable)
             assert obs_table.get_cell(pattern, "Pattern") == _abbreviate_function_name(pattern)
             assert obs_table.get_cell(pattern, "Backend") == "wrapper_only"
-            assert obs_table.get_cell(pattern, "Runtime") == "patched"
+            assert obs_table.get_cell(pattern, "Patch") == "patched"
 
     @pytest.mark.asyncio
     @pytest.mark.tui
     async def test_performance_columns_update_after_observation(self, mock_client_factory):
-        """Obs, Last Total, Last Self, Callees columns update correctly after an observation."""
+        """Obs, Last (Total/Self), Callees columns update correctly after an observation."""
         client = mock_client_factory(
             responses={
                 "trace": {
@@ -2830,8 +2831,10 @@ class TestTraceView:
 
             obs_table = trace_view.query_one("#trace-obs-table", DataTable)
             assert obs_table.get_cell("module.func", "Obs") == "1"
-            assert obs_table.get_cell("module.func", "Last Total") == "12.3ms"
-            assert obs_table.get_cell("module.func", "Last Self") == "8.1ms"
+            assert (
+                obs_table.get_cell("module.func", "Last (Total/Self)")
+                == "12.3ms / 8.1ms"
+            )
             assert obs_table.get_cell("module.func", "Callees") == "2"
 
     @pytest.mark.asyncio
