@@ -2471,7 +2471,7 @@ class TestTraceView:
             pattern = "some.func"
             watch_id = "wid_count_test"
             obs_table = trace_view.query_one("#trace-obs-table", DataTable)
-            obs_table.add_row(pattern, "Running", "0", "0s", "0", "—", "—", "—", "—", key=pattern)
+            obs_table.add_row(pattern, "Running", "0", "0s", "0", "—", "—", "—", key=pattern)
             trace_view._active_traces[watch_id] = {
                 "pattern": pattern,
                 "worker": None,
@@ -2481,7 +2481,6 @@ class TestTraceView:
                 "last_self": "—",
                 "last_combined": "—",
                 "last_callees": "—",
-                "backend": "—",
                 "runtime": "—",
             }
 
@@ -2733,14 +2732,14 @@ class TestTraceView:
             col_keys = {col.key.value for col in obs_table.columns.values()}
             assert col_keys == {
                 "Pattern", "Status", "Obs", "Running Time", "Errors",
-                "Last (Total/Self)", "Callees", "Backend", "Patch"
+                "Last (Total/Self)", "Callees", "Patch"
             }
-            assert len(list(obs_table.columns.values())) == 9
+            assert len(list(obs_table.columns.values())) == 8
 
     @pytest.mark.asyncio
     @pytest.mark.tui
-    async def test_backend_patch_populated_from_start_meta(self, mock_client_factory):
-        """Backend and Patch columns in obs table are populated from the trace start response meta."""
+    async def test_patch_populated_from_start_meta(self, mock_client_factory):
+        """Patch column in obs table is populated from the trace start response meta."""
         client = mock_client_factory(
             responses={
                 "trace": {
@@ -2780,7 +2779,6 @@ class TestTraceView:
 
             obs_table = trace_view.query_one("#trace-obs-table", DataTable)
             assert obs_table.get_cell(pattern, "Pattern") == _abbreviate_function_name(pattern)
-            assert obs_table.get_cell(pattern, "Backend") == "wrapper_only"
             assert obs_table.get_cell(pattern, "Patch") == "patched"
 
     @pytest.mark.asyncio

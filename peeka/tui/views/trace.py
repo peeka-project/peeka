@@ -252,7 +252,6 @@ class TraceView(Container):
         obs_table.add_column("Errors", key="Errors", width=7)
         obs_table.add_column("Last (Total/Self)", key="Last (Total/Self)", width=18)
         obs_table.add_column("Callees", key="Callees", width=9)
-        obs_table.add_column("Backend", key="Backend", width=16)
         obs_table.add_column("Patch", key="Patch", width=12)
         obs_table.cursor_type = "row"
         obs_table.border_title = "Active Traces"
@@ -710,14 +709,13 @@ class TraceView(Container):
         obs_table = self.query_one("#trace-obs-table", DataTable)
         try:
             obs_table.update_cell(pattern, "Status", "Running")
-            obs_table.update_cell(pattern, "Backend", backend)
             obs_table.update_cell(pattern, "Patch", runtime)
         except Exception:
             abbr_pattern = _abbreviate_function_name(pattern)
             obs_table.add_row(
                 abbr_pattern, "Running", "0",
                 "0s", "0", "—", "—",
-                backend, runtime,
+                runtime,
                 key=pattern,
             )
         self._observations_by_pattern.setdefault(pattern, [])
