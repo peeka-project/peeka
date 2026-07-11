@@ -714,8 +714,9 @@ class TraceView(Container):
             obs_table.update_cell(pattern, "Backend", backend)
             obs_table.update_cell(pattern, "Runtime", runtime)
         except Exception:
+            abbr_pattern = _abbreviate_function_name(pattern)
             obs_table.add_row(
-                pattern, "Running", "0",
+                abbr_pattern, "Running", "0",
                 "0s", "0", "—", "—", "—",
                 backend, runtime,
                 key=pattern,

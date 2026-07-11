@@ -7,7 +7,7 @@ from textual.widgets import DataTable, Input, Static, Tree
 
 from peeka.tui.app import PeekaApp
 from peeka.tui.screens.main import MainScreen
-from peeka.tui.views.trace import TraceView
+from peeka.tui.views.trace import TraceView, _abbreviate_function_name
 from peeka.tui.widgets.autocomplete_input import AutoCompleteInput
 
 
@@ -2771,14 +2771,16 @@ class TestTraceView:
             trace_view._stream_client = stream_client
 
             pattern_input = trace_view.query_one("#trace-pattern", AutoCompleteInput)
-            pattern_input.value = "module.func"
+            pattern = "examples.demo.calculator.compute"
+            pattern_input.value = pattern
 
             await trace_view._start_trace()
             await pilot.pause()
 
             obs_table = trace_view.query_one("#trace-obs-table", DataTable)
-            assert obs_table.get_cell("module.func", "Backend") == "wrapper_only"
-            assert obs_table.get_cell("module.func", "Runtime") == "patched"
+            assert obs_table.get_cell(pattern, "Pattern") == _abbreviate_function_name(pattern)
+            assert obs_table.get_cell(pattern, "Backend") == "wrapper_only"
+            assert obs_table.get_cell(pattern, "Runtime") == "patched"
 
     @pytest.mark.asyncio
     @pytest.mark.tui
