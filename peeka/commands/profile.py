@@ -3,9 +3,12 @@
 import io
 import json
 import logging
+import threading
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from peeka.commands.resource_owning import CleanupScope, ResourceOwningCommand
+from peeka.commands.top import _PROFILE_REGISTRY
+from peeka.core.profile.exact import ExactProfileSampler
 from peeka.core.profile.models import ProfileConfig
 from peeka.core.profile.processors import ProcessedProfile
 from peeka.core.profile.renderers import (
@@ -14,7 +17,6 @@ from peeka.core.profile.renderers import (
     SpeedscopeRenderer,
     TextRenderer,
 )
-from peeka.commands.top import _PROFILE_REGISTRY
 
 if TYPE_CHECKING:
     from peeka.core.agent import PeekaAgent
@@ -46,6 +48,8 @@ class ProfileCommand(ResourceOwningCommand):
 
     def __init__(self, agent: Optional["PeekaAgent"] = None):
         super().__init__(agent)
+        self._exact_sampler: Optional[ExactProfileSampler] = None
+        self._exact_stop_timer: Optional[threading.Timer] = None
 
     def execute(self, params: Dict[str, Any]) -> Dict[str, Any]:
         try:
@@ -76,6 +80,29 @@ class ProfileCommand(ResourceOwningCommand):
             max_samples=params.get("max_samples", 100000),
         )
         profile_id = _PROFILE_REGISTRY.start(config)
+        if config.backend == "exact":
+            sampler = ExactProfileSampler(
+                profile_id,
+                _PROFILE_REGISTRY,
+                max_events=params.get("max_events", 10000),
+            )
+            capability = sampler.check_capability()
+            if not capability["available"]:
+                _PROFILE_REGISTRY.stop(profile_id)
+                return {
+                    "status": "error",
+                    "error": capability["reason"],
+                    "capability": capability,
+                }
+            sampler.start()
+            self._exact_sampler = sampler
+            if config.duration_ms is not None:
+                self._exact_stop_timer = threading.Timer(
+                    config.duration_ms / 1000.0,
+                    sampler.stop,
+                )
+                self._exact_stop_timer.daemon = True
+                self._exact_stop_timer.start()
         return {"status": "success", "profile_id": profile_id}
 
     def _stop(self, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -83,6 +110,12 @@ class ProfileCommand(ResourceOwningCommand):
         if not profile_id:
             return {"status": "error", "error": "Missing profile_id"}
         try:
+            if self._exact_sampler is not None:
+                self._exact_sampler.stop()
+                self._exact_sampler = None
+            if self._exact_stop_timer is not None:
+                self._exact_stop_timer.cancel()
+                self._exact_stop_timer = None
             session = _PROFILE_REGISTRY.stop(profile_id)
             return {
                 "status": "success",
@@ -168,6 +201,21 @@ class ProfileCommand(ResourceOwningCommand):
         sessions = _PROFILE_REGISTRY.list_sessions()
         stopped: List[str] = []
         errors: List[Dict[str, Any]] = []
+
+        if self._exact_sampler is not None:
+            try:
+                self._exact_sampler.stop()
+                self._exact_sampler = None
+                if self._exact_stop_timer is not None:
+                    self._exact_stop_timer.cancel()
+                    self._exact_stop_timer = None
+            except Exception as exc:
+                logger.error(
+                    "[peeka Profile] exact sampler cleanup failed (%s)",
+                    reason,
+                    exc_info=True,
+                )
+                errors.append({"profile_id": "exact", "error": str(exc)})
 
         for session in sessions:
             if session.status != "running":
