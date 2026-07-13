@@ -16,11 +16,12 @@ from peeka.tui.views.inspect import InspectView
 from peeka.tui.views.logger import LoggerView
 from peeka.tui.views.memory import MemoryView
 from peeka.tui.views.monitor import MonitorView
+from peeka.tui.views.profile import ProfileView
 from peeka.tui.views.stack import StackView
-from peeka.tui.views.trace import TraceView
-from peeka.tui.views.watch import WatchView
 from peeka.tui.views.thread import ThreadView
 from peeka.tui.views.top import TopView
+from peeka.tui.views.trace import TraceView
+from peeka.tui.views.watch import WatchView
 
 
 class MainScreen(Screen):
@@ -38,6 +39,7 @@ class MainScreen(Screen):
         Binding("9", "switch_tab('threads')", "Threads"),
         Binding("escape", "go_back", "Back", priority=True),
         Binding("0", "switch_tab('top')", "Top"),
+        Binding("p", "switch_tab('profile')", "Profile"),
         Binding("q", "go_back", "Back"),
     ]
 
@@ -52,6 +54,7 @@ class MainScreen(Screen):
         "inspect": InspectView,
         "threads": ThreadView,
         "top": TopView,
+        "profile": ProfileView,
     }
 
     def __init__(self, pid: int, session_id: str, socket_path: str) -> None:
@@ -90,6 +93,8 @@ class MainScreen(Screen):
                     yield ThreadView(self.pid)
                 with TabPane("[bold underline]0[/]·Top", id="top"):
                     yield TopView(self.pid)
+                with TabPane("[bold underline]P[/]·Profile", id="profile"):
+                    yield ProfileView(self.pid)
         yield Footer()
 
     async def on_mount(self) -> None:
