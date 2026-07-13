@@ -10,6 +10,7 @@ from peeka.cli.parsers.consumers import add_consumer_parsers
 from peeka.cli.parsers.dx import add_dx_parsers
 from peeka.cli.parsers.jobs import add_job_parsers
 from peeka.cli.parsers.observe import add_observe_parsers
+from peeka.cli.parsers.profile import add_profile_parser
 from peeka.cli.parsers.probes import add_probe_parsers
 from peeka.cli.parsers.run import add_run_parser
 from peeka.cli.parsers.runtime import add_runtime_parsers
@@ -47,6 +48,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_dx_parsers(subparsers)
     add_job_parsers(subparsers)
     add_probe_parsers(subparsers)
+    add_profile_parser(subparsers)
 
     from peeka.cli.handlers import attach
     from peeka.cli.handlers import clients
@@ -54,6 +56,7 @@ def build_parser() -> argparse.ArgumentParser:
     from peeka.cli.handlers import dx
     from peeka.cli.handlers import jobs
     from peeka.cli.handlers import observe
+    from peeka.cli.handlers import profile
     from peeka.cli.handlers import probes
     from peeka.cli.handlers import run
     from peeka.cli.handlers import runtime
@@ -82,5 +85,6 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.choices["dx"].set_defaults(handler=dx.cmd_dx)
     subparsers.choices["job"].set_defaults(handler=jobs.cmd_job)
     subparsers.choices["probe"].set_defaults(handler=probes.cmd_probe)
+    subparsers.choices["profile"].set_defaults(handler=profile.handle_profile)
 
     return parser
