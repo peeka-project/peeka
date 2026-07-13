@@ -215,9 +215,16 @@ class TopView(Container):
         total_samples = snapshot.get("total_samples", 0)
         interval = snapshot.get("sample_interval", 0.01)
         interval_ms = interval * 1000
-        header.update(
-            f"Profiling... | Samples: {total_samples} | Interval: {interval_ms:.1f}ms"
-        )
+        profile_id = snapshot.get("profile_id", "")
+
+        if profile_id:
+            header.update(
+                f"Profiling... \\[{profile_id}] | Samples: {total_samples} | Interval: {interval_ms:.1f}ms"
+            )
+        else:
+            header.update(
+                f"Profiling... | Samples: {total_samples} | Interval: {interval_ms:.1f}ms"
+            )
 
         # Update table
         table = self.query_one("#top-table", DataTable)

@@ -422,6 +422,44 @@ class TestTopViewDataFlow:
 
     @pytest.mark.asyncio
     @pytest.mark.tui
+    async def test_update_table_with_profile_id_shows_in_header(self, mock_client_factory):
+        """_update_table with profile_id populates the header."""
+        client = mock_client_factory(
+            responses={
+                "top": {"status": "success", "top_id": "top_005_b"},
+            }
+        )
+        client.connect()
+
+        app = PeekaApp()
+        async with app.run_test(size=(120, 40)) as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            main_screen.action_switch_tab("top")
+            await pilot.pause()
+
+            top_view = app.screen.query_one(TopView)
+            
+            snapshot = {
+                "total_samples": 420,
+                "sample_interval": 0.01,
+                "profile_id": "prof_abc123",
+                "functions": [],
+            }
+            top_view._update_table(snapshot)
+            await pilot.pause()
+
+            header = top_view.query_one("#top-header", Static)
+            header_text = header.render().plain
+            assert "[prof_abc123]" in header_text
+            assert "420" in header_text
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
     async def test_reset_stats_sends_command_and_clears_table(self, mock_client_factory):
         """action_reset_stats sends reset command and clears table."""
         client = mock_client_factory(
