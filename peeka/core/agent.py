@@ -363,6 +363,7 @@ class PeekaAgent(
         "thread": ("peeka.commands.thread", "ThreadCommand"),
         "top": ("peeka.commands.top", "TopCommand"),
         "patch-status": ("peeka.commands.patch_status", "PatchStatusCommand"),
+        "profile": ("peeka.commands.profile", "ProfileCommand"),
     }
 
     def __init__(
