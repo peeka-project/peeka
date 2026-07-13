@@ -19,6 +19,7 @@ from peeka.tui.views.monitor import MonitorView
 from peeka.tui.views.profile import ProfileView
 from peeka.tui.views.stack import StackView
 from peeka.tui.views.thread import ThreadView
+from peeka.tui.views.timeline import TimelineView
 from peeka.tui.views.top import TopView
 from peeka.tui.views.trace import TraceView
 from peeka.tui.views.watch import WatchView
@@ -40,6 +41,7 @@ class MainScreen(Screen):
         Binding("escape", "go_back", "Back", priority=True),
         Binding("0", "switch_tab('top')", "Top"),
         Binding("p", "switch_tab('profile')", "Profile"),
+        Binding("t", "switch_tab('timeline')", "Timeline"),
         Binding("q", "go_back", "Back"),
     ]
 
@@ -55,6 +57,7 @@ class MainScreen(Screen):
         "threads": ThreadView,
         "top": TopView,
         "profile": ProfileView,
+        "timeline": TimelineView,
     }
 
     def __init__(self, pid: int, session_id: str, socket_path: str) -> None:
@@ -95,6 +98,8 @@ class MainScreen(Screen):
                     yield TopView(self.pid)
                 with TabPane("[bold underline]P[/]·Profile", id="profile"):
                     yield ProfileView(self.pid)
+                with TabPane("[bold underline]T[/]·Timeline (Experimental)", id="timeline"):
+                    yield TimelineView(self.pid)
         yield Footer()
 
     async def on_mount(self) -> None:

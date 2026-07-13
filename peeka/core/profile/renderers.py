@@ -176,6 +176,18 @@ class SpeedscopeRenderer(ProfileRenderer):
         return float(interval_ms)
 
 
+class TimelineRenderer(ProfileRenderer):
+    """Render timeline data as Chrome trace events by reusing PerfettoRenderer."""
+
+    def render(self, processed: "ProcessedProfile", output: TextIO) -> None:
+        if processed.timeline is None:
+            from peeka.core.profile.processors import BuildTimelineProcessor
+            temp_processed = BuildTimelineProcessor().process(processed.session)
+            processed.timeline = temp_processed.timeline
+
+        PerfettoRenderer().render(processed, output)
+
+
 class PerfettoRenderer(ProfileRenderer):
     """Render processed profiles as Chrome trace events for Perfetto."""
 

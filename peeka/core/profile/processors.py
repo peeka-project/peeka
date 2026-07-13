@@ -241,6 +241,38 @@ class BuildFlamegraphTreeProcessor(ProfileProcessor):
         return processed
 
 
+class BuildTimelineProcessor(ProfileProcessor):
+    """Build timeline lanes grouped by thread ID."""
+
+    def process(self, session: ProfileSession) -> ProcessedProfile:
+        """Return ProcessedProfile with timeline set to list of lane dicts."""
+        lanes: Dict[int, Dict[str, Any]] = {}
+        for sample in session.samples:
+            if not sample.stack:
+                continue
+
+            if sample.thread_id not in lanes:
+                lanes[sample.thread_id] = {
+                    "thread_id": sample.thread_id,
+                    "thread_name": sample.thread_name,
+                    "events": [],
+                }
+
+            lanes[sample.thread_id]["events"].append({
+                "timestamp": sample.timestamp,
+                "name": sample.stack[-1].name,
+                "stack_depth": len(sample.stack),
+            })
+
+        processed = ProcessedProfile(
+            profile_id=session.profile_id,
+            backend=session.backend,
+            session=session,
+        )
+        processed.timeline = list(lanes.values())
+        return processed
+
+
 def _frame_key(name: str, filename: str, lineno: int) -> str:
     return f"{name}::{filename}::{lineno}"
 
@@ -249,6 +281,7 @@ __all__ = [
     "AggregateRepeatedCallsProcessor",
     "BuildCallTreeProcessor",
     "BuildFlamegraphTreeProcessor",
+    "BuildTimelineProcessor",
     "BuildTopListProcessor",
     "ProcessedProfile",
     "ProcessorContext",
