@@ -45,6 +45,7 @@ DXSectionType = Literal[
     "note",
     "error",
     "summary",
+    "profile",
 ]
 
 

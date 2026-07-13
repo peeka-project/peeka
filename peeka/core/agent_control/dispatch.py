@@ -85,6 +85,7 @@ class AgentCommandDispatchMixin:
                 "list": self._handle_dx_list,
                 "status": self._handle_dx_status,
                 "add": self._handle_dx_add,
+                "add_profile": self._handle_dx_add_profile,
                 "summary": self._handle_dx_summary,
                 "export": self._handle_dx_export,
                 "close": self._handle_dx_close,

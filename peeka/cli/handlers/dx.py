@@ -28,6 +28,8 @@ def cmd_dx(args) -> int:
             return cmd_dx_export(args)
         elif args.dx_action == "close":
             return cmd_dx_close(args)
+        elif args.dx_action == "add-profile":
+            return cmd_dx_add_profile(args)
         else:
             OutputFormatter.error("dx", error=f"Unknown dx action: {args.dx_action}")
             return 1
@@ -146,6 +148,26 @@ def cmd_dx_close(args) -> int:
         render_success=_render_dx_close_success,
         render_error=_render_dx_close_error,
         error_exit_codes={"DX_CASE_NOT_FOUND": 2},
+    )
+
+
+def cmd_dx_add_profile(args) -> int:
+    return run_command(
+        args,
+        "dx.add_profile",
+        build_command=lambda a: {
+            "type": "dx",
+            "action": "add_profile",
+            "dx_case_id": a.dx_case,
+            "profile_id": a.profile_id,
+        },
+        render_success=_render_dx_add_profile_success,
+        render_error=_render_dx_add_profile_error,
+        error_exit_codes={
+            "DX_CASE_INVALID": 2,
+            "DX_CASE_NOT_FOUND": 2,
+            "PROFILE_NOT_FOUND": 2,
+        },
     )
 
 
@@ -283,5 +305,24 @@ def _render_dx_close_error(args, response, message, error_code) -> None:
     message = _response_error_message(response, message)
     if args.format == "json":
         OutputFormatter.error("dx.close", error=message, error_code=error_code)
+    else:
+        print(f"{error_code}: {message}", file=sys.stderr)
+
+
+def _render_dx_add_profile_success(args, response) -> None:
+    data = response.get("data", {})
+    if args.format == "json":
+        OutputFormatter.success("dx.add_profile", data=data)
+    else:
+        print(
+            f"Added profile section {data.get('section_id')} to DX case {data.get('dx_case_id')}",
+            file=sys.stderr,
+        )
+
+
+def _render_dx_add_profile_error(args, response, message, error_code) -> None:
+    message = _response_error_message(response, message)
+    if args.format == "json":
+        OutputFormatter.error("dx.add_profile", error=message, error_code=error_code)
     else:
         print(f"{error_code}: {message}", file=sys.stderr)

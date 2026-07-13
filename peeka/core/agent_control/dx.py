@@ -270,6 +270,58 @@ class AgentDXControlMixin:
             result["traceback"] = traceback.format_exc()
             return result
 
+    def _handle_dx_add_profile(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle dx.add_profile command."""
+        try:
+            from peeka.commands.top import _PROFILE_REGISTRY
+
+            dx_case_id = command.get("dx_case_id", "")
+            profile_id = command.get("profile_id", "")
+            if not dx_case_id or not profile_id:
+                return self._dx_error(
+                    "DX_CASE_INVALID",
+                    "dx_case_id and profile_id are required",
+                )
+
+            dx_case = self._get_dx_case_registry().get(dx_case_id)
+            if dx_case is None:
+                return self._dx_error(
+                    "DX_CASE_NOT_FOUND",
+                    f"DX case {dx_case_id!r} not found",
+                )
+
+            session = _PROFILE_REGISTRY.get_session(profile_id)
+            if session is None:
+                return self._dx_error(
+                    "PROFILE_NOT_FOUND",
+                    f"Profile session {profile_id!r} not found",
+                )
+
+            section = self._get_dx_case_registry().add_section(
+                dx_case_id,
+                section_type="profile",
+                title=f"Profile {profile_id}",
+                payload={
+                    "profile_id": profile_id,
+                    "backend": session.backend,
+                    "status": session.status,
+                    "sample_count": len(session.samples),
+                    "summary": session.summary.to_dict() if session.summary else {},
+                },
+            )
+            if section is None:
+                return self._dx_error(
+                    "DX_CASE_NOT_FOUND",
+                    f"DX case {dx_case_id!r} not found or cannot be modified",
+                )
+            return self._dx_success(
+                {"dx_case_id": dx_case_id, "section_id": section.section_id}
+            )
+        except Exception as e:
+            result = self._dx_error("COMMAND_EXECUTION_ERROR", str(e))
+            result["traceback"] = traceback.format_exc()
+            return result
+
     def _handle_dx_close(self, command: Dict[str, Any]) -> Dict[str, Any]:
         """Handle dx.close command."""
         try:

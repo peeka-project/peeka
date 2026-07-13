@@ -88,6 +88,7 @@ def add_dx_parsers(subparsers: Any) -> None:
             "note",
             "error",
             "summary",
+            "profile",
         ],
         help="Section type",
     )
@@ -199,4 +200,21 @@ def add_dx_parsers(subparsers: Any) -> None:
         type=str,
         default=None,
         help="Optional owning client session ID for access control",
+    )
+
+    dx_add_profile_parser = dx_subparsers.add_parser(
+        "add-profile", help="Attach a profile session artifact to a DX case"
+    )
+    dx_add_profile_parser.add_argument(
+        "--dx-case", type=str, required=True, help="DX case ID"
+    )
+    dx_add_profile_parser.add_argument(
+        "--profile-id", type=str, required=True, help="Profile session ID"
+    )
+    dx_add_profile_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["json", "table"],
+        default="table",
+        help="Output format (default: table)",
     )
