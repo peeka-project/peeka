@@ -31,6 +31,11 @@ def build_top_run_parser(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Disable peeka thread filtering (default: filter enabled)",
     )
+    parser.add_argument(
+        "--keep-profile",
+        action="store_true",
+        help="Keep the transient ProfileSession after top finishes (default: cleanup)",
+    )
 
 
 def add_runtime_parsers(subparsers: Any) -> None:

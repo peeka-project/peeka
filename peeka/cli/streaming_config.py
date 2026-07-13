@@ -122,6 +122,7 @@ def _top_command(args: Any, client_session_id: str) -> Dict[str, Any]:
         "interval": args.interval,
         "stream": True,
         "filter_peeka": not args.no_filter_peeka,
+        "keep_profile": args.keep_profile,
     }
 
 

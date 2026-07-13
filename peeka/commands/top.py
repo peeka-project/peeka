@@ -82,6 +82,7 @@ class TopCommand(ResourceOwningCommand):
         )
         self._client_session_id: Optional[str] = None
         self._job_id: Optional[str] = None
+        self._keep_profile: bool = False
         self._greenlet_switch_counts: Dict[int, int] = {}
         self._greenlet_throw_count: int = 0
 
@@ -162,6 +163,7 @@ class TopCommand(ResourceOwningCommand):
             self._filter_peeka = params.get("filter_peeka", True)
             self._client_session_id = params.get("client_session_id")
             self._job_id = params.get("job_id")
+            self._keep_profile = params.get("keep_profile", False)
 
             # Reset state
             self._stats.clear()
@@ -246,6 +248,8 @@ class TopCommand(ResourceOwningCommand):
         snapshot = self._build_snapshot()
         if self._profile_id:
             _ = _PROFILE_REGISTRY.stop(self._profile_id)
+            if not self._keep_profile:
+                _PROFILE_REGISTRY.cleanup(max_sessions=0)
 
         # Clean up
         with self._lock:
@@ -588,11 +592,13 @@ class TopCommand(ResourceOwningCommand):
             functions.sort(key=lambda x: x["own_pct"], reverse=True)
             greenlet_switch_counts = dict(self._greenlet_switch_counts)
             greenlet_throw_count = self._greenlet_throw_count
+            profile_id = self._profile_id
+            keep_profile = self._keep_profile
 
         snapshot = {
             "type": "top_snapshot",
             "top_id": top_id,
-            "profile_id": top_id,
+            "profile_id": profile_id,
             "backend": self._meta.get("backend", "sampling"),
             "total_samples": total_samples,
             "sample_count": total_samples,
@@ -613,6 +619,8 @@ class TopCommand(ResourceOwningCommand):
                 },
                 "throw_count": greenlet_throw_count,
             }
+        if keep_profile:
+            snapshot["keep_profile"] = True
         return snapshot
 
     def _is_peeka_thread(self, thread_id: int, frame) -> bool:

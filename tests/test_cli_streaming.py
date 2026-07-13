@@ -66,6 +66,7 @@ def _top_args(n: int) -> SimpleNamespace:
         interval=1,
         cycles=n,
         no_filter_peeka=False,
+        keep_profile=False,
     )
 
 
