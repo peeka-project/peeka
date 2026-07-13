@@ -410,6 +410,7 @@ def _top_args(cycles: int) -> SimpleNamespace:
         interval=1,
         cycles=cycles,
         no_filter_peeka=False,
+        keep_profile=False,
     )
 
 

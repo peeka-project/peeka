@@ -4,7 +4,7 @@ import io
 import json
 import logging
 import threading
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, ClassVar, Dict, List, Optional, TYPE_CHECKING
 
 from peeka.commands.resource_owning import CleanupScope, ResourceOwningCommand
 from peeka.commands.top import _PROFILE_REGISTRY
@@ -45,6 +45,8 @@ class ProfileCommand(ResourceOwningCommand):
 
     is_resource_owner: bool = True
     cleanup_scope: CleanupScope = CleanupScope.DETACH_ONLY
+    category: ClassVar[str] = "snapshot"
+    allows_concurrent: ClassVar[bool] = False
 
     def __init__(self, agent: Optional["PeekaAgent"] = None):
         super().__init__(agent)

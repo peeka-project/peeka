@@ -82,7 +82,7 @@ class TextRenderer(ProfileRenderer):
         for item in top_list:
             name = str(item.get("name", ""))
             filename = item.get("filename")
-            line = item.get("line")
+            line = item.get("lineno") or item.get("line")
             if filename is not None and line is not None:
                 name = f"{name} ({filename}:{line})"
             rows.append([
