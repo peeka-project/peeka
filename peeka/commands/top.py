@@ -5,11 +5,14 @@ Top Command - Function-level sampling profiler
 import logging
 import os
 import sys
+import time
 import uuid
 from typing import cast
-from typing import Any, Callable, ClassVar, Dict, Optional, Set, TYPE_CHECKING
+from typing import Any, Callable, ClassVar, Dict, List, Optional, Set, TYPE_CHECKING
 
 from peeka.commands.resource_owning import CleanupScope, ResourceOwningCommand
+from peeka.core.profile.models import ProfileConfig, SampleRecord, StackRecord
+from peeka.core.profile.registry import ProfileRegistry
 from peeka.core.probes import ProbeContext
 from peeka.core.runtime import primitives as _rpl
 from peeka.core.runtime.compat import (
@@ -24,6 +27,7 @@ if TYPE_CHECKING:
     from peeka.core.agent import PeekaAgent
 
 logger = logging.getLogger(__name__)
+_PROFILE_REGISTRY: ProfileRegistry = ProfileRegistry()
 
 
 class _NativeThreadHandle:
@@ -69,6 +73,7 @@ class TopCommand(ResourceOwningCommand):
 
         # Configuration
         self._top_id: Optional[str] = None
+        self._profile_id: Optional[str] = None
         self._interval: float = 0.01  # 10ms default
         self._stream: bool = False
         self._filter_peeka: bool = True
@@ -129,6 +134,7 @@ class TopCommand(ResourceOwningCommand):
                 return {
                     "status": "success",
                     "top_id": self._top_id,
+                    "profile_id": self._profile_id,
                     "message": "Profiler already running",
                     "meta": dict(self._meta),
                 }
@@ -177,6 +183,14 @@ class TopCommand(ResourceOwningCommand):
                 target=sampling_target,
                 name=f"peeka-top-{self._top_id}",
             )
+            self._profile_id = _PROFILE_REGISTRY.start(
+                ProfileConfig(
+                    backend="sampling",
+                    interval_ms=int(self._interval * 1000),
+                    duration_ms=None,
+                    max_samples=100000,
+                )
+            )
 
             # Start observation thread if streaming
             if self._stream and self.agent:
@@ -191,6 +205,7 @@ class TopCommand(ResourceOwningCommand):
             return {
                 "status": "success",
                 "top_id": self._top_id,
+                "profile_id": self._profile_id,
                 "interval": self._interval,
                 "stream": self._stream,
                 "meta": dict(self._meta),
@@ -229,12 +244,15 @@ class TopCommand(ResourceOwningCommand):
 
         # Build final snapshot
         snapshot = self._build_snapshot()
+        if self._profile_id:
+            _ = _PROFILE_REGISTRY.stop(self._profile_id)
 
         # Clean up
         with self._lock:
             self._sampling_thread = None
             self._observation_thread = None
             self._top_id = None
+            self._profile_id = None
             self._client_session_id = None
             self._job_id = None
 
@@ -337,9 +355,17 @@ class TopCommand(ResourceOwningCommand):
                     # Walk frame stack from leaf to root
                     current_frame = frame
                     is_leaf = True
+                    stack: List[StackRecord] = []
 
                     while current_frame is not None:
                         func_key = self._make_func_key(current_frame)
+                        stack.append(
+                            StackRecord(
+                                filename=current_frame.f_code.co_filename,
+                                lineno=current_frame.f_lineno,
+                                name=current_frame.f_code.co_name,
+                            )
+                        )
 
                         with self._lock:
                             # Initialize function stats if not seen before
@@ -364,6 +390,15 @@ class TopCommand(ResourceOwningCommand):
                         # Move to parent frame
                         current_frame = current_frame.f_back
                         is_leaf = False
+
+                    if self._profile_id:
+                        sample = SampleRecord(
+                            timestamp=time.time(),
+                            thread_id=thread_id,
+                            thread_name="",
+                            stack=stack,
+                        )
+                        _PROFILE_REGISTRY.add_sample(self._profile_id, sample)
 
                 # Increment total sample count
                 with self._lock:
@@ -557,9 +592,17 @@ class TopCommand(ResourceOwningCommand):
         snapshot = {
             "type": "top_snapshot",
             "top_id": top_id,
+            "profile_id": top_id,
+            "backend": self._meta.get("backend", "sampling"),
             "total_samples": total_samples,
+            "sample_count": total_samples,
             "sample_interval": interval,
             "functions": functions,
+            "summary": {
+                "sample_count": total_samples,
+                "start_time": 0.0,
+                "duration_ms": 0.0,
+            },
             "meta": dict(self._meta),
         }
         if self._meta.get("backend") == BACKEND_GREENLET_AWARE_SAMPLING:
