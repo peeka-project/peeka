@@ -1,5 +1,5 @@
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 import pytest
 
@@ -208,6 +208,23 @@ class TestProfileCommand:
         })
         assert result["status"] == "success"
         assert result["profile_id"].startswith("prof_")
+
+    def test_start_treats_none_max_samples_as_default(self, profile_command):
+        from peeka.commands.top import _PROFILE_REGISTRY
+
+        result = profile_command.execute({"action": "start", "max_samples": None})
+
+        assert result["status"] == "success"
+        session = _PROFILE_REGISTRY.get_session(result["profile_id"])
+        assert session is not None
+        assert session.config.max_samples == 100000
+
+    def test_profile_config_treats_none_max_samples_as_default(self):
+        from peeka.core.profile.models import ProfileConfig
+
+        config = ProfileConfig(max_samples=None)  # type: ignore[arg-type]
+
+        assert config.max_samples == 100000
 
     def test_stop_active_resources_stops_running_sessions(self, profile_command):
         start_result = profile_command.execute({"action": "start"})

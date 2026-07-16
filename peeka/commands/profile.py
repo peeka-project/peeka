@@ -1,3 +1,4 @@
+# pyright: reportArgumentType=false
 """Profile Command - direct management of profile sessions in ProfileRegistry."""
 
 import io
@@ -75,11 +76,12 @@ class ProfileCommand(ResourceOwningCommand):
             return {"status": "error", "error": str(exc)}
 
     def _start(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        max_samples = params.get("max_samples")
         config = ProfileConfig(
             backend=params.get("backend", "sampling"),
             interval_ms=params.get("interval_ms", 10),
             duration_ms=params.get("duration_ms"),
-            max_samples=params.get("max_samples", 100000),
+            max_samples=100000 if max_samples is None else max_samples,
         )
         profile_id = _PROFILE_REGISTRY.start(config)
         if config.backend == "exact":

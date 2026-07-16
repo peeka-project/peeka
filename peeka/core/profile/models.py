@@ -28,13 +28,15 @@ class ProfileConfig:
     backend: str = "sampling"
     interval_ms: int = 10
     duration_ms: Optional[int] = None
-    max_samples: int = 100000
+    max_samples: Optional[int] = 100000
 
     def __post_init__(self) -> None:
         if self.backend not in PROFILE_BACKENDS:
             raise ValueError("backend must be one of: sampling, exact")
         if self.interval_ms <= 0:
             raise ValueError("interval_ms must be greater than 0")
+        if self.max_samples is None:
+            self.max_samples = 100000
         if self.max_samples <= 0:
             raise ValueError("max_samples must be greater than 0")
         if self.duration_ms is not None and self.duration_ms <= 0:
@@ -51,7 +53,7 @@ class ProfileConfig:
             backend=str(data.get("backend", "sampling")),
             interval_ms=int(data.get("interval_ms", 10)),
             duration_ms=data.get("duration_ms"),
-            max_samples=int(data.get("max_samples", 100000)),
+            max_samples=None if data.get("max_samples") is None else int(data.get("max_samples", 100000)),
         )
 
 
