@@ -12,7 +12,9 @@ from typing import Any, ClassVar, Dict, List, Optional, TYPE_CHECKING
 from peeka.commands.resource_owning import CleanupScope, ResourceOwningCommand
 from peeka.commands.top import _PROFILE_REGISTRY
 from peeka.core.profile.exact import ExactProfileSampler
-from peeka.core.profile.models import ProfileConfig, SampleRecord, StackRecord
+from peeka.core.profile.models import ProfileConfig, ProfileSession, SampleRecord, StackRecord
+from peeka.core.profile.processors import BuildTimelineProcessor
+from peeka.core.profile.processors import BuildTopListProcessor
 from peeka.core.profile.processors import ProcessedProfile
 from peeka.core.profile.renderers import (
     JsonRenderer,
@@ -266,11 +268,7 @@ class ProfileCommand(ResourceOwningCommand):
         except KeyError:
             return {"status": "error", "error": "profile not found"}
 
-        processed = ProcessedProfile(
-            profile_id=session.profile_id,
-            backend=session.backend,
-            session=session,
-        )
+        processed = self._process_for_export(session, format_name)
         buf = io.StringIO()
         renderer_cls().render(processed, buf)
         return {
@@ -278,6 +276,21 @@ class ProfileCommand(ResourceOwningCommand):
             "content": buf.getvalue(),
             "format": format_name,
         }
+
+    def _process_for_export(
+        self,
+        session: ProfileSession,
+        format_name: str,
+    ) -> ProcessedProfile:
+        if format_name in ("json", "text"):
+            return BuildTopListProcessor().process(session)
+        if format_name == "perfetto":
+            return BuildTimelineProcessor().process(session)
+        return ProcessedProfile(
+            profile_id=session.profile_id,
+            backend=session.backend,
+            session=session,
+        )
 
     def stop_active_resources(
         self, pattern: Optional[str], reason: str

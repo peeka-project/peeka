@@ -128,6 +128,31 @@ class TestProfileCommand:
         parsed = json.loads(export_result["content"])
         assert parsed["profile_id"] == profile_id
 
+    def test_export_json_builds_top_list_from_samples(self, profile_command):
+        profile_id = self._start_profile_with_sample(profile_command)
+
+        export_result = profile_command.execute({
+            "action": "export",
+            "profile_id": profile_id,
+            "format": "json",
+        })
+
+        parsed = json.loads(export_result["content"])
+        assert parsed["top_list"]
+        assert parsed["top_list"][0]["name"] == "leaf_export_func"
+
+    def test_export_text_builds_top_list_from_samples(self, profile_command):
+        profile_id = self._start_profile_with_sample(profile_command)
+
+        export_result = profile_command.execute({
+            "action": "export",
+            "profile_id": profile_id,
+            "format": "text",
+        })
+
+        assert "leaf_export_func" in export_result["content"]
+        assert "100.00%" in export_result["content"]
+
     def test_export_text_format(self, profile_command):
         start_result = profile_command.execute({"action": "start"})
         profile_id = start_result["profile_id"]
@@ -294,3 +319,23 @@ class TestProfileCommand:
         from peeka.commands.profile import ProfileCommand
         from peeka.commands.resource_owning import CleanupScope
         assert ProfileCommand.__dict__["cleanup_scope"] is CleanupScope.DETACH_ONLY
+
+    def _start_profile_with_sample(self, profile_command) -> str:
+        from peeka.commands.top import _PROFILE_REGISTRY
+        from peeka.core.profile.models import ProfileConfig, SampleRecord, StackRecord
+
+        profile_id = _PROFILE_REGISTRY.start(ProfileConfig(backend="sampling"))
+        _PROFILE_REGISTRY.add_sample(
+            profile_id,
+            SampleRecord(
+                timestamp=time.time(),
+                thread_id=1,
+                thread_name="main",
+                stack=[
+                    StackRecord(filename="app.py", lineno=1, name="root_export_func"),
+                    StackRecord(filename="app.py", lineno=2, name="leaf_export_func"),
+                ],
+            ),
+        )
+        _PROFILE_REGISTRY.stop(profile_id)
+        return profile_id
