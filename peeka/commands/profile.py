@@ -4,13 +4,15 @@
 import io
 import json
 import logging
+import sys
 import threading
+import time
 from typing import Any, ClassVar, Dict, List, Optional, TYPE_CHECKING
 
 from peeka.commands.resource_owning import CleanupScope, ResourceOwningCommand
 from peeka.commands.top import _PROFILE_REGISTRY
 from peeka.core.profile.exact import ExactProfileSampler
-from peeka.core.profile.models import ProfileConfig
+from peeka.core.profile.models import ProfileConfig, SampleRecord, StackRecord
 from peeka.core.profile.processors import ProcessedProfile
 from peeka.core.profile.renderers import (
     JsonRenderer,
@@ -53,6 +55,9 @@ class ProfileCommand(ResourceOwningCommand):
         super().__init__(agent)
         self._exact_sampler: Optional[ExactProfileSampler] = None
         self._exact_stop_timer: Optional[threading.Timer] = None
+        self._sampling_thread: Optional[threading.Thread] = None
+        self._sampling_stop_event: Optional[threading.Event] = None
+        self._sampling_profile_id: Optional[str] = None
 
     def execute(self, params: Dict[str, Any]) -> Dict[str, Any]:
         try:
@@ -107,6 +112,8 @@ class ProfileCommand(ResourceOwningCommand):
                 )
                 self._exact_stop_timer.daemon = True
                 self._exact_stop_timer.start()
+        elif config.backend == "sampling":
+            self._start_sampling(profile_id, config)
         return {"status": "success", "profile_id": profile_id}
 
     def _stop(self, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -120,6 +127,8 @@ class ProfileCommand(ResourceOwningCommand):
             if self._exact_stop_timer is not None:
                 self._exact_stop_timer.cancel()
                 self._exact_stop_timer = None
+            if profile_id == self._sampling_profile_id:
+                self._stop_sampling()
             session = _PROFILE_REGISTRY.stop(profile_id)
             return {
                 "status": "success",
@@ -128,6 +137,77 @@ class ProfileCommand(ResourceOwningCommand):
             }
         except KeyError:
             return {"status": "error", "error": "profile not found"}
+
+    def _start_sampling(self, profile_id: str, config: ProfileConfig) -> None:
+        stop_event = threading.Event()
+        self._sampling_stop_event = stop_event
+        self._sampling_profile_id = profile_id
+        deadline = None
+        if config.duration_ms is not None:
+            deadline = time.time() + config.duration_ms / 1000.0
+        interval = max(float(config.interval_ms) / 1000.0, 0.001)
+        thread = threading.Thread(
+            target=self._sampling_loop,
+            args=(profile_id, interval, stop_event, deadline),
+            name=f"peeka-profile-{profile_id}",
+            daemon=True,
+        )
+        self._sampling_thread = thread
+        thread.start()
+
+    def _stop_sampling(self) -> None:
+        if self._sampling_stop_event is not None:
+            self._sampling_stop_event.set()
+        if self._sampling_thread is not None:
+            self._sampling_thread.join(timeout=2.0)
+        self._sampling_thread = None
+        self._sampling_stop_event = None
+        self._sampling_profile_id = None
+
+    def _sampling_loop(
+        self,
+        profile_id: str,
+        interval: float,
+        stop_event: threading.Event,
+        deadline: Optional[float],
+    ) -> None:
+        while not stop_event.is_set():
+            if deadline is not None and time.time() >= deadline:
+                break
+            try:
+                self._collect_sampling_snapshot(profile_id)
+            except Exception:
+                logger.debug("sampling profile snapshot failed", exc_info=True)
+            if stop_event.wait(timeout=interval):
+                break
+
+    def _collect_sampling_snapshot(self, profile_id: str) -> None:
+        current_thread_id = threading.get_ident()
+        thread_names = {thread.ident: thread.name for thread in threading.enumerate()}
+        for thread_id, frame in sys._current_frames().items():
+            if thread_id == current_thread_id:
+                continue
+            stack: List[StackRecord] = []
+            current_frame = frame
+            while current_frame is not None:
+                stack.append(
+                    StackRecord(
+                        filename=current_frame.f_code.co_filename,
+                        lineno=current_frame.f_lineno,
+                        name=current_frame.f_code.co_name,
+                    )
+                )
+                current_frame = current_frame.f_back
+            stack.reverse()
+            if not stack:
+                continue
+            sample = SampleRecord(
+                timestamp=time.time(),
+                thread_id=thread_id,
+                thread_name=thread_names.get(thread_id, ""),
+                stack=stack,
+            )
+            _PROFILE_REGISTRY.add_sample(profile_id, sample)
 
     def _snapshot(self, params: Dict[str, Any]) -> Dict[str, Any]:
         profile_id = params.get("profile_id")

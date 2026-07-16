@@ -1,4 +1,5 @@
 import json
+import time
 from typing import Any, Dict
 
 import pytest
@@ -225,6 +226,32 @@ class TestProfileCommand:
         config = ProfileConfig(max_samples=None)  # type: ignore[arg-type]
 
         assert config.max_samples == 100000
+
+    def test_sampling_backend_collects_samples_until_stop(self, profile_command):
+        start_result = profile_command.execute(
+            {"action": "start", "backend": "sampling", "interval_ms": 1}
+        )
+        profile_id = start_result["profile_id"]
+
+        time.sleep(0.05)
+        stop_result = profile_command.execute({"action": "stop", "profile_id": profile_id})
+
+        assert stop_result["status"] == "success"
+        assert stop_result["summary"]["sample_count"] > 0
+
+    def test_sampling_backend_thread_stops_cleanly(self, profile_command):
+        start_result = profile_command.execute(
+            {"action": "start", "backend": "sampling", "interval_ms": 1}
+        )
+        profile_id = start_result["profile_id"]
+        thread = profile_command._sampling_thread
+
+        stop_result = profile_command.execute({"action": "stop", "profile_id": profile_id})
+
+        assert stop_result["status"] == "success"
+        assert profile_command._sampling_thread is None
+        assert thread is not None
+        assert not thread.is_alive()
 
     def test_stop_active_resources_stops_running_sessions(self, profile_command):
         start_result = profile_command.execute({"action": "start"})

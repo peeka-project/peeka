@@ -11,6 +11,7 @@ from typing import Optional
 
 from peeka.core.profile.models import ProfileConfig
 from peeka.core.profile.models import ProfileSession
+from peeka.core.profile.models import ProfileSummary
 from peeka.core.profile.models import SampleRecord
 
 
@@ -56,6 +57,7 @@ class ProfileRegistry:
                 session.ended_at = time.time()
             elif session.ended_at is None:
                 session.ended_at = time.time()
+            session.summary = self._build_summary(session)
 
             _ = self._evict_if_needed()
             return deepcopy(session)
@@ -104,7 +106,8 @@ class ProfileRegistry:
             session = self._sessions.get(profile_id)
             if session is None or session.status != "running":
                 return
-            if len(session.samples) >= session.config.max_samples:
+            max_samples = session.config.max_samples or 100000
+            if len(session.samples) >= max_samples:
                 return
             session.samples.append(deepcopy(sample))
 
@@ -146,3 +149,12 @@ class ProfileRegistry:
 
     def _new_profile_id(self) -> str:
         return "prof_" + uuid.uuid4().hex[:12]
+
+    def _build_summary(self, session: ProfileSession) -> ProfileSummary:
+        ended_at = session.ended_at if session.ended_at is not None else time.time()
+        return ProfileSummary(
+            sample_count=len(session.samples),
+            duration_ms=max((ended_at - session.started_at) * 1000.0, 0.0),
+            start_time=session.started_at,
+            top_functions=[],
+        )
