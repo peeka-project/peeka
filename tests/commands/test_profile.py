@@ -21,7 +21,9 @@ def mock_agent():
 @pytest.fixture
 def profile_command(mock_agent):
     from peeka.commands.profile import ProfileCommand
-    return ProfileCommand(mock_agent)
+    command = ProfileCommand(mock_agent)
+    yield command
+    command.stop_active_resources(pattern=None, reason="test teardown")
 
 
 @pytest.fixture(autouse=True)

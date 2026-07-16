@@ -320,8 +320,24 @@ class ProfileCommand(ResourceOwningCommand):
                 )
                 errors.append({"profile_id": "exact", "error": str(exc)})
 
+        if self._sampling_thread is not None:
+            try:
+                profile_id = self._sampling_profile_id
+                self._stop_sampling()
+                if profile_id is not None:
+                    stopped.append(profile_id)
+            except Exception as exc:
+                logger.error(
+                    "[peeka Profile] sampling cleanup failed (%s)",
+                    reason,
+                    exc_info=True,
+                )
+                errors.append({"profile_id": "sampling", "error": str(exc)})
+
         for session in sessions:
             if session.status != "running":
+                continue
+            if session.profile_id in stopped:
                 continue
             try:
                 _PROFILE_REGISTRY.stop(session.profile_id)
