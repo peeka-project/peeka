@@ -71,6 +71,36 @@ class TestHandlerAddProfile:
         assert "sample_count" in section.payload
         assert "summary" in section.payload
 
+    def test_add_profile_denies_different_client_owner(
+        self, peeka_agent: PeekaAgent, profile_id: str
+    ) -> None:
+        client_registry = peeka_agent._get_client_registry()
+        owner = client_registry.create("target_1", "cli")
+        other = client_registry.create("target_1", "cli")
+        created = peeka_agent._handle_dx_create(
+            {
+                "target_id": "target_1",
+                "title": "Profile case",
+                "client_session_id": owner.client_session_id,
+            }
+        )
+        dx_case_id = created["data"]["dx_case_id"]
+
+        result = peeka_agent._handle_dx_add_profile(
+            {
+                "dx_case_id": dx_case_id,
+                "profile_id": profile_id,
+                "client_session_id": other.client_session_id,
+            }
+        )
+
+        assert result["status"] == "error"
+        assert result["error_code"] == "DX_CASE_ACCESS_DENIED"
+        registry = peeka_agent._get_dx_case_registry()
+        dx_case = registry.get(dx_case_id)
+        assert dx_case is not None
+        assert dx_case.sections == []
+
     def test_add_profile_missing_required_fields(
         self, peeka_agent: PeekaAgent
     ) -> None:

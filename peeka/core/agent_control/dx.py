@@ -1,3 +1,4 @@
+# pyright: reportAttributeAccessIssue=false
 """AgentDXControlMixin implementation."""
 
 import traceback
@@ -277,6 +278,7 @@ class AgentDXControlMixin:
 
             dx_case_id = command.get("dx_case_id", "")
             profile_id = command.get("profile_id", "")
+            requesting_client_session_id = self._get_requesting_client_session_id(command)
             if not dx_case_id or not profile_id:
                 return self._dx_error(
                     "DX_CASE_INVALID",
@@ -288,6 +290,11 @@ class AgentDXControlMixin:
                 return self._dx_error(
                     "DX_CASE_NOT_FOUND",
                     f"DX case {dx_case_id!r} not found",
+                )
+            if not self._dx_owner_matches(dx_case, requesting_client_session_id):
+                return self._dx_error(
+                    "DX_CASE_ACCESS_DENIED",
+                    "DX case does not belong to this client",
                 )
 
             session = _PROFILE_REGISTRY.get_session(profile_id)
