@@ -119,6 +119,14 @@ class ProfileRegistry:
                 return None
             return deepcopy(session)
 
+    def remove_session(self, profile_id: str) -> bool:
+        """Remove one profile session by identifier if it exists."""
+        with self._lock:
+            if profile_id not in self._sessions:
+                return False
+            del self._sessions[profile_id]
+            return True
+
     def _evict_if_needed(self, max_sessions: Optional[int] = None) -> int:
         """Evict the oldest stopped sessions when the retention limit is exceeded."""
         limit = self._max_sessions if max_sessions is None else max_sessions

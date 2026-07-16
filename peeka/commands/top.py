@@ -1,3 +1,4 @@
+# pyright: reportImportCycles=false
 """
 Top Command - Function-level sampling profiler
 """
@@ -247,9 +248,10 @@ class TopCommand(ResourceOwningCommand):
         # Build final snapshot
         snapshot = self._build_snapshot()
         if self._profile_id:
-            _ = _PROFILE_REGISTRY.stop(self._profile_id)
+            profile_id = self._profile_id
+            _ = _PROFILE_REGISTRY.stop(profile_id)
             if not self._keep_profile:
-                _PROFILE_REGISTRY.cleanup(max_sessions=0)
+                _PROFILE_REGISTRY.remove_session(profile_id)
 
         # Clean up
         with self._lock:

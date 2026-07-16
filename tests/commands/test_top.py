@@ -532,6 +532,25 @@ class TestTopCommand:
         assert session is not None
         assert session.status == "stopped"
 
+    def test_default_stop_preserves_previous_kept_profile(self, top_command):
+        """Default stop removes only its own transient profile session."""
+        from peeka.commands.top import _PROFILE_REGISTRY
+
+        kept_start = top_command.execute(
+            {"action": "start", "interval": 0.01, "keep_profile": True}
+        )
+        kept_profile_id = kept_start["profile_id"]
+        assert top_command.execute({"action": "stop"})["status"] == "success"
+
+        transient_start = top_command.execute({"action": "start", "interval": 0.01})
+        transient_profile_id = transient_start["profile_id"]
+        assert top_command.execute({"action": "stop"})["status"] == "success"
+
+        kept_session = _PROFILE_REGISTRY.get_session(kept_profile_id)
+        assert kept_session is not None
+        assert kept_session.status == "stopped"
+        assert _PROFILE_REGISTRY.get_session(transient_profile_id) is None
+
     def test_keep_profile_flag_appears_in_snapshot(self, top_command):
         """With keep_profile=True, snapshot includes 'keep_profile' key."""
         top_command.execute(
