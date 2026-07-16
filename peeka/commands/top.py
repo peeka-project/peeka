@@ -398,6 +398,7 @@ class TopCommand(ResourceOwningCommand):
                         is_leaf = False
 
                     if self._profile_id:
+                        stack.reverse()
                         sample = SampleRecord(
                             timestamp=time.time(),
                             thread_id=thread_id,

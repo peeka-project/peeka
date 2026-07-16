@@ -551,6 +551,51 @@ class TestTopCommand:
         assert kept_session.status == "stopped"
         assert _PROFILE_REGISTRY.get_session(transient_profile_id) is None
 
+    def test_profile_samples_store_root_to_leaf_stack_order(self, top_command):
+        """Raw profile samples use root-to-leaf order for processors."""
+        from peeka.commands.top import _PROFILE_REGISTRY
+
+        entered_leaf = threading.Event()
+        release_leaf = threading.Event()
+
+        def root_order_worker():
+            return parent_order_worker()
+
+        def parent_order_worker():
+            return leaf_order_worker()
+
+        def leaf_order_worker():
+            entered_leaf.set()
+            release_leaf.wait(timeout=2.0)
+            return None
+
+        worker = threading.Thread(target=root_order_worker, name="order-worker", daemon=True)
+        worker.start()
+        assert entered_leaf.wait(timeout=2.0)
+
+        try:
+            start_result = top_command.execute(
+                {"action": "start", "interval": 0.001, "keep_profile": True}
+            )
+            profile_id = start_result["profile_id"]
+            time.sleep(0.05)
+            assert top_command.execute({"action": "stop"})["status"] == "success"
+        finally:
+            release_leaf.set()
+            worker.join(timeout=2.0)
+
+        session = _PROFILE_REGISTRY.get_session(profile_id)
+        assert session is not None
+        order_sample = next(
+            sample
+            for sample in session.samples
+            if {"parent_order_worker", "leaf_order_worker"}.issubset(
+                {frame.name for frame in sample.stack}
+            )
+        )
+        names = [frame.name for frame in order_sample.stack]
+        assert names.index("parent_order_worker") < names.index("leaf_order_worker")
+
     def test_keep_profile_flag_appears_in_snapshot(self, top_command):
         """With keep_profile=True, snapshot includes 'keep_profile' key."""
         top_command.execute(
