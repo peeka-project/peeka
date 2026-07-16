@@ -270,7 +270,13 @@ class ProfileCommand(ResourceOwningCommand):
 
         processed = self._process_for_export(session, format_name)
         buf = io.StringIO()
-        renderer_cls().render(processed, buf)
+        if format_name == "json":
+            JsonRenderer(include_samples=bool(params.get("include_samples"))).render(
+                processed,
+                buf,
+            )
+        else:
+            renderer_cls().render(processed, buf)
         return {
             "status": "success",
             "content": buf.getvalue(),

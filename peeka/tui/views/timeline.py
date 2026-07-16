@@ -127,11 +127,14 @@ class TimelineView(Container):
                 "include_samples": True
             })
             if response.get("status") == "success":
-                path = response.get("path")
                 import json
-                with open(path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                
+                content = response.get("content")
+                if content is None:
+                    self.app.notify(f"Failed to export session {profile_id}", severity="error")
+                    self._update_table([])
+                    return
+                data = json.loads(str(content))
+                 
                 from peeka.core.profile.models import ProfileSession
                 from peeka.core.profile.processors import BuildTimelineProcessor
                 

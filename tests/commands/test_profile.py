@@ -141,6 +141,19 @@ class TestProfileCommand:
         assert parsed["top_list"]
         assert parsed["top_list"][0]["name"] == "leaf_export_func"
 
+    def test_export_json_can_include_raw_samples(self, profile_command):
+        profile_id = self._start_profile_with_sample(profile_command)
+
+        export_result = profile_command.execute({
+            "action": "export",
+            "profile_id": profile_id,
+            "format": "json",
+            "include_samples": True,
+        })
+
+        parsed = json.loads(export_result["content"])
+        assert parsed["samples"][0]["stack"][-1]["name"] == "leaf_export_func"
+
     def test_export_text_builds_top_list_from_samples(self, profile_command):
         profile_id = self._start_profile_with_sample(profile_command)
 
