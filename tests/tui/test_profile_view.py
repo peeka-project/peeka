@@ -1,5 +1,7 @@
 """Tests for Profile view."""
 
+from pathlib import Path
+
 import pytest
 from textual.widgets import Button, DataTable, Static
 
@@ -160,7 +162,8 @@ class TestProfileView:
             # Now mock the export response
             client.responses["profile"] = {
                 "status": "success",
-                "path": "/tmp/prof_123.json"
+                "content": '{"profile_id":"prof_123"}',
+                "format": "json",
             }
 
             table = profile_view.query_one("#profile-table", DataTable)
@@ -196,3 +199,9 @@ class TestProfileView:
             assert len(export_cmds) >= 1
             assert export_cmds[0].get("profile_id") == "prof_123"
             assert export_cmds[0].get("format") == "json"
+
+            assert profile_view._last_export_path is not None
+            export_path = Path(profile_view._last_export_path)
+            assert export_path.suffix == ".json"
+            assert export_path.read_text(encoding="utf-8") == '{"profile_id":"prof_123"}'
+            export_path.unlink()

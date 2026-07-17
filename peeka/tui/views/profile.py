@@ -1,6 +1,7 @@
 """Profile View - session management."""
 
 import logging
+import tempfile
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from textual.binding import Binding
@@ -34,6 +35,7 @@ class ProfileView(Container):
         self._log = logging.getLogger(__name__)
         self._sessions: List[Dict[str, Any]] = []
         self._selected_profile_id: Optional[str] = None
+        self._last_export_path: Optional[str] = None
 
     def compose(self):
         """Compose the Profile view layout."""
@@ -165,8 +167,23 @@ class ProfileView(Container):
                 "format": "json"
             })
             if response.get("status") == "success":
-                path = response.get("path", "unknown")
-                self.app.notify(f"Exported to {path}", severity="information")
+                content = response.get("content")
+                format_name = str(response.get("format", "json"))
+                suffix = f".{format_name}"
+                with tempfile.NamedTemporaryFile(
+                    mode="w",
+                    suffix=suffix,
+                    prefix=f"peeka-profile-{self._selected_profile_id}-",
+                    delete=False,
+                    encoding="utf-8",
+                ) as export_file:
+                    export_file.write(str(content) if content is not None else "")
+                    path = export_file.name
+                self._last_export_path = path
+                self.app.notify(
+                    f"Exported {format_name} profile to {path}",
+                    severity="information",
+                )
             else:
                 error = response.get("error", "Unknown error")
                 self.app.notify(f"Export failed: {error}", severity="error")
