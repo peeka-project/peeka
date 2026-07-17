@@ -293,6 +293,32 @@ class TestProfileCommand:
         assert thread is not None
         assert not thread.is_alive()
 
+    def test_sampling_backend_duration_stops_session(self, profile_command):
+        start_result = profile_command.execute(
+            {
+                "action": "start",
+                "backend": "sampling",
+                "interval_ms": 1,
+                "duration_ms": 20,
+            }
+        )
+        profile_id = start_result["profile_id"]
+
+        deadline = time.time() + 1.0
+        session_status = None
+        while time.time() < deadline:
+            list_result = profile_command.execute({"action": "list"})
+            session_map = {s["profile_id"]: s for s in list_result["sessions"]}
+            session_status = session_map[profile_id]["status"]
+            if session_status == "stopped":
+                break
+            time.sleep(0.01)
+
+        assert session_status == "stopped"
+        assert profile_command._sampling_thread is None
+        assert profile_command._sampling_stop_event is None
+        assert profile_command._sampling_profile_id is None
+
     def test_stop_active_resources_stops_running_sessions(self, profile_command):
         start_result = profile_command.execute({"action": "start"})
         profile_id = start_result["profile_id"]

@@ -179,15 +179,31 @@ class ProfileCommand(ResourceOwningCommand):
         stop_event: threading.Event,
         deadline: Optional[float],
     ) -> None:
-        while not stop_event.is_set():
-            if deadline is not None and time.time() >= deadline:
-                break
-            try:
-                self._collect_sampling_snapshot(profile_id)
-            except Exception:
-                logger.debug("sampling profile snapshot failed", exc_info=True)
-            if stop_event.wait(timeout=interval):
-                break
+        expired = False
+        try:
+            while not stop_event.is_set():
+                if deadline is not None and time.time() >= deadline:
+                    expired = True
+                    break
+                try:
+                    self._collect_sampling_snapshot(profile_id)
+                except Exception:
+                    logger.debug("sampling profile snapshot failed", exc_info=True)
+                if stop_event.wait(timeout=interval):
+                    break
+        finally:
+            if expired:
+                try:
+                    _PROFILE_REGISTRY.stop(profile_id)
+                except KeyError:
+                    logger.debug("sampling profile %s already removed", profile_id)
+                if (
+                    self._sampling_profile_id == profile_id
+                    and self._sampling_stop_event is stop_event
+                ):
+                    self._sampling_thread = None
+                    self._sampling_stop_event = None
+                    self._sampling_profile_id = None
 
     def _collect_sampling_snapshot(self, profile_id: str) -> None:
         current_thread_id = threading.get_ident()
