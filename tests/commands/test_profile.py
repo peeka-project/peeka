@@ -319,6 +319,27 @@ class TestProfileCommand:
         assert profile_command._sampling_stop_event is None
         assert profile_command._sampling_profile_id is None
 
+    def test_sampling_backend_rejects_double_start(self, profile_command):
+        first_result = profile_command.execute(
+            {"action": "start", "backend": "sampling", "interval_ms": 1}
+        )
+        profile_id = first_result["profile_id"]
+        first_thread = profile_command._sampling_thread
+
+        second_result = profile_command.execute(
+            {"action": "start", "backend": "sampling", "interval_ms": 1}
+        )
+
+        assert second_result["status"] == "error"
+        assert second_result["profile_id"] == profile_id
+        assert "already running" in second_result["error"].lower()
+        assert profile_command._sampling_thread is first_thread
+
+        stop_result = profile_command.execute({"action": "stop", "profile_id": profile_id})
+        assert stop_result["status"] == "success"
+        assert first_thread is not None
+        assert not first_thread.is_alive()
+
     def test_stop_active_resources_stops_running_sessions(self, profile_command):
         start_result = profile_command.execute({"action": "start"})
         profile_id = start_result["profile_id"]

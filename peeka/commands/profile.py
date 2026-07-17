@@ -90,6 +90,16 @@ class ProfileCommand(ResourceOwningCommand):
             duration_ms=params.get("duration_ms"),
             max_samples=100000 if max_samples is None else max_samples,
         )
+        if (
+            config.backend == "sampling"
+            and self._sampling_thread is not None
+            and self._sampling_thread.is_alive()
+        ):
+            return {
+                "status": "error",
+                "error": "Sampling profile already running",
+                "profile_id": self._sampling_profile_id,
+            }
         profile_id = _PROFILE_REGISTRY.start(config)
         if config.backend == "exact":
             sampler = ExactProfileSampler(
