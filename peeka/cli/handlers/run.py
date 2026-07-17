@@ -83,6 +83,7 @@ def _build_run_command(
         command["cycles"] = parsed.cycles
         command["sort"] = parsed.sort
         command["filter_peeka"] = not parsed.no_filter_peeka
+        command["keep_profile"] = parsed.keep_profile
         command["stream"] = True
         return command
 

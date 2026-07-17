@@ -99,6 +99,14 @@ def test_build_run_command_top_skips_command_name():
     assert command["sort"] == "total"
 
 
+def test_build_run_command_top_passes_keep_profile():
+    command = _build_run_command("top", ["top", "--keep-profile"])
+
+    assert command is not None
+    assert command["type"] == "top"
+    assert command["keep_profile"] is True
+
+
 def test_run_watch_limit_stops_after_n() -> None:
     command = _build_run_command("watch", ["watch", "mod.fn", "-n", "2"])
     assert command is not None
