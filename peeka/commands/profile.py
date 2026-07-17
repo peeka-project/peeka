@@ -158,10 +158,16 @@ class ProfileCommand(ResourceOwningCommand):
         thread.start()
 
     def _stop_sampling(self) -> None:
+        profile_id = self._sampling_profile_id
         if self._sampling_stop_event is not None:
             self._sampling_stop_event.set()
         if self._sampling_thread is not None:
             self._sampling_thread.join(timeout=2.0)
+        if profile_id is not None:
+            try:
+                _PROFILE_REGISTRY.stop(profile_id)
+            except KeyError:
+                logger.debug("sampling profile %s already removed", profile_id)
         self._sampling_thread = None
         self._sampling_stop_event = None
         self._sampling_profile_id = None

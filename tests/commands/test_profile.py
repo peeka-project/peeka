@@ -302,6 +302,14 @@ class TestProfileCommand:
         assert isinstance(result["errors"], list)
         assert profile_id in result["stopped"]
 
+        list_result = profile_command.execute({"action": "list"})
+        session_map = {s["profile_id"]: s for s in list_result["sessions"]}
+        assert session_map[profile_id]["status"] == "stopped"
+
+        active_result = profile_command.list_active_resources()
+        active_ids = [r["profile_id"] for r in active_result["active"]]
+        assert profile_id not in active_ids
+
     def test_stop_active_resources_empty_when_none_running(self, profile_command):
         result = profile_command.stop_active_resources(pattern=None, reason="test")
         assert result["stopped"] == []
