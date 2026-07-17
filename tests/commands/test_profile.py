@@ -95,6 +95,43 @@ class TestProfileCommand:
         assert "snapshot" in snap_result
         assert snap_result["snapshot"]["profile_id"] == profile_id
 
+    def test_snapshot_text_format(self, profile_command):
+        start_result = profile_command.execute({"action": "start"})
+        profile_id = start_result["profile_id"]
+
+        snap_result = profile_command.execute(
+            {"action": "snapshot", "profile_id": profile_id, "format": "text"}
+        )
+
+        assert snap_result["status"] == "success"
+        assert snap_result["profile_id"] == profile_id
+        assert snap_result["format"] == "text"
+        assert "Profile:" in snap_result["content"]
+        assert profile_id in snap_result["content"]
+
+    def test_snapshot_json_format_preserves_snapshot_payload(self, profile_command):
+        start_result = profile_command.execute({"action": "start"})
+        profile_id = start_result["profile_id"]
+
+        snap_result = profile_command.execute(
+            {"action": "snapshot", "profile_id": profile_id, "format": "json"}
+        )
+
+        assert snap_result["status"] == "success"
+        assert snap_result["snapshot"]["profile_id"] == profile_id
+        assert "content" not in snap_result
+
+    def test_snapshot_unknown_format(self, profile_command):
+        start_result = profile_command.execute({"action": "start"})
+        profile_id = start_result["profile_id"]
+
+        result = profile_command.execute(
+            {"action": "snapshot", "profile_id": profile_id, "format": "bogus"}
+        )
+
+        assert result["status"] == "error"
+        assert "unknown format" in result["error"].lower()
+
     def test_snapshot_missing_profile_id(self, profile_command):
         result = profile_command.execute({"action": "snapshot"})
         assert result["status"] == "error"

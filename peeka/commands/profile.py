@@ -247,20 +247,28 @@ class ProfileCommand(ResourceOwningCommand):
         profile_id = params.get("profile_id")
         if not profile_id:
             return {"status": "error", "error": "Missing profile_id"}
+        format_name = params.get("format", "json")
+        renderer_cls = _RENDERER_MAP.get(format_name)
+        if renderer_cls is None:
+            return {"status": "error", "error": f"Unknown format: {format_name}"}
         try:
             session = _PROFILE_REGISTRY.snapshot(profile_id)
         except KeyError:
             return {"status": "error", "error": "profile not found"}
 
-        processed = ProcessedProfile(
-            profile_id=session.profile_id,
-            backend=session.backend,
-            session=session,
-        )
+        processed = self._process_for_export(session, format_name)
         buf = io.StringIO()
-        JsonRenderer().render(processed, buf)
-        result = json.loads(buf.getvalue())
-        return {"status": "success", "profile_id": profile_id, "snapshot": result}
+        renderer_cls().render(processed, buf)
+        content = buf.getvalue()
+        if format_name == "json":
+            result = json.loads(content)
+            return {"status": "success", "profile_id": profile_id, "snapshot": result}
+        return {
+            "status": "success",
+            "profile_id": profile_id,
+            "format": format_name,
+            "content": content,
+        }
 
     def _list(self, params: Dict[str, Any]) -> Dict[str, Any]:  # noqa: ARG002
         sessions = _PROFILE_REGISTRY.list_sessions()
