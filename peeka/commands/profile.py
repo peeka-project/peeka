@@ -131,10 +131,14 @@ class ProfileCommand(ResourceOwningCommand):
                 }
 
             profile_id = _PROFILE_REGISTRY.start(config)
+            effective_max_events = min(
+                int(params.get("max_events", 10000)),
+                int(config.max_samples or 100000),
+            )
             sampler = ExactProfileSampler(
                 profile_id,
                 _PROFILE_REGISTRY,
-                max_events=params.get("max_events", 10000),
+                max_events=effective_max_events,
                 on_stop=lambda stopped_id: self._clear_exact_state(stopped_id, sampler),
             )
             capability = sampler.check_capability()

@@ -427,6 +427,70 @@ class TestProfileCommandExactBackend:
             "backend_name": None,
         }
 
+    def test_exact_start_caps_max_events_to_max_samples(self, monkeypatch):
+        import peeka.commands.profile as profile_module
+        from peeka.commands.profile import ProfileCommand
+
+        captured_max_events = []
+
+        class FakeSampler:
+            def __init__(
+                self,
+                profile_id: str,
+                registry: Any,
+                max_events: int = 10000,
+                on_stop: Any = None,
+            ):
+                self.profile_id = profile_id
+                self.active = False
+                captured_max_events.append(max_events)
+
+            def check_capability(self) -> Dict[str, Any]:
+                return {
+                    "available": True,
+                    "reason": None,
+                    "backend_name": "fake",
+                }
+
+            def start(self) -> None:
+                self.active = True
+
+            def stop(self) -> None:
+                self.active = False
+
+        monkeypatch.setattr(profile_module, "ExactProfileSampler", FakeSampler)
+        command = ProfileCommand()
+
+        start_result = command.execute(
+            {
+                "action": "start",
+                "backend": "exact",
+                "max_samples": 100,
+                "max_events": 10000,
+            }
+        )
+
+        assert start_result["status"] == "success"
+        assert captured_max_events == [100]
+
+        command.execute({"action": "stop", "profile_id": start_result["profile_id"]})
+
+    def test_exact_sampler_finalizes_at_registry_max_samples(self, registry):
+        from peeka.core.profile.exact import ExactProfileSampler
+
+        profile_id = registry.start(ProfileConfig(backend="exact", max_samples=100))
+        sampler = ExactProfileSampler(profile_id, registry, max_events=100)
+
+        for _ in range(100):
+            sampler._on_event(sys._getframe(), "call", None)
+
+        session = registry.snapshot(profile_id)
+        assert len(session.samples) <= 100
+        assert session.status == "stopped"
+        assert session.summary is not None
+        assert session.summary.sample_count <= 100
+        assert session.summary.overflow is True
+
     @pytest.mark.skipif(
         not hasattr(threading, "setprofile_all_threads"),
         reason="thread-wide exact profiling requires threading.setprofile_all_threads",
