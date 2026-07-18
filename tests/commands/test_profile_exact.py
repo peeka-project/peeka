@@ -141,7 +141,11 @@ class TestExactProfileSampler:
 
 @pytest.fixture(autouse=True)
 def cleanup_profile_registry():
+    from peeka.commands.profile import ProfileCommand
+
+    ProfileCommand._exact_profile_id = None
     yield
+    ProfileCommand._exact_profile_id = None
     from peeka.commands.top import _PROFILE_REGISTRY
 
     for session in _PROFILE_REGISTRY.list_sessions():
@@ -151,12 +155,137 @@ def cleanup_profile_registry():
 
 @pytest.mark.skipif(sys.version_info < (3, 9), reason="exact profile tests require Python 3.9+")
 class TestProfileCommandExactBackend:
+    def test_rejects_second_exact_start_without_disturbing_first(self, monkeypatch):
+        import peeka.commands.profile as profile_module
+        from peeka.commands.profile import ProfileCommand
+
+        class FakeSampler:
+            def __init__(
+                self,
+                profile_id: str,
+                registry: Any,
+                max_events: int = 10000,
+                on_stop: Any = None,
+            ):
+                self.profile_id = profile_id
+                self.active = False
+                self.stopped = False
+
+            def check_capability(self) -> Dict[str, Any]:
+                return {
+                    "available": True,
+                    "reason": None,
+                    "backend_name": "fake",
+                }
+
+            def start(self) -> None:
+                self.active = True
+
+            def stop(self) -> None:
+                self.active = False
+                self.stopped = True
+
+        monkeypatch.setattr(profile_module, "ExactProfileSampler", FakeSampler)
+        first_command = ProfileCommand()
+        second_command = ProfileCommand()
+
+        first_result = first_command.execute({"action": "start", "backend": "exact"})
+        second_result = second_command.execute({"action": "start", "backend": "exact"})
+
+        assert first_result["status"] == "success"
+        assert second_result == {
+            "status": "error",
+            "error": f"exact profile already running: {first_result['profile_id']}",
+            "profile_id": first_result["profile_id"],
+        }
+        assert ProfileCommand._exact_profile_id == first_result["profile_id"]
+        assert first_command._exact_sampler is not None
+        assert first_command._exact_sampler.active is True
+
+        stop_result = first_command.execute(
+            {"action": "stop", "profile_id": first_result["profile_id"]}
+        )
+
+        assert stop_result["status"] == "success"
+        assert first_command._exact_sampler is None
+        assert ProfileCommand._exact_profile_id is None
+
+    def test_stopping_unrelated_sampling_profile_preserves_exact_timer(self, monkeypatch):
+        import peeka.commands.profile as profile_module
+        from peeka.commands.profile import ProfileCommand
+
+        class FakeSampler:
+            def __init__(
+                self,
+                profile_id: str,
+                registry: Any,
+                max_events: int = 10000,
+                on_stop: Any = None,
+            ):
+                self.profile_id = profile_id
+                self.stopped = False
+
+            def check_capability(self) -> Dict[str, Any]:
+                return {
+                    "available": True,
+                    "reason": None,
+                    "backend_name": "fake",
+                }
+
+            def start(self) -> None:
+                return None
+
+            def stop(self) -> None:
+                self.stopped = True
+
+        monkeypatch.setattr(profile_module, "ExactProfileSampler", FakeSampler)
+        command = ProfileCommand()
+
+        exact_start = command.execute(
+            {
+                "action": "start",
+                "backend": "exact",
+                "duration_ms": 50,
+            }
+        )
+        sampling_start = command.execute(
+            {"action": "start", "backend": "sampling", "interval_ms": 1}
+        )
+        sampling_stop = command.execute(
+            {"action": "stop", "profile_id": sampling_start["profile_id"]}
+        )
+
+        assert exact_start["status"] == "success"
+        assert sampling_start["status"] == "success"
+        assert sampling_stop["status"] == "success"
+        assert command._exact_stop_timer is not None
+
+        deadline = time.time() + 1.0
+        exact_status = None
+        while time.time() < deadline:
+            list_result = command.execute({"action": "list"})
+            session_map = {s["profile_id"]: s for s in list_result["sessions"]}
+            exact_status = session_map[exact_start["profile_id"]]["status"]
+            if exact_status == "stopped":
+                break
+            time.sleep(0.01)
+
+        assert exact_status == "stopped"
+        assert command._exact_stop_timer is None
+        assert ProfileCommand._exact_profile_id is None
+
     def test_start_returns_error_when_capability_check_fails(self, monkeypatch):
         import peeka.commands.profile as profile_module
         from peeka.commands.profile import ProfileCommand
 
         class FailingSampler:
-            def __init__(self, profile_id: str, registry: Any, max_events: int = 10000):
+            def __init__(
+                self,
+                profile_id: str,
+                registry: Any,
+                max_events: int = 10000,
+                on_stop: Any = None,
+            ):
                 self.profile_id = profile_id
 
             def check_capability(self) -> Dict[str, Any]:

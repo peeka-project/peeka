@@ -52,11 +52,11 @@ class ProfileCommand(ResourceOwningCommand):
     cleanup_scope: CleanupScope = CleanupScope.DETACH_ONLY
     category: ClassVar[str] = "snapshot"
     allows_concurrent: ClassVar[bool] = False
+    _exact_profile_id: ClassVar[Optional[str]] = None
 
     def __init__(self, agent: Optional["PeekaAgent"] = None):
         super().__init__(agent)
         self._exact_sampler: Optional[ExactProfileSampler] = None
-        self._exact_profile_id: Optional[str] = None
         self._exact_stop_timer: Optional[threading.Timer] = None
         self._sampling_thread: Optional[threading.Thread] = None
         self._sampling_stop_event: Optional[threading.Event] = None
@@ -101,12 +101,22 @@ class ProfileCommand(ResourceOwningCommand):
                 "error": "Sampling profile already running",
                 "profile_id": self._sampling_profile_id,
             }
+        if config.backend == "exact":
+            active_exact_id = self._active_exact_profile_id()
+            if active_exact_id is not None:
+                return {
+                    "status": "error",
+                    "error": f"exact profile already running: {active_exact_id}",
+                    "profile_id": active_exact_id,
+                }
+
         profile_id = _PROFILE_REGISTRY.start(config)
         if config.backend == "exact":
             sampler = ExactProfileSampler(
                 profile_id,
                 _PROFILE_REGISTRY,
                 max_events=params.get("max_events", 10000),
+                on_stop=lambda stopped_id: self._clear_exact_state(stopped_id, sampler),
             )
             capability = sampler.check_capability()
             if not capability["available"]:
@@ -118,7 +128,7 @@ class ProfileCommand(ResourceOwningCommand):
                 }
             sampler.start()
             self._exact_sampler = sampler
-            self._exact_profile_id = profile_id
+            ProfileCommand._exact_profile_id = profile_id
             if config.duration_ms is not None:
                 self._exact_stop_timer = threading.Timer(
                     config.duration_ms / 1000.0,
@@ -136,11 +146,18 @@ class ProfileCommand(ResourceOwningCommand):
         if not profile_id:
             return {"status": "error", "error": "Missing profile_id"}
         try:
-            if self._exact_sampler is not None and profile_id == self._exact_profile_id:
+            is_exact_owner = profile_id == ProfileCommand._exact_profile_id
+            if (
+                self._exact_sampler is not None
+                and is_exact_owner
+            ):
                 self._exact_sampler.stop()
                 self._exact_sampler = None
-                self._exact_profile_id = None
-            if self._exact_stop_timer is not None:
+                ProfileCommand._exact_profile_id = None
+            if (
+                self._exact_stop_timer is not None
+                and is_exact_owner
+            ):
                 self._exact_stop_timer.cancel()
                 self._exact_stop_timer = None
             if profile_id == self._sampling_profile_id:
@@ -166,10 +183,38 @@ class ProfileCommand(ResourceOwningCommand):
             except KeyError:
                 logger.debug("exact profile %s already removed", profile_id)
         finally:
-            if self._exact_profile_id == profile_id and self._exact_sampler is sampler:
+            if (
+                ProfileCommand._exact_profile_id == profile_id
+                and self._exact_sampler is sampler
+            ):
                 self._exact_sampler = None
-                self._exact_profile_id = None
+                ProfileCommand._exact_profile_id = None
                 self._exact_stop_timer = None
+
+    def _active_exact_profile_id(self) -> Optional[str]:
+        profile_id = ProfileCommand._exact_profile_id
+        if profile_id is None:
+            return None
+        session = _PROFILE_REGISTRY.get_session(profile_id)
+        if session is not None and session.status == "running":
+            return profile_id
+        ProfileCommand._exact_profile_id = None
+        return None
+
+    def _clear_exact_state(
+        self,
+        profile_id: str,
+        sampler: ExactProfileSampler,
+    ) -> None:
+        if ProfileCommand._exact_profile_id != profile_id:
+            return
+        if self._exact_sampler is not sampler:
+            return
+        self._exact_sampler = None
+        ProfileCommand._exact_profile_id = None
+        if self._exact_stop_timer is not None:
+            self._exact_stop_timer.cancel()
+            self._exact_stop_timer = None
 
     def _start_sampling(self, profile_id: str, config: ProfileConfig) -> None:
         stop_event = threading.Event()
@@ -370,7 +415,7 @@ class ProfileCommand(ResourceOwningCommand):
             try:
                 self._exact_sampler.stop()
                 self._exact_sampler = None
-                self._exact_profile_id = None
+                ProfileCommand._exact_profile_id = None
                 if self._exact_stop_timer is not None:
                     self._exact_stop_timer.cancel()
                     self._exact_stop_timer = None

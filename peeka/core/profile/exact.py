@@ -4,7 +4,7 @@ import sys
 import threading
 import time
 from types import FrameType
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from peeka.core.profile.models import SampleRecord, StackRecord
 from peeka.core.profile.registry import ProfileRegistry
@@ -17,10 +17,17 @@ class ExactProfileSampler:
     events and stops itself once the configured event bound is reached.
     """
 
-    def __init__(self, profile_id: str, registry: ProfileRegistry, max_events: int = 10000):
+    def __init__(
+        self,
+        profile_id: str,
+        registry: ProfileRegistry,
+        max_events: int = 10000,
+        on_stop: Optional[Callable[[str], None]] = None,
+    ):
         self.profile_id = profile_id
         self.registry = registry
         self.max_events = max(1, int(max_events))
+        self._on_stop = on_stop
         self._active = False
         self._overflow = False
         self._dropped_events = 0
@@ -119,6 +126,8 @@ class ExactProfileSampler:
             )
         except KeyError:
             return
+        if self._on_stop is not None:
+            self._on_stop(self.profile_id)
 
     @property
     def dropped_events(self) -> int:
