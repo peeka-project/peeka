@@ -220,6 +220,7 @@ class TestCLIAddProfile:
                 assert command["action"] == "add_profile"
                 assert command["dx_case_id"] == "dx_abc123"
                 assert command["profile_id"] == "prof_xyz"
+                assert command["client_session_id"] == "client_owner"
                 return {
                     "status": "success",
                     "data": {
@@ -241,6 +242,7 @@ class TestCLIAddProfile:
             dx_action="add-profile",
             dx_case="dx_abc123",
             profile_id="prof_xyz",
+            client="client_owner",
             format="json",
         )
         exit_code = cli_dx.cmd_dx(args)
@@ -283,6 +285,7 @@ class TestCLIAddProfile:
             dx_action="add-profile",
             dx_case="dx_abc123",
             profile_id="prof_missing",
+            client=None,
             format="json",
         )
         exit_code = cli_dx.cmd_dx(args)
@@ -290,3 +293,47 @@ class TestCLIAddProfile:
         assert exit_code == 2
         obj = json.loads(captured.out.strip())
         assert obj["error_code"] == "PROFILE_NOT_FOUND"
+
+    def test_cli_add_profile_access_denied_exit_2(self, monkeypatch, capsys) -> None:
+        from peeka.cli import connection as cli_connection
+        from peeka.cli import sessions as cli_sessions
+        from peeka.cli.handlers import dx as cli_dx
+
+        class MockStreamingAgentClient:
+            def __init__(self, socket_path):
+                self.socket_path = socket_path
+
+            def connect(self) -> Dict[str, Any]:
+                return {"status": "success"}
+
+            def send_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
+                assert command["client_session_id"] == "client_other"
+                return {
+                    "status": "error",
+                    "error_code": "DX_CASE_ACCESS_DENIED",
+                    "message": "access denied",
+                    "error": "DX_CASE_ACCESS_DENIED: access denied",
+                }
+
+            def disconnect(self):
+                pass
+
+        monkeypatch.setattr(cli_connection, "StreamingAgentClient", MockStreamingAgentClient)
+        monkeypatch.setattr(
+            cli_sessions, "_check_agent_attached", lambda: ("/tmp/peeka_test.sock", 1234)
+        )
+
+        args = argparse.Namespace(
+            command="dx",
+            dx_action="add-profile",
+            dx_case="dx_abc123",
+            profile_id="prof_xyz",
+            client="client_other",
+            format="json",
+        )
+        exit_code = cli_dx.cmd_dx(args)
+        captured = capsys.readouterr()
+
+        assert exit_code == 2
+        obj = json.loads(captured.out.strip())
+        assert obj["error_code"] == "DX_CASE_ACCESS_DENIED"

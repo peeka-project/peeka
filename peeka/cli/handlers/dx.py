@@ -160,12 +160,14 @@ def cmd_dx_add_profile(args) -> int:
             "action": "add_profile",
             "dx_case_id": a.dx_case,
             "profile_id": a.profile_id,
+            "client_session_id": getattr(a, "client", None),
         },
         render_success=_render_dx_add_profile_success,
         render_error=_render_dx_add_profile_error,
         error_exit_codes={
             "DX_CASE_INVALID": 2,
             "DX_CASE_NOT_FOUND": 2,
+            "DX_CASE_ACCESS_DENIED": 2,
             "PROFILE_NOT_FOUND": 2,
         },
     )

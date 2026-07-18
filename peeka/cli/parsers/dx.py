@@ -212,6 +212,12 @@ def add_dx_parsers(subparsers: Any) -> None:
         "--profile-id", type=str, required=True, help="Profile session ID"
     )
     dx_add_profile_parser.add_argument(
+        "--client",
+        type=str,
+        default=None,
+        help="Optional owning client session ID for access control",
+    )
+    dx_add_profile_parser.add_argument(
         "--format",
         type=str,
         choices=["json", "table"],
