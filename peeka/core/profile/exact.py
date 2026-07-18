@@ -91,7 +91,7 @@ class ExactProfileSampler:
             if len(session.samples) >= self.max_events:
                 self._overflow = True
                 self._dropped_events += 1
-                self.stop()
+                self._stop_for_overflow()
                 return
 
             self.registry.add_sample(self.profile_id, self._build_sample(frame))
@@ -99,7 +99,7 @@ class ExactProfileSampler:
             session = self.registry.get_session(self.profile_id)
             if session is not None and len(session.samples) >= self.max_events:
                 self._overflow = True
-                self.stop()
+                self._stop_for_overflow()
         finally:
             self._callback_state.active = False
 
@@ -107,6 +107,18 @@ class ExactProfileSampler:
     def overflow(self) -> bool:
         """Return whether this sampler stopped after hitting its event bound."""
         return self._overflow
+
+    def _stop_for_overflow(self) -> None:
+        """Uninstall hooks and finalize the registry session after max_events."""
+        self.stop()
+        try:
+            _ = self.registry.stop(
+                self.profile_id,
+                overflow=True,
+                dropped_events=self._dropped_events,
+            )
+        except KeyError:
+            return
 
     @property
     def dropped_events(self) -> int:

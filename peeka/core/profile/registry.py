@@ -45,7 +45,12 @@ class ProfileRegistry:
             self._sessions[profile_id] = session
         return profile_id
 
-    def stop(self, profile_id: str) -> ProfileSession:
+    def stop(
+        self,
+        profile_id: str,
+        overflow: bool = False,
+        dropped_events: int = 0,
+    ) -> ProfileSession:
         """Stop a running profile session and return a snapshot of it."""
         with self._lock:
             session = self._sessions.get(profile_id)
@@ -57,7 +62,11 @@ class ProfileRegistry:
                 session.ended_at = time.time()
             elif session.ended_at is None:
                 session.ended_at = time.time()
-            session.summary = self._build_summary(session)
+            session.summary = self._build_summary(
+                session,
+                overflow=overflow,
+                dropped_events=dropped_events,
+            )
 
             _ = self._evict_if_needed()
             return deepcopy(session)
@@ -158,11 +167,18 @@ class ProfileRegistry:
     def _new_profile_id(self) -> str:
         return "prof_" + uuid.uuid4().hex[:12]
 
-    def _build_summary(self, session: ProfileSession) -> ProfileSummary:
+    def _build_summary(
+        self,
+        session: ProfileSession,
+        overflow: bool = False,
+        dropped_events: int = 0,
+    ) -> ProfileSummary:
         ended_at = session.ended_at if session.ended_at is not None else time.time()
         return ProfileSummary(
             sample_count=len(session.samples),
             duration_ms=max((ended_at - session.started_at) * 1000.0, 0.0),
             start_time=session.started_at,
             top_functions=[],
+            overflow=overflow,
+            dropped_events=dropped_events,
         )

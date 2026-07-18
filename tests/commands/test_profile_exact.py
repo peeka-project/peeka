@@ -63,8 +63,29 @@ class TestExactProfileSampler:
 
         session = registry.snapshot(profile_id)
         assert len(session.samples) == 1
+        assert session.status == "stopped"
+        assert session.summary is not None
+        assert session.summary.overflow is True
+        assert session.summary.dropped_events == 0
         assert sampler.overflow is True
         assert sampler.dropped_events == 1
+
+    def test_finalizes_registry_session_when_max_events_reached(self, registry):
+        from peeka.core.profile.exact import ExactProfileSampler
+
+        profile_id = registry.start(ProfileConfig(backend="exact", max_samples=10))
+        sampler = ExactProfileSampler(profile_id, registry, max_events=1)
+
+        sampler._on_event(sys._getframe(), "call", None)
+
+        session = registry.snapshot(profile_id)
+        assert session.status == "stopped"
+        assert session.ended_at is not None
+        assert session.summary is not None
+        assert session.summary.sample_count == 1
+        assert session.summary.overflow is True
+        assert session.summary.dropped_events == 0
+        assert sampler.active is False
 
     @pytest.mark.skipif(
         not hasattr(threading, "setprofile_all_threads"),

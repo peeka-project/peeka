@@ -119,6 +119,8 @@ class ProfileSummary:
     duration_ms: float
     start_time: float
     top_functions: List[Dict[str, Any]] = field(default_factory=list)
+    overflow: bool = False
+    dropped_events: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize the profile summary into a JSON-safe dictionary."""
@@ -132,6 +134,8 @@ class ProfileSummary:
             duration_ms=float(data.get("duration_ms", 0.0)),
             start_time=float(data.get("start_time", 0.0)),
             top_functions=list(data.get("top_functions", [])),
+            overflow=bool(data.get("overflow", False)),
+            dropped_events=int(data.get("dropped_events", 0)),
         )
 
 
