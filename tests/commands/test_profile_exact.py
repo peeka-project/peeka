@@ -2,7 +2,7 @@ import sys
 import threading
 import time
 from types import SimpleNamespace
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import pytest
 
@@ -155,6 +155,123 @@ def cleanup_profile_registry():
 
 @pytest.mark.skipif(sys.version_info < (3, 9), reason="exact profile tests require Python 3.9+")
 class TestProfileCommandExactBackend:
+    def test_concurrent_exact_starts_allow_only_one_active_profile(self, monkeypatch):
+        import peeka.commands.profile as profile_module
+        from peeka.commands.profile import ProfileCommand
+
+        ready_barrier = threading.Barrier(10)
+
+        class BlockingSampler:
+            def __init__(
+                self,
+                profile_id: str,
+                registry: Any,
+                max_events: int = 10000,
+                on_stop: Any = None,
+            ):
+                self.profile_id = profile_id
+                self.active = False
+
+            def check_capability(self) -> Dict[str, Any]:
+                return {
+                    "available": True,
+                    "reason": None,
+                    "backend_name": "fake",
+                }
+
+            def start(self) -> None:
+                time.sleep(0.05)
+                self.active = True
+
+            def stop(self) -> None:
+                self.active = False
+
+        monkeypatch.setattr(profile_module, "ExactProfileSampler", BlockingSampler)
+        commands = [ProfileCommand() for _ in range(10)]
+        results: List[Dict[str, Any]] = []
+        results_lock = threading.Lock()
+
+        def start_exact(command: ProfileCommand) -> None:
+            ready_barrier.wait(timeout=1.0)
+            result = command.execute({"action": "start", "backend": "exact"})
+            with results_lock:
+                results.append(result)
+
+        threads = [threading.Thread(target=start_exact, args=(command,)) for command in commands]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=2.0)
+
+        successes = [result for result in results if result["status"] == "success"]
+        errors = [result for result in results if result["status"] == "error"]
+
+        assert len(results) == 10
+        assert len(successes) == 1
+        assert len(errors) == 9
+        assert all("already running" in result["error"] for result in errors)
+        assert ProfileCommand._exact_profile_id == successes[0]["profile_id"]
+
+        owner = next(
+            command
+            for command in commands
+            if command._exact_sampler is not None
+            and command._exact_sampler.profile_id == successes[0]["profile_id"]
+        )
+        owner.execute({"action": "stop", "profile_id": successes[0]["profile_id"]})
+
+    def test_stale_exact_timer_does_not_stop_new_profile_hook(self, monkeypatch):
+        import peeka.commands.profile as profile_module
+        from peeka.commands.profile import ProfileCommand
+
+        class HookTrackingSampler:
+            current_hook_profile_id = None
+
+            def __init__(
+                self,
+                profile_id: str,
+                registry: Any,
+                max_events: int = 10000,
+                on_stop: Any = None,
+            ):
+                self.profile_id = profile_id
+                self.stopped = False
+
+            def check_capability(self) -> Dict[str, Any]:
+                return {
+                    "available": True,
+                    "reason": None,
+                    "backend_name": "fake",
+                }
+
+            def start(self) -> None:
+                HookTrackingSampler.current_hook_profile_id = self.profile_id
+
+            def stop(self) -> None:
+                self.stopped = True
+                HookTrackingSampler.current_hook_profile_id = None
+
+        monkeypatch.setattr(profile_module, "ExactProfileSampler", HookTrackingSampler)
+        command = ProfileCommand()
+
+        old_start = command.execute({"action": "start", "backend": "exact"})
+        old_sampler = command._exact_sampler
+        assert old_start["status"] == "success"
+        assert old_sampler is not None
+
+        old_stop = command.execute({"action": "stop", "profile_id": old_start["profile_id"]})
+        new_start = command.execute({"action": "start", "backend": "exact"})
+        assert old_stop["status"] == "success"
+        assert new_start["status"] == "success"
+        assert HookTrackingSampler.current_hook_profile_id == new_start["profile_id"]
+
+        command._expire_exact_profile(old_start["profile_id"], old_sampler)
+
+        assert HookTrackingSampler.current_hook_profile_id == new_start["profile_id"]
+        assert ProfileCommand._exact_profile_id == new_start["profile_id"]
+
+        command.execute({"action": "stop", "profile_id": new_start["profile_id"]})
+
     def test_rejects_second_exact_start_without_disturbing_first(self, monkeypatch):
         import peeka.commands.profile as profile_module
         from peeka.commands.profile import ProfileCommand

@@ -52,6 +52,7 @@ class ProfileCommand(ResourceOwningCommand):
     cleanup_scope: CleanupScope = CleanupScope.DETACH_ONLY
     category: ClassVar[str] = "snapshot"
     allows_concurrent: ClassVar[bool] = False
+    _exact_lock: ClassVar[threading.Lock] = threading.Lock()
     _exact_profile_id: ClassVar[Optional[str]] = None
 
     def __init__(self, agent: Optional["PeekaAgent"] = None):
@@ -102,6 +103,19 @@ class ProfileCommand(ResourceOwningCommand):
                 "profile_id": self._sampling_profile_id,
             }
         if config.backend == "exact":
+            return self._start_exact(params, config)
+
+        profile_id = _PROFILE_REGISTRY.start(config)
+        if config.backend == "sampling":
+            self._start_sampling(profile_id, config)
+        return {"status": "success", "profile_id": profile_id}
+
+    def _start_exact(
+        self,
+        params: Dict[str, Any],
+        config: ProfileConfig,
+    ) -> Dict[str, Any]:
+        with ProfileCommand._exact_lock:
             active_exact_id = self._active_exact_profile_id()
             if active_exact_id is not None:
                 return {
@@ -110,8 +124,7 @@ class ProfileCommand(ResourceOwningCommand):
                     "profile_id": active_exact_id,
                 }
 
-        profile_id = _PROFILE_REGISTRY.start(config)
-        if config.backend == "exact":
+            profile_id = _PROFILE_REGISTRY.start(config)
             sampler = ExactProfileSampler(
                 profile_id,
                 _PROFILE_REGISTRY,
@@ -126,19 +139,26 @@ class ProfileCommand(ResourceOwningCommand):
                     "error": capability["reason"],
                     "capability": capability,
                 }
-            sampler.start()
-            self._exact_sampler = sampler
+
             ProfileCommand._exact_profile_id = profile_id
+            self._exact_sampler = sampler
+            try:
+                sampler.start()
+            except Exception:
+                self._exact_sampler = None
+                ProfileCommand._exact_profile_id = None
+                _PROFILE_REGISTRY.stop(profile_id)
+                raise
+
             if config.duration_ms is not None:
                 self._exact_stop_timer = threading.Timer(
                     config.duration_ms / 1000.0,
                     self._expire_exact_profile,
                     args=(profile_id, sampler),
                 )
+                setattr(self._exact_stop_timer, "_peeka_profile_id", profile_id)
                 self._exact_stop_timer.daemon = True
                 self._exact_stop_timer.start()
-        elif config.backend == "sampling":
-            self._start_sampling(profile_id, config)
         return {"status": "success", "profile_id": profile_id}
 
     def _stop(self, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -146,20 +166,13 @@ class ProfileCommand(ResourceOwningCommand):
         if not profile_id:
             return {"status": "error", "error": "Missing profile_id"}
         try:
-            is_exact_owner = profile_id == ProfileCommand._exact_profile_id
-            if (
-                self._exact_sampler is not None
-                and is_exact_owner
-            ):
-                self._exact_sampler.stop()
-                self._exact_sampler = None
-                ProfileCommand._exact_profile_id = None
-            if (
-                self._exact_stop_timer is not None
-                and is_exact_owner
-            ):
-                self._exact_stop_timer.cancel()
-                self._exact_stop_timer = None
+            with ProfileCommand._exact_lock:
+                is_exact_owner = profile_id == ProfileCommand._exact_profile_id
+                if self._exact_sampler is not None and is_exact_owner:
+                    self._exact_sampler.stop()
+                    self._exact_sampler = None
+                    ProfileCommand._exact_profile_id = None
+                self._cancel_exact_timer_if_matches(profile_id)
             if profile_id == self._sampling_profile_id:
                 self._stop_sampling()
             session = _PROFILE_REGISTRY.stop(profile_id)
@@ -176,17 +189,18 @@ class ProfileCommand(ResourceOwningCommand):
         profile_id: str,
         sampler: ExactProfileSampler,
     ) -> None:
-        try:
-            sampler.stop()
+        with ProfileCommand._exact_lock:
+            if ProfileCommand._exact_profile_id != profile_id:
+                return
+            if self._exact_sampler is not sampler:
+                return
             try:
-                _PROFILE_REGISTRY.stop(profile_id)
-            except KeyError:
-                logger.debug("exact profile %s already removed", profile_id)
-        finally:
-            if (
-                ProfileCommand._exact_profile_id == profile_id
-                and self._exact_sampler is sampler
-            ):
+                sampler.stop()
+                try:
+                    _PROFILE_REGISTRY.stop(profile_id)
+                except KeyError:
+                    logger.debug("exact profile %s already removed", profile_id)
+            finally:
                 self._exact_sampler = None
                 ProfileCommand._exact_profile_id = None
                 self._exact_stop_timer = None
@@ -206,15 +220,28 @@ class ProfileCommand(ResourceOwningCommand):
         profile_id: str,
         sampler: ExactProfileSampler,
     ) -> None:
-        if ProfileCommand._exact_profile_id != profile_id:
+        with ProfileCommand._exact_lock:
+            if ProfileCommand._exact_profile_id != profile_id:
+                return
+            if self._exact_sampler is not sampler:
+                return
+            self._exact_sampler = None
+            ProfileCommand._exact_profile_id = None
+            self._cancel_exact_timer_if_matches(profile_id)
+
+    def _cancel_exact_timer_if_matches(self, profile_id: str) -> None:
+        timer = self._exact_stop_timer
+        if timer is None:
             return
-        if self._exact_sampler is not sampler:
+        if getattr(timer, "_peeka_profile_id", None) != profile_id:
             return
-        self._exact_sampler = None
-        ProfileCommand._exact_profile_id = None
-        if self._exact_stop_timer is not None:
-            self._exact_stop_timer.cancel()
-            self._exact_stop_timer = None
+        timer.cancel()
+        self._exact_stop_timer = None
+
+    def _timer_matches_profile(self, profile_id: str) -> bool:
+        if self._exact_stop_timer is None:
+            return False
+        return getattr(self._exact_stop_timer, "_peeka_profile_id", None) == profile_id
 
     def _start_sampling(self, profile_id: str, config: ProfileConfig) -> None:
         stop_event = threading.Event()
@@ -411,21 +438,25 @@ class ProfileCommand(ResourceOwningCommand):
         stopped: List[str] = []
         errors: List[Dict[str, Any]] = []
 
-        if self._exact_sampler is not None:
-            try:
-                self._exact_sampler.stop()
-                self._exact_sampler = None
-                ProfileCommand._exact_profile_id = None
-                if self._exact_stop_timer is not None:
-                    self._exact_stop_timer.cancel()
-                    self._exact_stop_timer = None
-            except Exception as exc:
-                logger.error(
-                    "[peeka Profile] exact sampler cleanup failed (%s)",
-                    reason,
-                    exc_info=True,
-                )
-                errors.append({"profile_id": "exact", "error": str(exc)})
+        with ProfileCommand._exact_lock:
+            if self._exact_sampler is not None:
+                try:
+                    exact_profile_id = ProfileCommand._exact_profile_id
+                    self._exact_sampler.stop()
+                    self._exact_sampler = None
+                    ProfileCommand._exact_profile_id = None
+                    if (
+                        exact_profile_id is not None
+                        and self._timer_matches_profile(exact_profile_id)
+                    ):
+                        self._cancel_exact_timer_if_matches(exact_profile_id)
+                except Exception as exc:
+                    logger.error(
+                        "[peeka Profile] exact sampler cleanup failed (%s)",
+                        reason,
+                        exc_info=True,
+                    )
+                    errors.append({"profile_id": "exact", "error": str(exc)})
 
         if self._sampling_thread is not None:
             try:
