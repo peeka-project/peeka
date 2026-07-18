@@ -95,8 +95,8 @@ class ProfileRegistry:
                     del self._sessions[profile_id]
                     removed += 1
 
-        if effective_max >= 0:
-            removed += self._evict_if_needed(effective_max)
+            if effective_max >= 0:
+                removed += self._evict_if_needed(effective_max)
 
         return removed
 

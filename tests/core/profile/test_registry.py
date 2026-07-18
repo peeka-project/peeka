@@ -1,7 +1,9 @@
 """Tests for the profile session registry."""
 
+import threading
 import time
 from collections.abc import Sequence
+from typing import List
 
 import pytest
 
@@ -165,3 +167,39 @@ def test_cleanup_with_max_sessions_override_keeps_newest_stopped(monkeypatch: py
     assert removed == 1
     assert profile_a not in remaining_ids
     assert set(remaining_ids) == {profile_b, profile_c}
+
+
+def test_concurrent_start_stop_cleanup_keeps_registry_consistent() -> None:
+    registry = ProfileRegistry(max_sessions=5)
+    config = ProfileConfig(backend="sampling", interval_ms=1)
+    errors: List[BaseException] = []
+    errors_lock = threading.Lock()
+    barrier = threading.Barrier(8)
+
+    def worker(worker_id: int) -> None:
+        try:
+            barrier.wait(timeout=2.0)
+            for iteration in range(100):
+                profile_id = registry.start(config)
+                if (worker_id + iteration) % 3 == 0:
+                    _ = registry.cleanup(max_sessions=5)
+                _ = registry.stop(profile_id)
+                _ = registry.cleanup(max_sessions=5)
+        except BaseException as exc:
+            with errors_lock:
+                errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(index,)) for index in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5.0)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert errors == []
+
+    sessions = registry.list_sessions()
+    profile_ids = [session.profile_id for session in sessions]
+    assert len(profile_ids) == len(set(profile_ids))
+    assert all(session.status == "stopped" for session in sessions)
+    assert len(sessions) <= 5
