@@ -432,6 +432,33 @@ class TestProfileCommand:
         )
         assert stop_result["status"] == "success"
 
+    def test_sampling_can_be_stopped_by_different_command_instance(self):
+        from peeka.commands.profile import ProfileCommand
+
+        starter = ProfileCommand()
+        stopper = ProfileCommand()
+        next_command = ProfileCommand()
+
+        start_result = starter.execute(
+            {"action": "start", "backend": "sampling", "interval_ms": 100}
+        )
+        profile_id = start_result["profile_id"]
+        thread = starter._sampling_thread
+
+        stop_result = stopper.execute({"action": "stop", "profile_id": profile_id})
+
+        assert stop_result["status"] == "success"
+        assert thread is not None
+        assert not thread.is_alive()
+        assert ProfileCommand._active_sampling_profile_id is None
+
+        next_result = next_command.execute(
+            {"action": "start", "backend": "sampling", "interval_ms": 100}
+        )
+        assert next_result["status"] == "success"
+
+        next_command.execute({"action": "stop", "profile_id": next_result["profile_id"]})
+
     def test_stop_active_resources_stops_running_sessions(self, profile_command):
         start_result = profile_command.execute({"action": "start"})
         profile_id = start_result["profile_id"]

@@ -491,6 +491,98 @@ class TestProfileCommandExactBackend:
         assert session.summary.sample_count <= 100
         assert session.summary.overflow is True
 
+    def test_exact_sampler_start_runs_outside_exact_lock(self, monkeypatch):
+        import peeka.commands.profile as profile_module
+        from peeka.commands.profile import ProfileCommand
+
+        lock_was_free = []
+
+        class LockCheckingSampler:
+            def __init__(
+                self,
+                profile_id: str,
+                registry: Any,
+                max_events: int = 10000,
+                on_stop: Any = None,
+            ):
+                self.profile_id = profile_id
+                self.active = False
+
+            def check_capability(self) -> Dict[str, Any]:
+                return {
+                    "available": True,
+                    "reason": None,
+                    "backend_name": "fake",
+                }
+
+            def start(self) -> None:
+                acquired = ProfileCommand._exact_lock.acquire(blocking=False)
+                lock_was_free.append(acquired)
+                if acquired:
+                    ProfileCommand._exact_lock.release()
+                self.active = True
+
+            def stop(self) -> None:
+                self.active = False
+
+        monkeypatch.setattr(profile_module, "ExactProfileSampler", LockCheckingSampler)
+        command = ProfileCommand()
+
+        start_result = command.execute({"action": "start", "backend": "exact"})
+
+        assert start_result["status"] == "success"
+        assert lock_was_free == [True]
+
+        command.execute({"action": "stop", "profile_id": start_result["profile_id"]})
+
+    def test_exact_can_be_stopped_by_different_command_instance(self, monkeypatch):
+        import peeka.commands.profile as profile_module
+        from peeka.commands.profile import ProfileCommand
+
+        class FakeSampler:
+            def __init__(
+                self,
+                profile_id: str,
+                registry: Any,
+                max_events: int = 10000,
+                on_stop: Any = None,
+            ):
+                self.profile_id = profile_id
+                self.active = False
+                self.stopped = False
+
+            def check_capability(self) -> Dict[str, Any]:
+                return {
+                    "available": True,
+                    "reason": None,
+                    "backend_name": "fake",
+                }
+
+            def start(self) -> None:
+                self.active = True
+
+            def stop(self) -> None:
+                self.active = False
+                self.stopped = True
+
+        monkeypatch.setattr(profile_module, "ExactProfileSampler", FakeSampler)
+        starter = ProfileCommand()
+        stopper = ProfileCommand()
+        next_command = ProfileCommand()
+
+        start_result = starter.execute({"action": "start", "backend": "exact"})
+        sampler = starter._exact_sampler
+        stop_result = stopper.execute({"action": "stop", "profile_id": start_result["profile_id"]})
+        next_result = next_command.execute({"action": "start", "backend": "exact"})
+
+        assert stop_result["status"] == "success"
+        assert sampler is not None
+        assert getattr(sampler, "stopped") is True
+        assert ProfileCommand._exact_profile_id is None or ProfileCommand._exact_profile_id == next_result["profile_id"]
+        assert next_result["status"] == "success"
+
+        next_command.execute({"action": "stop", "profile_id": next_result["profile_id"]})
+
     @pytest.mark.skipif(
         not hasattr(threading, "setprofile_all_threads"),
         reason="thread-wide exact profiling requires threading.setprofile_all_threads",
