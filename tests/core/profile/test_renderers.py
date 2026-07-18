@@ -159,6 +159,61 @@ class TestSpeedscopeRenderer:
         assert payload["profiles"][0]["weights"] == [250.0, 50.0]
         assert payload["profiles"][0]["endValue"] == 300.0
 
+    def test_render_multithread_speedscope_uses_per_thread_weights(self) -> None:
+        session = ProfileSession(
+            profile_id="profile-multi",
+            backend="sampling",
+            config=ProfileConfig(interval_ms=100),
+            started_at=100.0,
+            ended_at=100.2,
+            samples=[
+                SampleRecord(
+                    timestamp=100.0,
+                    thread_id=1,
+                    thread_name="main",
+                    stack=[StackRecord(filename="app.py", lineno=1, name="main")],
+                ),
+                SampleRecord(
+                    timestamp=100.001,
+                    thread_id=2,
+                    thread_name="worker",
+                    stack=[StackRecord(filename="worker.py", lineno=1, name="worker")],
+                ),
+                SampleRecord(
+                    timestamp=100.1,
+                    thread_id=1,
+                    thread_name="main",
+                    stack=[StackRecord(filename="app.py", lineno=2, name="main_next")],
+                ),
+                SampleRecord(
+                    timestamp=100.101,
+                    thread_id=2,
+                    thread_name="worker",
+                    stack=[StackRecord(filename="worker.py", lineno=2, name="worker_next")],
+                ),
+            ],
+        )
+        processed = ProcessedProfile(
+            profile_id=session.profile_id,
+            backend=session.backend,
+            session=session,
+        )
+        output = StringIO()
+
+        SpeedscopeRenderer().render(processed, output)
+
+        payload = cast(Dict[str, Any], json.loads(output.getvalue()))
+        profiles = payload["profiles"]
+        assert len(profiles) == 2
+        assert [profile["name"] for profile in profiles] == [
+            "profile-multi [main]",
+            "profile-multi [worker]",
+        ]
+        assert profiles[0]["weights"] == pytest.approx([100.0, 100.0])
+        assert profiles[1]["weights"] == pytest.approx([100.0, 100.0])
+        assert profiles[0]["endValue"] == pytest.approx(200.0)
+        assert profiles[1]["endValue"] == pytest.approx(200.0)
+
 
 @pytest.mark.unit
 class TestPerfettoRenderer:

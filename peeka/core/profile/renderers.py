@@ -10,8 +10,9 @@ from typing import List
 from typing import Tuple
 from typing import TextIO
 
-from peeka.core.profile.processors import ProcessedProfile
 from peeka.core.profile.models import ProfileSession
+from peeka.core.profile.models import SampleRecord
+from peeka.core.profile.processors import ProcessedProfile
 
 
 class ProfileRenderer(ABC):
@@ -122,44 +123,33 @@ class SpeedscopeRenderer(ProfileRenderer):
         session = processed.session
         frame_lookup: Dict[Tuple[Any, Any, Any, Any], int] = {}
         frames: List[Dict[str, Any]] = []
-        stacks: List[List[int]] = []
-        weights: List[float] = []
+        profiles: List[Dict[str, Any]] = []
 
-        for index, sample in enumerate(session.samples):
-            stack_indices: List[int] = []
-            for frame in sample.stack:
-                key = (frame.name, frame.module, frame.filename, frame.lineno)
-                frame_index = frame_lookup.get(key)
-                if frame_index is None:
-                    frame_index = len(frames)
-                    frame_lookup[key] = frame_index
-                    frame_data: Dict[str, Any] = {"name": frame.name}
-                    if frame.filename:
-                        frame_data["file"] = frame.filename
-                    if frame.lineno is not None:
-                        frame_data["line"] = frame.lineno
-                    if frame.module is not None:
-                        frame_data["module"] = frame.module
-                    frames.append(frame_data)
-                stack_indices.append(frame_index)
+        sample_groups = self._group_samples_by_thread(session.samples)
+        multi_thread = len(sample_groups) > 1
+        if not sample_groups:
+            sample_groups = [[]]
+        for samples in sample_groups:
+            stacks: List[List[int]] = []
+            weights: List[float] = []
+            for index, sample in enumerate(samples):
+                stacks.append(self._stack_indices(sample, frame_lookup, frames))
+                weights.append(self._sample_weight_ms(session, samples, index))
 
-            stacks.append(stack_indices)
-            weights.append(self._sample_weight_ms(session, index))
-
-        profile: Dict[str, Any] = {
-            "type": "sampled",
-            "name": processed.profile_id,
-            "unit": "milliseconds",
-            "startValue": 0,
-            "endValue": sum(weights),
-            "samples": stacks,
-            "weights": weights,
-        }
+            profiles.append({
+                "type": "sampled",
+                "name": self._profile_name(processed.profile_id, samples, multi_thread),
+                "unit": "milliseconds",
+                "startValue": 0,
+                "endValue": sum(weights),
+                "samples": stacks,
+                "weights": weights,
+            })
 
         payload: Dict[str, Any] = {
             "$schema": "https://www.speedscope.app/file-format-schema.json",
             "shared": {"frames": frames},
-            "profiles": [profile],
+            "profiles": profiles,
             "activeProfileIndex": 0,
             "name": processed.profile_id,
             "exporter": "peeka",
@@ -167,10 +157,64 @@ class SpeedscopeRenderer(ProfileRenderer):
 
         json.dump(payload, output, ensure_ascii=False)
 
-    def _sample_weight_ms(self, session: ProfileSession, index: int) -> float:
-        sample = session.samples[index]
-        if index + 1 < len(session.samples):
-            next_sample = session.samples[index + 1]
+    def _group_samples_by_thread(
+        self,
+        samples: List[SampleRecord],
+    ) -> List[List[SampleRecord]]:
+        sample_groups: Dict[int, List[SampleRecord]] = {}
+        thread_order: List[int] = []
+        for sample in samples:
+            if sample.thread_id not in sample_groups:
+                sample_groups[sample.thread_id] = []
+                thread_order.append(sample.thread_id)
+            sample_groups[sample.thread_id].append(sample)
+        return [sample_groups[thread_id] for thread_id in thread_order]
+
+    def _stack_indices(
+        self,
+        sample: SampleRecord,
+        frame_lookup: Dict[Tuple[Any, Any, Any, Any], int],
+        frames: List[Dict[str, Any]],
+    ) -> List[int]:
+        stack_indices: List[int] = []
+        for frame in sample.stack:
+            key = (frame.name, frame.module, frame.filename, frame.lineno)
+            frame_index = frame_lookup.get(key)
+            if frame_index is None:
+                frame_index = len(frames)
+                frame_lookup[key] = frame_index
+                frame_data: Dict[str, Any] = {"name": frame.name}
+                if frame.filename:
+                    frame_data["file"] = frame.filename
+                if frame.lineno is not None:
+                    frame_data["line"] = frame.lineno
+                if frame.module is not None:
+                    frame_data["module"] = frame.module
+                frames.append(frame_data)
+            stack_indices.append(frame_index)
+        return stack_indices
+
+    def _profile_name(
+        self,
+        profile_id: str,
+        samples: List[SampleRecord],
+        multi_thread: bool,
+    ) -> str:
+        if not multi_thread or not samples:
+            return profile_id
+        sample = samples[0]
+        thread_label = sample.thread_name or str(sample.thread_id)
+        return f"{profile_id} [{thread_label}]"
+
+    def _sample_weight_ms(
+        self,
+        session: ProfileSession,
+        samples: List[SampleRecord],
+        index: int,
+    ) -> float:
+        sample = samples[index]
+        if index + 1 < len(samples):
+            next_sample = samples[index + 1]
             return max((next_sample.timestamp - sample.timestamp) * 1000.0, 0.0)
         interval_ms = getattr(session.config, "interval_ms", 0)
         return float(interval_ms)
