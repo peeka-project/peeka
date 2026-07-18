@@ -56,6 +56,7 @@ class ProfileCommand(ResourceOwningCommand):
     def __init__(self, agent: Optional["PeekaAgent"] = None):
         super().__init__(agent)
         self._exact_sampler: Optional[ExactProfileSampler] = None
+        self._exact_profile_id: Optional[str] = None
         self._exact_stop_timer: Optional[threading.Timer] = None
         self._sampling_thread: Optional[threading.Thread] = None
         self._sampling_stop_event: Optional[threading.Event] = None
@@ -117,10 +118,12 @@ class ProfileCommand(ResourceOwningCommand):
                 }
             sampler.start()
             self._exact_sampler = sampler
+            self._exact_profile_id = profile_id
             if config.duration_ms is not None:
                 self._exact_stop_timer = threading.Timer(
                     config.duration_ms / 1000.0,
-                    sampler.stop,
+                    self._expire_exact_profile,
+                    args=(profile_id, sampler),
                 )
                 self._exact_stop_timer.daemon = True
                 self._exact_stop_timer.start()
@@ -133,9 +136,10 @@ class ProfileCommand(ResourceOwningCommand):
         if not profile_id:
             return {"status": "error", "error": "Missing profile_id"}
         try:
-            if self._exact_sampler is not None:
+            if self._exact_sampler is not None and profile_id == self._exact_profile_id:
                 self._exact_sampler.stop()
                 self._exact_sampler = None
+                self._exact_profile_id = None
             if self._exact_stop_timer is not None:
                 self._exact_stop_timer.cancel()
                 self._exact_stop_timer = None
@@ -149,6 +153,23 @@ class ProfileCommand(ResourceOwningCommand):
             }
         except KeyError:
             return {"status": "error", "error": "profile not found"}
+
+    def _expire_exact_profile(
+        self,
+        profile_id: str,
+        sampler: ExactProfileSampler,
+    ) -> None:
+        try:
+            sampler.stop()
+            try:
+                _PROFILE_REGISTRY.stop(profile_id)
+            except KeyError:
+                logger.debug("exact profile %s already removed", profile_id)
+        finally:
+            if self._exact_profile_id == profile_id and self._exact_sampler is sampler:
+                self._exact_sampler = None
+                self._exact_profile_id = None
+                self._exact_stop_timer = None
 
     def _start_sampling(self, profile_id: str, config: ProfileConfig) -> None:
         stop_event = threading.Event()
@@ -349,6 +370,7 @@ class ProfileCommand(ResourceOwningCommand):
             try:
                 self._exact_sampler.stop()
                 self._exact_sampler = None
+                self._exact_profile_id = None
                 if self._exact_stop_timer is not None:
                     self._exact_stop_timer.cancel()
                     self._exact_stop_timer = None

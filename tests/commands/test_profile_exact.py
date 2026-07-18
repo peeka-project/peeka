@@ -159,3 +159,45 @@ class TestProfileCommandExactBackend:
             "reason": "forced unavailable",
             "backend_name": None,
         }
+
+    @pytest.mark.skipif(
+        not hasattr(threading, "setprofile_all_threads"),
+        reason="thread-wide exact profiling requires threading.setprofile_all_threads",
+    )
+    def test_duration_expiry_stops_exact_session_and_clears_state(self):
+        from peeka.commands.profile import ProfileCommand
+
+        command = ProfileCommand()
+        try:
+            start_result = command.execute(
+                {
+                    "action": "start",
+                    "backend": "exact",
+                    "duration_ms": 20,
+                    "max_events": 1000,
+                }
+            )
+            assert start_result["status"] == "success"
+            profile_id = start_result["profile_id"]
+
+            deadline = time.time() + 1.0
+            session_status = None
+            while time.time() < deadline:
+                list_result = command.execute({"action": "list"})
+                session_map = {s["profile_id"]: s for s in list_result["sessions"]}
+                session_status = session_map[profile_id]["status"]
+                if session_status == "stopped":
+                    break
+                time.sleep(0.01)
+
+            assert session_status == "stopped"
+            assert command._exact_sampler is None
+            assert command._exact_profile_id is None
+            assert command._exact_stop_timer is None
+
+            second_result = command.execute(
+                {"action": "start", "backend": "exact", "max_events": 1000}
+            )
+            assert second_result["status"] == "success"
+        finally:
+            command.stop_active_resources(pattern=None, reason="test teardown")
