@@ -62,10 +62,16 @@ class ProfileRegistry:
                 session.ended_at = time.time()
             elif session.ended_at is None:
                 session.ended_at = time.time()
+            preserved_overflow = overflow
+            preserved_dropped_events = dropped_events
+            if session.summary is not None:
+                preserved_overflow = overflow or session.summary.overflow
+                if dropped_events == 0 and session.summary.dropped_events:
+                    preserved_dropped_events = session.summary.dropped_events
             session.summary = self._build_summary(
                 session,
-                overflow=overflow,
-                dropped_events=dropped_events,
+                overflow=preserved_overflow,
+                dropped_events=preserved_dropped_events,
             )
 
             _ = self._evict_if_needed()

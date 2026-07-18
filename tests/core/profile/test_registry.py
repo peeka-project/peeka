@@ -63,6 +63,27 @@ def test_start_stop_snapshot_and_list_sessions(monkeypatch: pytest.MonkeyPatch) 
     assert sessions[0].status == "stopped"
 
 
+def test_stop_preserves_existing_overflow_summary(monkeypatch: pytest.MonkeyPatch) -> None:
+    current = [100.0]
+    set_time(monkeypatch, current)
+
+    registry = ProfileRegistry()
+    profile_id = registry.start(ProfileConfig(backend="exact"))
+    registry.add_sample(profile_id, make_sample(1))
+
+    current[0] = 101.0
+    overflow_stop = registry.stop(profile_id, overflow=True, dropped_events=7)
+    current[0] = 102.0
+    manual_stop = registry.stop(profile_id)
+
+    assert overflow_stop.summary is not None
+    assert overflow_stop.summary.overflow is True
+    assert overflow_stop.summary.dropped_events == 7
+    assert manual_stop.summary is not None
+    assert manual_stop.summary.overflow is True
+    assert manual_stop.summary.dropped_events == 7
+
+
 def test_add_sample_drops_when_session_hits_max_samples(monkeypatch: pytest.MonkeyPatch) -> None:
     current = [1.0]
     set_time(monkeypatch, current)
