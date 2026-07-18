@@ -1,4 +1,6 @@
 import sys
+import threading
+import time
 from types import SimpleNamespace
 from typing import Any, Dict
 
@@ -25,10 +27,13 @@ class TestExactProfileSampler:
 
         assert set(result) == {"available", "reason", "backend_name"}
         assert isinstance(result["available"], bool)
-        if sys.version_info >= (3, 12) and hasattr(sys, "monitoring"):
-            assert result["backend_name"] == "sys_monitoring"
+        if hasattr(threading, "setprofile_all_threads"):
+            assert result["available"] is True
+            assert result["backend_name"] == "setprofile_all_threads"
         else:
+            assert result["available"] is False
             assert result["backend_name"] == "setprofile"
+            assert result["reason"] == "exact profiling requires threading.setprofile_all_threads"
 
     def test_check_capability_refuses_gevent_patched_runtime(self, monkeypatch, registry):
         from peeka.core.profile.exact import ExactProfileSampler
@@ -60,6 +65,57 @@ class TestExactProfileSampler:
         assert len(session.samples) == 1
         assert sampler.overflow is True
         assert sampler.dropped_events == 1
+
+    @pytest.mark.skipif(
+        not hasattr(threading, "setprofile_all_threads"),
+        reason="thread-wide exact profiling requires threading.setprofile_all_threads",
+    )
+    def test_start_installs_profiler_in_existing_worker_thread(self, registry):
+        from peeka.core.profile.exact import ExactProfileSampler
+
+        profile_id = registry.start(ProfileConfig(backend="exact", max_samples=1000))
+        ready = threading.Event()
+        proceed = threading.Event()
+        finished = threading.Event()
+
+        def thread_locality_worker_func() -> None:
+            return None
+
+        def worker() -> None:
+            ready.set()
+            proceed.wait(timeout=1.0)
+            for _ in range(20):
+                thread_locality_worker_func()
+            finished.set()
+
+        thread = threading.Thread(target=worker, name="exact-locality-worker")
+        thread.start()
+        assert ready.wait(timeout=1.0)
+
+        sampler = ExactProfileSampler(profile_id, registry, max_events=1000)
+        try:
+            sampler.start()
+            proceed.set()
+            assert finished.wait(timeout=1.0)
+
+            deadline = time.time() + 1.0
+            captured = False
+            while time.time() < deadline:
+                session = registry.snapshot(profile_id)
+                captured = any(
+                    record.name == "thread_locality_worker_func"
+                    for sample in session.samples
+                    for record in sample.stack
+                )
+                if captured:
+                    break
+                time.sleep(0.01)
+        finally:
+            sampler.stop()
+            proceed.set()
+            thread.join(timeout=1.0)
+
+        assert captured is True
 
 
 @pytest.fixture(autouse=True)

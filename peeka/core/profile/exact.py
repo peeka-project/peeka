@@ -25,6 +25,7 @@ class ExactProfileSampler:
         self._overflow = False
         self._dropped_events = 0
         self._backend_name: Optional[str] = None
+        self._callback_state = threading.local()
 
     def check_capability(self) -> Dict[str, Any]:
         """Return whether exact profiling is safe in the current runtime.
@@ -40,16 +41,16 @@ class ExactProfileSampler:
                 "backend_name": None,
             }
 
-        if sys.version_info >= (3, 12) and hasattr(sys, "monitoring"):
+        if hasattr(threading, "setprofile_all_threads"):
             return {
                 "available": True,
                 "reason": None,
-                "backend_name": "sys_monitoring",
+                "backend_name": "setprofile_all_threads",
             }
 
         return {
-            "available": True,
-            "reason": None,
+            "available": False,
+            "reason": "exact profiling requires threading.setprofile_all_threads",
             "backend_name": "setprofile",
         }
 
@@ -60,37 +61,47 @@ class ExactProfileSampler:
             raise RuntimeError(str(capability["reason"]))
         self._backend_name = capability["backend_name"]
         self._active = True
-        sys.setprofile(self._on_event)
+        threading.setprofile(self._on_event)
+        threading.setprofile_all_threads(self._on_event)
 
     def stop(self) -> None:
         """Remove the exact profile hook."""
         if self._active:
-            sys.setprofile(None)
+            threading.setprofile(None)
+            threading.setprofile_all_threads(None)
         self._active = False
 
     def _on_event(self, frame: FrameType, event: str, arg: Any) -> None:  # noqa: ARG002
         """Record one call-event sample and stop after the configured bound."""
         if event != "call":
             return
+        if getattr(self._callback_state, "active", False):
+            return
+        if self._is_internal_profile_frame(frame):
+            return
         if self._overflow:
             self._dropped_events += 1
             return
 
-        session = self.registry.get_session(self.profile_id)
-        if session is None or session.status != "running":
-            return
-        if len(session.samples) >= self.max_events:
-            self._overflow = True
-            self._dropped_events += 1
-            self.stop()
-            return
+        self._callback_state.active = True
+        try:
+            session = self.registry.get_session(self.profile_id)
+            if session is None or session.status != "running":
+                return
+            if len(session.samples) >= self.max_events:
+                self._overflow = True
+                self._dropped_events += 1
+                self.stop()
+                return
 
-        self.registry.add_sample(self.profile_id, self._build_sample(frame))
+            self.registry.add_sample(self.profile_id, self._build_sample(frame))
 
-        session = self.registry.get_session(self.profile_id)
-        if session is not None and len(session.samples) >= self.max_events:
-            self._overflow = True
-            self.stop()
+            session = self.registry.get_session(self.profile_id)
+            if session is not None and len(session.samples) >= self.max_events:
+                self._overflow = True
+                self.stop()
+        finally:
+            self._callback_state.active = False
 
     @property
     def overflow(self) -> bool:
@@ -132,6 +143,15 @@ class ExactProfileSampler:
             stack=stack,
             lane="exact",
         )
+
+    def _is_internal_profile_frame(self, frame: FrameType) -> bool:
+        current: Optional[FrameType] = frame
+        while current is not None:
+            module = current.f_globals.get("__name__")
+            if isinstance(module, str) and module.startswith("peeka.core.profile"):
+                return True
+            current = current.f_back
+        return False
 
     def _is_gevent_patched(self) -> bool:
         gevent = sys.modules.get("gevent")
