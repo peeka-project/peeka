@@ -89,6 +89,33 @@ class TestTopCommand:
         # Cleanup
         top_command.execute({"action": "stop"})
 
+    def test_start_rejects_sub_millisecond_interval_without_leaking_resources(self, top_command):
+        """Invalid sub-millisecond intervals must not start sampler resources."""
+        from peeka.commands.top import _PROFILE_REGISTRY
+
+        before_sessions = _PROFILE_REGISTRY.list_sessions()
+
+        result = top_command.execute({"action": "start", "interval": 0.0005})
+
+        assert result["status"] == "error"
+        assert "interval" in result["error"].lower()
+        assert top_command._sampling_thread is None
+        assert top_command._observation_thread is None
+        assert top_command._top_id is None
+        assert top_command._profile_id is None
+        assert _PROFILE_REGISTRY.list_sessions() == before_sessions
+
+    def test_start_accepts_one_millisecond_interval(self, top_command):
+        """The minimum valid 1ms top interval still starts normally."""
+        result = top_command.execute({"action": "start", "interval": 0.001})
+
+        assert result["status"] == "success"
+        assert result["interval"] == 0.001
+        assert top_command._sampling_thread is not None
+        assert top_command._sampling_thread.is_alive()
+
+        top_command.execute({"action": "stop"})
+
     def test_stop_terminates_thread(self, top_command):
         """Test that stop terminates sampling thread."""
         # Start first

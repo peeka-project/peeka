@@ -157,9 +157,18 @@ class TopCommand(ResourceOwningCommand):
                         "falling back to frame_walk"
                     )
 
+            interval = float(params.get("interval", 0.01))
+            interval_ms = int(interval * 1000)
+            if interval_ms < 1:
+                return {
+                    "status": "error",
+                    "error": "interval must be at least 0.001 seconds",
+                    "interval": interval,
+                }
+
             # Generate unique top_id
             self._top_id = f"top_{uuid.uuid4().hex[:8]}"
-            self._interval = params.get("interval", 0.01)
+            self._interval = interval
             self._stream = params.get("stream", False)
             self._filter_peeka = params.get("filter_peeka", True)
             self._client_session_id = params.get("client_session_id")
@@ -189,7 +198,7 @@ class TopCommand(ResourceOwningCommand):
             self._profile_id = _PROFILE_REGISTRY.start(
                 ProfileConfig(
                     backend="sampling",
-                    interval_ms=int(self._interval * 1000),
+                    interval_ms=interval_ms,
                     duration_ms=None,
                     max_samples=100000,
                 )
