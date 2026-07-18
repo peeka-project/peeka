@@ -1,4 +1,5 @@
 import json
+import threading
 import time
 from typing import Any, Dict
 
@@ -376,6 +377,60 @@ class TestProfileCommand:
         assert stop_result["status"] == "success"
         assert first_thread is not None
         assert not first_thread.is_alive()
+
+    def test_concurrent_sampling_starts_allow_only_one_active_profile(
+        self,
+        monkeypatch,
+    ):
+        import peeka.commands.profile as profile_module
+        from peeka.commands.profile import ProfileCommand
+
+        original_start = profile_module._PROFILE_REGISTRY.start
+        ready_barrier = threading.Barrier(10)
+
+        def slow_start(config):
+            time.sleep(0.05)
+            return original_start(config)
+
+        monkeypatch.setattr(profile_module._PROFILE_REGISTRY, "start", slow_start)
+        commands = [ProfileCommand() for _ in range(10)]
+        results = []
+        results_lock = threading.Lock()
+
+        def start_sampling(command):
+            ready_barrier.wait(timeout=1.0)
+            result = command.execute(
+                {"action": "start", "backend": "sampling", "interval_ms": 100}
+            )
+            with results_lock:
+                results.append(result)
+
+        threads = [
+            threading.Thread(target=start_sampling, args=(command,))
+            for command in commands
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=2.0)
+
+        successes = [result for result in results if result["status"] == "success"]
+        errors = [result for result in results if result["status"] == "error"]
+
+        assert len(results) == 10
+        assert len(successes) == 1
+        assert len(errors) == 9
+        assert all("already running" in result["error"].lower() for result in errors)
+
+        owner = next(
+            command
+            for command in commands
+            if command._sampling_profile_id == successes[0]["profile_id"]
+        )
+        stop_result = owner.execute(
+            {"action": "stop", "profile_id": successes[0]["profile_id"]}
+        )
+        assert stop_result["status"] == "success"
 
     def test_stop_active_resources_stops_running_sessions(self, profile_command):
         start_result = profile_command.execute({"action": "start"})

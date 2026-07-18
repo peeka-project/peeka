@@ -54,6 +54,10 @@ class ProfileCommand(ResourceOwningCommand):
     allows_concurrent: ClassVar[bool] = False
     _exact_lock: ClassVar[threading.Lock] = threading.Lock()
     _exact_profile_id: ClassVar[Optional[str]] = None
+    _sampling_lock: ClassVar[threading.Lock] = threading.Lock()
+    _active_sampling_thread: ClassVar[Optional[threading.Thread]] = None
+    _active_sampling_stop_event: ClassVar[Optional[threading.Event]] = None
+    _active_sampling_profile_id: ClassVar[Optional[str]] = None
 
     def __init__(self, agent: Optional["PeekaAgent"] = None):
         super().__init__(agent)
@@ -92,22 +96,24 @@ class ProfileCommand(ResourceOwningCommand):
             duration_ms=params.get("duration_ms"),
             max_samples=100000 if max_samples is None else max_samples,
         )
-        if (
-            config.backend == "sampling"
-            and self._sampling_thread is not None
-            and self._sampling_thread.is_alive()
-        ):
-            return {
-                "status": "error",
-                "error": "Sampling profile already running",
-                "profile_id": self._sampling_profile_id,
-            }
         if config.backend == "exact":
             return self._start_exact(params, config)
 
-        profile_id = _PROFILE_REGISTRY.start(config)
         if config.backend == "sampling":
-            self._start_sampling(profile_id, config)
+            with ProfileCommand._sampling_lock:
+                active_sampling_id = self._get_active_sampling_profile_id()
+                if active_sampling_id is not None:
+                    return {
+                        "status": "error",
+                        "error": "Sampling profile already running",
+                        "profile_id": active_sampling_id,
+                    }
+
+                profile_id = _PROFILE_REGISTRY.start(config)
+                self._start_sampling(profile_id, config)
+                return {"status": "success", "profile_id": profile_id}
+
+        profile_id = _PROFILE_REGISTRY.start(config)
         return {"status": "success", "profile_id": profile_id}
 
     def _start_exact(
@@ -173,8 +179,9 @@ class ProfileCommand(ResourceOwningCommand):
                     self._exact_sampler = None
                     ProfileCommand._exact_profile_id = None
                 self._cancel_exact_timer_if_matches(profile_id)
-            if profile_id == self._sampling_profile_id:
-                self._stop_sampling()
+            with ProfileCommand._sampling_lock:
+                if profile_id == ProfileCommand._active_sampling_profile_id:
+                    self._stop_sampling()
             session = _PROFILE_REGISTRY.stop(profile_id)
             return {
                 "status": "success",
@@ -243,6 +250,18 @@ class ProfileCommand(ResourceOwningCommand):
             return False
         return getattr(self._exact_stop_timer, "_peeka_profile_id", None) == profile_id
 
+    def _get_active_sampling_profile_id(self) -> Optional[str]:
+        profile_id = ProfileCommand._active_sampling_profile_id
+        thread = ProfileCommand._active_sampling_thread
+        if profile_id is None or thread is None:
+            return None
+        if thread.is_alive():
+            return profile_id
+        ProfileCommand._active_sampling_thread = None
+        ProfileCommand._active_sampling_stop_event = None
+        ProfileCommand._active_sampling_profile_id = None
+        return None
+
     def _start_sampling(self, profile_id: str, config: ProfileConfig) -> None:
         stop_event = threading.Event()
         self._sampling_stop_event = stop_event
@@ -258,6 +277,9 @@ class ProfileCommand(ResourceOwningCommand):
             daemon=True,
         )
         self._sampling_thread = thread
+        ProfileCommand._active_sampling_thread = thread
+        ProfileCommand._active_sampling_stop_event = stop_event
+        ProfileCommand._active_sampling_profile_id = profile_id
         thread.start()
 
     def _stop_sampling(self) -> None:
@@ -274,6 +296,10 @@ class ProfileCommand(ResourceOwningCommand):
         self._sampling_thread = None
         self._sampling_stop_event = None
         self._sampling_profile_id = None
+        if ProfileCommand._active_sampling_profile_id == profile_id:
+            ProfileCommand._active_sampling_thread = None
+            ProfileCommand._active_sampling_stop_event = None
+            ProfileCommand._active_sampling_profile_id = None
 
     def _sampling_loop(
         self,
@@ -300,13 +326,21 @@ class ProfileCommand(ResourceOwningCommand):
                     _PROFILE_REGISTRY.stop(profile_id)
                 except KeyError:
                     logger.debug("sampling profile %s already removed", profile_id)
-                if (
-                    self._sampling_profile_id == profile_id
-                    and self._sampling_stop_event is stop_event
-                ):
-                    self._sampling_thread = None
-                    self._sampling_stop_event = None
-                    self._sampling_profile_id = None
+                with ProfileCommand._sampling_lock:
+                    if (
+                        ProfileCommand._active_sampling_profile_id == profile_id
+                        and ProfileCommand._active_sampling_stop_event is stop_event
+                    ):
+                        ProfileCommand._active_sampling_thread = None
+                        ProfileCommand._active_sampling_stop_event = None
+                        ProfileCommand._active_sampling_profile_id = None
+                    if (
+                        self._sampling_profile_id == profile_id
+                        and self._sampling_stop_event is stop_event
+                    ):
+                        self._sampling_thread = None
+                        self._sampling_stop_event = None
+                        self._sampling_profile_id = None
 
     def _collect_sampling_snapshot(self, profile_id: str) -> None:
         current_thread_id = threading.get_ident()
@@ -458,10 +492,30 @@ class ProfileCommand(ResourceOwningCommand):
                     )
                     errors.append({"profile_id": "exact", "error": str(exc)})
 
+        with ProfileCommand._sampling_lock:
+            active_sampling_id = ProfileCommand._active_sampling_profile_id
+            if active_sampling_id is not None:
+                try:
+                    profile_id = active_sampling_id
+                    self._sampling_thread = ProfileCommand._active_sampling_thread
+                    self._sampling_stop_event = ProfileCommand._active_sampling_stop_event
+                    self._sampling_profile_id = active_sampling_id
+                    self._stop_sampling()
+                    if profile_id is not None:
+                        stopped.append(profile_id)
+                except Exception as exc:
+                    logger.error(
+                        "[peeka Profile] sampling cleanup failed (%s)",
+                        reason,
+                        exc_info=True,
+                    )
+                    errors.append({"profile_id": "sampling", "error": str(exc)})
+
         if self._sampling_thread is not None:
             try:
                 profile_id = self._sampling_profile_id
-                self._stop_sampling()
+                with ProfileCommand._sampling_lock:
+                    self._stop_sampling()
                 if profile_id is not None:
                     stopped.append(profile_id)
             except Exception as exc:
