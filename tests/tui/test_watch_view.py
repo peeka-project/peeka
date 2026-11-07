@@ -440,8 +440,8 @@ class TestWatchView:
 
     @pytest.mark.asyncio
     @pytest.mark.tui
-    async def test_watch_table_has_ten_columns(self, mock_client_factory):
-        """Active watches table has exactly 10 specified columns."""
+    async def test_watch_table_has_nine_columns(self, mock_client_factory):
+        """Active watches table has exactly 9 specified columns."""
         client = mock_client_factory(responses={})
         client.connect()
 
