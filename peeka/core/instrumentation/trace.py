@@ -245,9 +245,12 @@ class InjectorTraceMixin:
             )
 
             runtime_meta = None
+            # Report the gevent downgrade whenever the non-monitoring path ran
+            # wrapper-only under gevent: explicit settrace, auto backend on
+            # Python < 3.12 (implicitly settrace), or a pre-patched startup.
             dynamic_settrace_downgrade = (
                 effective_backend == BACKEND_WRAPPER_ONLY
-                and force_backend == BACKEND_SETTRACE
+                and not use_monitoring
                 and _is_gevent_patched_now()
             )
             if dynamic_settrace_downgrade:

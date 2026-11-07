@@ -242,3 +242,31 @@ class TestTraceRuntimeMeta:
             assert isinstance(trace_meta["downgraded"], bool)
             assert trace_meta["downgrade_reason"] is None or isinstance(trace_meta["downgrade_reason"], str)
             assert isinstance(trace_meta["gevent_patched_now"], bool)
+
+    def test_observation_runtime_meta_when_forced_wrapper_only_under_gevent(self, monkeypatch):
+        """Version-independent regression: non-monitoring wrapper_only under gevent reports meta.
+
+        dd93aeb narrowed the condition to ``force_backend == settrace`` which dropped
+        runtime_meta for the auto backend on Python < 3.12 and for pre-patched
+        (wrapper_only) startups; only the 3.9 CI job could catch it.
+        """
+        from peeka.core.runtime.compat import BACKEND_WRAPPER_ONLY
+
+        fake_monkey = types.ModuleType("gevent.monkey")
+        setattr(fake_monkey, "is_module_patched", lambda _name: True)
+        monkeypatch.setitem(sys.modules, "gevent.monkey", fake_monkey)
+
+        agent = MockAgent()
+        injector = DecoratorInjector(agent)
+        module = _install_trace_module(monkeypatch, "trace_runtime_meta_forced_wrapper")
+
+        injector.inject_trace(
+            "trace_runtime_meta_forced_wrapper.root",
+            {"times": 1},
+            force_backend=BACKEND_WRAPPER_ONLY,
+        )
+
+        assert module.root() == "outer"
+        trace_meta = agent._observations[0]["runtime_meta"]["trace"]
+        assert trace_meta["effective_backend"] == BACKEND_WRAPPER_ONLY
+        assert trace_meta["gevent_patched_now"] is True
