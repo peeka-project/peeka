@@ -50,3 +50,17 @@ dev = [
     "testcontainers>=4.0.0; python_version>='3.9'",
     "docker>=7.0.0",
 ]
+
+[tool.cibuildwheel]
+# _inject is built as a single cp38-abi3 extension (see setup.py). cibuildwheel
+# builds it once on cp38 and re-tests the same wheel on the newest CPython.
+build = ["cp38-*", "cp314-*"]
+skip = ["*t-*"]
+test-command = "python -c \"import peeka.core._inject as m; print(m.__file__)\""
+
+[tool.cibuildwheel.linux]
+# manylinux2014 = glibc 2.17: the extension must dlopen() inside old target
+# containers (e.g. Debian-based python:3.8 images). Building on a modern host
+# produced a manylinux_2_34 wheel -> "GLIBC_2.34 not found".
+manylinux-x86_64-image = "manylinux2014"
+manylinux-aarch64-image = "manylinux2014"

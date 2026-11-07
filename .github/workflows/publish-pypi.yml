@@ -16,6 +16,7 @@ jobs:
   test:
     name: Run Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     
     steps:
       - uses: actions/checkout@v4
@@ -32,10 +33,17 @@ jobs:
       - name: Run unit tests
         run: bash scripts/release_check.sh
   
+  wheels:
+    name: Build wheels
+    needs: test
+    # cibuildwheel matrix: manylinux2014/musllinux x86_64+aarch64, macOS arm64+x86_64
+    uses: ./.github/workflows/build-wheels.yml
+
   publish:
     name: Build and Publish to PyPI
-    needs: test
+    needs: [test, wheels]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     
     # environment: pypi tells GitHub Actions to use the PyPI environment
     # which is configured in repo settings with OIDC trusted publishers
@@ -54,24 +62,32 @@ jobs:
           python-version: '3.12'
       
       - name: Install build tools
-        run: pip install --upgrade pip build auditwheel
+        run: pip install --upgrade pip build
       
       - name: Clean dist directory
         run: rm -rf dist/
       
-      - name: Build package
-        run: python -m build
+      # Wheels come from build-wheels.yml (cibuildwheel, manylinux2014 = glibc 2.17).
+      # Building a wheel here on ubuntu-latest produced manylinux_2_34 for cp312 only.
+      - name: Build sdist
+        run: python -m build --sdist
       
-      - name: Repair wheel to manylinux
-        run: |
-          WHL=$(ls dist/*.whl 2>/dev/null | head -1)
-          if [ -n "$WHL" ]; then
-            auditwheel repair "$WHL" --wheel-dir dist/ && rm "$WHL"
-          fi
+      - name: Download wheels
+        uses: actions/download-artifact@v8.0.1
+        with:
+          pattern: wheels-*
+          path: dist/
+          merge-multiple: true
       
       - name: Verify wheel contents
         run: |
-          unzip -l dist/*.whl | grep -c 'peeka/' | xargs test 10 -le || exit 1
+          ls -l dist/
+          for whl in dist/*.whl; do
+            unzip -l "$whl" | grep -q 'peeka/core/_inject' || { echo "::error::$whl lacks _inject"; exit 1; }
+            unzip -l "$whl" | grep -c 'peeka/' | xargs test 10 -le || exit 1
+          done
+          ls dist/*.whl | grep -q 'manylinux_2_17_x86_64' || { echo "::error::no manylinux2014 x86_64 wheel"; exit 1; }
+          ls dist/*.whl | grep -q 'macosx_.*_arm64' || { echo "::error::no macOS arm64 wheel"; exit 1; }
       
       - name: Publish to PyPI
         # Uses pypa/gh-action-pypi-publish with Trusted Publishing
@@ -82,6 +98,7 @@ jobs:
     name: Create GitHub Release
     needs: publish
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     
     permissions:
       contents: write
