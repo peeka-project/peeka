@@ -687,7 +687,8 @@ class ProcessSelectorScreen(Screen):
         States:
         1. Error visible: Esc → reset panel, hide it, return (no quit)
         2. Attach in progress: Esc → no-op (must wait for result)
-        3. Idle: Esc → quit (original behavior)
+        3. Filter focused with text: Esc → clear the filter (no quit)
+        4. Idle: Esc → quit (original behavior)
         """
         # State 1: showing attach error → reset panel, return to idle
         try:
@@ -703,5 +704,11 @@ class ProcessSelectorScreen(Screen):
         if self._attaching:
             return
 
-        # State 3: idle → quit
+        # State 3: typing a filter → clear it instead of quitting the app
+        filter_input = self.query_one("#filter", Input)
+        if self.focused is filter_input and filter_input.value:
+            filter_input.value = ""
+            return
+
+        # State 4: idle → quit
         self.app.exit()

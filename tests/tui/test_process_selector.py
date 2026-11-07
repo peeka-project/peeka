@@ -5,7 +5,7 @@ from typing import Optional
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import DataTable
+from textual.widgets import DataTable, Input
 
 from peeka.core.processes import PythonProcess
 from peeka.core.targets import TargetAgent
@@ -277,3 +277,34 @@ def test_no_glob_calls():
     assert not re.search(r"glob\.glob", content)
     assert not re.search(r"os\.listdir.*tmp", content)
     assert not re.search(r"ps aux", content)
+
+
+@pytest.mark.asyncio
+@pytest.mark.tui
+async def test_escape_clears_filter_before_quitting(monkeypatch, mock_targets):
+    """Esc while typing a filter clears it; only Esc on an empty filter quits."""
+    patch_discovery(monkeypatch, mock_targets)
+
+    exited = []
+    app = MockProcessApp()
+    async with app.run_test(size=(140, 24)) as pilot:
+        await pilot.pause()
+        monkeypatch.setattr(app, "exit", lambda *a, **k: exited.append(True))
+
+        filter_input = app.screen.query_one("#filter", Input)
+        filter_input.focus()
+        await pilot.press("1", "0", "0", "1")
+        await pilot.pause()
+        assert filter_input.value == "1001"
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert filter_input.value == ""
+        assert exited == []
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert exited == [True]
+

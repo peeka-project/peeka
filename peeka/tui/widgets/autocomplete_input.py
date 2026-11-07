@@ -196,6 +196,26 @@ class AutoCompleteInput(Widget):
             event.prevent_default()
             event.stop()
 
+    def dismiss_dropdown(self) -> bool:
+        """Hide the completion dropdown if it is showing.
+
+        Also cancels a pending completion fetch so the dropdown does not
+        reopen right after being dismissed.
+
+        Returns:
+            True if the dropdown was visible and is now hidden.
+        """
+        if self._debounce_timer is not None:
+            self._debounce_timer.stop()
+            self._debounce_timer = None
+        self._pending_prefix = None
+
+        dropdown = self.query_one("#ac-dropdown", OptionList)
+        if not dropdown.display:
+            return False
+        dropdown.display = False
+        return True
+
     @property
     def value(self) -> str:
         """Get current input value."""

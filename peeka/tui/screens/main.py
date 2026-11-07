@@ -10,7 +10,7 @@ from textual.binding import Binding
 from textual.command import DiscoveryHit, Hit, Hits, Provider
 from textual.containers import Container
 from textual.screen import Screen
-from textual.widgets import Header, Footer, TabbedContent, TabPane
+from textual.widgets import Header, Footer, Input, TabbedContent, TabPane
 
 from peeka.tui.activity import make_activity_reporter, make_client_info
 from peeka.tui.views.dashboard import DashboardView
@@ -25,6 +25,7 @@ from peeka.tui.views.timeline import TimelineView
 from peeka.tui.views.top import TopView
 from peeka.tui.views.trace import TraceView
 from peeka.tui.views.watch import WatchView
+from peeka.tui.widgets.autocomplete_input import AutoCompleteInput
 
 
 class TabSpec(NamedTuple):
@@ -363,9 +364,42 @@ class MainScreen(Screen):
             set_active(active)
 
     def action_go_back(self) -> None:
+        """Esc/q: step out of text entry before leaving the screen.
+
+        Going back detaches from the target and stops every watch/trace, so a
+        stray Esc while typing must not trigger it. Order of precedence:
+        close an open completion dropdown, then blur a focused input, and only
+        when nothing is focused for typing, go back.
+        """
+        if self._leave_text_entry():
+            return
+
         self._cleanup_all_views()
         self.app.sub_title = "Python Runtime Diagnostics"
         self.app.pop_screen()
+
+    def _leave_text_entry(self) -> bool:
+        """Dismiss a completion dropdown or blur a focused input.
+
+        Returns:
+            True if Esc was consumed by leaving text entry.
+        """
+        focused = self.focused
+        if focused is None:
+            return False
+
+        autocomplete = None
+        for node in (focused, *focused.ancestors):
+            if isinstance(node, AutoCompleteInput):
+                autocomplete = node
+                break
+
+        if autocomplete is not None and autocomplete.dismiss_dropdown():
+            return True
+        if autocomplete is not None or isinstance(focused, Input):
+            self.set_focus(None)
+            return True
+        return False
 
     def _cleanup_all_views(self) -> None:
         for view_cls in (WatchView, TraceView, StackView, MonitorView):
