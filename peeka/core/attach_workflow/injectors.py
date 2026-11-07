@@ -122,6 +122,38 @@ class AttachInjectionMixin:
 
         raise NotImplementedError(f"Unsupported platform: {system_name}")
 
+    def _check_injector_loadable_in_target(self) -> None:
+        """Fail fast when the target cannot dlopen the C injector.
+
+        Runs before GDB is launched so a GLIBC/ABI mismatch between the peeka
+        host and the target (e.g. an old-distro container) is reported with
+        its real cause instead of surfacing as an opaque GDB/readiness failure.
+        An inconclusive probe keeps the original behaviour.
+        """
+        attach_module = _attach_module()
+        injector_path = attach_module._find_injector_path()
+        if not injector_path:
+            return
+        loadable, reason = attach_module._probe_injector_in_target(self.pid, injector_path)
+        if loadable is None:
+            attach_module.logger.debug(
+                "C extension target probe inconclusive (%s); trying dlopen path", reason
+            )
+            return
+        if loadable:
+            attach_module.logger.debug("C extension loadable in target PID %d", self.pid)
+            return
+        attach_module.logger.info(
+            "C extension not loadable in target (%s); skipping dlopen path", reason
+        )
+        raise RuntimeError(
+            f"C extension not loadable in target process {self.pid} ({reason}). "
+            "The peeka C injector was built against a newer libc/ABI than the "
+            "target environment provides (common when the target runs in an "
+            "older-distro container). Run peeka with an install built for the "
+            "target environment, e.g. inside the container."
+        )
+
     def _inject_via_gdb(self) -> bool:
         """
         Inject via GDB using dlopen + C extension.
@@ -137,6 +169,7 @@ class AttachInjectionMixin:
         ):
             self._check_gdb_available()
             self._check_ptrace_permissions()
+            self._check_injector_loadable_in_target()
 
             agent_code = _attach_module()._read_agent_code()
             notify_port = self._create_notify_server()

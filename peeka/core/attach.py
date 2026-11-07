@@ -5,8 +5,11 @@ Attach to running Python processes and inject agent code
 
 import importlib.util
 import logging
+import os
+import re
 import shutil
 import socket as sock_mod
+import subprocess
 import sys
 import time
 import uuid
@@ -221,6 +224,109 @@ def _has_injector() -> bool:
         return True
     except (ImportError, OSError):
         return False
+
+
+# Timeout for the target-side C extension loadability probe (seconds).
+_INJECTOR_PROBE_TIMEOUT = 5.0
+
+# Only run the target executable as a probe when it is clearly a Python
+# interpreter; embedded hosts (uwsgi, blender, ...) must not be executed.
+_PYTHON_EXE_RE = re.compile(r"^python\d*(\.\d+)*[a-z]*$")
+
+_INJECTOR_PROBE_CODE = "import ctypes, sys; ctypes.CDLL(sys.argv[1])"
+
+
+def _summarize_dlopen_error(output: str) -> str:
+    """Condense a dlopen/ctypes failure into a short, log-friendly reason."""
+    match = re.search(r"version [`'\"]?(GLIBC_[0-9.]+)[`'\"]? not found", output)
+    if match:
+        return f"{match.group(1)} not found"
+    if "cannot open shared object file" in output:
+        return "shared object not visible in target filesystem"
+    lines = [line.strip() for line in output.strip().splitlines() if line.strip()]
+    if not lines:
+        return "unknown error"
+    reason = lines[-1]
+    return reason if len(reason) <= 200 else reason[:197] + "..."
+
+
+def _probe_injector_in_target(
+    pid: int,
+    injector_path: str,
+    timeout: float = _INJECTOR_PROBE_TIMEOUT,
+) -> Tuple[Optional[bool], str]:
+    """Check whether the target's environment can dlopen the C injector.
+
+    ``_has_injector()`` only proves the extension loads in the *peeka* process.
+    The GDB path dlopen()s it inside the target, whose glibc may be older (for
+    example a Python 3.8 Debian container on a GLIBC 2.34+ host). This runs
+    ``ctypes.CDLL(injector_path)`` with the target's own interpreter, inside
+    the target's mount namespace when it differs from ours (via ``nsenter``),
+    so the same dynamic loader and libc that GDB's dlopen would see are used.
+
+    Returns:
+        ``(True, "")`` when the extension loads, ``(False, reason)`` when it
+        definitely does not, and ``(None, reason)`` when the probe itself could
+        not run (no permission, not a python executable, timeout, ...). Callers
+        must keep the original behaviour on ``None``.
+    """
+    if not sys.platform.startswith("linux"):
+        return None, "probe only supported on Linux"
+
+    try:
+        exe_in_target = os.readlink(f"/proc/{pid}/exe")
+    except OSError as exc:
+        return None, f"cannot read /proc/{pid}/exe: {exc}"
+    exe_in_target = exe_in_target.replace(" (deleted)", "")
+    if not _PYTHON_EXE_RE.match(os.path.basename(exe_in_target)):
+        return None, f"target executable is not a python interpreter: {exe_in_target}"
+
+    try:
+        same_mount_ns = os.readlink(f"/proc/{pid}/ns/mnt") == os.readlink(
+            "/proc/self/ns/mnt"
+        )
+    except OSError:
+        same_mount_ns = True
+
+    if same_mount_ns:
+        cmd = [exe_in_target]
+    else:
+        # The interpreter, its dynamic loader and libc live under the target's
+        # root; check the binary is there before entering the namespace.
+        rooted_exe = f"/proc/{pid}/root{exe_in_target}"
+        if not os.access(rooted_exe, os.X_OK):
+            return None, f"target interpreter not executable: {rooted_exe}"
+        nsenter = shutil.which("nsenter")
+        if not nsenter:
+            return None, "nsenter not available for cross-namespace probe"
+        cmd = [nsenter, f"--target={pid}", "--mount", "--", exe_in_target]
+    cmd += ["-I", "-S", "-c", _INJECTOR_PROBE_CODE, injector_path]
+
+    try:
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return None, f"probe timed out after {timeout:g}s"
+    except OSError as exc:
+        return None, f"probe could not run: {exc}"
+
+    if result.returncode == 0:
+        return True, ""
+
+    output = f"{result.stderr}\n{result.stdout}"
+    lowered = output.lower()
+    if not same_mount_ns and (
+        "operation not permitted" in lowered or "permission denied" in lowered
+    ) and "ctypes" not in lowered:
+        return None, "no permission to enter target mount namespace"
+    if "OSError" in output or "cannot open shared object" in output:
+        return False, _summarize_dlopen_error(output)
+    return None, f"probe failed (exit {result.returncode}): {_summarize_dlopen_error(output)}"
 
 
 def _read_agent_code() -> str:
