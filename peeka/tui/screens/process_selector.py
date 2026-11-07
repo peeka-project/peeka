@@ -356,6 +356,23 @@ class ProcessSelectorScreen(Screen):
         """Filter targets based on input."""
         self.refresh_processes()
 
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Enter in the filter: attach if exactly one target is selectable.
+
+        With several candidates, move focus to the table so the next Enter
+        picks the highlighted row. The filter Input consumes Enter itself,
+        so the screen-level ``enter`` binding never sees it.
+        """
+        if event.input.id != "filter":
+            return
+        event.stop()
+        if len(self._selectable_pids) == 1:
+            self._attach_to_process(next(iter(self._selectable_pids.values())))
+            return
+        table = self.query_one("#process-table", DataTable)
+        if table.row_count:
+            table.focus()
+
     def action_refresh(self) -> None:
         """Refresh process list."""
         self.refresh_processes()

@@ -308,3 +308,60 @@ async def test_escape_clears_filter_before_quitting(monkeypatch, mock_targets):
 
         assert exited == [True]
 
+
+@pytest.mark.asyncio
+@pytest.mark.tui
+async def test_enter_in_filter_attaches_single_match(monkeypatch, mock_targets):
+    """Enter in the filter attaches when exactly one selectable target matches."""
+    patch_discovery(monkeypatch, mock_targets)
+
+    attached = []
+    app = MockProcessApp()
+    async with app.run_test(size=(140, 24)) as pilot:
+        await pilot.pause()
+        app.screen_instance._attach_to_process = attached.append
+
+        filter_input = app.screen.query_one("#filter", Input)
+        filter_input.focus()
+        await pilot.press("1", "0", "0", "1")
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert attached == [1001]
+
+
+@pytest.mark.asyncio
+@pytest.mark.tui
+async def test_enter_in_filter_moves_to_table_when_ambiguous(monkeypatch, mock_targets):
+    """With several selectable matches, Enter hands focus to the table instead."""
+    alive_copy = TargetAgent(
+        target_id="target_00000009",
+        legacy_session_id="00000009",
+        pid=1009,
+        socket_path="/tmp/peeka_00000009.sock",
+        state="alive",
+        agent_mode="injected",
+        injection_mode="pep768",
+        python_version="3.14.0",
+        peeka_version="0.1.0",
+        created_at=1000.0,
+        last_seen_at=2000.0,
+    )
+    patch_discovery(monkeypatch, mock_targets + [alive_copy])
+
+    attached = []
+    app = MockProcessApp()
+    async with app.run_test(size=(140, 24)) as pilot:
+        await pilot.pause()
+        app.screen_instance._attach_to_process = attached.append
+
+        filter_input = app.screen.query_one("#filter", Input)
+        filter_input.focus()
+        await pilot.press("1", "0", "0")
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert attached == []
+        assert app.focused is app.screen.query_one("#process-table", DataTable)

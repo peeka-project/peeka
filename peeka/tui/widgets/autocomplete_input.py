@@ -196,6 +196,10 @@ class AutoCompleteInput(Widget):
             event.prevent_default()
             event.stop()
 
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Close the dropdown on Enter; the event keeps bubbling to the view."""
+        self.dismiss_dropdown()
+
     def dismiss_dropdown(self) -> bool:
         """Hide the completion dropdown if it is showing.
 

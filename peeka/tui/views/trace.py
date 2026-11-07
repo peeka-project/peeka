@@ -355,6 +355,15 @@ class TraceView(Container):
             self._stream_client.disconnect()
             self._stream_client = None
 
+    async def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Enter in any field starts tracing, same as the Trace button.
+
+        A focused Input consumes Enter itself, so the view-level ``enter``
+        binding only fires when no input has focus.
+        """
+        event.stop()
+        await self._start_trace()
+
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
         if event.button.id == "trace-btn":

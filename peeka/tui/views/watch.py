@@ -411,6 +411,15 @@ class WatchView(Container):
             self._stream_client.disconnect()
             self._stream_client = None
 
+    async def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Enter in any field starts watching, same as the Watch button.
+
+        A focused Input consumes Enter itself, so the view-level ``enter``
+        binding only fires when no input has focus.
+        """
+        event.stop()
+        await self._start_watch()
+
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
         if event.button.id == "watch-btn":

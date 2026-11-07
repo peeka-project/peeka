@@ -126,6 +126,15 @@ class MonitorView(Container):
         stats_panel = self.query_one("#stats-panel", Vertical)
         stats_panel.border_title = "Performance Statistics"
 
+    async def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Enter in any field starts monitoring, same as the Monitor button.
+
+        A focused Input consumes Enter itself, so the view-level ``enter``
+        binding only fires when no input has focus.
+        """
+        event.stop()
+        await self._start_monitor()
+
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "monitor-btn":
             await self._start_monitor()

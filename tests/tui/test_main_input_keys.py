@@ -88,3 +88,74 @@ class TestEscapeLeavesTextEntryFirst:
             assert app.screen is main_screen
             assert app.focused is None
 
+
+ENTER_CASES = [
+    ("watch", "WatchView", "_start_watch", "#watch-pattern #ac-input"),
+    ("watch", "WatchView", "_start_watch", "#watch-condition"),
+    ("trace", "TraceView", "_start_trace", "#trace-pattern #ac-input"),
+    ("trace", "TraceView", "_start_trace", "#trace-min-duration"),
+    ("stack", "StackView", "_start_stack", "#stack-pattern #ac-input"),
+    ("monitor", "MonitorView", "_start_monitor", "#monitor-pattern #ac-input"),
+    ("monitor", "MonitorView", "_start_monitor", "#monitor-interval"),
+]
+
+
+class TestEnterInInputStarts:
+    """Enter in a view's input starts the action, same as its button."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    @pytest.mark.parametrize("tab_id,view_name,method,selector", ENTER_CASES)
+    async def test_enter_in_input_starts_action(self, monkeypatch, tab_id, view_name, method, selector):
+        app = PeekaApp()
+        async with app.run_test(size=(140, 30)) as pilot:
+            main_screen = await _push_main(app, pilot, monkeypatch)
+            main_screen.action_switch_tab(tab_id)
+            await pilot.pause()
+
+            view = main_screen.query_one(view_name)
+            calls = []
+
+            async def _record() -> None:
+                calls.append(method)
+
+            monkeypatch.setattr(view, method, _record)
+
+            field = main_screen.query_one(selector, Input)
+            field.focus()
+            await pilot.pause()
+            await pilot.press("x")
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert calls == [method]
+            assert app.screen is main_screen
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_enter_closes_completion_dropdown(self, monkeypatch):
+        app = PeekaApp()
+        async with app.run_test(size=(140, 30)) as pilot:
+            main_screen = await _push_main(app, pilot, monkeypatch)
+            main_screen.action_switch_tab("watch")
+            await pilot.pause()
+
+            view = main_screen.query_one("WatchView")
+
+            async def _noop() -> None:
+                return None
+
+            monkeypatch.setattr(view, "_start_watch", _noop)
+
+            pattern_input = main_screen.query_one("#watch-pattern #ac-input", Input)
+            pattern_input.focus()
+            dropdown = main_screen.query_one("#watch-pattern #ac-dropdown", OptionList)
+            dropdown.add_option("demo.Calculator.add")
+            dropdown.display = True
+            await pilot.pause()
+
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert dropdown.display is False
+

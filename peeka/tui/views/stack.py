@@ -9,7 +9,7 @@ import threading
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Vertical, Horizontal
-from textual.widgets import Static, DataTable, Button, Tree
+from textual.widgets import Static, DataTable, Button, Input, Tree
 from textual.worker import Worker, get_current_worker
 
 from peeka.tui.activity import make_activity_reporter, make_client_info
@@ -239,6 +239,15 @@ class StackView(Container):
         if self._stream_client:
             self._stream_client.disconnect()
             self._stream_client = None
+
+    async def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Enter in any field starts stack sampling, same as the Stack button.
+
+        A focused Input consumes Enter itself, so the view-level ``enter``
+        binding only fires when no input has focus.
+        """
+        event.stop()
+        await self._start_stack()
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "stack-btn":
