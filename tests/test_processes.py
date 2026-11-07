@@ -265,3 +265,96 @@ def test_discover_python_processes_ps_fallback_handles_shlex_failure(
 
     assert len(discovered) == 1
     assert discovered[0].pid == 101
+
+
+def _patch_proc(
+    monkeypatch: pytest.MonkeyPatch, proc_root: Path, exe_paths: dict
+) -> None:
+    def fake_readlink(path: str) -> str:
+        if path not in exe_paths:
+            raise PermissionError(path)
+        return exe_paths[path]
+
+    monkeypatch.setattr(processes, "PROC_DIR", proc_root)
+    monkeypatch.setattr(processes.os, "getpid", lambda: 1)
+    monkeypatch.setattr(processes.os, "readlink", fake_readlink)
+
+
+def test_discover_python_processes_reads_minor_version_from_libpython_map(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    proc_root = tmp_path / "proc"
+    proc_root.mkdir()
+    entry = _write_proc_entry(proc_root, 610, ["python3", "/app/app.py"], "python3")
+    _ = (entry / "maps").write_text(
+        "7f00-7f10 r-xp 0 08:01 1 /usr/lib/libc.so.6\n"
+        "7f20-7f30 r-xp 0 08:01 2 /usr/local/lib/libpython3.14.so.1.0\n",
+        encoding="utf-8",
+    )
+    _patch_proc(monkeypatch, proc_root, {str(entry / "exe"): "/usr/local/bin/python3"})
+
+    discovered = processes.discover_python_processes()
+
+    assert [p.python_version for p in discovered] == ["3.14"]
+
+
+def test_discover_python_processes_keeps_exe_version_over_maps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    proc_root = tmp_path / "proc"
+    proc_root.mkdir()
+    entry = _write_proc_entry(proc_root, 611, ["python3.12", "/app/app.py"], "python3.12")
+    _ = (entry / "maps").write_text("x /usr/lib/libpython3.11.so\n", encoding="utf-8")
+    _patch_proc(monkeypatch, proc_root, {str(entry / "exe"): "/usr/bin/python3.12"})
+
+    assert [p.python_version for p in processes.discover_python_processes()] == ["3.12"]
+
+
+def test_discover_python_processes_handles_unreadable_exe_and_maps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Processes of other users: exe/maps raise EACCES but cmdline is readable."""
+    proc_root = tmp_path / "proc"
+    proc_root.mkdir()
+    entry = _write_proc_entry(proc_root, 620, ["/usr/bin/python3", "srv.py"], "python3")
+    (entry / "maps").mkdir()  # reading a directory raises OSError
+    _patch_proc(monkeypatch, proc_root, {})
+
+    discovered = processes.discover_python_processes()
+
+    assert [(p.pid, p.executable, p.python_version) for p in discovered] == [
+        (620, "", "3")
+    ]
+
+
+def test_discover_python_processes_skips_fully_unreadable_entries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    proc_root = tmp_path / "proc"
+    proc_root.mkdir()
+    (proc_root / "630").mkdir()  # no cmdline/comm: vanished or hidden
+    (proc_root / "self").mkdir()
+    _patch_proc(monkeypatch, proc_root, {})
+
+    assert processes.discover_python_processes() == []
+
+
+@pytest.mark.parametrize(
+    "command, is_tool",
+    [
+        ("/venv/bin/python3 /venv/bin/peeka", True),
+        ("/venv/bin/python3 /venv/bin/peeka-cli attach 1", True),
+        ("python3 -X dev -m peeka.tui", True),
+        ("python3 -m peeka.cli.main targets", True),
+        ("/usr/local/bin/peeka", True),
+        ("python3 /srv/app.py --data-dir /srv/peeka", False),
+        ("python3 -m uvicorn app:main --app-dir /home/u/peeka", False),
+        ("python3 /home/u/peeka/examples/demo.py", False),
+        ("python3 -m peekaboo", False),
+        ("", False),
+    ],
+)
+def test_is_peeka_tool_process_only_inspects_program_and_workload(
+    command: str, is_tool: bool
+) -> None:
+    assert processes._is_peeka_tool_process(command) is is_tool

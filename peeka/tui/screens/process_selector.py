@@ -2,8 +2,10 @@
 Process Selector Screen - List and select Python processes to attach.
 """
 
+import os
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from rich.markup import escape
@@ -24,6 +26,76 @@ from peeka.tui.activity import (
     format_attach_activity,
     format_attach_summary,
 )
+
+
+PTRACE_SCOPE_PATH = Path("/proc/sys/kernel/yama/ptrace_scope")
+
+# Display group order: attached targets first, then processes that can be
+# attached, then stale/unknown leftovers.
+_STATE_GROUP_RANK = {"alive": 0, "attachable": 1}
+
+_EMPTY_HINT = (
+    "No Python processes found.\n"
+    "Peeka lists processes visible in this PID namespace via /proc. If your "
+    "target is missing: run peeka inside the same container/host as the "
+    "target (e.g. docker exec), check /proc is not mounted with hidepid, "
+    "or press r to refresh after starting the target."
+)
+
+
+def _read_ptrace_scope() -> Optional[int]:
+    """Return kernel.yama.ptrace_scope, or None when unavailable."""
+    try:
+        return int(PTRACE_SCOPE_PATH.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _geteuid() -> Optional[int]:
+    geteuid = getattr(os, "geteuid", None)
+    return geteuid() if callable(geteuid) else None
+
+
+def attach_failure_hints(pid: int) -> List[str]:
+    """Return concrete, environment-specific reasons an attach may fail.
+
+    Generic causes are only listed when no concrete one is detected, so the
+    first line the user reads is the most likely explanation.
+    """
+    hints: List[str] = []
+    euid = _geteuid()
+    scope = _read_ptrace_scope()
+    if scope is not None and scope >= 1 and euid != 0:
+        if scope == 1:
+            hints.append(
+                "kernel.yama.ptrace_scope=1: only parent processes may ptrace. "
+                "Run peeka as root (sudo) or: "
+                "echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope"
+            )
+        else:
+            hints.append(
+                f"kernel.yama.ptrace_scope={scope}: ptrace is restricted to "
+                "CAP_SYS_PTRACE (or disabled). Run peeka as root or lower the scope."
+            )
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        hints.append(f"Process {pid} has exited.")
+    except PermissionError:
+        hints.append(
+            f"Process {pid} is owned by another user: run peeka as that user "
+            "or as root (CAP_SYS_PTRACE)."
+        )
+    except OSError:
+        pass
+    if not hints:
+        hints = [
+            "Python version mismatch between peeka and the target",
+            "GDB/LLDB not available (needed for Python < 3.14)",
+            "Container lacks CAP_SYS_PTRACE (docker run --cap-add=SYS_PTRACE)",
+            "Process already has an agent attached",
+        ]
+    return hints
 
 
 @dataclass
@@ -69,11 +141,13 @@ class ProcessSelectorScreen(Screen):
         # 2. At < 140 cols: Name, State, Created remain; others omitted
         # 3. Alive rows use 'green', attachable rows use 'cyan', stale/failed use 'dim red'
         # 4. Alive/attachable rows are selectable; stale/unknown rows are not
+        # 4b. Rows are grouped: attached (alive) → attachable → stale/unknown
         # 5. Refresh key 'r' triggers reload; status bar shows "Refreshed N processes at HH:MM:SS"
         yield Header()
         selector = Container(
             Input(placeholder="Filter by Name, Command, PID, or State...", id="filter", classes="compact-control"),
             DataTable(id="process-table"),
+            Static(_EMPTY_HINT, id="empty-hint", classes="empty-state"),
             id="process-selector",
             classes="panel",
         )
@@ -93,6 +167,7 @@ class ProcessSelectorScreen(Screen):
         attach_panel.styles.display = "none"
         error_widget = self.query_one("#attach-error")
         error_widget.styles.display = "none"
+        self.query_one("#empty-hint").styles.display = "none"
 
         # Set border titles for attach panel sections
         progress = self.query_one("#attach-progress", Static)
@@ -207,6 +282,17 @@ class ProcessSelectorScreen(Screen):
                 )
             self._visible_row_count += 1
 
+        self._update_summary(rows, filter_text)
+
+    def _update_summary(self, rows: List[_ProcessRow], filter_text: str) -> None:
+        """Show attached/attachable counts and the empty-state hint."""
+        attached = sum(1 for row in rows if row.state == "alive")
+        attachable = sum(1 for row in rows if row.state == "attachable")
+        selector = self.query_one("#process-selector")
+        selector.border_subtitle = f"{attached} attached · {attachable} attachable"
+        hint = self.query_one("#empty-hint")
+        hint.styles.display = "block" if not rows and not filter_text else "none"
+
     def _discover_rows(self) -> List[_ProcessRow]:
         """Return rows for attached targets plus unattached Python processes."""
         targets = discover_targets()
@@ -226,7 +312,15 @@ class ProcessSelectorScreen(Screen):
             if process.pid in attached_pids:
                 continue
             rows.append(self._row_from_process(process))
-        return sorted(rows, key=lambda row: (row.created_at, row.name, row.pid))
+        return sorted(
+            rows,
+            key=lambda row: (
+                _STATE_GROUP_RANK.get(row.state, len(_STATE_GROUP_RANK)),
+                row.created_at,
+                row.name,
+                row.pid,
+            ),
+        )
 
     def _row_from_target(
         self, target: TargetAgent, process: Optional[PythonProcess]
@@ -366,14 +460,11 @@ class ProcessSelectorScreen(Screen):
             else:
                 real_error = attacher.get_last_error()
                 error_details = f"Error: {real_error}\n\n" if real_error else ""
+                hints = "\n".join(f"- {hint}" for hint in attach_failure_hints(pid))
                 error_message = (
                     f"Failed to attach to process {pid}\n\n"
                     f"{error_details}"
-                    "This could be due to:\n"
-                    "- Permission issues (ptrace_scope)\n"
-                    "- Python version mismatch\n"
-                    "- GDB/LLDB not available\n"
-                    "- Process already has an agent attached"
+                    f"Likely cause:\n{hints}"
                 )
         except Exception as e:
             tb = traceback.format_exc()

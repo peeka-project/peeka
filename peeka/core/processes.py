@@ -13,6 +13,9 @@ from typing import Optional
 PROC_DIR = Path("/proc")
 _PYTHON_NAME_RE = re.compile(r"^python(?:\d+(?:\.\d+)*)?[a-z]?$", re.IGNORECASE)
 _PYTHON_VERSION_RE = re.compile(r"python(?P<version>\d+(?:\.\d+)*)", re.IGNORECASE)
+_LIBPYTHON_VERSION_RE = re.compile(r"libpython(?P<version>\d+\.\d+)")
+_PEEKA_TOOL_NAMES = ("peeka", "peeka-cli")
+_PEEKA_TOOL_MODULES = ("peeka.tui", "peeka.cli")
 
 
 @dataclass
@@ -67,13 +70,21 @@ def _read_python_process(proc_entry: Path, pid: int) -> Optional[PythonProcess]:
     comm = _read_text(proc_entry / "comm")
     executable = _read_executable(proc_entry / "exe")
 
-    return _python_process_from_fields(
+    process = _python_process_from_fields(
         pid=pid,
         cmdline_parts=cmdline_parts,
         comm=comm,
         executable=executable,
         created_at=_get_created_at(proc_entry),
     )
+    if process is not None and "." not in process.python_version:
+        # ``python3`` / ``python`` binaries only reveal the major version in
+        # their name. A shared-library build maps ``libpython3.X.so`` which
+        # pins down major.minor; static builds simply keep the coarse value.
+        mapped_version = _read_libpython_version(proc_entry / "maps")
+        if mapped_version:
+            process.python_version = mapped_version
+    return process
 
 
 def _discover_python_processes_with_ps(
@@ -171,6 +182,23 @@ def _read_cmdline_parts(path: Path) -> List[str]:
     ]
 
 
+def _read_libpython_version(path: Path) -> str:
+    """Return ``X.Y`` from a mapped libpython, or "" if unreadable/absent.
+
+    ``/proc/<pid>/maps`` needs ptrace-level access, so processes owned by
+    other users yield "" rather than an error.
+    """
+    try:
+        with path.open("r", encoding="utf-8", errors="ignore") as handle:
+            for line in handle:
+                match = _LIBPYTHON_VERSION_RE.search(line)
+                if match:
+                    return match.group("version")
+    except OSError:
+        return ""
+    return ""
+
+
 def _read_text(path: Path) -> str:
     try:
         return path.read_text(encoding="utf-8", errors="ignore").strip()
@@ -240,14 +268,24 @@ def _python_option_size(cmdline_parts: List[str], index: int) -> int:
 
 
 def _is_peeka_tool_process(command: str) -> bool:
+    """Return True for Peeka's own CLI/TUI processes.
+
+    Only the program itself (argv[0]), the script or ``-m`` module the
+    interpreter runs are inspected, so a workload that merely passes a path
+    like ``/srv/peeka`` as an argument is still listed.
+    """
     parts = command.split()
-    for part in parts:
-        name = Path(part).name
-        if name in ("peeka", "peeka-cli"):
-            return True
-        if part in ("peeka.tui", "peeka.cli", "peeka.cli.main"):
-            return True
-    return False
+    if not parts:
+        return False
+    if Path(parts[0]).name in _PEEKA_TOOL_NAMES:
+        return True
+    workload = _python_workload_name(parts)
+    if workload in _PEEKA_TOOL_NAMES:
+        return True
+    return any(
+        workload == module or workload.startswith(module + ".")
+        for module in _PEEKA_TOOL_MODULES
+    )
 
 
 def _extract_python_version(text: str) -> str:
