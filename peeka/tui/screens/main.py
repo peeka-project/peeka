@@ -10,7 +10,7 @@ from textual.binding import Binding
 from textual.command import DiscoveryHit, Hit, Hits, Provider
 from textual.containers import Container
 from textual.screen import Screen
-from textual.widgets import Header, Footer, Input, TabbedContent, TabPane
+from textual.widgets import Header, Footer, Input, TabbedContent, TabPane, Tabs
 
 from peeka.tui.activity import make_activity_reporter, make_client_info
 from peeka.tui.views.dashboard import DashboardView
@@ -224,6 +224,14 @@ class MainScreen(Screen):
         return nested.active or sub_tabs[0][0]
 
     async def on_mount(self) -> None:
+        # Tabs are switched with digit/letter keys; keep the tab strip out of
+        # the focus chain so the first Tab after switching lands in the view's
+        # first input instead of on the strip.
+        tabbed = self.query_one("#main-content", TabbedContent)
+        for child in tabbed.children:
+            if isinstance(child, Tabs):
+                child.can_focus = False
+
         await self._connect()
 
         if self._client:

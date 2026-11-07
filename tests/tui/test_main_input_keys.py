@@ -159,3 +159,45 @@ class TestEnterInInputStarts:
 
             assert dropdown.display is False
 
+
+class TestTabReachesInputAfterSwitch:
+    """After a digit-key tab switch, one Tab focuses the view's first input."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    @pytest.mark.parametrize(
+        "key,selector",
+        [
+            ("2", "#watch-pattern #ac-input"),
+            ("3", "#trace-pattern #ac-input"),
+            ("4", "#stack-pattern #ac-input"),
+            ("5", "#monitor-pattern #ac-input"),
+            ("8", "#inspect-path"),
+        ],
+    )
+    async def test_single_tab_focuses_first_input(self, monkeypatch, key, selector):
+        app = PeekaApp()
+        async with app.run_test(size=(140, 30)) as pilot:
+            main_screen = await _push_main(app, pilot, monkeypatch)
+
+            await pilot.press(key)
+            await pilot.pause()
+            assert app.focused is None
+
+            await pilot.press("tab")
+            await pilot.pause()
+
+            assert app.focused is main_screen.query_one(selector, Input)
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_digit_keys_still_switch_tabs_when_nothing_focused(self, monkeypatch):
+        app = PeekaApp()
+        async with app.run_test(size=(140, 30)) as pilot:
+            main_screen = await _push_main(app, pilot, monkeypatch)
+            tabbed = main_screen.query_one("#main-content")
+
+            for key, tab_id in (("2", "watch"), ("3", "trace"), ("1", "dashboard")):
+                await pilot.press(key)
+                await pilot.pause()
+                assert tabbed.active == tab_id
