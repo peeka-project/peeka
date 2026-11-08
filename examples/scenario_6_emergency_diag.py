@@ -12,12 +12,11 @@ Bugs:
 
 Peeka workflow:
   peeka-cli attach <PID>
-  peeka-cli sc User
-  peeka-cli sm get_user
-  peeka-cli inspect '__main__.UserService' --attr _cache
-  peeka-cli inspect '__main__.UserService' --attr _retry_count
+  peeka-cli sc '__main__.*Service'
+  peeka-cli sm '__main__.UserService'
+  peeka-cli inspect --action instances --type '__main__.UserService' --limit 1
   peeka-cli logger --action list
-  peeka-cli logger --action set __main__ DEBUG
+  peeka-cli logger --action set --logger __main__ --level DEBUG
   peeka-cli watch '__main__.UserService.get_user' -n 5
 """
 
@@ -177,20 +176,19 @@ def demo_mode():
     print("Available Peeka Commands:")
     print()
     print("1. Search classes:")
-    print("   peeka-cli sc User")
+    print("   peeka-cli sc '__main__.*Service'")
     print()
     print("2. Search methods:")
-    print("   peeka-cli sm get_user")
+    print("   peeka-cli sm '__main__.UserService'")
     print()
-    print("3. Inspect hidden state:")
-    print("   peeka-cli inspect '__main__.UserService' --attr _cache")
-    print("   peeka-cli inspect '__main__.UserService' --attr _retry_count")
+    print("3. Inspect live instances:")
+    print("   peeka-cli inspect --action instances --type '__main__.UserService' --limit 1")
     print()
     print("4. List loggers:")
     print("   peeka-cli logger --action list")
     print()
     print("5. Set logger level (enable DEBUG logs):")
-    print("   peeka-cli logger --action set __main__ DEBUG")
+    print("   peeka-cli logger --action set --logger __main__ --level DEBUG")
     print()
     print("6. Watch function calls:")
     print("   peeka-cli watch '__main__.UserService.get_user' -n 5")

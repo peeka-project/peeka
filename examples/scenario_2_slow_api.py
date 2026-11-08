@@ -7,12 +7,12 @@ where certain search patterns trigger inefficient nested loop execution.
 
 Bug location: DatabaseSimulator.search_products()
 - Fast path: Direct list comprehension (~5ms)
-- Slow path: Nested loop with I/O simulation when query length > 10 chars
+- Slow path (~1s): per-row I/O simulation in a nested loop when query length > 10 chars
 - Every 7th product search uses a long query, triggering the bug
 
 Peeka workflow:
   peeka-cli attach <PID>
-  peeka-cli monitor '__main__.DatabaseSimulator' --interval 2
+  peeka-cli monitor '__main__.DatabaseSimulator.search_products' --interval 5
   peeka-cli watch '__main__.DatabaseSimulator.search_products' --condition "cost > 200" -n 3
   peeka-cli trace '__main__.ApiService.handle_product_search' -n 2 --min-duration 10
 """
@@ -71,16 +71,16 @@ class DatabaseSimulator:
             List of matching products
         """
         if len(query_str) > 10:
-            # SLOW PATH: Inefficient nested loop simulation
+            # SLOW PATH: one simulated I/O round trip per product, plus a
+            # redundant inner comparison loop: 100 products x 10ms ~= 1s.
             results = []
             for product in self.product_catalog:
-                # Simulate complex search with nested operations
+                time.sleep(0.01)  # Simulate a per-row I/O wait
+                matched = False
                 for _ in range(100):
-                    # Simulate I/O wait or complex comparison
-                    time.sleep(0.01)
-                    if query_str.lower() in product["name"].lower():
-                        break
-                if query_str.lower() in product["name"].lower():
+                    # Simulate a complex comparison repeated needlessly
+                    matched = query_str.lower() in product["name"].lower()
+                if matched:
                     results.append(product)
             return results
         else:
