@@ -2,10 +2,12 @@
 Main Screen - Primary interface after attaching to a process.
 """
 
-from typing import Any, Dict, Optional, Set, Type
+from functools import partial
+from typing import Any, Dict, List, NamedTuple, Optional, Set, Type
 
 from textual.app import ComposeResult
 from textual.binding import Binding
+from textual.command import DiscoveryHit, Hit, Hits, Provider
 from textual.containers import Container
 from textual.screen import Screen
 from textual.widgets import Header, Footer, TabbedContent, TabPane
@@ -25,6 +27,75 @@ from peeka.tui.views.trace import TraceView
 from peeka.tui.views.watch import WatchView
 
 
+class TabSpec(NamedTuple):
+    """Static description of one main-screen tab."""
+
+    tab_id: str
+    key: str
+    title: str
+    experimental: bool = False
+
+
+# Order defines tab order. Digit keys are reserved for the most used views;
+# everything is also reachable from the command palette (Ctrl+P), so new or
+# rarely used views do not need a global key.
+TAB_SPECS: List[TabSpec] = [
+    TabSpec("dashboard", "1", "Dashboard"),
+    TabSpec("watch", "2", "Watch"),
+    TabSpec("trace", "3", "Trace"),
+    TabSpec("stack", "4", "Stack"),
+    TabSpec("monitor", "5", "Monitor"),
+    TabSpec("memory", "6", "Memory"),
+    TabSpec("logger", "7", "Logger"),
+    TabSpec("inspect", "8", "Inspect"),
+    TabSpec("threads", "9", "Threads"),
+    TabSpec("top", "0", "Top"),
+    TabSpec("profile", "p", "Profile"),
+    TabSpec("timeline", "", "Timeline (Experimental)", experimental=True),
+]
+
+
+class ViewJumpProvider(Provider):
+    """Command palette entries that jump to a main-screen tab."""
+
+    def _commands(self) -> List[TabSpec]:
+        screen = self.screen
+        if not isinstance(screen, MainScreen):
+            return []
+        return screen.visible_tab_specs()
+
+    def _jump(self, tab_id: str) -> None:
+        screen = self.screen
+        if isinstance(screen, MainScreen):
+            screen.action_switch_tab(tab_id)
+
+    @staticmethod
+    def _help(spec: TabSpec) -> str:
+        return f"Shortcut: {spec.key.upper()}" if spec.key else "No shortcut"
+
+    async def discover(self) -> Hits:
+        for spec in self._commands():
+            yield DiscoveryHit(
+                f"Go to {spec.title}",
+                partial(self._jump, spec.tab_id),
+                help=self._help(spec),
+            )
+
+    async def search(self, query: str) -> Hits:
+        matcher = self.matcher(query)
+        for spec in self._commands():
+            text = f"Go to {spec.title}"
+            score = matcher.match(text)
+            if score > 0:
+                yield Hit(
+                    score,
+                    matcher.highlight(text),
+                    partial(self._jump, spec.tab_id),
+                    text=text,
+                    help=self._help(spec),
+                )
+
+
 class MainScreen(Screen):
     """Main screen with tabbed interface for different diagnostic views."""
 
@@ -41,9 +112,10 @@ class MainScreen(Screen):
         Binding("escape", "go_back", "Back", priority=True),
         Binding("0", "switch_tab('top')", "Top"),
         Binding("p", "switch_tab('profile')", "Profile"),
-        Binding("t", "switch_tab('timeline')", "Timeline"),
         Binding("q", "go_back", "Back"),
     ]
+
+    COMMANDS = {ViewJumpProvider}
 
     _VIEW_BY_TAB: Dict[str, Type[Any]] = {
         "dashboard": DashboardView,
@@ -76,31 +148,20 @@ class MainScreen(Screen):
                 initial="dashboard",
                 id="main-content",
             ):
-                with TabPane("[bold underline]1[/]·Dashboard", id="dashboard"):
-                    yield DashboardView(self.pid)
-                with TabPane("[bold underline]2[/]·Watch", id="watch"):
-                    yield WatchView(self.pid)
-                with TabPane("[bold underline]3[/]·Trace", id="trace"):
-                    yield TraceView(self.pid)
-                with TabPane("[bold underline]4[/]·Stack", id="stack"):
-                    yield StackView(self.pid)
-                with TabPane("[bold underline]5[/]·Monitor", id="monitor"):
-                    yield MonitorView(self.pid)
-                with TabPane("[bold underline]6[/]·Memory", id="memory"):
-                    yield MemoryView(self.pid)
-                with TabPane("[bold underline]7[/]·Logger", id="logger"):
-                    yield LoggerView(self.pid)
-                with TabPane("[bold underline]8[/]·Inspect", id="inspect"):
-                    yield InspectView(self.pid)
-                with TabPane("[bold underline]9[/]·Threads", id="threads"):
-                    yield ThreadView(self.pid)
-                with TabPane("[bold underline]0[/]·Top", id="top"):
-                    yield TopView(self.pid)
-                with TabPane("[bold underline]P[/]·Profile", id="profile"):
-                    yield ProfileView(self.pid)
-                with TabPane("[bold underline]T[/]·Timeline (Experimental)", id="timeline"):
-                    yield TimelineView(self.pid)
+                for spec in self.visible_tab_specs():
+                    label = (
+                        f"[bold underline]{spec.key.upper()}[/]·{spec.title}"
+                        if spec.key
+                        else spec.title
+                    )
+                    with TabPane(label, id=spec.tab_id):
+                        yield self._VIEW_BY_TAB[spec.tab_id](self.pid)
         yield Footer()
+
+    def visible_tab_specs(self) -> List[TabSpec]:
+        """Return the tabs shown on this screen, honouring the experimental flag."""
+        experimental = bool(getattr(self.app, "experimental", False))
+        return [spec for spec in TAB_SPECS if experimental or not spec.experimental]
 
     async def on_mount(self) -> None:
         await self._connect()
@@ -175,6 +236,8 @@ class MainScreen(Screen):
         """Switch to a specific view."""
         # Clear focus from the old pane first. Otherwise Textual may reactivate
         # that pane when the hidden focused widget receives focus bookkeeping.
+        if tab_id not in {spec.tab_id for spec in self.visible_tab_specs()}:
+            return
         self.set_focus(None)
         tabbed = self.query_one("#main-content", TabbedContent)
         tabbed.active = tab_id

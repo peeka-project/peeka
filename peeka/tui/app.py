@@ -3,6 +3,7 @@ PeekaApp - Main TUI Application
 """
 
 import asyncio
+import os
 import signal
 import threading
 import time
@@ -36,6 +37,7 @@ class TUILogHandler(logging.Handler):
 
 # Module constants
 DEFAULT_THEME = "dracula"
+EXPERIMENTAL_ENV = "PEEKA_TUI_EXPERIMENTAL"
 
 PEEKA_CUSTOM_THEMES = ["peeka-hc-dark", "peeka-hc-light"]
 
@@ -74,13 +76,18 @@ class PeekaApp(App):
         Binding("?", "help", "Help"),
     ]
 
-    def __init__(self, theme: Optional[str] = None) -> None:
+    def __init__(self, theme: Optional[str] = None, experimental: bool = False) -> None:
         """Initialize PeekaApp.
 
         Args:
             theme: Theme name to use. Defaults to None, which resolves to "dracula".
+            experimental: Show experimental views (e.g. Timeline). Also enabled by
+                setting the ``PEEKA_TUI_EXPERIMENTAL=1`` environment variable.
         """
         super().__init__()
+        self.experimental = experimental or os.environ.get(
+            EXPERIMENTAL_ENV, ""
+        ).strip().lower() in ("1", "true", "yes", "on")
         self._theme_name = theme if theme is not None else DEFAULT_THEME
         self._activity_entries: List[Dict[str, Any]] = []
         self._activity_listeners: List[Callable[[Dict[str, Any]], None]] = []

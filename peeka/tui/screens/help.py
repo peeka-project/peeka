@@ -18,6 +18,7 @@ HELP_TEXT = """
 |-----|--------|
 | `Ctrl+Q` | Quit application |
 | `?` | Show this help |
+| `Ctrl+P` | Command palette - jump to any view by name |
 | `Escape` | Go back / Close modal |
 
 ## Main Screen Tabs
@@ -34,6 +35,11 @@ HELP_TEXT = """
 | `8` | Inspect - Object inspection |
 | `9` | Threads - Thread management |
 | `0` | Top - Function profiler |
+| `p` | Profile - Sampling profiler sessions |
+
+Experimental views (e.g. Timeline) are hidden by default. Start with
+`peeka --experimental` (or `PEEKA_TUI_EXPERIMENTAL=1`) and open them from
+the command palette (`Ctrl+P`).
 
 ## Process Selector
 

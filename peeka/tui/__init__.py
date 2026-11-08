@@ -27,6 +27,11 @@ def main() -> None:
     parser.add_argument(
         "--list-themes", action="store_true", help="List available themes and exit"
     )
+    parser.add_argument(
+        "--experimental",
+        action="store_true",
+        help="Show experimental views such as Timeline (or set PEEKA_TUI_EXPERIMENTAL=1)",
+    )
     args = parser.parse_args()
 
     # Handle --list-themes (before checking for textual)
@@ -89,7 +94,7 @@ def main() -> None:
     os.environ.setdefault("TERM", "xterm-256color")
     os.environ.setdefault("COLORTERM", "truecolor")
 
-    app = PeekaApp(theme=args.theme)
+    app = PeekaApp(theme=args.theme, experimental=args.experimental)
 
     # atexit fallback: ensure cleanup runs even if signal handlers don't fire
     def _atexit_cleanup() -> None:

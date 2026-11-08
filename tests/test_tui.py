@@ -8,7 +8,7 @@ Tests verify:
 
 1. ProcessSelectorScreen renders with correct widgets
 
-2. MainScreen has all 12 tabs with correct labels
+2. MainScreen has all 11 default tabs with correct labels
 
 3. Tab switching works and updates active state
 
@@ -1269,7 +1269,7 @@ class TestMainScreen:
 
     async def test_main_screen_has_correct_number_of_tabs(self):
 
-        """MainScreen has exactly 12 tab panes."""
+        """MainScreen has exactly 11 tab panes by default (experimental hidden)."""
 
         app = PeekaApp()
 
@@ -1295,7 +1295,7 @@ class TestMainScreen:
 
             panes = [c for c in switcher.children if isinstance(c, TabPane)]
 
-            assert len(panes) == 12
+            assert len(panes) == 11
 
 
 
@@ -1354,8 +1354,6 @@ class TestMainScreen:
                 "top",
 
                 "profile",
-
-                "timeline",
 
             ]
 
@@ -1884,3 +1882,131 @@ class TestWorkerCallable:
         # The lambda wrapper ensures the method is called inside the worker thread
 
         assert callable(view._periodic_refresh)
+
+
+class TestMainScreenNavigation:
+    """Experimental gating, command-palette jumps and tab-bar geometry."""
+
+    @staticmethod
+    def _push_main(app):
+        app.push_screen(
+            MainScreen(pid=12345, session_id="test", socket_path="/tmp/fake.sock")
+        )
+
+    @staticmethod
+    def _pane_ids(app):
+        from textual.widgets import ContentSwitcher, TabbedContent, TabPane
+
+        tabbed = app.screen.query_one("#main-content", TabbedContent)
+        switcher = tabbed.query_one(ContentSwitcher)
+        return [c.id for c in switcher.children if isinstance(c, TabPane)]
+
+    @pytest.mark.asyncio
+    async def test_timeline_hidden_by_default(self, monkeypatch):
+        monkeypatch.delenv("PEEKA_TUI_EXPERIMENTAL", raising=False)
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            self._push_main(app)
+            await pilot.pause()
+            assert "timeline" not in self._pane_ids(app)
+
+    @pytest.mark.asyncio
+    async def test_timeline_shown_with_experimental_flag(self, monkeypatch):
+        monkeypatch.delenv("PEEKA_TUI_EXPERIMENTAL", raising=False)
+        app = PeekaApp(experimental=True)
+        async with app.run_test() as pilot:
+            self._push_main(app)
+            await pilot.pause()
+            ids = self._pane_ids(app)
+            assert ids[-1] == "timeline"
+            assert len(ids) == 12
+
+    def test_experimental_env_var_enables_flag(self, monkeypatch):
+        monkeypatch.setenv("PEEKA_TUI_EXPERIMENTAL", "1")
+        assert PeekaApp().experimental is True
+        monkeypatch.setenv("PEEKA_TUI_EXPERIMENTAL", "0")
+        assert PeekaApp().experimental is False
+
+    def test_main_screen_does_not_bind_t(self):
+        """`t` belongs to Trace's Drill Trace; the screen must not claim it."""
+        keys = {b.key for b in MainScreen.BINDINGS}
+        assert "t" not in keys
+        assert {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "p"} <= keys
+
+    @pytest.mark.asyncio
+    async def test_switch_to_hidden_tab_is_ignored(self, monkeypatch):
+        monkeypatch.delenv("PEEKA_TUI_EXPERIMENTAL", raising=False)
+        from textual.widgets import TabbedContent
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            self._push_main(app)
+            await pilot.pause()
+            app.screen.action_switch_tab("timeline")
+            await pilot.pause()
+            assert app.screen.query_one("#main-content", TabbedContent).active == "dashboard"
+
+    @pytest.mark.asyncio
+    async def test_command_palette_lists_and_jumps_to_visible_tabs(self, monkeypatch):
+        monkeypatch.delenv("PEEKA_TUI_EXPERIMENTAL", raising=False)
+        from textual.widgets import TabbedContent
+
+        from peeka.tui.screens.main import ViewJumpProvider
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            self._push_main(app)
+            await pilot.pause()
+            provider = ViewJumpProvider(app.screen)
+            hits = [hit async for hit in provider.discover()]
+            titles = [str(hit.display) for hit in hits]
+            assert "Go to Profile" in titles
+            assert not any("Timeline" in t for t in titles)
+            assert len(hits) == len(self._pane_ids(app))
+
+            searched = [hit async for hit in provider.search("prof")]
+            assert searched and searched[0].text == "Go to Profile"
+            searched[0].command()
+            await pilot.pause()
+            assert app.screen.query_one("#main-content", TabbedContent).active == "profile"
+
+    @pytest.mark.asyncio
+    async def test_command_palette_includes_timeline_when_experimental(self, monkeypatch):
+        monkeypatch.delenv("PEEKA_TUI_EXPERIMENTAL", raising=False)
+        from peeka.tui.screens.main import ViewJumpProvider
+
+        app = PeekaApp(experimental=True)
+        async with app.run_test() as pilot:
+            self._push_main(app)
+            await pilot.pause()
+            hits = [hit async for hit in ViewJumpProvider(app.screen).discover()]
+            assert any("Timeline" in str(hit.display) for hit in hits)
+
+    @pytest.mark.asyncio
+    async def test_default_tabs_fit_wide_terminal(self, monkeypatch):
+        """At 140 columns every default tab is fully inside the tab bar."""
+        monkeypatch.delenv("PEEKA_TUI_EXPERIMENTAL", raising=False)
+        from textual.widgets import Tab, Tabs
+
+        app = PeekaApp()
+        async with app.run_test(size=(140, 24)) as pilot:
+            self._push_main(app)
+            await pilot.pause()
+            tabs = app.screen.query_one("#main-content").query_one(Tabs)
+            last = list(tabs.query(Tab))[-1]
+            assert last.id.endswith("profile")
+            assert last.region.right <= tabs.region.right
+
+    @pytest.mark.asyncio
+    async def test_tab_bar_stays_single_row_on_narrow_terminal(self, monkeypatch):
+        """At 80 columns the bar scrolls rather than wrapping or growing."""
+        monkeypatch.delenv("PEEKA_TUI_EXPERIMENTAL", raising=False)
+        from textual.widgets import Tab, Tabs
+
+        app = PeekaApp()
+        async with app.run_test(size=(80, 24)) as pilot:
+            self._push_main(app)
+            await pilot.pause()
+            tabs = app.screen.query_one("#main-content").query_one(Tabs)
+            assert tabs.region.height == 2
+            assert {t.region.y for t in tabs.query(Tab)} == {tabs.region.y}
