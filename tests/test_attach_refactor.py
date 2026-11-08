@@ -451,8 +451,11 @@ class TestAttachProgress:
             # Restore original level
             attach.logger.setLevel(original_level)
 
-    def test_check_existing_session_emits_running_and_one_done(self):
+    def test_check_existing_session_emits_running_and_one_done(self, tmp_path, monkeypatch):
         """Verify _check_existing_attachment emits one running and one done for check_existing_session."""
+        # The scan reads the real /tmp/peeka_*.sock; a live agent elsewhere on the
+        # machine would make it report a reusable session. Scan an empty dir.
+        monkeypatch.setattr(attach, "Path", lambda *_a, **_k: tmp_path)
         events = []
         attacher = ProcessAttacher(12345, progress_callback=events.append)
 
