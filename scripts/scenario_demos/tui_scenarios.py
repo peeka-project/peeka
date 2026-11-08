@@ -134,11 +134,12 @@ async def s6(s: TuiSession) -> None:
     await start_view(s, "2", "#watch-pattern", "__main__.UserService.get_user", "#watch-btn")
     await s.sleep(8)
     await s.shot("s6-tui-2-watch")
-    # Logger view: list current levels. (Setting a level from the TUI fails
-    # today with "Missing required parameters: name"; the CLI path works.)
+    # Logger view: raise __main__ to DEBUG; the refreshed table shows the new level.
     await s.tab("7", settle=2)
-    await s.click("#logger-refresh-btn")
-    await s.sleep(2)
+    await s.set_value("#logger-name", "__main__")
+    await s.set_value("#logger-level-select", "DEBUG")
+    await s.click("#set-level-btn")
+    await s.sleep(3)
     await s.shot("s6-tui-3-logger")
     await s.tab("8", settle=1)
     await s.set_value("#inspect-path", "__main__.UserService")

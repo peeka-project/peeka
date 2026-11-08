@@ -9,7 +9,7 @@ import sys
 import time
 import uuid
 from typing import cast
-from typing import Any, Callable, ClassVar, Dict, List, Optional, Set, TYPE_CHECKING
+from typing import Any, Callable, ClassVar, Dict, FrozenSet, List, Optional, Set, TYPE_CHECKING
 
 from peeka.commands.resource_owning import CleanupScope, ResourceOwningCommand
 from peeka.core.profile.models import ProfileConfig, SampleRecord, StackRecord
@@ -89,6 +89,7 @@ class TopCommand(ResourceOwningCommand):
 
         # Resolve peeka package directory for thread filtering
         self._peeka_pkg_dir: str = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + os.sep
+        self._agent_codes: Optional[FrozenSet[Any]] = None
 
     def execute(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -665,7 +666,48 @@ class TopCommand(ResourceOwningCommand):
             if fname.startswith(self._peeka_pkg_dir):
                 return True
 
+            # The thread's entry point decides ownership: agent threads (accept
+            # loop, client handlers, observation flush/send) start in agent
+            # code, which is exec'd from source in the target (co_filename is
+            # "<string>" or a temp file), so the package-path check above
+            # cannot see them.
+            root = frame
+            while root.f_back is not None:
+                root = root.f_back
+            if root.f_code.co_filename.startswith(self._peeka_pkg_dir):
+                return True
+            if root.f_code in self._get_agent_codes():
+                return True
+
         return False
+
+    def _get_agent_codes(self) -> FrozenSet[Any]:
+        """Return code objects of the agent class (and nested functions), cached."""
+        if self._agent_codes is not None:
+            return self._agent_codes
+
+        codes: Set[Any] = set()
+
+        def add(code: Any) -> None:
+            if code in codes:
+                return
+            codes.add(code)
+            for const in code.co_consts:
+                if hasattr(const, "co_code"):
+                    add(const)
+
+        agent_cls = type(self.agent) if self.agent is not None else None
+        for klass in getattr(agent_cls, "__mro__", ()):
+            if klass is object:
+                continue
+            for value in vars(klass).values():
+                func = getattr(value, "__func__", value)
+                code = getattr(func, "__code__", None)
+                if code is not None:
+                    add(code)
+
+        self._agent_codes = frozenset(codes)
+        return self._agent_codes
 
     def _make_func_key(self, frame) -> str:
         """

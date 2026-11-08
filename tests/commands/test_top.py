@@ -511,6 +511,59 @@ class TestTopCommand:
             stop_flag.set()
             worker.join(timeout=2.0)
 
+    def test_agent_threads_exec_from_source_are_excluded(self):
+        """Agent threads whose code was exec'd from source must be filtered.
+
+        In a real target the agent module is exec'd from source, so its frames
+        report co_filename "<string>" and the package-path check misses them.
+        Regression: `top` listed the agent's _handle_client at ~199% own.
+        """
+        import _thread
+
+        from peeka.commands.top import TopCommand
+
+        source = (
+            "import time\n"
+            "class FakeAgent(MockAgent):\n"
+            "    def _handle_client(self, stop):\n"
+            "        while not stop.is_set():\n"
+            "            sum(range(500))\n"
+            "    def _send(self, stop):\n"
+            "        def send_frames():\n"
+            "            while not stop.is_set():\n"
+            "                sum(range(500))\n"
+            "        send_frames()\n"
+        )
+        namespace: Dict[str, Any] = {"MockAgent": MockAgent}
+        exec(compile(source, "<string>", "exec"), namespace)
+        agent = namespace["FakeAgent"]()
+
+        stop = threading.Event()
+
+        def app_worker():
+            while not stop.is_set():
+                sum(range(500))
+
+        _thread.start_new_thread(agent._handle_client, (stop,))
+        # Root frame is a nested function of an agent method.
+        _thread.start_new_thread(lambda: agent._send(stop), ())
+        worker = threading.Thread(target=app_worker, daemon=True)
+        worker.start()
+
+        cmd = TopCommand(agent)
+        try:
+            assert cmd.execute({"action": "start", "interval": 0.005})["status"] == "success"
+            time.sleep(0.3)
+            names = [f["name"] for f in cmd.execute({"action": "snapshot"})["snapshot"]["functions"]]
+            assert "app_worker" in names
+            assert "_handle_client" not in names
+            # The lambda root is not agent code, so only check the agent-rooted one.
+            cmd.execute({"action": "stop"})
+        finally:
+            stop.set()
+            worker.join(timeout=2.0)
+            cmd.stop_active_resources(pattern=None, reason="test teardown")
+
     def test_stop_active_resources_returns_list_shape(self, top_command):
         """Test that stop_active_resources always returns a list for 'stopped'."""
         result = top_command.stop_active_resources(pattern=None, reason="test")

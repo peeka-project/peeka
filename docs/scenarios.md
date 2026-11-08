@@ -2,7 +2,7 @@
 
 ## 前言
 
-Peeka 是一个基于 [PEP 768](https://peps.python.org/pep-0768/) 远程调试的 Python 运行时诊断工具，支持 Python 3.8-3.14+。本文档通过 7 个真实场景案例，展示如何使用 peeka-cli 排查 Python 应用中的常见问题。
+Peeka 是一个基于 [PEP 768](https://peps.python.org/pep-0768/) 远程调试的 Python 运行时诊断工具，支持 Python 3.8-3.14+。本文档通过 8 个真实场景案例，展示如何使用 peeka-cli 排查 Python 应用中的常见问题。
 
 ### 本文档定位
 
@@ -16,6 +16,7 @@ Peeka 是一个基于 [PEP 768](https://peps.python.org/pep-0768/) 远程调试�
 2. 每个场景包含：问题描述 → 启动示例 → 诊断步骤 → 根因分析 → 修复建议
 3. 所有示例代码位于 `examples/` 目录，可直接运行
 4. 所有命令输出为 JSONL 格式，可用 `jq` 过滤
+5. 文中的输出示例经过精简（省略了路径、ID 等字段），实际运行的完整输出和 TUI 截图见 [scenario-demos.md](scenario-demos.md)
 
 ## 前置准备
 
@@ -58,628 +59,7 @@ python examples/scenario_1_order_bug.py &
 peeka-cli attach 12345
 ```
 
-所有后续命令依赖 attach 状态，诊断完成后使用 `peeka-cli detach 12345` 分离。
-
----
-
-## 场景 1: 电商订单金额计算错误
-
-### 问题描述
-
-你负责维护一个电商订单系统，用户反馈某些订单的最终金额异常高，远超商品实际价格。经初步排查，发现折扣订单的金额计算似乎有问题。
-
-### 症状表现
-
-- 正常订单金额正确（无折扣）
-- 有折扣的订单金额异常（远大于小计）
-- 问题偶发，约 1/5 订单受影响
-
-### 启动示例
-
-```bash
-python examples/scenario_1_order_bug.py &
-# 输出: PID: 12345
-# 订单处理日志会持续输出
-```
-
-### Attach 步骤
-
-```bash
-peeka-cli attach 12345
-```
-
-预期输出：
-```json
-{"type": "status", "level": "info", "message": "Attaching to process 12345"}
-{"type": "success", "command": "attach", "data": {"pid": 12345, "socket": "/tmp/peeka_xxx.sock"}}
-```
-
-### 诊断步骤
-
-#### 步骤 1: 观察订单处理函数
-
-```bash
-peeka-cli watch '__main__.OrderProcessor.calculate_total' -n 5
-```
-
-预期输出（JSONL）：
-```json
-{"type": "event", "event": "watch_started", "data": {"watch_id": "watch_001", "pattern": "__main__.OrderProcessor.calculate_total"}}
-{"type": "observation", "watch_id": "watch_001", "timestamp": 1705586200.123, "func_name": "__main__.OrderProcessor.calculate_total", "args": [{"order_id": 1, "items": [[100, 2]], "discount": 0}], "kwargs": {}, "result": 200.0, "success": true, "duration_ms": 0.12, "count": 1}
-{"type": "observation", "watch_id": "watch_001", "timestamp": 1705586203.456, "func_name": "__main__.OrderProcessor.calculate_total", "args": [{"order_id": 5, "items": [[100, 2]], "discount": 20}], "kwargs": {}, "result": 4000.0, "success": true, "duration_ms": 0.11, "count": 2}
-```
-
-**分析**：
-- 第 1 次调用：无折扣订单，小计 200，结果 200（正确）
-- 第 2 次调用：20% 折扣订单，小计 200，结果 4000（异常！）
-
-#### 步骤 2: 查看调用栈
-
-```bash
-peeka-cli stack '__main__.OrderProcessor.calculate_total' -n 2
-```
-
-预期输出：
-```json
-{"type": "observation", "timestamp": 1705586210.789, "func_name": "__main__.OrderProcessor.calculate_total", "stack": [
-  {"file": "examples/scenario_1_order_bug.py", "line": 145, "func": "<module>", "code": "processor.process_next_order()"},
-  {"file": "examples/scenario_1_order_bug.py", "line": 88, "func": "process_next_order", "code": "total = self.calculate_total(order)"},
-  {"file": "examples/scenario_1_order_bug.py", "line": 61, "func": "calculate_total", "code": "total = subtotal * order.discount"}
-], "count": 1}
-```
-
-**分析**：
-- 调用链：`<module>` → `process_next_order` → `calculate_total`
-- 第 61 行代码：`total = subtotal * order.discount` 可疑
-
-### 根因分析
-
-查看 `examples/scenario_1_order_bug.py` 第 61 行：
-
-```python
-# BUG: 应该是 subtotal * (1 - order.discount / 100)
-total = subtotal * order.discount  # 折扣 20 被当作倍数使用
-```
-
-**问题**：
-- 折扣字段 `discount` 存储为整数百分比（如 20 表示 20%）
-- 计算时直接用 `subtotal * discount` 而非 `subtotal * (1 - discount / 100)`
-- 导致 200 元订单打 20% 折扣变成 200 × 20 = 4000 元
-
-### 修复建议
-
-```python
-def calculate_total(self, order):
-    subtotal = order.get_subtotal()
-    if order.discount > 0:
-        # 修复：正确计算折扣
-        discount_multiplier = 1 - (order.discount / 100)
-        total = subtotal * discount_multiplier
-    else:
-        total = subtotal
-    return total
-```
-
-### 清理步骤
-
-```bash
-peeka-cli reset --all
-peeka-cli detach 12345
-```
-
----
-
-## 场景 2: API 偶发慢请求
-
-### 问题描述
-
-你维护的 API 服务偶尔会出现响应时间从几毫秒突然飙升到 1 秒以上的情况，但无法稳定复现。日志中没有明显异常，需要定位到底是哪个函数、在什么条件下变慢。
-
-### 症状表现
-
-- 大部分请求响应快（< 10ms）
-- 偶发慢请求（> 1000ms）
-- 日志无异常，难以复现
-
-### 启动示例
-
-```bash
-python examples/scenario_2_slow_api.py &
-# 输出: PID: 12346
-```
-
-### Attach 步骤
-
-```bash
-peeka-cli attach 12346
-```
-
-### 诊断步骤
-
-#### 步骤 1: 监控整体性能
-
-```bash
-peeka-cli monitor -i 2 -n 5
-```
-
-预期输出：
-```json
-{"type": "observation", "timestamp": 1705586300.123, "data": {"cpu_percent": 15.2, "memory_mb": 45.6, "threads": 1}}
-{"type": "observation", "timestamp": 1705586302.456, "data": {"cpu_percent": 18.3, "memory_mb": 45.8, "threads": 1}}
-{"type": "observation", "timestamp": 1705586304.789, "data": {"cpu_percent": 89.1, "memory_mb": 46.2, "threads": 1}}
-```
-
-**分析**：第 3 次观察 CPU 飙升至 89%，说明有计算密集操作。
-
-#### 步骤 2: 捕获慢调用
-
-使用 `--condition "cost > 200"` 过滤执行时间超过 200ms 的调用：
-
-```bash
-peeka-cli watch '__main__.DatabaseSimulator.search_products' --condition "cost > 200" -n 3
-```
-
-预期输出：
-```json
-{"type": "event", "event": "watch_started", "data": {"watch_id": "watch_002", "pattern": "__main__.DatabaseSimulator.search_products"}}
-{"type": "observation", "watch_id": "watch_002", "timestamp": 1705586310.123, "func_name": "__main__.DatabaseSimulator.search_products", "args": ["high performance laptop computer"], "kwargs": {}, "result": [{"id": 42, "name": "Product 42", "price": 899.5}], "success": true, "duration_ms": 1021.45, "count": 1}
-```
-
-**分析**：
-- `search_products` 函数在处理长查询字符串（"high performance laptop computer"，32 字符）时耗时 1021ms
-- 短查询字符串（< 10 字符）未被捕获，说明仅长查询触发慢路径
-
-#### 步骤 3: 追踪调用树
-
-```bash
-peeka-cli trace '__main__.ApiService.handle_product_search' -n 2
-```
-
-预期输出：
-```
-`---[1025.3ms] __main__.ApiService.handle_product_search()
-    `---[1021.8ms] __main__.DatabaseSimulator.search_products()
-```
-
-**分析**：
-- 慢请求的瓶颈在 `search_products` 方法
-- 该方法消耗了请求总时间的 99.7%
-
-### 根因分析
-
-查看 `examples/scenario_2_slow_api.py` 第 60-85 行：
-
-```python
-def search_products(self, query_str):
-    if len(query_str) > 10:
-        # BUG: 嵌套循环 + sleep 模拟 I/O 等待
-        results = []
-        for product in self.product_catalog:
-            for _ in range(100):  # 内层循环 100 次
-                time.sleep(0.01)  # 每次 10ms，总计 1s
-            if query_str.lower() in product["name"].lower():
-                results.append(product)
-        return results
-    else:
-        # 快速路径：列表推导
-        return [p for p in self.product_catalog if query_str.lower() in p["name"].lower()]
-```
-
-**问题**：
-- 查询字符串长度 > 10 时触发低效嵌套循环
-- 内层循环 100 次 × 10ms = 1 秒固定延迟
-- 每 7 次请求中第 7 次使用长查询字符串（32 字符）
-
-### 修复建议
-
-```python
-def search_products(self, query_str):
-    # 移除长度判断和嵌套循环，统一使用快速路径
-    return [p for p in self.product_catalog if query_str.lower() in p["name"].lower()]
-```
-
-### 清理步骤
-
-```bash
-peeka-cli reset --all
-peeka-cli detach 12346
-```
-
----
-
-## 场景 3: CPU 占用过高
-
-### 问题描述
-
-数据处理服务的 CPU 占用率持续在 30-50%，远高于预期的 5-10%。需要定位哪个函数消耗了 CPU 资源。
-
-### 症状表现
-
-- CPU 使用率持续偏高（30-50%）
-- 无明显错误日志
-- 处理速度低于预期
-
-### 启动示例
-
-```bash
-python examples/scenario_3_high_cpu.py &
-# 输出: PID: 12347
-```
-
-### Attach 步骤
-
-```bash
-peeka-cli attach 12347
-```
-
-### 诊断步骤
-
-#### 步骤 1: 定位热点函数
-
-使用 `top` 命令采样函数级 CPU 消耗：
-
-```bash
-peeka-cli top '__main__.DataProcessor' -n 10 -i 2
-```
-
-预期输出：
-```json
-{"type": "result", "command": "top", "data": {
-  "samples": [
-    {"func": "__main__.DataProcessor.transform_data", "count": 245, "percent": 78.2},
-    {"func": "__main__.DataProcessor.process_batch", "count": 52, "percent": 16.6},
-    {"func": "__main__.DataProcessor.generate_batch", "count": 16, "percent": 5.1}
-  ],
-  "total_samples": 313
-}}
-```
-
-**分析**：
-- `transform_data` 占 78.2% 采样，是 CPU 热点
-- `process_batch` 和 `generate_batch` 占比较低
-
-#### 步骤 2: 观察热点函数执行
-
-```bash
-peeka-cli watch '__main__.DataProcessor.transform_data' -n 5
-```
-
-预期输出：
-```json
-{"type": "observation", "watch_id": "watch_003", "timestamp": 1705586400.123, "func_name": "__main__.DataProcessor.transform_data", "args": [[{"id": 1, "value": 123.4, "category": "A"}, ...]], "kwargs": {}, "result": [...], "success": true, "duration_ms": 45.67, "count": 1}
-{"type": "observation", "watch_id": "watch_003", "timestamp": 1705586400.678, "func_name": "__main__.DataProcessor.transform_data", "args": [[{"id": 1, "value": 456.7, "category": "B"}, ...]], "kwargs": {}, "result": [...], "success": true, "duration_ms": 48.23, "count": 2}
-```
-
-**分析**：
-- 每次调用耗时 45-48ms
-- 调用频率高（约每 500ms 一次）
-- 累计 CPU 消耗显著
-
-#### 步骤 3: 查看调用树
-
-```bash
-peeka-cli trace '__main__.DataProcessor.process_batch' -n 3
-```
-
-预期输出：
-```
-`---[52.3ms] __main__.DataProcessor.process_batch()
-    `---[48.7ms] __main__.DataProcessor.transform_data()
-```
-
-**分析**：
-- `transform_data` 消耗 process_batch 的 93% 时间
-- 是性能瓶颈
-
-### 根因分析
-
-查看 `examples/scenario_3_high_cpu.py` 第 55-95 行：
-
-```python
-def transform_data(self, data):
-    # BUG: 第一次排序
-    sorted_data = sorted(data, key=lambda x: x["value"])
-    
-    # BUG: 冗余验证（遍历已排序数据，但不缓存）
-    validated = []
-    for record in sorted_data:
-        if record["value"] > 0:
-            validated.append(record)
-    
-    # BUG: 第二次排序（完全重复）
-    refined = sorted(validated, key=lambda x: x["value"])
-    
-    # BUG: 第三次排序（再次重复）
-    final = sorted(refined, key=lambda x: x["value"])
-    
-    return final
-```
-
-**问题**：
-- 对同一数据集执行 3 次 `sorted()` 操作
-- 排序复杂度 O(n log n)，重复 3 次浪费 CPU
-- 批次大小 300 条记录，每批 3 次排序
-
-### 修复建议
-
-```python
-def transform_data(self, data):
-    # 修复：仅排序一次，缓存结果
-    sorted_data = sorted(data, key=lambda x: x["value"])
-    
-    # 在已排序数据上过滤（无需重新排序）
-    validated = [record for record in sorted_data if record["value"] > 0]
-    
-    return validated
-```
-
-### 清理步骤
-
-```bash
-peeka-cli reset --all
-peeka-cli detach 12347
-```
-
----
-
-## 场景 4: 内存持续增长
-
-### 问题描述
-
-缓存服务运行一段时间后内存占用持续增长，从最初的 50MB 涨到数百 MB，怀疑存在内存泄漏。
-
-### 症状表现
-
-- 内存占用线性增长
-- 无 OOM 但增速异常
-- 缓存命中率正常
-
-### 启动示例
-
-```bash
-python examples/scenario_4_memory_leak.py &
-# 输出: PID: 12348
-# Cache size: 0 entries
-```
-
-### Attach 步骤
-
-```bash
-peeka-cli attach 12348
-```
-
-### 诊断步骤
-
-#### 步骤 1: 启动内存追踪
-
-**关键**：必须先执行 `memory --action start` 启动 tracemalloc：
-
-```bash
-peeka-cli memory --action start
-```
-
-预期输出：
-```json
-{"type": "success", "command": "memory", "data": {"action": "start", "status": "tracemalloc started"}}
-```
-
-#### 步骤 2: 查看内存分配热点
-
-```bash
-peeka-cli memory --action top
-```
-
-预期输出：
-```json
-{"type": "result", "command": "memory", "data": {
-  "top_allocations": [
-    {"file": "examples/scenario_4_memory_leak.py", "line": 52, "size_mb": 12.3, "count": 5420},
-    {"file": "<frozen importlib._bootstrap>", "line": 228, "size_mb": 2.1, "count": 89}
-  ]
-}}
-```
-
-**分析**：
-- 第 52 行分配了 12.3 MB（5420 次分配）
-- 是主要内存增长点
-
-#### 步骤 3: 创建内存快照（第一次）
-
-```bash
-peeka-cli memory --action snapshot
-```
-
-预期输出：
-```json
-{"type": "success", "command": "memory", "data": {"action": "snapshot", "snapshot_id": 1}}
-```
-
-#### 步骤 4: 等待一段时间
-
-等待 10-30 秒，让程序继续运行，观察日志输出：
-
-```
-Cache size: 1500 entries (hits: 50, misses: 1500)
-Cache size: 3000 entries (hits: 100, misses: 3000)
-Cache size: 4500 entries (hits: 150, misses: 4500)
-```
-
-**分析**：缓存条目持续增长，无清理迹象。
-
-#### 步骤 5: 创建内存快照（第二次）
-
-```bash
-peeka-cli memory --action snapshot
-```
-
-预期输出：
-```json
-{"type": "success", "command": "memory", "data": {"action": "snapshot", "snapshot_id": 2}}
-```
-
-#### 步骤 6: 对比快照差异
-
-```bash
-peeka-cli memory --action diff
-```
-
-预期输出：
-```json
-{"type": "result", "command": "memory", "data": {
-  "diff": [
-    {"file": "examples/scenario_4_memory_leak.py", "line": 52, "size_diff_mb": 8.7, "count_diff": 3000},
-    {"file": "examples/scenario_4_memory_leak.py", "line": 36, "size_diff_mb": 0.5, "count_diff": 1}
-  ],
-  "total_diff_mb": 9.2
-}}
-```
-
-**分析**：
-- 第 52 行在两次快照间增加 8.7 MB（3000 次分配）
-- 与缓存条目增长数量一致
-- 确认内存泄漏位置
-
-### 根因分析
-
-查看 `examples/scenario_4_memory_leak.py` 第 40-52 行：
-
-```python
-def add(self, key, value):
-    """
-    Add entry to cache with BUG - no eviction.
-    
-    BUG: Cache grows unbounded without any eviction policy.
-    Should implement LRU, TTL, or max_size limit, but doesn't.
-    """
-    # BUG: Always adds, never evicts (line 52)
-    self.cache[key] = value
-```
-
-**问题**：
-- 缓存字典 `self.cache` 无淘汰机制
-- 每次请求都添加新条目，永不删除
-- 缺少 LRU、TTL 或 max_size 限制
-
-### 修复建议
-
-```python
-from collections import OrderedDict
-
-class CacheManager:
-    def __init__(self, max_size=1000):
-        self.cache = OrderedDict()
-        self.max_size = max_size
-    
-    def add(self, key, value):
-        # 修复：LRU 淘汰策略
-        if key in self.cache:
-            self.cache.move_to_end(key)
-        self.cache[key] = value
-        
-        # 超出限制时删除最旧条目
-        if len(self.cache) > self.max_size:
-            self.cache.popitem(last=False)
-```
-
-### 清理步骤
-
-```bash
-peeka-cli memory --action stop
-peeka-cli reset --all
-peeka-cli detach 12348
-```
-
----
-
-## 场景 5: 多线程死锁
-
-### 问题描述
-
-银行转账服务偶尔会出现所有 Worker 线程卡死的情况，主线程仍在运行但无法处理新请求。怀疑存在死锁。
-
-### 症状表现
-
-- Worker 线程无响应
-- 主线程正常（心跳日志正常）
-- 转账操作停止
-
-### 启动示例
-
-```bash
-python examples/scenario_5_deadlock.py &
-# 输出: PID: 12349
-# Worker threads started, main thread heartbeat...
-```
-
-### Attach 步骤
-
-```bash
-peeka-cli attach 12349
-```
-
-### 诊断步骤
-
-#### 步骤 1: 查看线程状态
-
-```bash
-peeka-cli thread
-```
-
-预期输出：
-```json
-{"type": "result", "command": "thread", "data": {
-  "threads": [
-    {"id": 1, "name": "MainThread", "daemon": false, "alive": true, "state": "RUNNING"},
-    {"id": 2, "name": "worker_1", "daemon": true, "alive": true, "state": "WAITING"},
-    {"id": 3, "name": "worker_2", "daemon": true, "alive": true, "state": "WAITING"}
-  ]
-}}
-```
-
-**分析**：
-- 主线程 RUNNING（正常）
-- 两个 Worker 线程都是 WAITING 状态（异常，应为 RUNNING）
-
-#### 步骤 2: 捕获调用栈
-
-```bash
-peeka-cli stack '__main__.TransferService.transfer' -n 5
-```
-
-预期输出：
-```json
-{"type": "observation", "timestamp": 1705586500.123, "func_name": "__main__.TransferService.transfer", "stack": [
-  {"file": "examples/scenario_5_deadlock.py", "line": 180, "func": "worker_thread", "code": "service.transfer(acc1, acc2, amount)"},
-  {"file": "examples/scenario_5_deadlock.py", "line": 91, "func": "transfer", "code": "with from_account.lock:"}
-], "thread_name": "worker_1", "count": 1}
-{"type": "observation", "timestamp": 1705586500.456, "func_name": "__main__.TransferService.transfer", "stack": [
-  {"file": "examples/scenario_5_deadlock.py", "line": 192, "func": "worker_thread", "code": "service.transfer(acc2, acc1, amount)"},
-  {"file": "examples/scenario_5_deadlock.py", "line": 91, "func": "transfer", "code": "with from_account.lock:"}
-], "thread_name": "worker_2", "count": 2}
-```
-
-### 根因分析
-
-每个场景都有独立的 Python 脚本，启动方式：
-
-```bash
-# 启动场景脚本（后台运行）
-python examples/scenario_1_order_bug.py &
-
-# 记下输出的 PID（进程ID）
-# 输出示例：PID: 12345
-```
-
-### Attach 到目标进程
-
-```bash
-# 使用 PID attach
-peeka-cli attach <PID>
-
-# 输出示例：
-# {"type":"status","level":"info","message":"Attaching to process 12345"}
-# {"type":"success","command":"attach","data":{"pid":12345,"socket":"/tmp/peeka_xxx.sock"}}
-```
+所有后续命令依赖 attach 状态，诊断完成后使用 `peeka-cli detach` 分离。
 
 ---
 
@@ -781,8 +161,8 @@ def calculate_total(self, order):
 ### 清理
 
 ```bash
-peeka-cli reset --all
-peeka-cli detach 12345
+peeka-cli reset
+peeka-cli detach
 kill 12345
 ```
 
@@ -813,17 +193,19 @@ python examples/scenario_2_slow_api.py &
 
 ```bash
 peeka-cli attach 23456
-peeka-cli monitor -i 2 -n 10
+peeka-cli monitor '__main__.DatabaseSimulator.search_products' --interval 5 -c 2
 ```
+
+`monitor` 需要具体到函数的 pattern（只写类名不会统计任何调用）。每个周期输出一行统计，`rt_*` 单位为毫秒。
 
 输出示例：
 ```json
-{"type":"event","event":"monitor_started","data":{"interval":2,"times":10}}
-{"type":"observation","data":{"timestamp":1705586300.0,"cpu_percent":15.3,"memory_mb":45.2,"threads":3,"observations":{"__main__.DatabaseSimulator.search_products":{"count":12,"avg_duration_ms":8.5,"max_duration_ms":15.2}}}}
-{"type":"observation","data":{"timestamp":1705586302.0,"cpu_percent":16.1,"memory_mb":45.3,"threads":3,"observations":{"__main__.DatabaseSimulator.search_products":{"count":14,"avg_duration_ms":450.3,"max_duration_ms":1050.8}}}}
+{"type":"event","event":"monitor_started","data":{"monitor_id":"monitor_66328cb6","pattern":"__main__.DatabaseSimulator.search_products"}}
+{"type":"observation","cycle":1,"total":6,"success":6,"fail":0,"fail_rate":0.0,"rt_avg":168.1,"rt_min":0.02,"rt_max":1008.5}
+{"type":"observation","cycle":2,"total":13,"success":13,"fail":0,"fail_rate":0.0,"rt_avg":155.2,"rt_min":0.02,"rt_max":1009.3}
 ```
 
-**分析**：发现 `search_products` 方法的 `max_duration_ms` 周期性飙升到 1000ms+
+**分析**：大部分调用不到 1ms，但 `rt_max` 每个周期都在 1000ms 左右，说明存在偶发慢调用
 
 #### 步骤 2：捕获慢请求
 
@@ -835,57 +217,54 @@ peeka-cli watch '__main__.DatabaseSimulator.search_products' --condition "cost >
 
 输出示例：
 ```json
-{"type":"event","event":"watch_started","data":{"watch_id":"watch_002","pattern":"__main__.DatabaseSimulator.search_products","condition":"cost > 200"}}
-{"type":"observation","watch_id":"watch_002","timestamp":1705586310.5,"func_name":"__main__.DatabaseSimulator.search_products","args":["high performance laptop computer"],"kwargs":{},"result":[{"id":1,"name":"Product 1","price":599.99}],"success":true,"duration_ms":1050.3,"count":1}
-{"type":"observation","watch_id":"watch_002","timestamp":1705586317.2,"func_name":"__main__.DatabaseSimulator.search_products","args":["ergonomic wireless keyboard mouse"],"kwargs":{},"result":[{"id":5,"name":"Product 5","price":89.99}],"success":true,"duration_ms":980.1,"count":2}
+{"type":"event","event":"watch_started","data":{"watch_id":"watch_e1c2a3b4","pattern":"__main__.DatabaseSimulator.search_products"}}
+{"type":"observation","func_name":"__main__.DatabaseSimulator.search_products","params":["high performance laptop computer"],"returnObj":[],"success":true,"cost":1008.7,"thread_name":"MainThread"}
 ```
 
-**分析**：慢请求的共同特征是**查询字符串长度 > 10 字符**
+**分析**：慢请求的入参都是长查询字符串（> 10 字符），短查询从不出现在结果里
 
 #### 步骤 3：追踪调用树
 
 ```bash
-peeka-cli trace '__main__.ApiService.handle_product_search' -n 2
+peeka-cli trace '__main__.ApiService.handle_product_search' -n 1 --condition "cost > 200"
 ```
 
-输出示例（树形格式）：
-```
-`---[1055.3ms] __main__.ApiService.handle_product_search()
-    `---[1050.8ms] __main__.DatabaseSimulator.search_products()
-        +---[850.2ms] <nested_loop_iteration_1>
-        +---[100.5ms] <nested_loop_iteration_2>
-        `---[98.1ms] <nested_loop_iteration_3>
+`trace` 记录被追踪函数的直接子调用（默认跳过内置函数）。
+
+输出示例：
+```json
+{"type":"observation","func_name":"__main__.ApiService.handle_product_search","total_duration_ms":1008.7,"self_time_ms":0.09,"call_tree":[{"function":"__main__.DatabaseSimulator.search_products","lineno":60,"count":1,"total_ms":1008.6}]}
 ```
 
-**分析**：`search_products()` 内部存在嵌套循环，占用了几乎全部执行时间
+**分析**：请求的 1008ms 几乎全部花在 `search_products()` 里，问题在这个函数内部
 
 ### 根因分析
 
 **Bug 位置**：`DatabaseSimulator.search_products()` 方法
 
-**问题代码**（第 60-80 行）：
+**问题代码**（第 60-92 行）：
 ```python
 def search_products(self, query_str):
-    # BUG: 当查询字符串长度 > 10 时触发低效嵌套循环
     if len(query_str) > 10:
-        # 嵌套循环：O(n²) 复杂度
+        # 慢路径：逐行模拟 I/O，外加冗余的内层比较循环
         results = []
         for product in self.product_catalog:
-            for term in query_str.split():
-                if term.lower() in product["name"].lower():
-                    results.append(product)
-                    time.sleep(0.01)  # 模拟 I/O 操作
-                    break
+            time.sleep(0.01)  # 每个商品一次 10ms 的 I/O
+            matched = False
+            for _ in range(100):
+                matched = query_str.lower() in product["name"].lower()
+            if matched:
+                results.append(product)
         return results
     else:
-        # 快速路径：列表推导 O(n)
+        # 快速路径：列表推导
         return [p for p in self.product_catalog if query_str.lower() in p["name"].lower()]
 ```
 
 **触发条件**：
-- 每 7 个产品搜索请求，就会使用长查询字符串（32 字符）
-- 长查询触发嵌套循环分支
-- 内层循环中的 `time.sleep(0.01)` 累积延迟达到 1 秒
+- 请求序号是 7 的倍数的商品搜索会使用长查询字符串（32 字符）
+- 长查询走慢路径分支
+- 100 个商品 × 每个 10ms 的模拟 I/O ≈ 1 秒
 
 ### 修复建议
 
@@ -903,8 +282,8 @@ def search_products(self, query_str):
 ### 清理
 
 ```bash
-peeka-cli reset --all
-peeka-cli detach 23456
+peeka-cli reset
+peeka-cli detach
 kill 23456
 ```
 
@@ -934,15 +313,18 @@ python examples/scenario_3_high_cpu.py &
 
 ```bash
 peeka-cli attach 34567
-peeka-cli top '__main__.DataProcessor' -n 10 -i 2
+peeka-cli top --cycles 3
 ```
 
-输出示例：
+`top` 对整个进程做栈采样（默认每 10ms 一次，自动排除 peeka 自己的线程），每个周期输出一次按 `own_pct` 排序的函数列表。
+
+输出示例（每个周期一行，这里只保留前几个函数）：
 ```json
-{"type":"result","command":"top","data":{"pattern":"__main__.DataProcessor","samples":[{"func_name":"__main__.DataProcessor.transform_data","calls":15,"total_time_ms":2450.5,"avg_time_ms":163.4,"percent":78.2},{"func_name":"__main__.DataProcessor.process_batch","calls":15,"total_time_ms":2580.3,"avg_time_ms":172.0,"percent":82.3},{"func_name":"__main__.DataProcessor.generate_batch","calls":15,"total_time_ms":125.6,"avg_time_ms":8.4,"percent":4.0}]}}
+{"type":"event","event":"top_started","data":{"top_id":"top_f456c21b","interval":0.01,"filter_peeka":true}}
+{"type":"observation","total_samples":230,"functions":[{"name":"main","filename":"examples/scenario_3_high_cpu.py","line":165,"own_pct":55.2,"total_pct":55.2},{"name":"transform_data","filename":"examples/scenario_3_high_cpu.py","line":80,"own_pct":10.9,"total_pct":10.9},{"name":"process_batch","filename":"examples/scenario_3_high_cpu.py","line":107,"own_pct":0.0,"total_pct":20.4}]}
 ```
 
-**分析**：`transform_data()` 占用 78.2% 的执行时间，是明显的热点
+**分析**：除了主循环本身，`transform_data()` 是最大的业务热点，`process_batch()` 的 total 时间主要由它贡献
 
 #### 步骤 2：追踪调用树查看时间分布
 
@@ -1022,8 +404,8 @@ def transform_data(self, data):
 ### 清理
 
 ```bash
-peeka-cli reset --all
-peeka-cli detach 34567
+peeka-cli reset
+peeka-cli detach
 kill 34567
 ```
 
@@ -1068,7 +450,7 @@ peeka-cli memory --action start
 #### 步骤 2：查看内存分配热点
 
 ```bash
-peeka-cli memory --action top -n 10
+peeka-cli memory --action top --limit 10
 ```
 
 输出示例：
@@ -1116,15 +498,17 @@ peeka-cli memory --action diff
 #### 步骤 6：检查缓存对象状态
 
 ```bash
-peeka-cli inspect '__main__.CacheManager' --attr cache
+peeka-cli inspect --action instances --type '__main__.CacheManager' --limit 1 --depth 1
 ```
+
+`cache_manager` 是 `main()` 的局部变量，无法用 `--target` 按路径访问，所以按类型列出存活实例。
 
 输出示例：
 ```json
-{"type":"result","command":"inspect","data":{"pattern":"__main__.CacheManager","attribute":"cache","value":{"type":"dict","size":18500,"sample":{"request_12345":{"id":"req_12345","data":"..."},"request_12346":{"id":"req_12346","data":"..."}}}}}
+{"type":"result","command":"vmtool","data":{"action":"instances","class_name":"__main__.CacheManager","count":1,"instances":[{"__class__":"__main__.CacheManager","__attrs__":{"cache":"{'request_100': {'request_id': 100, 'timestamp': ..., 'data': 'xxxx...'}, ...}","hits":"0","misses":"4900"}}]}}
 ```
 
-**分析**：缓存已有 18,500 个条目且还在增长
+**分析**：`hits` 一直是 0、`misses` 持续增长，缓存只进不出
 
 ### 根因分析
 
@@ -1173,8 +557,8 @@ class CacheManager:
 
 ```bash
 peeka-cli memory --action stop
-peeka-cli reset --all
-peeka-cli detach 45678
+peeka-cli reset
+peeka-cli detach
 kill 45678
 ```
 
@@ -1218,21 +602,24 @@ peeka-cli thread
 - worker_1: **WAITING**（等待锁）
 - worker_2: **WAITING**（等待锁）
 
-#### 步骤 2：捕获死锁时的调用栈
+#### 步骤 2：查看卡住线程的调用栈
+
+死锁的线程不会再进入 `transfer()`，`stack` 这类"等下一次调用"的命令抓不到它们，应直接读取线程当前的栈：
 
 ```bash
-peeka-cli stack '__main__.TransferService.transfer' -n 5
+peeka-cli thread --tid <Worker 线程的 tid> --depth 8
 ```
 
 输出示例：
 ```json
-{"type":"observation","data":{"pattern":"__main__.TransferService.transfer","stack":[{"file":"examples/scenario_5_deadlock.py","line":85,"function":"transfer","code":"with from_account.lock:  # 已获取 account1.lock"},{"file":"examples/scenario_5_deadlock.py","line":90,"function":"transfer","code":"with to_account.lock:  # 等待 account2.lock"}],"thread":"worker_1","count":1}}
-{"type":"observation","data":{"pattern":"__main__.TransferService.transfer","stack":[{"file":"examples/scenario_5_deadlock.py","line":85,"function":"transfer","code":"with from_account.lock:  # 已获取 account2.lock"},{"file":"examples/scenario_5_deadlock.py","line":90,"function":"transfer","code":"with to_account.lock:  # 等待 account1.lock"}],"thread":"worker_2","count":2}}
+{"type":"result","command":"thread","data":{"action":"detail","thread":{"tid":140655304402624,"name":"Worker-B→A","state":"RUNNABLE","stack":[{"filename":"examples/scenario_5_deadlock.py","lineno":103,"funcname":"transfer","locals_keys":["self","from_account","to_account","amount"]},{"filename":"examples/scenario_5_deadlock.py","lineno":149,"funcname":"worker_b_to_a"},{"filename":"threading.py","lineno":1024,"funcname":"run"}]}}}
 ```
 
+两个 Worker 线程都停在 `transfer()` 第 103 行（`with to_account.lock:`）。注意 `state` 显示为 RUNNABLE：Python 层面看不到线程是否阻塞在锁上，要靠"栈长时间不变"来判断。
+
 **分析**：
-- worker_1: 持有 account1.lock，等待 account2.lock
-- worker_2: 持有 account2.lock，等待 account1.lock
+- Worker-A→B: 持有 account_a.lock，等待 account_b.lock
+- Worker-B→A: 持有 account_b.lock，等待 account_a.lock
 - 形成**循环等待**，死锁！
 
 ### 根因分析
@@ -1283,8 +670,8 @@ def transfer(self, from_account, to_account, amount):
 ### 清理
 
 ```bash
-peeka-cli reset --all
-peeka-cli detach 56789
+peeka-cli reset
+peeka-cli detach
 kill 56789
 ```
 
@@ -1323,7 +710,7 @@ peeka-cli sc '__main__.*Service'
 
 输出示例：
 ```json
-{"type":"result","command":"sc","data":{"pattern":"*Service","classes":["__main__.UserService","__main__.TransferService"]}}
+{"type":"result","command":"sc","data":{"classes":[{"name":"__main__.UserService"}],"count":1}}
 ```
 
 **分析**：找到了 `UserService` 类
@@ -1331,32 +718,31 @@ peeka-cli sc '__main__.*Service'
 #### 步骤 2：探索类的方法
 
 ```bash
-peeka-cli sm '__main__.UserService.*'
+peeka-cli sm '__main__.UserService'
 ```
 
 输出示例：
 ```json
-{"type":"result","command":"sm","data":{"pattern":"UserService.*","methods":["__main__.UserService.__init__","__main__.UserService.get_user","__main__.UserService.process_request"]}}
+{"type":"result","command":"sm","data":{"methods":[{"name":"get_user","signature":"(self, user_id)"}],"count":1}}
 ```
 
-**分析**：`UserService` 有 `get_user()` 和 `process_request()` 方法
+**分析**：`UserService` 只有一个公开方法 `get_user()`
 
 #### 步骤 3：检查内部状态
 
 ```bash
-peeka-cli inspect '__main__.UserService' --attr _cache
-peeka-cli inspect '__main__.UserService' --attr _retry_count
+peeka-cli inspect --action instances --type '__main__.UserService' --limit 1 --depth 1
 ```
 
 输出示例：
 ```json
-{"type":"result","command":"inspect","data":{"pattern":"__main__.UserService","attribute":"_cache","value":{"type":"dict","size":8500,"sample":{"user_123":{"user_id":123,"name":"User 123"}}}}}
-{"type":"result","command":"inspect","data":{"pattern":"__main__.UserService","attribute":"_retry_count","value":{"type":"int","value":12500}}}
+{"type":"result","command":"vmtool","data":{"action":"instances","class_name":"__main__.UserService","count":1,"instances":[{"__class__":"__main__.UserService","__attrs__":{"config":"<__main__.AppConfig object at 0x7feaf30b8c20>","logger":"<Logger __main__ (WARNING)>","users_fetched":"52"}}]}}
 ```
 
 **分析**：
-- `_cache` 已有 8,500 个条目（不断增长）
-- `_retry_count` 高达 12,500（从不重置）
+- `inspect` 和 `watch` 的对象输出都不显示 `_` 开头的私有属性，所以 `_cache`、`_retry_count` 本身看不到
+- 但 `users_fetched` 每次缓存未命中都会加一，它持续增长说明缓存未命中一直在发生，`_cache` 也随之同步增长
+- 结合源码可以确认 `_cache` 没有淘汰、`_retry_count` 从不重置
 
 #### 步骤 4：调整日志级别
 
@@ -1367,7 +753,7 @@ peeka-cli logger --action list
 
 输出示例：
 ```json
-{"type":"result","command":"logger","data":{"action":"list","loggers":[{"name":"root","level":"INFO"},{"name":"__main__","level":"WARNING"}]}}
+{"type":"result","command":"logger","data":{"loggers":[{"name":"__main__","level":"WARNING","level_num":30,"handlers":0}],"count":1}}
 ```
 
 ```bash
@@ -1377,7 +763,7 @@ peeka-cli logger --action set --logger __main__ --level DEBUG
 
 输出：
 ```json
-{"type":"success","command":"logger","data":{"action":"set","logger":"__main__","level":"DEBUG","message":"Logger level updated"}}
+{"type":"result","command":"logger","data":{"name":"__main__","old_level":"WARNING","new_level":"DEBUG","old_level_num":30,"new_level_num":10}}
 ```
 
 #### 步骤 5：观察函数行为
@@ -1455,8 +841,8 @@ logging.basicConfig(
 
 ```bash
 peeka-cli logger --action set --logger __main__ --level WARNING
-peeka-cli reset --all
-peeka-cli detach 67890
+peeka-cli reset
+peeka-cli detach
 kill 67890
 ```
 
@@ -1593,112 +979,10 @@ def generate_daily_report(self):
 ### 清理
 
 ```bash
-peeka-cli reset --all
-peeka-cli detach 78901
+peeka-cli reset
+peeka-cli detach
 kill 78901
 ```
-
----
-
-## 附录：常用命令速查表
-
-### 基础命令
-
-| 命令 | 说明 | 示例 |
-|------|------|------|
-| `attach <pid>` | 附加到进程 | `peeka-cli attach 12345` |
-| `detach <pid>` | 从进程分离 | `peeka-cli detach 12345` |
-| `reset --all` | 清除所有注入 | `peeka-cli reset --all` |
-
-### 观察命令
-
-| 命令 | 说明 | 关键参数 |
-|------|------|----------|
-| `watch '<pattern>'` | 观察函数调用 | `-n` 次数, `--condition` 过滤条件 |
-| `trace '<pattern>'` | 追踪直接子调用 | `--min-duration` 最小耗时 |
-| `stack '<pattern>'` | 捕获调用栈 | `-n` 次数, `--depth` 栈深度 |
-| `monitor` | 性能监控 | `-i` 间隔, `-n` 次数 |
-| `top '<pattern>'` | 函数性能采样 | `-n` 次数, `-i` 间隔 |
-
-### 内存分析
-
-| 命令 | 说明 |
-|------|------|
-| `memory --action start` | 启动内存追踪（必须第一步） |
-| `memory --action top` | 查看内存分配热点 |
-| `memory --action snapshot` | 创建内存快照 |
-| `memory --action diff` | 对比两次快照 |
-| `memory --action stop` | 停止内存追踪 |
-
-### 探索命令
-
-| 命令 | 说明 | 示例 |
-|------|------|------|
-| `sc '<pattern>'` | 搜索类 | `peeka-cli sc '__main__.*Service'` |
-| `sm '<pattern>'` | 搜索方法 | `peeka-cli sm '__main__.User*'` |
-| `inspect '<pattern>'` | 检查对象状态 | `peeka-cli inspect '__main__.Cache' --attr size` |
-
-### 日志管理
-
-| 命令 | 说明 | 示例 |
-|------|------|------|
-| `logger --action list` | 列出所有 logger | `peeka-cli logger --action list` |
-| `logger --action set` | 调整日志级别 | `peeka-cli logger --action set --logger __main__ --level DEBUG` |
-
-### 线程分析
-
-| 命令 | 说明 |
-|------|------|
-| `thread` | 查看所有线程状态和调用栈 |
-
-### JSONL 输出类型
-
-所有命令输出 JSONL 格式（每行一个 JSON 对象），通过 `type` 字段区分：
-
-- `status`: 状态信息（非关键）
-- `success`: 命令成功
-- `error`: 命令失败
-- `event`: 控制事件（started/stopped）
-- `observation`: 实时观察数据（watch/stack/monitor）
-- `result`: 查询结果（logger/memory/sc/sm）
-
-### 使用 jq 过滤输出
-
-```bash
-# 只显示观察数据
-peeka-cli watch '__main__.func' | jq 'select(.type == "observation")'
-
-# 只显示耗时 > 100ms 的调用
-peeka-cli watch '__main__.func' | jq 'select(.type == "observation" and .duration_ms > 100)'
-
-# 提取函数名和耗时
-peeka-cli watch '__main__.func' | jq 'select(.type == "observation") | {func: .func_name, ms: .duration_ms}'
-```
-
----
-
-## 总结
-
-本教程展示了 7 个典型的 Python 运行时诊断场景：
-
-1. **业务逻辑 Bug**：使用 `watch` 观察函数参数和返回值，定位计算错误
-2. **慢请求**：使用 `monitor` + `watch --condition` + `trace` 渐进式定位性能瓶颈
-3. **CPU 过高**：使用 `top` 采样热点函数，`trace` 分析时间分布
-4. **内存泄漏**：使用 `memory` 命令完整工作流（start → top → snapshot → diff）
-5. **死锁**：使用 `thread` 和 `stack` 识别循环等待
-6. **紧急诊断**：使用 `sc/sm/inspect/logger` 探索未知应用
-7. **调用分析**：使用 `stack` 和 `watch` 识别高频调用方
-
-所有示例脚本位于 `examples/scenario_*.py`，可直接运行和调试。
-
-**关键原则**：
-- 先 attach，再执行命令
-- 内存分析必须先 `memory --action start`
-- 使用 `--condition` 过滤高价值数据
-- 结合 jq 处理 JSONL 输出
-- 诊断完成后记得 `reset` 和 `detach`
-
-Happy debugging with Peeka! 🔍
 
 ---
 
@@ -1890,7 +1174,7 @@ Peeka 的 agent 使用 Runtime Primitive Layer (RPL) 来绕过 monkey-patching�
 ### 清理步骤
 
 ```bash
-peeka-cli detach 12345
+peeka-cli detach
 kill 12345
 ```
 
@@ -1898,6 +1182,85 @@ kill 12345
 
 - [Runtime Primitive Layer](runtime-primitive-layer.md) — RPL 的设计原理和 API 文档
 - [Python Process Attach Internals](python-process-attach-internals.md) — Peeka 如何注入代码到运行中的进程
+
+---
+
+## 附录：常用命令速查表
+
+### 基础命令
+
+| 命令 | 说明 | 示例 |
+|------|------|------|
+| `attach <pid>` | 附加到进程 | `peeka-cli attach 12345` |
+| `detach` | 从当前进程分离 | `peeka-cli detach` |
+| `reset [pattern]` | 清除注入（不带参数清除全部） | `peeka-cli reset` |
+
+### 观察命令
+
+| 命令 | 说明 | 关键参数 |
+|------|------|----------|
+| `watch '<pattern>'` | 观察函数调用 | `-n` 次数, `--condition` 过滤条件 |
+| `trace '<pattern>'` | 追踪直接子调用 | `--min-duration` 最小耗时 |
+| `stack '<pattern>'` | 捕获调用栈 | `-n` 次数, `--depth` 栈深度 |
+| `monitor '<pattern>'` | 周期性统计调用次数和耗时 | `--interval` 周期秒数, `-c` 周期数 |
+| `top` | 整个进程的栈采样热点 | `--interval` 采样间隔, `--cycles` 周期数 |
+
+### 内存分析
+
+| 命令 | 说明 |
+|------|------|
+| `memory --action start` | 启动内存追踪（必须第一步） |
+| `memory --action top --limit N` | 查看内存分配热点 |
+| `memory --action snapshot` | 创建内存快照 |
+| `memory --action diff` | 对比两次快照 |
+| `memory --action stop` | 停止内存追踪 |
+
+### 探索命令
+
+| 命令 | 说明 | 示例 |
+|------|------|------|
+| `sc '<pattern>'` | 搜索类 | `peeka-cli sc '__main__.*Service'` |
+| `sm '<class pattern>'` | 列出类的方法 | `peeka-cli sm '__main__.UserService'` |
+| `inspect --target <path>` | 按路径读取对象 | `peeka-cli inspect --target '__main__.config'` |
+| `inspect --action instances --type <class>` | 列出类的存活实例 | `peeka-cli inspect --action instances --type '__main__.CacheManager'` |
+
+### 日志管理
+
+| 命令 | 说明 | 示例 |
+|------|------|------|
+| `logger --action list` | 列出所有 logger | `peeka-cli logger --action list` |
+| `logger --action set` | 调整日志级别 | `peeka-cli logger --action set --logger __main__ --level DEBUG` |
+
+### 线程分析
+
+| 命令 | 说明 |
+|------|------|
+| `thread` | 列出所有线程及其栈顶帧 |
+| `thread --tid <tid>` | 查看单个线程的完整调用栈 |
+
+### JSONL 输出类型
+
+所有命令输出 JSONL 格式（每行一个 JSON 对象），通过 `type` 字段区分：
+
+- `status`: 状态信息（非关键）
+- `success`: 命令成功
+- `error`: 命令失败
+- `event`: 控制事件（started/stopped）
+- `observation`: 实时观察数据（watch/stack/monitor）
+- `result`: 查询结果（logger/memory/sc/sm）
+
+### 使用 jq 过滤输出
+
+```bash
+# 只显示观察数据
+peeka-cli watch '__main__.func' | jq 'select(.type == "observation")'
+
+# 只显示耗时 > 100ms 的调用（cost 单位为毫秒）
+peeka-cli watch '__main__.func' | jq 'select(.type == "observation" and .cost > 100)'
+
+# 提取函数名和耗时
+peeka-cli watch '__main__.func' | jq 'select(.type == "observation") | {func: .func_name, ms: .cost}'
+```
 
 ---
 
@@ -1909,7 +1272,7 @@ kill 12345
 2. **慢请求**：使用 `monitor` + `watch --condition` + `trace` 渐进式定位性能瓶颈
 3. **CPU 过高**：使用 `top` 采样热点函数，`trace` 分析时间分布
 4. **内存泄漏**：使用 `memory` 命令完整工作流（start → top → snapshot → diff）
-5. **死锁**：使用 `thread` 和 `stack` 识别循环等待
+5. **死锁**：使用 `thread` 和 `thread --tid` 识别循环等待
 6. **紧急诊断**：使用 `sc/sm/inspect/logger` 探索未知应用
 7. **调用分析**：使用 `stack` 和 `watch` 识别高频调用方
 8. **Monkey-Patch 检测**：使用 `patch-status` 确认 gevent/eventlet 状态和 RPL 完整性
@@ -1924,4 +1287,3 @@ kill 12345
 - 诊断完成后记得 `reset` 和 `detach`
 
 Happy debugging with Peeka!
-```

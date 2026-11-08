@@ -13,7 +13,7 @@ Bug location: CacheManager.add()
 Peeka workflow:
   peeka-cli attach <PID>
   peeka-cli memory --action start
-  peeka-cli memory --action top -n 10
+  peeka-cli memory --action top --limit 10
   peeka-cli memory --action snapshot
   (wait 10-30 seconds)
   peeka-cli memory --action snapshot

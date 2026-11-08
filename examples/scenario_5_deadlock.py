@@ -13,9 +13,8 @@ Bug location: TransferService.transfer()
 
 Peeka workflow:
   peeka-cli attach <PID>
-  peeka-cli thread --action list
-  peeka-cli thread --action stacks
-  peeka-cli stack '__main__.TransferService.transfer' -n 5
+  peeka-cli thread
+  peeka-cli thread --tid <TID of a Worker thread> --depth 8
 
 Main thread stays in heartbeat loop (never participates in deadlock).
 """

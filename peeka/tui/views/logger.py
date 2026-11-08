@@ -163,7 +163,7 @@ class LoggerView(Container):
         command: Dict[str, Any] = {
             "type": "logger",
             "action": "set",
-            "logger": logger_name,
+            "name": logger_name,
             "level": level,
         }
 

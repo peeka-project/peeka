@@ -102,6 +102,74 @@ class TestAgentTransport:
             client_sock.close()
             worker.join(timeout=1.0)
 
+    @pytest.mark.parametrize(
+        "client_extra, expect_stream",
+        [
+            ({}, True),  # CLI: reads OBS on the same connection
+            ({"observations": True}, True),
+            ({"observations": False}, False),  # TUI control connection
+        ],
+    )
+    def test_stream_start_promotion_respects_declined_observations(
+        self, client_extra: Dict[str, Any], expect_stream: bool
+    ) -> None:
+        """A control connection that declines OBS must stay a control connection.
+
+        Regression: the TUI sends ``stack start`` over its main connection while
+        reading observations on a dedicated stream connection. Promoting the
+        main connection flooded it with unread OBS frames until the agent
+        evicted it, breaking every later TUI command.
+        """
+        agent = PeekaAgent("transport-test")
+        agent._emit_log = lambda level, message, details=None: None  # type: ignore[method-assign]
+        agent._execute_command = lambda command: {  # type: ignore[method-assign]
+            "status": "success",
+            "watch_id": "w1",
+        }
+
+        server_sock, client_sock = socket.socketpair()
+        worker = threading.Thread(
+            target=agent._handle_client,
+            args=(server_sock, 1),
+            daemon=True,
+        )
+        worker.start()
+
+        try:
+            client_sock.settimeout(0.5)
+            client_info: Dict[str, Any] = {
+                "id": "tui-test01",
+                "kind": "tui",
+                "source": "main",
+                "pid": 12345,
+            }
+            client_info.update(client_extra)
+            command = json.dumps(
+                {
+                    "type": "stack",
+                    "action": "start",
+                    "pattern": "mod.func",
+                    "_client": client_info,
+                }
+            ).encode("utf-8")
+            client_sock.sendall(len(command).to_bytes(4, "big"))
+            client_sock.sendall(command)
+            assert _recv_response(client_sock)["status"] == "success"
+
+            kind = agent._client_connection_kinds.get(server_sock)
+            assert (kind == "stream") is expect_stream
+
+            agent._send_observation({"event_id": "evt_1", "probe_id": "prb_stream"})
+            if expect_stream:
+                assert _recv_exact(client_sock, 4) == b"OBS:"
+            else:
+                client_sock.settimeout(0.3)
+                with pytest.raises(socket.timeout):
+                    client_sock.recv(1)
+        finally:
+            client_sock.close()
+            worker.join(timeout=1.0)
+
     def test_observations_only_broadcast_to_stream_connections(self) -> None:
         """Control connections should not receive unrelated OBS frames."""
         agent = PeekaAgent("transport-test")
