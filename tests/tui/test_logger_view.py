@@ -125,8 +125,23 @@ class TestLoggerView:
             ]
             assert len(commands) > 0
             set_command = commands[0]
-            assert set_command.get("logger") == "peeka.core"
+            assert set_command.get("name") == "peeka.core"
             assert set_command.get("level") == "DEBUG"
+
+            # Contract: the agent-side command must accept what the view sends.
+            import logging
+            from types import SimpleNamespace
+
+            from peeka.commands.logger import LoggerCommand
+
+            target = logging.getLogger("peeka.core")
+            original = target.level
+            try:
+                result = LoggerCommand(SimpleNamespace()).execute(set_command)
+                assert result.get("status") == "success", result
+                assert target.level == logging.DEBUG
+            finally:
+                target.setLevel(original)
 
     @pytest.mark.asyncio
     @pytest.mark.tui
