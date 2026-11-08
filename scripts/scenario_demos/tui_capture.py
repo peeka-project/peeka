@@ -74,7 +74,11 @@ class TuiSession:
         from peeka.tui.widgets.autocomplete_input import AutoCompleteInput
 
         for widget in self.app.screen.query(AutoCompleteInput):
-            widget.dismiss_dropdown()
+            if hasattr(widget, "dismiss_dropdown"):
+                widget.dismiss_dropdown()
+            else:
+                for dropdown in widget.query("#ac-dropdown"):
+                    dropdown.display = False
         self.app.screen.set_focus(None)
         await self.pilot.pause()
         OUT_DIR.mkdir(parents=True, exist_ok=True)

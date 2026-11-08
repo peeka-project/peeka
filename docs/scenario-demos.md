@@ -59,7 +59,7 @@
 
 **业务问题**：商品搜索接口偶尔极慢，其余请求都正常。
 
-> 截图时目标以 `--interval 3` 启动：示例里的慢路径会把整个请求循环阻塞很久，拉开请求间隔才能先采到正常请求。
+> 本节截图拍摄时，示例的慢路径还是约 100 秒（已在 `fix/scenario-demo-bugs` 分支修正为约 1 秒），所以目标以 `--interval 3` 启动，以便先采到正常请求。
 
 ### CLI
 
@@ -113,7 +113,7 @@
 
    ![场景 3 attach](assets/scenarios/s3-cli-2-attach.png)
 
-3. `top` 采样：业务代码里 `transform_data` 及其排序用的 `<lambda>` 占比最高。（表格前几行的 `_handle_client`/`wait` 来自 `<string>` 与 threading，是 peeka agent 自身线程，见文末"已知问题"。）
+3. `top` 采样：除主循环外，业务代码里 `transform_data` 及其排序用的 `<lambda>` 占比最高。
 
    ![场景 3 top](assets/scenarios/s3-cli-3-top.png)
 
@@ -243,7 +243,7 @@
 |------|------|
 | attach | ![](assets/scenarios/s6-tui-1-attach.png) |
 | Watch 视图 | ![](assets/scenarios/s6-tui-2-watch.png) |
-| Logger 视图：`__main__` 当前为 WARNING（TUI 里改级别目前会失败，见文末；用 CLI 修改） | ![](assets/scenarios/s6-tui-3-logger.png) |
+| Logger 视图：把 `__main__` 调到 DEBUG | ![](assets/scenarios/s6-tui-3-logger.png) |
 | Inspect 视图：`UserService` | ![](assets/scenarios/s6-tui-4-inspect.png) |
 
 ---
@@ -287,8 +287,10 @@
 
 ## 截图过程中发现的问题
 
-- `examples/scenario_2_slow_api.py` 的慢路径实际要跑约 100 秒（内层循环从不 `break`），而 `scenarios.md` 写的是约 1 秒；`watch --condition "cost > 200"` 因此长时间等不到结果。
-- `peeka-cli top` 默认开启 `filter_peeka`，但结果里仍有 agent 自身的 `<string>` 帧（`_handle_client` 等），且 own% 超过 100%。
-- TUI Logger 视图的 "Set Level" 发出的命令用 `logger` 字段，agent 要求 `name`，报 `Missing required parameters: name`；CLI 的 `logger --action set` 正常。
-- TUI 中对高频函数（如场景 7 的 `Database.execute_query`）开 Stack 流后，共享命令连接会失去响应：随后的 stop / monitor / trace / 补全请求报 `no response received`、`Broken pipe`。同一会话里先后开多个流时也出现过后面的视图无数据。截图时场景 2、3、7 的每个视图各开一个新的 TUI 会话（重新 attach 同一进程）来规避。
-- `scenarios.md` 中部分命令写法已过时，例如 `monitor -i 2 -n 5`（现为 `--interval` / `-c`）、`reset --all`、`detach <PID>`，以及给 `monitor` 传通配符。本文截图使用的是当前语法。
+以下问题均已在 `fix/scenario-demo-bugs` 分支修复，场景 3 和场景 6 的相关截图已用修复后的代码重拍：
+
+- `examples/scenario_2_slow_api.py` 的慢路径实际要跑约 100 秒（内层循环从不 `break`），文档写的是约 1 秒。现已改为每个商品一次 10ms 的模拟 I/O，约 1 秒。
+- `peeka-cli top` 开着 `filter_peeka`，结果里仍有 agent 自身的 `<string>` 帧（`_handle_client` 等），own% 超过 100%。原因是 agent 代码在目标进程里以源码方式执行，文件名不在 peeka 包目录下；现在按线程入口帧识别 agent 线程。
+- TUI Logger 视图 "Set Level" 发出的字段是 `logger`，agent 要求 `name`，报 `Missing required parameters: name`。已改为 `name`。
+- TUI 中开 Stack/Watch/Trace/Monitor 流后，共享命令连接失去响应（`no response received`、`Broken pipe`）。原因是 TUI 在主连接上发 `start`，agent 把主连接也升级为观察流连接并向它推送数据，没人读取导致缓冲区写满、连接被当作慢客户端踢掉。现在 TUI 的非流连接会声明不接收观察数据。截图脚本仍为每个视图开独立 TUI 会话，但这已不是必需的。
+- `scenarios.md` 中过时的命令写法（`monitor -i/-n`、`reset --all`、`detach <PID>`、`top <pattern>`、`inspect --attr` 等）和重复的场景 1-5 章节已清理。
