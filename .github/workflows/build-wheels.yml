@@ -32,7 +32,9 @@ jobs:
             archs: aarch64
           # Apple Silicon runner builds both arches; x86_64 is cross-compiled
           # and tested under Rosetta, so no Intel macOS runner is needed.
-          - os: macos-14
+          # macos-latest tracks GitHub's current arm64 image; pinned labels
+          # (macos-13, then macos-14) were retired and broke this workflow.
+          - os: macos-latest
             archs: arm64 x86_64
 
     steps:
@@ -51,7 +53,7 @@ jobs:
           ls wheelhouse/
           # auditwheel (run by cibuildwheel) tags the wheel with the glibc it
           # needs; anything newer than 2.17 would break old target containers.
-          ls wheelhouse/*.whl | grep -qE 'cp38-abi3-manylinux_2_17_' \
+          ls wheelhouse/*.whl | grep -qE 'cp38-abi3-.*manylinux_2_17_' \
             || { echo "::error::expected cp38-abi3 manylinux_2_17 wheel"; exit 1; }
 
       - uses: actions/upload-artifact@v7.0.1
