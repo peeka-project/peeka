@@ -1,7 +1,9 @@
-"""Host-side TUI tests - executes pytest inside GDB container.
+"""Host-side TUI tests - runs TUI smoke checks inside the GDB container.
 
-These tests orchestrate pytest execution inside the container to run
-tui_inner_test.py, which uses textual's run_test() API. This two-layer
+These tests run
+tui_smoke_inner.py (a plain-Python script, since the image has no pytest),
+which uses textual's run_test() API. tui_inner_test.py is the pytest
+variant of the same checks and runs on the host. This two-layer
 approach is necessary because textual requires in-process Python access
 that cannot be driven via container exec commands.
 
@@ -19,7 +21,7 @@ class TestContainerTUI:
     """Host-side orchestration of container TUI tests."""
 
     def test_tui_tests_pass_inside_container(self, gdb_container):
-        """Run TUI tests inside container using pytest.
+        """Run the TUI smoke script inside the container.
 
         Args:
             gdb_container: Python 3.12 container with textual installed.

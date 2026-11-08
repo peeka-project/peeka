@@ -11,6 +11,28 @@ from peeka.tui.screens.main import MainScreen
 
 pytestmark = [pytest.mark.tui, pytest.mark.asyncio]
 
+# Default (non-experimental) top-level tabs, in display order.
+EXPECTED_TABS = [
+    "dashboard",
+    "watch",
+    "trace",
+    "stack",
+    "monitor",
+    "memory",
+    "logger",
+    "inspect",
+    "threads",
+    "top",
+]
+
+
+def _pane_labels(app, pane_id):
+    """Return the input-label texts rendered inside one tab pane."""
+    from textual.widgets import TabPane
+
+    pane = app.screen.query_one(f"#{pane_id}", TabPane)
+    return [label.render().plain for label in pane.query("Static.input-label")]
+
 
 class TestTUIInContainer:
     """TUI integration tests running inside the container."""
@@ -18,7 +40,7 @@ class TestTUIInContainer:
     async def test_tui_app_starts(self):
         """Verify PeekaApp instantiates and runs."""
         app = PeekaApp()
-        async with app.run_test() as pilot:
+        async with app.run_test():
             assert app.is_running
 
     async def test_tui_help_screen(self):
@@ -28,8 +50,8 @@ class TestTUIInContainer:
             await pilot.press("?")
             assert app.is_running
 
-    async def test_main_screen_has_eight_tabs(self):
-        """Verify MainScreen has exactly 8 tab panes."""
+    async def test_main_screen_has_default_tabs(self):
+        """Verify MainScreen has exactly the default top-level tab panes."""
         app = PeekaApp()
         async with app.run_test() as pilot:
             app.push_screen(
@@ -39,11 +61,11 @@ class TestTUIInContainer:
             from textual.widgets import TabbedContent, TabPane
 
             tabbed = app.screen.query_one("#main-content", TabbedContent)
-            panes = list(tabbed.query(TabPane))
-            assert len(panes) == 8
+            panes = tabbed.query_one("ContentSwitcher").query_children(TabPane)
+            assert len(panes) == len(EXPECTED_TABS)
 
     async def test_tab_ids_correct(self):
-        """Verify all 8 tab pane IDs match expected names."""
+        """Verify top-level tab pane IDs match expected names and order."""
         app = PeekaApp()
         async with app.run_test() as pilot:
             app.push_screen(
@@ -53,19 +75,8 @@ class TestTUIInContainer:
             from textual.widgets import TabbedContent, TabPane
 
             tabbed = app.screen.query_one("#main-content", TabbedContent)
-            panes = list(tabbed.query(TabPane))
-            pane_ids = [pane.id for pane in panes]
-            expected = [
-                "dashboard",
-                "watch",
-                "trace",
-                "stack",
-                "monitor",
-                "memory",
-                "logger",
-                "inspect",
-            ]
-            assert pane_ids == expected
+            panes = tabbed.query_one("ContentSwitcher").query_children(TabPane)
+            assert [pane.id for pane in panes] == EXPECTED_TABS
 
     async def test_tab_switching(self):
         """Verify tab switching updates TabbedContent.active."""
@@ -79,17 +90,7 @@ class TestTUIInContainer:
 
             tabbed = app.screen.query_one("#main-content", TabbedContent)
 
-            tab_names = [
-                "watch",
-                "trace",
-                "stack",
-                "monitor",
-                "memory",
-                "logger",
-                "inspect",
-                "dashboard",
-            ]
-            for tab_name in tab_names:
+            for tab_name in EXPECTED_TABS[1:] + EXPECTED_TABS[:1]:
                 app.screen.action_switch_tab(tab_name)
                 await pilot.pause()
                 assert tabbed.active == tab_name, (
@@ -97,7 +98,7 @@ class TestTUIInContainer:
                 )
 
     async def test_trace_view_labels(self):
-        """Verify trace view has Pattern, Depth, and Condition labels."""
+        """Verify trace view has Pattern, Min Duration, and Condition labels."""
         app = PeekaApp()
         async with app.run_test() as pilot:
             app.push_screen(
@@ -107,11 +108,11 @@ class TestTUIInContainer:
             app.screen.action_switch_tab("trace")
             await pilot.pause()
 
-            labels = app.screen.query("Static.input-label")
-            label_texts = [label.render().plain for label in labels]
-            assert "Pattern:" in label_texts
-            assert "Depth:" in label_texts
-            assert "Condition:" in label_texts
+            assert _pane_labels(app, "trace") == [
+                "Pattern:",
+                "Min Duration (ms):",
+                "Condition:",
+            ]
 
     async def test_trace_view_buttons(self):
         """Verify trace view has Trace, Stop, and Clear buttons."""
@@ -158,10 +159,7 @@ class TestTUIInContainer:
             app.screen.action_switch_tab("watch")
             await pilot.pause()
 
-            labels = app.screen.query("Static.input-label")
-            label_texts = [label.render().plain for label in labels]
-            assert "Pattern:" in label_texts
-            assert "Condition:" in label_texts
+            assert _pane_labels(app, "watch") == ["Pattern:", "Condition:"]
 
     async def test_views_label_counts(self):
         """Verify each view with inputs has the correct number of labels."""
@@ -172,20 +170,21 @@ class TestTUIInContainer:
             )
             await pilot.pause()
 
+            from textual.widgets import TabbedContent
+
+            tabbed = app.screen.query_one("#main-content", TabbedContent)
+            # digit key -> (tab id, input-label count in that tab)
             tab_label_counts = {
-                "w": 2,  # Watch: Pattern, Condition
-                "t": 3,  # Trace: Pattern, Depth, Condition
-                "s": 1,  # Stack: Pattern
-                "m": 2,  # Monitor: Pattern, Interval
-                "l": 2,  # Logger: Filter, Logger
-                "i": 1,  # Inspect: Object Path
+                "2": ("watch", 2),  # Pattern, Condition
+                "3": ("trace", 3),  # Pattern, Min Duration, Condition
+                "4": ("stack", 1),  # Pattern
+                "5": ("monitor", 2),  # Pattern, Interval
+                "7": ("logger", 2),  # Filter, Logger
+                "8": ("inspect", 1),  # Object Path
             }
 
-            for key, expected_count in tab_label_counts.items():
+            for key, (tab_id, expected_count) in tab_label_counts.items():
                 await pilot.press(key)
                 await pilot.pause()
-                labels = app.screen.query("Static.input-label")
-                assert len(labels) >= expected_count, (
-                    f"Tab '{key}': expected >= {expected_count} labels, "
-                    f"got {len(labels)}"
-                )
+                assert tabbed.active == tab_id, f"key {key!r} did not open {tab_id}"
+                assert len(_pane_labels(app, tab_id)) == expected_count
