@@ -8,7 +8,7 @@ Tests verify:
 
 1. ProcessSelectorScreen renders with correct widgets
 
-2. MainScreen has all 11 default tabs with correct labels
+2. MainScreen has all 10 default tabs with correct labels
 
 3. Tab switching works and updates active state
 
@@ -1269,7 +1269,7 @@ class TestMainScreen:
 
     async def test_main_screen_has_correct_number_of_tabs(self):
 
-        """MainScreen has exactly 11 tab panes by default (experimental hidden)."""
+        """MainScreen has exactly 10 top-level tab panes by default (experimental hidden)."""
 
         app = PeekaApp()
 
@@ -1295,7 +1295,7 @@ class TestMainScreen:
 
             panes = [c for c in switcher.children if isinstance(c, TabPane)]
 
-            assert len(panes) == 11
+            assert len(panes) == 10
 
 
 
@@ -1352,8 +1352,6 @@ class TestMainScreen:
                 "threads",
 
                 "top",
-
-                "profile",
 
             ]
 
@@ -1919,7 +1917,7 @@ class TestMainScreenNavigation:
             await pilot.pause()
             ids = self._pane_ids(app)
             assert ids[-1] == "timeline"
-            assert len(ids) == 12
+            assert len(ids) == 11
 
     def test_experimental_env_var_enables_flag(self, monkeypatch):
         monkeypatch.setenv("PEEKA_TUI_EXPERIMENTAL", "1")
@@ -1927,11 +1925,12 @@ class TestMainScreenNavigation:
         monkeypatch.setenv("PEEKA_TUI_EXPERIMENTAL", "0")
         assert PeekaApp().experimental is False
 
-    def test_main_screen_does_not_bind_t(self):
-        """`t` belongs to Trace's Drill Trace; the screen must not claim it."""
+    def test_main_screen_binds_only_digit_tab_keys(self):
+        """`t` belongs to Trace's Drill Trace; `p` was freed by the Performance merge."""
         keys = {b.key for b in MainScreen.BINDINGS}
         assert "t" not in keys
-        assert {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "p"} <= keys
+        assert "p" not in keys
+        assert {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0"} <= keys
 
     @pytest.mark.asyncio
     async def test_switch_to_hidden_tab_is_ignored(self, monkeypatch):
@@ -1960,15 +1959,18 @@ class TestMainScreenNavigation:
             provider = ViewJumpProvider(app.screen)
             hits = [hit async for hit in provider.discover()]
             titles = [str(hit.display) for hit in hits]
-            assert "Go to Profile" in titles
+            assert "Go to Performance › Live Top" in titles
+            assert "Go to Performance › Profiles" in titles
             assert not any("Timeline" in t for t in titles)
-            assert len(hits) == len(self._pane_ids(app))
+            # Performance contributes one entry per sub-tab.
+            assert len(hits) == len(self._pane_ids(app)) + 1
 
-            searched = [hit async for hit in provider.search("prof")]
-            assert searched and searched[0].text == "Go to Profile"
+            searched = [hit async for hit in provider.search("profiles")]
+            assert searched and searched[0].text == "Go to Performance › Profiles"
             searched[0].command()
             await pilot.pause()
-            assert app.screen.query_one("#main-content", TabbedContent).active == "profile"
+            assert app.screen.query_one("#main-content", TabbedContent).active == "top"
+            assert app.screen.query_one("#top-content", TabbedContent).active == "top-profile"
 
     @pytest.mark.asyncio
     async def test_command_palette_includes_timeline_when_experimental(self, monkeypatch):
@@ -1994,7 +1996,7 @@ class TestMainScreenNavigation:
             await pilot.pause()
             tabs = app.screen.query_one("#main-content").query_one(Tabs)
             last = list(tabs.query(Tab))[-1]
-            assert last.id.endswith("profile")
+            assert last.id.endswith("top")
             assert last.region.right <= tabs.region.right
 
     @pytest.mark.asyncio
@@ -2010,3 +2012,122 @@ class TestMainScreenNavigation:
             tabs = app.screen.query_one("#main-content").query_one(Tabs)
             assert tabs.region.height == 2
             assert {t.region.y for t in tabs.query(Tab)} == {tabs.region.y}
+
+
+class TestPerformanceTab:
+    """Top and Profile merged under one Performance tab with sub-tabs."""
+
+    class _FakeClient:
+        socket_path = "/tmp/fake.sock"
+
+        def send_command(self, _command):
+            return {"status": "error", "error": "fake"}
+
+        def disconnect(self):
+            pass
+
+    @staticmethod
+    def _push_main(app):
+        app.push_screen(
+            MainScreen(pid=12345, session_id="test", socket_path="/tmp/fake.sock")
+        )
+
+    @staticmethod
+    def _record_set_client(monkeypatch):
+        from peeka.tui.views.profile import ProfileView
+        from peeka.tui.views.top import TopView
+
+        calls = []
+        monkeypatch.setattr(TopView, "set_client", lambda self, c: calls.append("top"))
+        monkeypatch.setattr(ProfileView, "set_client", lambda self, c: calls.append("profile"))
+        return calls
+
+    @pytest.mark.asyncio
+    async def test_performance_hosts_live_top_and_profiles(self):
+        from textual.widgets import TabbedContent
+
+        from peeka.tui.views.profile import ProfileView
+        from peeka.tui.views.top import TopView
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            self._push_main(app)
+            await pilot.pause()
+            nested = app.screen.query_one("#top-content", TabbedContent)
+            assert nested.active == "top-live"
+            assert app.screen.query_one("#top-live").query_one(TopView)
+            assert app.screen.query_one("#top-profile").query_one(ProfileView)
+
+    @pytest.mark.asyncio
+    async def test_key_zero_opens_live_top(self):
+        from textual.widgets import TabbedContent
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            self._push_main(app)
+            await pilot.pause()
+            await pilot.press("0")
+            await pilot.pause()
+            assert app.screen.query_one("#main-content", TabbedContent).active == "top"
+            assert app.screen.query_one("#top-content", TabbedContent).active == "top-live"
+
+    @pytest.mark.asyncio
+    async def test_sub_views_activate_lazily(self, monkeypatch):
+        """Each sub-view gets the client only when its sub-tab is first shown."""
+        calls = self._record_set_client(monkeypatch)
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            self._push_main(app)
+            await pilot.pause()
+            app.screen._client = self._FakeClient()
+            assert calls == []
+
+            app.screen.action_switch_tab("top")
+            await pilot.pause()
+            assert calls == ["top"]
+
+            app.screen.action_switch_tab("top-profile")
+            await pilot.pause()
+            assert calls == ["top", "profile"]
+
+            app.screen.action_switch_tab("dashboard")
+            app.screen.action_switch_tab("top")
+            await pilot.pause()
+            assert calls == ["top", "profile"]
+
+    @pytest.mark.asyncio
+    async def test_nested_switch_while_hidden_does_not_activate(self, monkeypatch):
+        """Changing the Performance sub-tab while another tab is shown is inert."""
+        from textual.widgets import TabbedContent
+
+        calls = self._record_set_client(monkeypatch)
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            self._push_main(app)
+            await pilot.pause()
+            app.screen._client = self._FakeClient()
+            app.screen.query_one("#top-content", TabbedContent).active = "top-profile"
+            await pilot.pause()
+            assert calls == []
+            assert app.screen.query_one("#main-content", TabbedContent).active == "dashboard"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("width", [80, 140])
+    async def test_sub_tab_bar_is_compact(self, width):
+        """Sub-tab bar is one row directly under the main bar; Live Top keeps its table."""
+        from textual.widgets import DataTable, Tab, TabbedContent, Tabs
+
+        app = PeekaApp()
+        async with app.run_test(size=(width, 24)) as pilot:
+            self._push_main(app)
+            await pilot.pause()
+            app.screen.action_switch_tab("top")
+            await pilot.pause()
+            main_tabs = app.screen.query_one("#main-content", TabbedContent).query_one(Tabs)
+            sub_tabs = app.screen.query_one("#top-content", TabbedContent).query_one(Tabs)
+            assert sub_tabs.region.height == 2
+            assert {t.region.y for t in sub_tabs.query(Tab)} == {sub_tabs.region.y}
+            assert sub_tabs.region.y == main_tabs.region.bottom + 1
+            table = app.screen.query_one("#top-table", DataTable)
+            assert table.region.height >= 10
+            assert table.region.right <= width

@@ -34,8 +34,7 @@ HELP_TEXT = """
 | `7` | Logger - Logger management |
 | `8` | Inspect - Object inspection |
 | `9` | Threads - Thread management |
-| `0` | Top - Function profiler |
-| `p` | Profile - Sampling profiler sessions |
+| `0` | Performance - Live Top sampling and Profile sessions (sub-tabs) |
 
 Experimental views (e.g. Timeline) are hidden by default. Start with
 `peeka --experimental` (or `PEEKA_TUI_EXPERIMENTAL=1`) and open them from

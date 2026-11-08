@@ -3,7 +3,7 @@ Main Screen - Primary interface after attaching to a process.
 """
 
 from functools import partial
-from typing import Any, Dict, List, NamedTuple, Optional, Set, Type
+from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple, Type
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -49,20 +49,35 @@ TAB_SPECS: List[TabSpec] = [
     TabSpec("logger", "7", "Logger"),
     TabSpec("inspect", "8", "Inspect"),
     TabSpec("threads", "9", "Threads"),
-    TabSpec("top", "0", "Top"),
-    TabSpec("profile", "p", "Profile"),
+    TabSpec("top", "0", "Performance"),
     TabSpec("timeline", "", "Timeline (Experimental)", experimental=True),
 ]
+
+# Tabs that group several views behind a nested sub-tab bar. The first entry
+# is the default sub-tab. Live Top and Profile sessions share the same
+# sampling data (top records into a transient ProfileSession), so they live
+# together under one top-level tab.
+SUB_TABS: Dict[str, List[Tuple[str, str]]] = {
+    "top": [("top-live", "Live Top"), ("top-profile", "Profiles")],
+}
+
+
+class JumpTarget(NamedTuple):
+    """A view the command palette can jump to."""
+
+    tab_id: str
+    title: str
+    key: str
 
 
 class ViewJumpProvider(Provider):
     """Command palette entries that jump to a main-screen tab."""
 
-    def _commands(self) -> List[TabSpec]:
+    def _commands(self) -> List[JumpTarget]:
         screen = self.screen
         if not isinstance(screen, MainScreen):
             return []
-        return screen.visible_tab_specs()
+        return screen.jump_targets()
 
     def _jump(self, tab_id: str) -> None:
         screen = self.screen
@@ -70,7 +85,7 @@ class ViewJumpProvider(Provider):
             screen.action_switch_tab(tab_id)
 
     @staticmethod
-    def _help(spec: TabSpec) -> str:
+    def _help(spec: JumpTarget) -> str:
         return f"Shortcut: {spec.key.upper()}" if spec.key else "No shortcut"
 
     async def discover(self) -> Hits:
@@ -110,8 +125,7 @@ class MainScreen(Screen):
         Binding("8", "switch_tab('inspect')", "Inspect"),
         Binding("9", "switch_tab('threads')", "Threads"),
         Binding("escape", "go_back", "Back", priority=True),
-        Binding("0", "switch_tab('top')", "Top"),
-        Binding("p", "switch_tab('profile')", "Profile"),
+        Binding("0", "switch_tab('top')", "Performance"),
         Binding("q", "go_back", "Back"),
     ]
 
@@ -127,8 +141,8 @@ class MainScreen(Screen):
         "logger": LoggerView,
         "inspect": InspectView,
         "threads": ThreadView,
-        "top": TopView,
-        "profile": ProfileView,
+        "top-live": TopView,
+        "top-profile": ProfileView,
         "timeline": TimelineView,
     }
 
@@ -155,13 +169,58 @@ class MainScreen(Screen):
                         else spec.title
                     )
                     with TabPane(label, id=spec.tab_id):
-                        yield self._VIEW_BY_TAB[spec.tab_id](self.pid)
+                        sub_tabs = SUB_TABS.get(spec.tab_id)
+                        if not sub_tabs:
+                            yield self._VIEW_BY_TAB[spec.tab_id](self.pid)
+                            continue
+                        with TabbedContent(
+                            initial=sub_tabs[0][0],
+                            id=f"{spec.tab_id}-content",
+                            classes="sub-tabs",
+                        ):
+                            for sub_id, sub_title in sub_tabs:
+                                with TabPane(sub_title, id=sub_id):
+                                    yield self._VIEW_BY_TAB[sub_id](self.pid)
         yield Footer()
 
     def visible_tab_specs(self) -> List[TabSpec]:
         """Return the tabs shown on this screen, honouring the experimental flag."""
         experimental = bool(getattr(self.app, "experimental", False))
         return [spec for spec in TAB_SPECS if experimental or not spec.experimental]
+
+    def jump_targets(self) -> List[JumpTarget]:
+        """Return every view reachable from the command palette, in tab order."""
+        targets: List[JumpTarget] = []
+        for spec in self.visible_tab_specs():
+            sub_tabs = SUB_TABS.get(spec.tab_id)
+            if not sub_tabs:
+                targets.append(JumpTarget(spec.tab_id, spec.title, spec.key))
+                continue
+            for index, (sub_id, sub_title) in enumerate(sub_tabs):
+                targets.append(
+                    JumpTarget(
+                        sub_id,
+                        f"{spec.title} › {sub_title}",
+                        spec.key if index == 0 else "",
+                    )
+                )
+        return targets
+
+    @staticmethod
+    def _parent_tab(tab_id: str) -> Optional[str]:
+        """Return the top-level tab that hosts sub-tab ``tab_id``, if any."""
+        for parent, sub_tabs in SUB_TABS.items():
+            if any(sub_id == tab_id for sub_id, _ in sub_tabs):
+                return parent
+        return None
+
+    def _leaf_tab(self, tab_id: str) -> str:
+        """Resolve a top-level tab to the view tab currently shown inside it."""
+        sub_tabs = SUB_TABS.get(tab_id)
+        if not sub_tabs:
+            return tab_id
+        nested = self.query_one(f"#{tab_id}-content", TabbedContent)
+        return nested.active or sub_tabs[0][0]
 
     async def on_mount(self) -> None:
         await self._connect()
@@ -236,20 +295,36 @@ class MainScreen(Screen):
         """Switch to a specific view."""
         # Clear focus from the old pane first. Otherwise Textual may reactivate
         # that pane when the hidden focused widget receives focus bookkeeping.
-        if tab_id not in {spec.tab_id for spec in self.visible_tab_specs()}:
+        visible = {spec.tab_id for spec in self.visible_tab_specs()}
+        parent = self._parent_tab(tab_id)
+        if (parent or tab_id) not in visible:
             return
         self.set_focus(None)
         tabbed = self.query_one("#main-content", TabbedContent)
-        tabbed.active = tab_id
+        if parent:
+            # Select the sub-tab first so activating the parent resolves to it.
+            self.query_one(f"#{parent}-content", TabbedContent).active = tab_id
+            tabbed.active = parent
+        else:
+            tabbed.active = tab_id
 
     def on_tabbed_content_tab_activated(
         self, event: TabbedContent.TabActivated
     ) -> None:
-        """Initialize a tab's view the first time the main tab is shown."""
-        if event.tabbed_content.id != "main-content":
+        """Initialize a tab's view the first time it is shown."""
+        pane_id = event.pane.id
+        if not pane_id:
             return
-        if event.pane.id:
-            self._select_tab(event.pane.id)
+        if event.tabbed_content.id == "main-content":
+            self._select_tab(self._leaf_tab(pane_id))
+            return
+        parent = self._parent_tab(pane_id)
+        if parent is None:
+            return
+        # A nested sub-tab only counts as shown while its parent tab is active.
+        main = self.query_one("#main-content", TabbedContent)
+        if main.active == parent:
+            self._select_tab(pane_id)
 
     def _select_tab(self, tab_id: str) -> None:
         """Activate a tab and notify views when they become visible or hidden."""

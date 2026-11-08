@@ -51,7 +51,7 @@ class TestProfileView:
             await pilot.pause()
 
             # Switch to Profile tab
-            main_screen.action_switch_tab("profile")
+            main_screen.action_switch_tab("top-profile")
             await pilot.pause()
 
             # Inject the mock client
@@ -87,7 +87,7 @@ class TestProfileView:
             await app.push_screen(main_screen)
             await pilot.pause()
 
-            main_screen.action_switch_tab("profile")
+            main_screen.action_switch_tab("top-profile")
             await pilot.pause()
 
             profile_view = app.screen.query_one(ProfileView)
@@ -111,7 +111,7 @@ class TestProfileView:
             await app.push_screen(main_screen)
             await pilot.pause()
 
-            main_screen.action_switch_tab("profile")
+            main_screen.action_switch_tab("top-profile")
             await pilot.pause()
 
             profile_view = app.screen.query_one(ProfileView)
@@ -150,7 +150,7 @@ class TestProfileView:
             await app.push_screen(main_screen)
             await pilot.pause()
 
-            main_screen.action_switch_tab("profile")
+            main_screen.action_switch_tab("top-profile")
             await pilot.pause()
 
             profile_view = app.screen.query_one(ProfileView)

@@ -218,6 +218,13 @@ TabPane {
     padding: 0;
 }
 
+/* Nested sub-tab bar (e.g. Performance > Live Top / Profiles): no extra
+   margins so the hosted view keeps as many rows as possible. */
+.sub-tabs > Tabs {
+    margin-top: 0;
+    margin-bottom: 0;
+}
+
 /* ============================================================================
    VIEW CONTAINERS
    ============================================================================ */
@@ -230,7 +237,8 @@ TabPane {
 #logger-container,
 #inspect-container,
 #thread-container,
-#top-container {
+#top-container,
+#profile-container {
     padding: 0 1;
 }
 
