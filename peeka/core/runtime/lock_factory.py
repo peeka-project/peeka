@@ -14,7 +14,7 @@ Per-field domain declarations live in LOCK_DOMAIN_TABLE.
 
 from typing import Any, Optional
 
-from peeka.core.runtime.primitives import _NATIVE_ALLOCATE_LOCK, _NATIVE_RLOCK
+from peeka.core.runtime.primitives import _NATIVE_ALLOCATE_LOCK, allocate_rlock
 
 # Domain constants
 DOMAIN_NATIVE: str = "native_thread"
@@ -110,5 +110,5 @@ class LockFactory:
             ValueError: If domain is not a recognized constant.
         """
         if domain in (DOMAIN_NATIVE, DOMAIN_GREENLET_ONLY, DOMAIN_MIXED):
-            return _NATIVE_RLOCK()
+            return allocate_rlock()
         raise ValueError(f"Unknown lock domain: {domain!r}")

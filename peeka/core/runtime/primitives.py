@@ -12,7 +12,7 @@ import socket
 import sys
 import threading
 import time
-from typing import Any, Callable, Dict, Optional, Tuple, Union, cast
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union, cast
 
 
 def _get_original_runtime_attr(
@@ -59,6 +59,14 @@ _NATIVE_ALLOCATE_LOCK = _get_original_runtime_attr(
 
 _NATIVE_RLOCK = _get_original_runtime_attr(
     "threading", "RLock", threading.RLock
+)
+
+# threading.RLock is a factory: once gevent has patched threading, it falls
+# back to the pure-Python threading._RLock built on threading._allocate_lock,
+# which is then a gevent lock. The C implementation _thread.RLock is never
+# replaced by gevent, so peeka's own reentrant locks are allocated from it.
+_NATIVE_C_RLOCK: Optional[Any] = _get_original_runtime_attr(
+    "_thread", "RLock", getattr(_thread, "RLock", None)
 )
 
 _NATIVE_EVENT = _get_original_runtime_attr(
@@ -124,21 +132,83 @@ def allocate_lock() -> Any:
 
 
 def allocate_rlock() -> Any:
-    """Allocate a native reentrant lock from threading.RLock.
+    """Allocate a native reentrant lock.
+
+    Uses the C ``_thread.RLock`` when available, falling back to the captured
+    ``threading.RLock`` factory.
 
     Returns:
-        A native RLock object (not patched by gevent/eventlet).
+        A native RLock object (not patched by gevent).
     """
+    if _NATIVE_C_RLOCK is not None:
+        return _NATIVE_C_RLOCK()
     return _NATIVE_RLOCK()
 
 
+class _NativeEvent:
+    """Minimal threading.Event equivalent built only on native locks.
+
+    threading.Event cannot be used even when captured unpatched: its
+    Condition allocates locks through threading's module globals, which
+    gevent replaces with greenlet-aware locks.
+    """
+
+    def __init__(self) -> None:
+        self._lock = _NATIVE_ALLOCATE_LOCK()
+        self._flag = False
+        self._waiters: List[Any] = []
+
+    def is_set(self) -> bool:
+        return self._flag
+
+    isSet = is_set
+
+    def set(self) -> None:
+        with self._lock:
+            self._flag = True
+            waiters = self._waiters
+            self._waiters = []
+        for waiter in waiters:
+            waiter.release()
+
+    def clear(self) -> None:
+        with self._lock:
+            self._flag = False
+
+    def wait(self, timeout: Optional[float] = None) -> bool:
+        with self._lock:
+            if self._flag:
+                return True
+            waiter = _NATIVE_ALLOCATE_LOCK()
+            waiter.acquire()
+            self._waiters.append(waiter)
+
+        if timeout is None:
+            signaled = bool(waiter.acquire())
+        elif timeout > 0:
+            signaled = bool(waiter.acquire(True, timeout))
+        else:
+            signaled = bool(waiter.acquire(False))
+
+        if signaled:
+            return True
+        with self._lock:
+            try:
+                self._waiters.remove(waiter)
+            except ValueError:
+                # set() already took this waiter; it is (or will be) released.
+                return True
+            return False
+
+
 def create_event() -> Any:
-    """Create a native event from threading.Event.
+    """Create an event built only on native locks.
 
     Returns:
-        A native Event object (not patched by gevent/eventlet).
+        An object with the threading.Event interface (set, clear, is_set,
+        wait) that does not block on gevent-patched locks.
     """
-    return _NATIVE_EVENT()
+    return _NativeEvent()
 
 
 def create_socket(

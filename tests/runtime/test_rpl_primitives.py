@@ -215,3 +215,61 @@ def test_module_docstring_marks_target_side_only():
 
     docstring_upper = primitives.__doc__.upper()
     assert "TARGET" in docstring_upper or "AGENT" in docstring_upper or "RUNTIME" in docstring_upper
+
+
+@pytest.mark.unit
+def test_allocate_rlock_uses_c_rlock():
+    """allocate_rlock must not return threading._RLock (gevent-lock based)."""
+    rlock = primitives.allocate_rlock()
+    assert type(rlock).__module__ == "_thread"
+    assert type(rlock).__name__ == "RLock"
+    with rlock:
+        with rlock:
+            pass
+
+
+@pytest.mark.unit
+def test_create_event_is_built_on_native_lock():
+    """create_event must not use threading.Condition (gevent-patched locks)."""
+    event = primitives.create_event()
+    assert type(event._lock).__module__ == "_thread"
+
+
+@pytest.mark.unit
+def test_native_event_semantics():
+    """_NativeEvent behaves like threading.Event for set/clear/wait."""
+    event = primitives.create_event()
+    assert event.is_set() is False
+    assert event.wait(0) is False
+    assert event.wait(0.01) is False
+
+    event.set()
+    assert event.is_set() is True
+    assert event.wait() is True
+    assert event.wait(0) is True
+
+    event.clear()
+    assert event.is_set() is False
+    assert event._waiters == []
+
+
+@pytest.mark.unit
+def test_native_event_wakes_waiter_from_other_thread():
+    """set() from one native thread releases a waiter in another."""
+    event = primitives.create_event()
+    started = primitives.allocate_lock()
+    started.acquire()
+    finished = primitives.allocate_lock()
+    finished.acquire()
+    results = []
+
+    def waiter():
+        started.release()
+        results.append(event.wait(5))
+        finished.release()
+
+    primitives.start_thread(waiter)
+    assert started.acquire(True, 5)
+    event.set()
+    assert finished.acquire(True, 5)
+    assert results == [True]
