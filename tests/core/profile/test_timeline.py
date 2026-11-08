@@ -2,7 +2,6 @@ import io
 import json
 import time
 
-import pytest
 
 from peeka.core.profile.models import ProfileConfig
 from peeka.core.profile.models import ProfileSession
