@@ -109,8 +109,14 @@ def make_empty() -> Dict[str, Any]:
         "rpl_integrity": {
             "ok": True,
             "status": "ok",
-            "captured_ids": {},
-            "current_ids": {},
-            "drift": [],
+            "socket_native": True,
+            "thread_native": True,
+            "lock_native": True,
+            "rlock_native": True,
+            "event_native": True,
+            "time_native": True,
+            "perf_counter_native": True,
+            "get_ident_native": True,
+            "capture_source": {},
         },
     }

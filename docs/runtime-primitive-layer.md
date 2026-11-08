@@ -1,6 +1,8 @@
 # Runtime Primitive Layer (RPL)
 
-The Runtime Primitive Layer is a target-side module that provides access to native Python runtime primitives guaranteed to survive third-party monkey-patching. RPL enables Peeka to inject diagnostics reliably into processes running gevent, eventlet, or other frameworks that replace standard library functions.
+The Runtime Primitive Layer is a target-side module that provides access to native Python runtime primitives guaranteed to survive third-party monkey-patching. RPL enables Peeka to inject diagnostics reliably into processes running gevent or other frameworks that replace standard library functions.
+
+> **eventlet:** RPL recovers unpatched originals only through gevent's `gevent.monkey.get_original`. If eventlet patched the process before Peeka attached, RPL ends up with eventlet's green primitives. `integrity_check()` detects this and reports `ok: false`, but Peeka's agent infrastructure is not protected in that case.
 
 ## Why RPL Exists
 
@@ -74,13 +76,13 @@ Allocate a native lock from `_thread.allocate_lock`.
 allocate_rlock() -> RLock
 ```
 
-Allocate a native reentrant lock from `threading.RLock`.
+Allocate a native reentrant lock from the C `_thread.RLock` (falling back to `threading.RLock`). `threading.RLock` itself is not used directly: once gevent patches `threading`, it returns the pure-Python `_RLock` built on a gevent lock.
 
 ```python
 create_event() -> Event
 ```
 
-Create a native threading event from `threading.Event`.
+Create an event with the `threading.Event` interface (`set`, `clear`, `is_set`, `wait`) built only on native `_thread` locks. `threading.Event` cannot be used even in its unpatched form, because its `Condition` allocates locks through gevent-patched `threading` globals.
 
 ### Thread Identification
 
@@ -110,19 +112,23 @@ Get a high-resolution performance counter using `time.perf_counter`. This functi
 integrity_check() -> dict
 ```
 
-Verify that all native primitives were captured correctly at import time. Returns a dictionary with these keys:
+Verify that the primitives Peeka itself uses are genuinely native: C builtins for functions, and `_thread` lock types for freshly created locks and events. It does **not** compare them with the current module attributes. In a gevent process those are patched by design, and that drift is reported by `patch-status` under `stdlib_origin`.
 
-- `socket_native`: bool, True if `_NATIVE_SOCKET` is `_socket.socket`
-- `thread_native`: bool, True if `_NATIVE_START_NEW_THREAD` is native
-- `lock_native`: bool, True if `_NATIVE_ALLOCATE_LOCK` is native
-- `rlock_native`: bool, True if `_NATIVE_RLOCK` is native
-- `event_native`: bool, True if `_NATIVE_EVENT` is native
-- `time_native`: bool, True if `_NATIVE_TIME` is native
-- `perf_counter_native`: bool, True if `_NATIVE_PERF_COUNTER` is native
-- `get_ident_native`: bool, True if `_NATIVE_GET_IDENT` is native
-- `captured_at_import`: bool, always True (indicates eager capture)
+Returns a dictionary with these keys:
+
+- `socket_native`: bool, `_NATIVE_SOCKET` is the C `_socket.socket` type
+- `thread_native`: bool, the captured `start_new_thread` is a C builtin
+- `lock_native`: bool, `allocate_lock()` returns a `_thread.lock`
+- `rlock_native`: bool, `allocate_rlock()` returns a `_thread.RLock`
+- `event_native`: bool, `create_event()` is built on a `_thread.lock`
+- `time_native`: bool, the captured `time.time` is a C builtin
+- `perf_counter_native`: bool, the captured `time.perf_counter` is a C builtin
+- `get_ident_native`: bool, the captured `get_ident` is a C builtin
+- `capture_source`: dict, primitive name → where it was captured from: `gevent.get_original` (unpatched original from gevent), `module_attr` (the module attribute at import time), or `_socket` (the C type)
 - `status`: str, "ok" if all checks pass, "degraded" otherwise
 - `ok`: bool, True if all checks pass, False otherwise
+
+`ok: true` in a gevent-patched process is expected: RPL recovered the originals through `gevent.monkey.get_original`. `ok: false` means some primitive Peeka uses is a greenlet-aware replacement (typically eventlet patched the process before attach), so agent threads may stall. `capture_source` shows which primitive fell back to `module_attr`.
 
 **Example:**
 ```python
@@ -185,7 +191,7 @@ For `_socket.socket`, RPL uses a direct reference because gevent patches `socket
 
 ### Integrity Verification
 
-The `integrity_check()` function exposes RPL's internal state for diagnostics. The `patch-status` command uses this to report whether the target process is running with native or patched primitives:
+The `integrity_check()` function exposes RPL's internal state for diagnostics. The `patch-status` command reports it next to `stdlib_origin`. `stdlib_origin` shows whether the target's stdlib attributes are patched; `rpl_integrity` shows whether Peeka's own primitives are still native:
 
 ```bash
 peeka-cli patch-status --pid 12345
@@ -230,7 +236,15 @@ Example output (JSONL):
       "time_native": true,
       "perf_counter_native": true,
       "get_ident_native": true,
-      "captured_at_import": true
+      "capture_source": {
+        "socket": "_socket",
+        "start_new_thread": "gevent.get_original",
+        "allocate_lock": "gevent.get_original",
+        "rlock": "gevent.get_original",
+        "time": "gevent.get_original",
+        "perf_counter": "module_attr",
+        "get_ident": "gevent.get_original"
+      }
     }
   }
 }

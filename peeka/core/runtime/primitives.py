@@ -12,11 +12,20 @@ import socket
 import sys
 import threading
 import time
+import types
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union, cast
 
 
+# Where each primitive peeka relies on was captured from, keyed by primitive
+# name. Values: "gevent.get_original", "module_attr" or "_socket".
+_CAPTURE_SOURCE: Dict[str, str] = {}
+
+
 def _get_original_runtime_attr(
-    module_name: str, attr_name: str, fallback: Any
+    module_name: str,
+    attr_name: str,
+    fallback: Any,
+    source_key: Optional[str] = None,
 ) -> Any:
     """Return an unpatched runtime primitive when gevent exposes one.
 
@@ -27,6 +36,8 @@ def _get_original_runtime_attr(
         module_name: Name of the module (e.g., "_thread", "threading").
         attr_name: Name of the attribute to retrieve.
         fallback: Value to return if gevent.monkey.get_original is unavailable.
+        source_key: When given, record where the value came from in
+            _CAPTURE_SOURCE under this key.
 
     Returns:
         The original unpatched attribute, or fallback if not available.
@@ -35,9 +46,15 @@ def _get_original_runtime_attr(
     get_original = getattr(monkey, "get_original", None)
     if callable(get_original):
         try:
-            return get_original(module_name, attr_name)
+            value = get_original(module_name, attr_name)
         except Exception:
             pass
+        else:
+            if source_key is not None:
+                _CAPTURE_SOURCE[source_key] = "gevent.get_original"
+            return value
+    if source_key is not None:
+        _CAPTURE_SOURCE[source_key] = "module_attr"
     return fallback
 
 
@@ -48,13 +65,14 @@ def _get_original_runtime_attr(
 # Python module layer; _socket.socket remains the blocking native socket that
 # is safe to use from the agent's low-level native threads.
 _NATIVE_SOCKET = _socket.socket
+_CAPTURE_SOURCE["socket"] = "_socket"
 
 _NATIVE_START_NEW_THREAD = _get_original_runtime_attr(
-    "_thread", "start_new_thread", _thread.start_new_thread
+    "_thread", "start_new_thread", _thread.start_new_thread, source_key="start_new_thread"
 )
 
 _NATIVE_ALLOCATE_LOCK = _get_original_runtime_attr(
-    "_thread", "allocate_lock", _thread.allocate_lock
+    "_thread", "allocate_lock", _thread.allocate_lock, source_key="allocate_lock"
 )
 
 _NATIVE_RLOCK = _get_original_runtime_attr(
@@ -66,7 +84,7 @@ _NATIVE_RLOCK = _get_original_runtime_attr(
 # which is then a gevent lock. The C implementation _thread.RLock is never
 # replaced by gevent, so peeka's own reentrant locks are allocated from it.
 _NATIVE_C_RLOCK: Optional[Any] = _get_original_runtime_attr(
-    "_thread", "RLock", getattr(_thread, "RLock", None)
+    "_thread", "RLock", getattr(_thread, "RLock", None), source_key="rlock"
 )
 
 _NATIVE_EVENT = _get_original_runtime_attr(
@@ -74,14 +92,15 @@ _NATIVE_EVENT = _get_original_runtime_attr(
 )
 
 _NATIVE_TIME = _get_original_runtime_attr(
-    "time", "time", time.time
+    "time", "time", time.time, source_key="time"
 )
 
 # time.perf_counter is NOT patched by gevent/eventlet — direct reference is safe.
 _NATIVE_PERF_COUNTER = time.perf_counter
+_CAPTURE_SOURCE["perf_counter"] = "module_attr"
 
 _NATIVE_GET_IDENT = _get_original_runtime_attr(
-    "threading", "get_ident", threading.get_ident
+    "threading", "get_ident", threading.get_ident, source_key="get_ident"
 )
 
 # select.poll is patched by gevent (and select.select by eventlet); a blocking
@@ -312,64 +331,72 @@ def perf_counter() -> float:
     return _NATIVE_PERF_COUNTER()
 
 
-def _was_captured_via_get_original(captured: Any) -> bool:
-    return captured is not None and callable(captured)
+def _is_builtin(func: Any) -> bool:
+    # Native runtime functions are C builtins; gevent/eventlet replacements
+    # are plain Python functions.
+    return isinstance(func, types.BuiltinFunctionType)
+
+
+def _is_thread_type(obj: Any, type_name: str) -> bool:
+    # Compare by name instead of against _thread.<type>: under eventlet the
+    # _thread module seen here may itself be the green replacement.
+    obj_type = type(obj)
+    return obj_type.__module__ == "_thread" and obj_type.__name__ == type_name
+
+
+def _probe(check: Callable[[], bool]) -> bool:
+    try:
+        return bool(check())
+    except Exception:
+        return False
 
 
 def integrity_check() -> Dict[str, Any]:
-    """Verify that all native primitives were captured correctly.
+    """Verify that the primitives peeka itself uses are genuinely native.
 
-    Semantics: "*_native" means "we captured a callable original function",
-    NOT "current attr is still original". This distinction matters when
-    gevent/eventlet was loaded before peeka attached: in that case,
-    _get_original_runtime_attr successfully returns the original unpatched
-    function via gevent.monkey.get_original, which is different from the
-    current patched module attribute.
+    Semantics: "*_native" means "the object peeka's RPL hands out is the C
+    runtime implementation", checked by the identity of the captured function
+    or of a freshly created lock/event. It does NOT compare against the
+    current module attributes: in a gevent process those are patched by
+    design, and that drift is reported separately by patch-status
+    ``stdlib_origin``. ``ok=False`` therefore means peeka's own threads or
+    locks are greenlet-aware replacements (e.g. eventlet patched the process
+    before peeka attached) and agent infrastructure may stall.
 
     Returns:
         Dictionary with keys:
-        - "socket_native": bool, True if _NATIVE_SOCKET is _socket.socket
-        - "thread_native": bool, True if _NATIVE_START_NEW_THREAD was captured
-        - "lock_native": bool, True if _NATIVE_ALLOCATE_LOCK was captured
-        - "rlock_native": bool, True if _NATIVE_RLOCK was captured
-        - "event_native": bool, True if _NATIVE_EVENT was captured
-        - "time_native": bool, True if _NATIVE_TIME was captured
-        - "perf_counter_native": bool, True if _NATIVE_PERF_COUNTER is native
-        - "get_ident_native": bool, True if _NATIVE_GET_IDENT was captured
-        - "captured_at_import": bool, always True (indicates eager capture)
+        - "socket_native": bool, _NATIVE_SOCKET is the C _socket.socket type
+        - "thread_native": bool, start_new_thread is a C builtin
+        - "lock_native": bool, allocate_lock() returns a _thread.lock
+        - "rlock_native": bool, allocate_rlock() returns a _thread.RLock
+        - "event_native": bool, create_event() is built on a _thread.lock
+        - "time_native": bool, time.time capture is a C builtin
+        - "perf_counter_native": bool, perf_counter capture is a C builtin
+        - "get_ident_native": bool, get_ident capture is a C builtin
+        - "capture_source": dict, primitive name -> where it was captured from
+          ("gevent.get_original", "module_attr" or "_socket")
         - "status": str, "ok" if all checks pass, "degraded" otherwise
         - "ok": bool, True if all checks pass, False otherwise
     """
-    socket_ok = _NATIVE_SOCKET is _socket.socket
-    thread_ok = _was_captured_via_get_original(_NATIVE_START_NEW_THREAD)
-    lock_ok = _was_captured_via_get_original(_NATIVE_ALLOCATE_LOCK)
-    rlock_ok = _was_captured_via_get_original(_NATIVE_RLOCK)
-    event_ok = _was_captured_via_get_original(_NATIVE_EVENT)
-    time_ok = _was_captured_via_get_original(_NATIVE_TIME)
-    perf_counter_ok = _NATIVE_PERF_COUNTER is time.perf_counter
-    get_ident_ok = _was_captured_via_get_original(_NATIVE_GET_IDENT)
-
-    all_ok = (
-        socket_ok
-        and thread_ok
-        and lock_ok
-        and rlock_ok
-        and event_ok
-        and time_ok
-        and perf_counter_ok
-        and get_ident_ok
-    )
-
-    return {
-        "socket_native": socket_ok,
-        "thread_native": thread_ok,
-        "lock_native": lock_ok,
-        "rlock_native": rlock_ok,
-        "event_native": event_ok,
-        "time_native": time_ok,
-        "perf_counter_native": perf_counter_ok,
-        "get_ident_native": get_ident_ok,
-        "captured_at_import": True,
-        "status": "ok" if all_ok else "degraded",
-        "ok": all_ok,
+    checks = {
+        "socket_native": _probe(
+            lambda: isinstance(_NATIVE_SOCKET, type)
+            and _NATIVE_SOCKET.__module__ == "_socket"
+        ),
+        "thread_native": _is_builtin(_NATIVE_START_NEW_THREAD),
+        "lock_native": _probe(lambda: _is_thread_type(allocate_lock(), "lock")),
+        "rlock_native": _probe(lambda: _is_thread_type(allocate_rlock(), "RLock")),
+        "event_native": _probe(
+            lambda: _is_thread_type(cast(_NativeEvent, create_event())._lock, "lock")
+        ),
+        "time_native": _is_builtin(_NATIVE_TIME),
+        "perf_counter_native": _is_builtin(_NATIVE_PERF_COUNTER),
+        "get_ident_native": _is_builtin(_NATIVE_GET_IDENT),
     }
+    all_ok = all(checks.values())
+
+    result: Dict[str, Any] = dict(checks)
+    result["capture_source"] = dict(_CAPTURE_SOURCE)
+    result["status"] = "ok" if all_ok else "degraded"
+    result["ok"] = all_ok
+    return result

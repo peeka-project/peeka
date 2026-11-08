@@ -60,7 +60,7 @@ def test_native_lock_identity():
 
 
 @pytest.mark.unit
-def test_native_captured_at_import():
+def test_native_primitives_are_module_constants():
     """Verify native primitives exist as module-level constants (not properties/lazy)."""
     assert hasattr(primitives, "_NATIVE_SOCKET")
     assert hasattr(primitives, "_NATIVE_START_NEW_THREAD")
@@ -74,9 +74,6 @@ def test_native_captured_at_import():
     assert not isinstance(
         type(primitives).__dict__.get("_NATIVE_SOCKET", None), property
     )
-
-    result = primitives.integrity_check()
-    assert result["captured_at_import"] is True
 
 
 @pytest.mark.unit
@@ -146,7 +143,7 @@ def test_integrity_check_schema():
         "time_native",
         "perf_counter_native",
         "get_ident_native",
-        "captured_at_import",
+        "capture_source",
         "status",
         "ok",
     }
@@ -157,8 +154,8 @@ def test_integrity_check_schema():
         if key == "status":
             assert isinstance(result[key], str)
             assert result[key] in ("ok", "degraded")
-        elif key in ("captured_at_import", "ok"):
-            assert isinstance(result[key], bool)
+        elif key == "capture_source":
+            assert isinstance(result[key], dict)
         else:
             assert isinstance(result[key], bool)
 
@@ -179,7 +176,6 @@ def test_integrity_check_status_ok_clean_env():
     assert result["time_native"] is True
     assert result["perf_counter_native"] is True
     assert result["get_ident_native"] is True
-    assert result["captured_at_import"] is True
 
 
 @pytest.mark.unit

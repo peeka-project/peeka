@@ -116,20 +116,20 @@ def test_fake_patch_engaged_eventlet(fake_eventlet_patch):
 
 @pytest.mark.unit
 def test_rpl_integrity_under_chaos(fake_gevent_patch):
-    """RPL integrity_check confirms eager-captured originals survive monkey-patching.
+    """RPL integrity_check stays ok when module attributes are monkey-patched.
 
-    Design semantics: integrity_check reports whether the *captured-at-import*
-    references are still valid callables. Because capture happens before any
-    monkey-patching can occur, all "*_native" flags must remain True even after
-    the current module attributes are replaced by gevent/eventlet sentinels.
+    integrity_check verifies the identity of the primitives peeka itself uses
+    (C builtins / _thread lock types), not whether the current module
+    attributes still match them. The fixture replaces _thread attributes after
+    RPL captured them, so the captured primitives remain native and ok stays
+    True; the drift is patch-status ``stdlib_origin``'s job.
 
-    This is the core resilience guarantee — see also test_rpl_*_survives_*
-    which verify the captured primitives still work end-to-end under chaos.
+    See also test_rpl_*_survives_* which verify the captured primitives still
+    work end-to-end under chaos.
     """
     from peeka.core.runtime import primitives
 
     result = primitives.integrity_check()
-    assert result["captured_at_import"] is True
     assert result["socket_native"] is True
     assert result["lock_native"] is True
     assert result["thread_native"] is True

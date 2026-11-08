@@ -1081,7 +1081,15 @@ peeka-cli patch-status
       "time_native": true,
       "perf_counter_native": true,
       "get_ident_native": true,
-      "captured_at_import": true
+      "capture_source": {
+        "socket": "_socket",
+        "start_new_thread": "gevent.get_original",
+        "allocate_lock": "gevent.get_original",
+        "rlock": "gevent.get_original",
+        "time": "gevent.get_original",
+        "perf_counter": "module_attr",
+        "get_ident": "gevent.get_original"
+      }
     }
   }
 }
@@ -1102,8 +1110,9 @@ peeka-cli patch-status
 
 **rpl_integrity 部分**：
 - `status = "ok"`, `ok = true`: Peeka 的 Runtime Primitive Layer (RPL) 完整性正常
-- 所有 8 个原生 primitive 检查都通过（`*_native = true`）
-- `captured_at_import = true`: RPL 在模块导入时成功捕获了原生引用
+- 所有 8 个原生 primitive 检查都通过（`*_native = true`）：Peeka 自己使用的线程、锁、Event、socket、计时函数都是 C 原生实现
+- `capture_source`: 每个 primitive 从哪里取得。`gevent.get_original` 表示 gevent 已 patch，RPL 通过 gevent 取回了原版；`module_attr` 表示直接使用导入时的模块属性
+- 注意 `rpl_integrity` 和 `stdlib_origin` 回答的是两个问题：`stdlib_origin` 看目标进程的标准库有没有被替换（gevent 下 `matches=false` 是正常的），`rpl_integrity` 看 Peeka 自己手里的 primitive 是否仍是原生的
 
 **线程模型部分**：
 - `total_threads = 5`: 进程有 5 个线程（包括 main thread + gevent hub + Peeka agent 线程）
@@ -1116,7 +1125,7 @@ peeka-cli patch-status
 
 Peeka 的 agent 使用 Runtime Primitive Layer (RPL) 来绕过 monkey-patching：
 
-1. **Eager Capture**: RPL 在模块导入时（`import peeka.core.runtime.primitives`）就捕获了原生 primitive 的引用，早于任何 monkey-patching
+1. **取回原版**: RPL 在模块导入时（`import peeka.core.runtime.primitives`）捕获 primitive。attach 时目标进程通常已经被 gevent patch，所以 RPL 通过 `gevent.monkey.get_original` 取回未被替换的原版
 2. **C 扩展安全**: RPL 使用 `_socket.socket`（C 扩展）而非 `socket.socket`（Python 包装器）— gevent 只 patch Python 层
 3. **原生线程**: RPL 使用 `_thread.start_new_thread`（原生 OS 线程）而非 `threading.Thread`（可能被 patch 的协程）
 
@@ -1133,9 +1142,9 @@ Peeka 的 agent 使用 Runtime Primitive Layer (RPL) 来绕过 monkey-patching�
 - Agent 和 CLI 之间的通信不会被 greenlet 调度器阻塞
 
 当 `rpl_integrity.ok = false` 时，表示：
-- RPL 未能成功捕获某些原生 primitive（可能在 RPL 导入前就被 patch 了）
-- 部分 Peeka 功能可能不稳定
-- 建议重新 attach 或检查 Python 环境
+- Peeka 自己使用的某些 primitive 是协程版替代品，而不是 C 原生实现。查看哪些 `*_native = false`，以及对应的 `capture_source` 是否为 `module_attr`
+- 最常见的原因：eventlet 在 Peeka attach 之前已经 `monkey_patch()`。RPL 目前只能通过 gevent 取回原版，eventlet 场景下取到的是绿色版本
+- Agent 线程可能被协程调度器阻塞，`watch`/`trace`/`stack` 等命令可能卡住或不稳定；重新 attach 不能解决
 
 ### 实际场景示例
 
@@ -1169,7 +1178,7 @@ Peeka 的 agent 使用 Runtime Primitive Layer (RPL) 来绕过 monkey-patching�
   "eventlet": {"status": "active"}
 }
 ```
-解读：gevent 已导入但未激活，eventlet 已激活 → 只有 eventlet 的 patch 生效
+解读：gevent 已导入但未激活，eventlet 已激活 → 只有 eventlet 的 patch 生效。此时 `rpl_integrity` 通常为 `ok: false`（`thread_native`、`lock_native`、`event_native`、`get_ident_native` 为 false），Peeka 的 agent 基础设施不受保护
 
 ### 清理步骤
 
