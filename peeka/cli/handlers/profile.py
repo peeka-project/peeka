@@ -91,14 +91,21 @@ def _handle_start(args: argparse.Namespace) -> int:
     return _run_profile_command(
         args,
         "profile.start",
-        lambda a: {
-            "action": "start",
-            "backend": a.backend,
-            "interval_ms": max(1, int(round(a.interval * 1000.0))),
-            "duration_ms": None if a.duration is None else max(1, int(round(a.duration * 1000.0))),
-            "max_samples": a.max_samples,
-        },
+        _build_start_command,
     )
+
+
+def _build_start_command(a: argparse.Namespace) -> Dict[str, Any]:
+    command: Dict[str, Any] = {
+        "action": "start",
+        "backend": a.backend,
+        "interval_ms": max(1, int(round(a.interval * 1000.0))),
+        "duration_ms": None if a.duration is None else max(1, int(round(a.duration * 1000.0))),
+        "max_samples": a.max_samples,
+    }
+    if getattr(a, "experimental", False):
+        command["experimental"] = True
+    return command
 
 
 def _handle_stop(args: argparse.Namespace) -> int:

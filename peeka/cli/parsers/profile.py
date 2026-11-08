@@ -20,8 +20,15 @@ def add_profile_parser(subparsers: Any) -> None:
     start_parser.add_argument(
         "--backend",
         type=str,
+        choices=["sampling", "exact"],
         default="sampling",
-        help="Profiler backend (default: sampling)",
+        help="Profiler backend (default: sampling; exact needs --experimental)",
+    )
+    start_parser.add_argument(
+        "--experimental",
+        action="store_true",
+        default=False,
+        help="Allow the experimental exact backend (Python 3.12+, high overhead)",
     )
     start_parser.add_argument(
         "--interval",

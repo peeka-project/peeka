@@ -236,7 +236,7 @@ class TestProfileCommandExactBackend:
 
         def start_exact(command: ProfileCommand) -> None:
             ready_barrier.wait(timeout=1.0)
-            result = command.execute({"action": "start", "backend": "exact"})
+            result = command.execute({"action": "start", "backend": "exact", "experimental": True})
             with results_lock:
                 results.append(result)
 
@@ -297,13 +297,13 @@ class TestProfileCommandExactBackend:
         monkeypatch.setattr(profile_module, "ExactProfileSampler", HookTrackingSampler)
         command = ProfileCommand()
 
-        old_start = command.execute({"action": "start", "backend": "exact"})
+        old_start = command.execute({"action": "start", "backend": "exact", "experimental": True})
         old_sampler = command._exact_sampler
         assert old_start["status"] == "success"
         assert old_sampler is not None
 
         old_stop = command.execute({"action": "stop", "profile_id": old_start["profile_id"]})
-        new_start = command.execute({"action": "start", "backend": "exact"})
+        new_start = command.execute({"action": "start", "backend": "exact", "experimental": True})
         assert old_stop["status"] == "success"
         assert new_start["status"] == "success"
         assert HookTrackingSampler.current_hook_profile_id == new_start["profile_id"]
@@ -349,8 +349,8 @@ class TestProfileCommandExactBackend:
         first_command = ProfileCommand()
         second_command = ProfileCommand()
 
-        first_result = first_command.execute({"action": "start", "backend": "exact"})
-        second_result = second_command.execute({"action": "start", "backend": "exact"})
+        first_result = first_command.execute({"action": "start", "backend": "exact", "experimental": True})
+        second_result = second_command.execute({"action": "start", "backend": "exact", "experimental": True})
 
         assert first_result["status"] == "success"
         assert second_result == {
@@ -370,7 +370,7 @@ class TestProfileCommandExactBackend:
         assert first_command._exact_sampler is None
         assert ProfileCommand._exact_profile_id is None
 
-    def test_stopping_unrelated_sampling_profile_preserves_exact_timer(self, monkeypatch):
+    def test_stopping_unrelated_profile_preserves_exact_timer(self, monkeypatch):
         import peeka.commands.profile as profile_module
         from peeka.commands.profile import ProfileCommand
 
@@ -404,20 +404,17 @@ class TestProfileCommandExactBackend:
         exact_start = command.execute(
             {
                 "action": "start",
-                "backend": "exact",
+                "backend": "exact", "experimental": True,
                 "duration_ms": 50,
             }
         )
-        sampling_start = command.execute(
-            {"action": "start", "backend": "sampling", "interval_ms": 1}
-        )
-        sampling_stop = command.execute(
-            {"action": "stop", "profile_id": sampling_start["profile_id"]}
-        )
+        from peeka.commands.top import _PROFILE_REGISTRY
+
+        unrelated_id = _PROFILE_REGISTRY.start(ProfileConfig(backend="sampling"))
+        unrelated_stop = command.execute({"action": "stop", "profile_id": unrelated_id})
 
         assert exact_start["status"] == "success"
-        assert sampling_start["status"] == "success"
-        assert sampling_stop["status"] == "success"
+        assert unrelated_stop["status"] == "success"
         assert command._exact_stop_timer is not None
 
         deadline = time.time() + 1.0
@@ -460,7 +457,7 @@ class TestProfileCommandExactBackend:
 
         monkeypatch.setattr(profile_module, "ExactProfileSampler", FailingSampler)
 
-        result = ProfileCommand().execute({"action": "start", "backend": "exact"})
+        result = ProfileCommand().execute({"action": "start", "backend": "exact", "experimental": True})
 
         assert result["status"] == "error"
         assert result["error"] == "forced unavailable"
@@ -507,7 +504,7 @@ class TestProfileCommandExactBackend:
         start_result = command.execute(
             {
                 "action": "start",
-                "backend": "exact",
+                "backend": "exact", "experimental": True,
                 "max_samples": 100,
                 "max_events": 10000,
             }
@@ -571,7 +568,7 @@ class TestProfileCommandExactBackend:
         monkeypatch.setattr(profile_module, "ExactProfileSampler", LockCheckingSampler)
         command = ProfileCommand()
 
-        start_result = command.execute({"action": "start", "backend": "exact"})
+        start_result = command.execute({"action": "start", "backend": "exact", "experimental": True})
 
         assert start_result["status"] == "success"
         assert lock_was_free == [True]
@@ -613,10 +610,10 @@ class TestProfileCommandExactBackend:
         stopper = ProfileCommand()
         next_command = ProfileCommand()
 
-        start_result = starter.execute({"action": "start", "backend": "exact"})
+        start_result = starter.execute({"action": "start", "backend": "exact", "experimental": True})
         sampler = starter._exact_sampler
         stop_result = stopper.execute({"action": "stop", "profile_id": start_result["profile_id"]})
-        next_result = next_command.execute({"action": "start", "backend": "exact"})
+        next_result = next_command.execute({"action": "start", "backend": "exact", "experimental": True})
 
         assert stop_result["status"] == "success"
         assert sampler is not None
@@ -638,7 +635,7 @@ class TestProfileCommandExactBackend:
             start_result = command.execute(
                 {
                     "action": "start",
-                    "backend": "exact",
+                    "backend": "exact", "experimental": True,
                     "duration_ms": 20,
                     "max_events": 1000,
                 }
@@ -662,8 +659,103 @@ class TestProfileCommandExactBackend:
             assert command._exact_stop_timer is None
 
             second_result = command.execute(
-                {"action": "start", "backend": "exact", "max_events": 1000}
+                {"action": "start", "backend": "exact", "experimental": True, "max_events": 1000}
             )
             assert second_result["status"] == "success"
         finally:
             command.stop_active_resources(pattern=None, reason="test teardown")
+
+
+class _InertSampler:
+    """Exact sampler stand-in that never installs a real profile hook."""
+
+    def __init__(self, profile_id: str, registry: Any, max_events: int = 10000, on_stop: Any = None):
+        self.profile_id = profile_id
+
+    def check_capability(self) -> Dict[str, Any]:
+        return {"available": True, "reason": None, "backend_name": "fake"}
+
+    def start(self) -> None:
+        return None
+
+    def stop(self) -> None:
+        return None
+
+
+@pytest.mark.skipif(sys.version_info < (3, 9), reason="exact profile tests require Python 3.9+")
+class TestExactBackendGuards:
+    def test_exact_start_requires_experimental_flag(self, monkeypatch):
+        import peeka.commands.profile as profile_module
+        from peeka.commands.profile import ProfileCommand
+        from peeka.commands.top import _PROFILE_REGISTRY
+
+        monkeypatch.setattr(profile_module, "ExactProfileSampler", _InertSampler)
+        before = len(_PROFILE_REGISTRY.list_sessions())
+
+        result = ProfileCommand().execute({"action": "start", "backend": "exact"})
+
+        assert result["status"] == "error"
+        assert "experimental" in result["error"]
+        assert ProfileCommand._exact_profile_id is None
+        assert len(_PROFILE_REGISTRY.list_sessions()) == before
+
+    def test_exact_refused_while_sampling_profile_runs(self, monkeypatch):
+        import peeka.commands.profile as profile_module
+        from peeka.commands.profile import ProfileCommand
+
+        monkeypatch.setattr(profile_module, "ExactProfileSampler", _InertSampler)
+        command = ProfileCommand()
+        sampling = command.execute({"action": "start", "backend": "sampling", "interval_ms": 5})
+        try:
+            exact = command.execute({"action": "start", "backend": "exact", "experimental": True})
+            assert exact["status"] == "error"
+            assert "mutually exclusive" in exact["error"]
+            assert exact["profile_id"] == sampling["profile_id"]
+        finally:
+            command.execute({"action": "stop", "profile_id": sampling["profile_id"]})
+
+    def test_sampling_refused_while_exact_profile_runs(self, monkeypatch):
+        import peeka.commands.profile as profile_module
+        from peeka.commands.profile import ProfileCommand
+
+        monkeypatch.setattr(profile_module, "ExactProfileSampler", _InertSampler)
+        command = ProfileCommand()
+        exact = command.execute({"action": "start", "backend": "exact", "experimental": True})
+        try:
+            sampling = command.execute({"action": "start", "backend": "sampling"})
+            assert sampling["status"] == "error"
+            assert "mutually exclusive" in sampling["error"]
+            assert sampling["profile_id"] == exact["profile_id"]
+        finally:
+            command.execute({"action": "stop", "profile_id": exact["profile_id"]})
+
+    def test_capability_failure_leaves_no_session_behind(self, monkeypatch):
+        import peeka.commands.profile as profile_module
+        from peeka.commands.profile import ProfileCommand
+        from peeka.commands.top import _PROFILE_REGISTRY
+
+        class UnavailableSampler(_InertSampler):
+            def check_capability(self) -> Dict[str, Any]:
+                return {"available": False, "reason": "nope", "backend_name": None}
+
+        monkeypatch.setattr(profile_module, "ExactProfileSampler", UnavailableSampler)
+        before = {s.profile_id for s in _PROFILE_REGISTRY.list_sessions()}
+
+        result = ProfileCommand().execute({"action": "start", "backend": "exact", "experimental": True})
+
+        assert result["status"] == "error"
+        assert {s.profile_id for s in _PROFILE_REGISTRY.list_sessions()} == before
+
+    def test_capability_refuses_when_another_profiler_is_installed(self, registry):
+        from peeka.core.profile.exact import ExactProfileSampler
+
+        sampler = ExactProfileSampler(registry.start(ProfileConfig(backend="exact")), registry)
+        previous = sys.getprofile()
+        sys.setprofile(lambda frame, event, arg: None)
+        try:
+            result = sampler.check_capability()
+        finally:
+            sys.setprofile(previous)
+
+        assert result["available"] is False
+        assert result["reason"] == "another profiler is already installed"

@@ -48,6 +48,13 @@ class ExactProfileSampler:
                 "backend_name": None,
             }
 
+        if sys.getprofile() is not None or self._threading_profile() is not None:
+            return {
+                "available": False,
+                "reason": "another profiler is already installed",
+                "backend_name": None,
+            }
+
         if hasattr(threading, "setprofile_all_threads"):
             return {
                 "available": True,
@@ -170,6 +177,12 @@ class ExactProfileSampler:
                 return True
             current = current.f_back
         return False
+
+    def _threading_profile(self) -> Any:
+        getprofile = getattr(threading, "getprofile", None)
+        if getprofile is None:
+            return getattr(threading, "_profile_hook", None)
+        return getprofile()
 
     def _is_gevent_patched(self) -> bool:
         gevent = sys.modules.get("gevent")

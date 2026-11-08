@@ -99,9 +99,39 @@ class ProfileCommand(ResourceOwningCommand):
             max_samples=100000 if max_samples is None else max_samples,
         )
         if config.backend == "exact":
+            if not params.get("experimental"):
+                return {
+                    "status": "error",
+                    "error": (
+                        "exact backend is experimental and disabled by default; "
+                        "pass experimental=true (CLI: --experimental) to enable it"
+                    ),
+                }
+            with ProfileCommand._sampling_lock:
+                active_sampling_id = self._get_active_sampling_profile_id()
+            if active_sampling_id is not None:
+                return {
+                    "status": "error",
+                    "error": (
+                        "exact and sampling profiles are mutually exclusive; "
+                        f"sampling profile already running: {active_sampling_id}"
+                    ),
+                    "profile_id": active_sampling_id,
+                }
             return self._start_exact(params, config)
 
         if config.backend == "sampling":
+            with ProfileCommand._exact_lock:
+                active_exact_id = self._active_exact_profile_id()
+            if active_exact_id is not None:
+                return {
+                    "status": "error",
+                    "error": (
+                        "exact and sampling profiles are mutually exclusive; "
+                        f"exact profile already running: {active_exact_id}"
+                    ),
+                    "profile_id": active_exact_id,
+                }
             with ProfileCommand._sampling_lock:
                 active_sampling_id = self._get_active_sampling_profile_id()
                 if active_sampling_id is not None:
@@ -145,7 +175,7 @@ class ProfileCommand(ResourceOwningCommand):
         )
         capability = sampler.check_capability()
         if not capability["available"]:
-            _PROFILE_REGISTRY.stop(profile_id)
+            _PROFILE_REGISTRY.remove_session(profile_id)
             return {
                 "status": "error",
                 "error": capability["reason"],
