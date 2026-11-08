@@ -10,12 +10,12 @@ import time
 from typing import Any, ClassVar, Dict, List, Optional, TYPE_CHECKING
 
 from peeka.commands.resource_owning import CleanupScope, ResourceOwningCommand
-from peeka.commands.top import _PROFILE_REGISTRY
 from peeka.core.profile.exact import ExactProfileSampler
 from peeka.core.profile.models import ProfileConfig, ProfileSession, SampleRecord, StackRecord
 from peeka.core.profile.processors import BuildTimelineProcessor
 from peeka.core.profile.processors import BuildTopListProcessor
 from peeka.core.profile.processors import ProcessedProfile
+from peeka.core.profile.registry import PROFILE_REGISTRY as _PROFILE_REGISTRY
 from peeka.core.profile.renderers import (
     JsonRenderer,
     PerfettoRenderer,
@@ -275,8 +275,8 @@ class ProfileCommand(ResourceOwningCommand):
         profile_id = ProfileCommand._exact_profile_id
         if profile_id is None:
             return None
-        session = _PROFILE_REGISTRY.get_session(profile_id)
-        if session is not None and session.status == "running":
+        session = _PROFILE_REGISTRY.get_session_info(profile_id)
+        if session is not None and session["status"] == "running":
             return profile_id
         ProfileCommand._exact_profile_id = None
         ProfileCommand._active_exact_sampler = None
@@ -492,16 +492,16 @@ class ProfileCommand(ResourceOwningCommand):
         }
 
     def _list(self, params: Dict[str, Any]) -> Dict[str, Any]:  # noqa: ARG002
-        sessions = _PROFILE_REGISTRY.list_sessions()
+        sessions = _PROFILE_REGISTRY.list_session_infos()
         return {
             "status": "success",
             "sessions": [
                 {
-                    "profile_id": s.profile_id,
-                    "backend": s.backend,
-                    "status": s.status,
-                    "started_at": s.started_at,
-                    "sample_count": len(s.samples),
+                    "profile_id": s["profile_id"],
+                    "backend": s["backend"],
+                    "status": s["status"],
+                    "started_at": s["started_at"],
+                    "sample_count": s["sample_count"],
                 }
                 for s in sessions
             ],
@@ -562,7 +562,7 @@ class ProfileCommand(ResourceOwningCommand):
     def stop_active_resources(
         self, pattern: Optional[str], reason: str
     ) -> Dict[str, Any]:
-        sessions = _PROFILE_REGISTRY.list_sessions()
+        sessions = _PROFILE_REGISTRY.list_session_infos()
         stopped: List[str] = []
         errors: List[Dict[str, Any]] = []
 
@@ -620,33 +620,34 @@ class ProfileCommand(ResourceOwningCommand):
                 errors.append({"profile_id": "sampling", "error": str(exc)})
 
         for session in sessions:
-            if session.status != "running":
+            session_id = session["profile_id"]
+            if session["status"] != "running":
                 continue
-            if session.profile_id in stopped:
+            if session_id in stopped:
                 continue
             try:
-                _PROFILE_REGISTRY.stop(session.profile_id)
-                stopped.append(session.profile_id)
+                _PROFILE_REGISTRY.stop(session_id)
+                stopped.append(session_id)
             except Exception as exc:
                 logger.error(
                     "[peeka Profile] stop_active_resources failed for %s (%s)",
-                    session.profile_id,
+                    session_id,
                     reason,
                     exc_info=True,
                 )
-                errors.append({"profile_id": session.profile_id, "error": str(exc)})
+                errors.append({"profile_id": session_id, "error": str(exc)})
 
         return {"stopped": stopped, "errors": errors}
 
     def list_active_resources(self) -> Dict[str, Any]:
-        sessions = _PROFILE_REGISTRY.list_sessions()
+        sessions = _PROFILE_REGISTRY.list_session_infos()
         active = [
             {
-                "profile_id": s.profile_id,
-                "backend": s.backend,
-                "started_at": s.started_at,
+                "profile_id": s["profile_id"],
+                "backend": s["backend"],
+                "started_at": s["started_at"],
             }
             for s in sessions
-            if s.status == "running"
+            if s["status"] == "running"
         ]
         return {"active": active}

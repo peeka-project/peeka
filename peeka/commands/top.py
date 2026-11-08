@@ -13,7 +13,7 @@ from typing import Any, Callable, ClassVar, Dict, FrozenSet, List, Optional, Set
 
 from peeka.commands.resource_owning import CleanupScope, ResourceOwningCommand
 from peeka.core.profile.models import ProfileConfig, SampleRecord, StackRecord
-from peeka.core.profile.registry import ProfileRegistry
+from peeka.core.profile.registry import PROFILE_REGISTRY
 from peeka.core.probes import ProbeContext
 from peeka.core.runtime import primitives as _rpl
 from peeka.core.runtime.compat import (
@@ -28,7 +28,8 @@ if TYPE_CHECKING:
     from peeka.core.agent import PeekaAgent
 
 logger = logging.getLogger(__name__)
-_PROFILE_REGISTRY: ProfileRegistry = ProfileRegistry()
+# Backward-compatible alias; the registry now lives in peeka.core.profile.
+_PROFILE_REGISTRY = PROFILE_REGISTRY
 
 
 class _NativeThreadHandle:

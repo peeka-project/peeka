@@ -237,3 +237,54 @@ def test_add_sample_returns_count_and_minus_one_when_not_running() -> None:
     registry.stop(profile_id)
     assert registry.add_sample(profile_id, make_sample(4)) == -1
     assert registry.add_sample("prof_missing", make_sample(5)) == -1
+
+
+def test_list_session_infos_reports_counts_without_samples() -> None:
+    registry = ProfileRegistry()
+    profile_id = registry.start(ProfileConfig(backend="sampling"))
+    registry.add_sample(profile_id, make_sample(1))
+    registry.add_sample(profile_id, make_sample(2))
+
+    infos = registry.list_session_infos()
+
+    assert len(infos) == 1
+    assert infos[0]["profile_id"] == profile_id
+    assert infos[0]["status"] == "running"
+    assert infos[0]["sample_count"] == 2
+    assert "samples" not in infos[0]
+    assert registry.get_session_info("prof_missing") is None
+
+
+def test_evicts_oldest_stopped_sessions_over_retained_sample_bound(monkeypatch: pytest.MonkeyPatch) -> None:
+    current = [1.0]
+    set_time(monkeypatch, current)
+    registry = ProfileRegistry(max_sessions=10, max_retained_samples=3)
+
+    ids = []
+    for _ in range(3):
+        profile_id = registry.start(ProfileConfig(backend="sampling"))
+        registry.add_sample(profile_id, make_sample(1))
+        registry.add_sample(profile_id, make_sample(2))
+        current[0] += 1.0
+        registry.stop(profile_id)
+        ids.append(profile_id)
+
+    remaining = {info["profile_id"] for info in registry.list_session_infos()}
+    assert remaining == {ids[2]}
+
+
+def test_keeps_latest_stopped_session_even_if_it_exceeds_sample_bound() -> None:
+    registry = ProfileRegistry(max_retained_samples=1)
+    profile_id = registry.start(ProfileConfig(backend="sampling"))
+    registry.add_sample(profile_id, make_sample(1))
+    registry.add_sample(profile_id, make_sample(2))
+    registry.stop(profile_id)
+
+    assert registry.get_session_info(profile_id) is not None
+
+
+def test_module_registry_is_shared_with_top_alias() -> None:
+    from peeka.commands.top import _PROFILE_REGISTRY
+    from peeka.core.profile.registry import PROFILE_REGISTRY
+
+    assert _PROFILE_REGISTRY is PROFILE_REGISTRY
