@@ -87,6 +87,49 @@ class TestExactProfileSampler:
         assert session.summary.dropped_events == 0
         assert sampler.active is False
 
+    def test_ignores_calls_made_while_peeka_code_is_on_the_stack(self, registry):
+        from peeka.core.profile.exact import ExactProfileSampler
+
+        profile_id = registry.start(ProfileConfig(backend="exact", max_samples=10))
+        sampler = ExactProfileSampler(profile_id, registry, max_events=1)
+        peeka_globals = {"__name__": "peeka.commands.profile"}
+        captured: List[Any] = []
+        exec(
+            "import sys\n"
+            "def inner():\n"
+            "    return sys._getframe()\n"
+            "def outer():\n"
+            "    captured.append(inner())\n",
+            peeka_globals,
+        )
+        peeka_globals["captured"] = captured
+        peeka_globals["outer"]()
+
+        sampler._on_event(captured[0], "call", None)
+
+        session = registry.snapshot(profile_id)
+        assert session.samples == []
+        assert session.status == "running"
+        assert sampler.overflow is False
+
+    def test_overflow_callback_never_runs_under_peeka_frames(self, registry):
+        """A command holding its lock must not be re-entered by on_stop."""
+        from peeka.core.profile.exact import ExactProfileSampler
+
+        calls: List[str] = []
+        profile_id = registry.start(ProfileConfig(backend="exact", max_samples=10))
+        sampler = ExactProfileSampler(
+            profile_id, registry, max_events=1, on_stop=calls.append
+        )
+        peeka_globals: Dict[str, Any] = {"__name__": "peeka.commands.profile"}
+        exec("import sys\ndef grab():\n    return sys._getframe()\n", peeka_globals)
+
+        sampler._on_event(peeka_globals["grab"](), "call", None)
+        assert calls == []
+
+        sampler._on_event(sys._getframe(), "call", None)
+        assert calls == [profile_id]
+
     @pytest.mark.skipif(
         not hasattr(threading, "setprofile_all_threads"),
         reason="thread-wide exact profiling requires threading.setprofile_all_threads",

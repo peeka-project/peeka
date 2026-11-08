@@ -84,7 +84,7 @@ class ExactProfileSampler:
             return
         if getattr(self._callback_state, "active", False):
             return
-        if self._is_internal_profile_frame(frame):
+        if self._is_peeka_frame(frame):
             return
         if self._overflow:
             self._dropped_events += 1
@@ -92,19 +92,10 @@ class ExactProfileSampler:
 
         self._callback_state.active = True
         try:
-            session = self.registry.get_session(self.profile_id)
-            if session is None or session.status != "running":
+            count = self.registry.add_sample(self.profile_id, self._build_sample(frame))
+            if count < 0:
                 return
-            if len(session.samples) >= self.max_events:
-                self._overflow = True
-                self._dropped_events += 1
-                self._stop_for_overflow()
-                return
-
-            self.registry.add_sample(self.profile_id, self._build_sample(frame))
-
-            session = self.registry.get_session(self.profile_id)
-            if session is not None and len(session.samples) >= self.max_events:
+            if count >= self.max_events:
                 self._overflow = True
                 self._stop_for_overflow()
         finally:
@@ -165,11 +156,17 @@ class ExactProfileSampler:
             lane="exact",
         )
 
-    def _is_internal_profile_frame(self, frame: FrameType) -> bool:
+    def _is_peeka_frame(self, frame: FrameType) -> bool:
+        """Return whether any frame on the stack belongs to peeka itself.
+
+        Skipping every call made while peeka code is on the stack keeps the
+        agent's own work out of the profile and guarantees the hook never runs
+        (and never reaches ``on_stop``) while a peeka command holds its locks.
+        """
         current: Optional[FrameType] = frame
         while current is not None:
             module = current.f_globals.get("__name__")
-            if isinstance(module, str) and module.startswith("peeka.core.profile"):
+            if isinstance(module, str) and (module == "peeka" or module.startswith("peeka.")):
                 return True
             current = current.f_back
         return False

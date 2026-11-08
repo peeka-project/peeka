@@ -115,16 +115,28 @@ class ProfileRegistry:
 
         return removed
 
-    def add_sample(self, profile_id: str, sample: SampleRecord) -> None:
-        """Append a sample to a running session while respecting sample limits."""
+    def add_sample(self, profile_id: str, sample: SampleRecord) -> int:
+        """Append a sample to a running session while respecting sample limits.
+
+        The registry takes ownership of ``sample``; callers must not mutate it
+        afterwards. This avoids a deep copy on the hot sampling path.
+
+        Args:
+            profile_id: Target session identifier.
+            sample: Freshly built sample record.
+
+        Returns:
+            The session's sample count after the call, or ``-1`` when the
+            session is missing or no longer running.
+        """
         with self._lock:
             session = self._sessions.get(profile_id)
             if session is None or session.status != "running":
-                return
+                return -1
             max_samples = session.config.max_samples or 100000
-            if len(session.samples) >= max_samples:
-                return
-            session.samples.append(deepcopy(sample))
+            if len(session.samples) < max_samples:
+                session.samples.append(sample)
+            return len(session.samples)
 
     def get_session(self, profile_id: str) -> Optional[ProfileSession]:
         """Return a copy of the session if it exists."""

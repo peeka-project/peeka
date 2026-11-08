@@ -224,3 +224,16 @@ def test_concurrent_start_stop_cleanup_keeps_registry_consistent() -> None:
     assert len(profile_ids) == len(set(profile_ids))
     assert all(session.status == "stopped" for session in sessions)
     assert len(sessions) <= 5
+
+
+def test_add_sample_returns_count_and_minus_one_when_not_running() -> None:
+    registry = ProfileRegistry()
+    profile_id = registry.start(ProfileConfig(backend="sampling", max_samples=2))
+
+    assert registry.add_sample(profile_id, make_sample(1)) == 1
+    assert registry.add_sample(profile_id, make_sample(2)) == 2
+    assert registry.add_sample(profile_id, make_sample(3)) == 2
+
+    registry.stop(profile_id)
+    assert registry.add_sample(profile_id, make_sample(4)) == -1
+    assert registry.add_sample("prof_missing", make_sample(5)) == -1
