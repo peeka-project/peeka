@@ -528,3 +528,44 @@ class TestProfileCommand:
         )
         _PROFILE_REGISTRY.stop(profile_id)
         return profile_id
+
+
+class TestProfileCleanupEdgeCases:
+    def test_stop_active_resources_ignores_local_thread_without_profile_id(self):
+        import threading as _threading
+
+        from peeka.commands.profile import ProfileCommand
+
+        command = ProfileCommand()
+        command._sampling_thread = _threading.Thread(target=lambda: None)
+        command._sampling_profile_id = None
+
+        result = command.stop_active_resources(pattern=None, reason="test")
+
+        assert result["errors"] == []
+        assert None not in result["stopped"]
+
+    def test_stop_active_resources_stops_stale_local_sampling_handle(self):
+        import threading as _threading
+
+        from peeka.commands.profile import ProfileCommand
+        from peeka.core.profile.models import ProfileConfig
+        from peeka.core.profile.registry import PROFILE_REGISTRY
+
+        profile_id = PROFILE_REGISTRY.start(ProfileConfig(backend="sampling"))
+        stop_event = _threading.Event()
+        thread = _threading.Thread(target=stop_event.wait, daemon=True)
+        thread.start()
+        command = ProfileCommand()
+        command._sampling_thread = thread
+        command._sampling_stop_event = stop_event
+        command._sampling_profile_id = profile_id
+
+        result = command.stop_active_resources(pattern=None, reason="test")
+
+        thread.join(timeout=1.0)
+        assert not thread.is_alive()
+        assert profile_id in result["stopped"]
+        assert command._sampling_thread is None
+        info = PROFILE_REGISTRY.get_session_info(profile_id)
+        assert info is not None and info["status"] == "stopped"
