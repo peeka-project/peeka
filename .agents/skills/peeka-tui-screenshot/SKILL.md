@@ -40,16 +40,16 @@ $T stop p314; $T state                    # 对比前后状态
 ## 键盘交互要点（2026-11-07 实测，已对应修复）
 
 - **进程选择器**：过滤框里按 Enter，如果只剩一个可 attach 进程就直接 attach；剩多个时焦点移到表格，再按 Enter 选中高亮行。过滤框有内容时按 Esc 会清空过滤框，为空时 Esc 才退出。
-- **切 tab**：数字键或字母键（见下方快捷键）只在焦点**不在**输入框时生效。切过去后焦点为空，按一次 `tab` 就进入该视图的第一个输入框（tab 栏不在焦点链里）。
+- **切 tab**：数字键（见下方快捷键）只在焦点**不在**输入框时生效。切过去后焦点在该视图上，按一次 `tab` 就进入该视图的第一个输入框（tab 栏不在焦点链里）。
 - **输入框里按 Enter** 会启动当前视图的动作（Watch / Trace / Stack / Monitor / Inspect），和点按钮效果一样；同时会关闭自动补全下拉框。
-- **输入框里按 Esc**：先关自动补全下拉框，再取消输入框焦点；焦点为空时再按 Esc 才是 Back（会 detach 并停止所有 watch/trace）。所以从输入框切到别的 tab 的方式是：先 `escape`，再按数字键。
+- **输入框里按 Esc**：先关自动补全下拉框，再把焦点从输入框交回视图；焦点不在输入框时再按 Esc 才是 Back（会 detach 并停止所有 watch/trace）。所以从输入框切到别的 tab 的方式是：先 `escape`，再按数字键。
 - `tab` 之后先 `sleep 0.3` 再 `send`：文字比焦点切换先到时，字母会被当成 tab 快捷键（`t`、`p` 等）。
-- 视图自己的绑定（Watch 的 `delete` = Stop All 等）只在焦点位于该视图内时生效；Esc 之后焦点为空，按了没反应。要停止就 Tab 到 Stop 按钮再 Enter。焦点在表格上时按 Esc 是 Back（会 detach），不是取消焦点。
+- 切 tab 后、以及在输入框里按 Esc 后，焦点落在当前视图上，所以视图自己的绑定（Watch 的 `delete` = Stop All、各视图的 `r` 刷新等）可以直接按。焦点已在视图或表格上时再按 Esc 是 Back（会 detach），不是取消焦点。
 - 输入前用 `text` 确认焦点和当前视图，不要盲目连续发送按键。
 
 ## 快捷键
 
-主 tab：`1` Dashboard、`2` Watch、`3` Trace、`4` Stack、`5` Monitor、`6` Memory、`7` Logger、`8` Inspect、`9` Threads、`0` Top、`p` Profile、`t` Timeline；`esc`/`q` Back、`ctrl+q` 退出、`?` 帮助。以 `peeka/tui/screens/main.py` 的 `BINDINGS` 为准。
+主 tab：`1` Dashboard、`2` Watch、`3` Trace、`4` Stack、`5` Monitor、`6` Memory、`7` Logger、`8` Inspect、`9` Threads、`0` Performance（内含 Live / Profile 两个子 tab，切过去默认是 Live）；`esc`/`q` Back、`ctrl+p` 视图跳转面板（可直达 Profile 子 tab）、`ctrl+q` 退出、`?` 帮助。Timeline 只有 `peeka --experimental` 或 `PEEKA_TUI_EXPERIMENTAL=1` 时才显示。以 `peeka/tui/screens/main.py` 的 `BINDINGS` 和 `TAB_SPECS` 为准。
 
 ## 备选方案
 

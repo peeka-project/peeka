@@ -10,6 +10,7 @@ from textual.binding import Binding
 from textual.command import DiscoveryHit, Hit, Hits, Provider
 from textual.containers import Container
 from textual.screen import Screen
+from textual.widget import Widget
 from textual.widgets import Header, Footer, Input, TabbedContent, TabPane, Tabs
 
 from peeka.tui.activity import make_activity_reporter, make_client_info
@@ -232,6 +233,14 @@ class MainScreen(Screen):
             if isinstance(child, Tabs):
                 child.can_focus = False
 
+        # Each view takes focus itself when shown and when Esc leaves an
+        # input, so its own bindings (Enter, Delete, r, c, ...) keep working
+        # and show in the footer. Keys a view does not bind (digits, q, Esc)
+        # still bubble up to this screen.
+        for view in self._views():
+            view.can_focus = True
+        self.call_after_refresh(self._focus_active_view)
+
         await self._connect()
 
         if self._client:
@@ -316,6 +325,7 @@ class MainScreen(Screen):
             tabbed.active = parent
         else:
             tabbed.active = tab_id
+        self.call_after_refresh(self._focus_active_view)
 
     def on_tabbed_content_tab_activated(
         self, event: TabbedContent.TabActivated
@@ -326,6 +336,7 @@ class MainScreen(Screen):
             return
         if event.tabbed_content.id == "main-content":
             self._select_tab(self._leaf_tab(pane_id))
+            self.call_after_refresh(self._focus_active_view)
             return
         parent = self._parent_tab(pane_id)
         if parent is None:
@@ -334,6 +345,41 @@ class MainScreen(Screen):
         main = self.query_one("#main-content", TabbedContent)
         if main.active == parent:
             self._select_tab(pane_id)
+            self.call_after_refresh(self._focus_active_view)
+
+    def _views(self) -> List[Widget]:
+        """Return the view of every composed tab (experimental ones may be absent)."""
+        views: List[Widget] = []
+        for view_cls in self._VIEW_BY_TAB.values():
+            views.extend(self.query(view_cls))
+        return views
+
+    def _active_view(self) -> Optional[Widget]:
+        """Return the view actually shown, resolving nested sub-tabs."""
+        tabbed = self.query_one("#main-content", TabbedContent)
+        view_cls = self._VIEW_BY_TAB.get(self._leaf_tab(tabbed.active or ""))
+        if view_cls is None:
+            return None
+        found = self.query(view_cls)
+        return found.first() if found else None
+
+    def _focus_active_view(self) -> None:
+        """Focus the active view when focus is empty or left in a hidden view.
+
+        Focus already inside the active view, or on a visible control outside
+        every view (such as a sub-tab strip), is left alone.
+        """
+        view = self._active_view()
+        if view is None:
+            return
+        focused = self.focused
+        if focused is not None:
+            if focused is view or view in focused.ancestors:
+                return
+            views = self._views()
+            if not any(other is focused or other in focused.ancestors for other in views):
+                return
+        view.focus(scroll_visible=False)
 
     def _select_tab(self, tab_id: str) -> None:
         """Activate a tab and notify views when they become visible or hidden."""
@@ -376,8 +422,9 @@ class MainScreen(Screen):
 
         Going back detaches from the target and stops every watch/trace, so a
         stray Esc while typing must not trigger it. Order of precedence:
-        close an open completion dropdown, then blur a focused input, and only
-        when nothing is focused for typing, go back.
+        close an open completion dropdown, then move focus from a focused
+        input back to its view, and only when nothing is focused for typing,
+        go back.
         """
         if self._leave_text_entry():
             return
@@ -405,7 +452,11 @@ class MainScreen(Screen):
         if autocomplete is not None and autocomplete.dismiss_dropdown():
             return True
         if autocomplete is not None or isinstance(focused, Input):
-            self.set_focus(None)
+            view = self._active_view()
+            if view is not None and view in focused.ancestors:
+                view.focus(scroll_visible=False)
+            else:
+                self.set_focus(None)
             return True
         return False
 
