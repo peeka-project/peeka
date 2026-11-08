@@ -10,9 +10,11 @@ from functools import wraps
 import logging
 import threading
 import uuid
+import weakref
 from typing import Any, ClassVar, Dict, List, Optional, Set, TYPE_CHECKING, Tuple, cast
 
 from peeka.commands.resource_owning import CleanupScope, ResourceOwningCommand
+from peeka.core.instrumentation.registry import retarget_wrapper_call, wrapper_call_target
 from peeka.core.monitor import MonitorManager
 from peeka.core.probes import ProbeContext
 from peeka.core.runtime import primitives as _rpl
@@ -62,6 +64,36 @@ class MonitorCommand(ResourceOwningCommand):
         self.manager = MonitorManager()
         self._monitors: Dict[str, Dict[str, Any]] = {}
         self._lock = _rpl.allocate_lock()
+        self._register_injector_listener()
+
+    def _register_injector_listener(self) -> None:
+        """Follow injector wrapper removals so monitors never call stale wrappers."""
+        injector = getattr(self.agent, "injector", None)
+        add_listener = getattr(injector, "add_wrapper_removed_listener", None)
+        if not callable(add_listener):
+            return
+        weak_handler = weakref.WeakMethod(self._on_injector_wrapper_removed)
+
+        def listener(removed_wrapper: Any, bypass_target: Any) -> None:
+            handler = weak_handler()
+            if handler is not None:
+                handler(removed_wrapper, bypass_target)
+
+        add_listener(listener)
+
+    def _on_injector_wrapper_removed(
+        self, removed_wrapper: Any, bypass_target: Any
+    ) -> None:
+        """Splice a removed injector wrapper out of active monitor call paths."""
+        with self._lock:
+            for active_monitor in self._monitors.values():
+                monitor_wrapper = active_monitor.get("wrapper")
+                if (
+                    active_monitor.get("original") is removed_wrapper
+                    or wrapper_call_target(monitor_wrapper) is removed_wrapper
+                ):
+                    retarget_wrapper_call(monitor_wrapper, removed_wrapper, bypass_target)
+                    active_monitor["original"] = bypass_target
 
     def execute(self, params: Dict[str, Any]) -> Dict[str, Any]:
         try:
@@ -225,35 +257,7 @@ class MonitorCommand(ResourceOwningCommand):
         self, wrapper: Any, old_target: Any, new_target: Any
     ) -> None:
         """Retarget a live Peeka wrapper that directly called a removed wrapper."""
-        if getattr(wrapper, "__wrapped__", None) is old_target:
-            try:
-                wrapper.__wrapped__ = new_target
-            except Exception:
-                pass
-
-        closure = getattr(wrapper, "__closure__", None)
-        code = getattr(wrapper, "__code__", None)
-        if closure is None or code is None:
-            return
-
-        for name, cell in zip(code.co_freevars, closure):
-            try:
-                cell_value = cell.cell_contents
-            except ValueError:
-                continue
-
-            if name == "func" and cell_value is old_target:
-                try:
-                    cell.cell_contents = new_target
-                except Exception:
-                    pass
-            elif name == "self":
-                factory_func = getattr(cell_value, "func", None)
-                if factory_func is old_target:
-                    try:
-                        cell_value.func = new_target
-                    except Exception:
-                        pass
+        retarget_wrapper_call(wrapper, old_target, new_target)
 
     def _periodic_output_loop(
         self, watch_id: str, cycle: int, cycles: int, stop_event: threading.Event
@@ -429,7 +433,7 @@ class MonitorCommand(ResourceOwningCommand):
                         active_monitor["owned_root_original"] = monitor_info.get(
                             "owned_root_original"
                         )
-                elif active_monitor.get("owned_root_original") is monitor_info[
+                if active_monitor.get("owned_root_original") is monitor_info[
                     "wrapper"
                 ]:
                     active_monitor["owned_root_original"] = (

@@ -11,6 +11,67 @@ from peeka.core.probes import ProbeContext
 logger = logging.getLogger(__name__)
 
 
+def wrapper_call_target(wrapper: Any) -> Any:
+    """Return the callable a Peeka wrapper delegates to, or None.
+
+    Peeka wrappers (watch/stack/trace/monitor) capture their target either in a
+    closure cell named ``func`` or on a factory object held in a ``self`` cell.
+    Only call this on wrappers known to be Peeka-owned.
+    """
+    closure = getattr(wrapper, "__closure__", None)
+    code = getattr(wrapper, "__code__", None)
+    if closure is None or code is None:
+        return None
+    factory_func = None
+    for name, cell in zip(code.co_freevars, closure):
+        try:
+            cell_value = cell.cell_contents
+        except ValueError:
+            continue
+        if name == "func":
+            return cell_value
+        if name == "self":
+            factory_func = getattr(cell_value, "func", None)
+    return factory_func
+
+
+def retarget_wrapper_call(wrapper: Any, old_target: Any, new_target: Any) -> None:
+    """Make a live Peeka wrapper call new_target where it called old_target.
+
+    Updates both the real call path (closure cell / factory attribute) and
+    ``__wrapped__`` so introspection and execution stay consistent.
+    """
+    if getattr(wrapper, "__wrapped__", None) is old_target:
+        try:
+            wrapper.__wrapped__ = new_target
+        except Exception:
+            pass
+
+    closure = getattr(wrapper, "__closure__", None)
+    code = getattr(wrapper, "__code__", None)
+    if closure is None or code is None:
+        return
+
+    for name, cell in zip(code.co_freevars, closure):
+        try:
+            cell_value = cell.cell_contents
+        except ValueError:
+            continue
+
+        if name == "func" and cell_value is old_target:
+            try:
+                cell.cell_contents = new_target
+            except Exception:
+                pass
+        elif name == "self":
+            factory_func = getattr(cell_value, "func", None)
+            if factory_func is old_target:
+                try:
+                    cell_value.func = new_target
+                except Exception:
+                    pass
+
+
 class InjectorRegistryMixin:
     agent: Any = None
     instrumented: Dict[str, Dict[str, Any]] = {}
@@ -49,11 +110,14 @@ class InjectorRegistryMixin:
                 self._replace_function(info["parent"], info["attr_name"], info["original"])
                 self._restore_aliases(info)
 
-            return {
-                "watch_id": watch_id,
-                "pattern": info["pattern"],
-                "count": info["count"],
-            }
+            bypass_target = self._bypass_removed_wrapper(info)
+
+        self._notify_wrapper_removed(info.get("wrapper"), bypass_target)
+        return {
+            "watch_id": watch_id,
+            "pattern": info["pattern"],
+            "count": info["count"],
+        }
 
     def uninject_all(self) -> int:
         """
@@ -94,8 +158,15 @@ class InjectorRegistryMixin:
                         "Best-effort restoration failed for %s", watch_id, exc_info=True
                     )
 
+            removed = [
+                (info.get("wrapper"), self._bypass_target_for(info))
+                for info in self.instrumented.values()
+            ]
             self.instrumented.clear()
-            return count
+
+        for removed_wrapper, bypass_target in removed:
+            self._notify_wrapper_removed(removed_wrapper, bypass_target)
+        return count
 
     def cleanup_orphan_watches(self, now: Optional[float] = None) -> int:
         """Remove watch probes whose owner session stayed dead past grace.
@@ -312,37 +383,74 @@ class InjectorRegistryMixin:
                 replacement = self._live_previous_probe_wrapper(info, remaining)
                 self._replace_function(info["parent"], info["attr_name"], replacement)
                 self._restore_watch_aliases(info, replacement)
-            self._relink_wrapped_chain(removed_wrapper, info, remaining)
             return
 
         replacement = info.get("root_original", info["original"])
         if current is removed_wrapper:
             self._replace_function(info["parent"], info["attr_name"], replacement)
             self._restore_watch_aliases(info, replacement)
-        self._relink_wrapped_chain(removed_wrapper, info, [])
 
-    def _relink_wrapped_chain(
-        self,
-        removed_wrapper: Any,
-        removed_info: Dict[str, Any],
-        remaining: List[Dict[str, Any]],
+    def add_wrapper_removed_listener(
+        self, listener: Callable[[Any, Any], None]
     ) -> None:
-        """Sever stale __wrapped__ links on live wrappers pointing at removed_wrapper."""
+        """Register a callback run after an injector wrapper is removed.
+
+        The callback receives ``(removed_wrapper, bypass_target)`` outside the
+        injector lock, so other wrapper owners (e.g. monitor) can stop calling
+        the removed wrapper.
+        """
+        listeners = self.__dict__.setdefault("_wrapper_removed_listeners", [])
+        listeners.append(listener)
+
+    def _notify_wrapper_removed(self, removed_wrapper: Any, bypass_target: Any) -> None:
         if removed_wrapper is None:
             return
+        for listener in list(self.__dict__.get("_wrapper_removed_listeners", [])):
+            try:
+                listener(removed_wrapper, bypass_target)
+            except Exception:
+                logger.debug("Wrapper-removed listener failed", exc_info=True)
 
-        root = removed_info.get("root_original", removed_info["original"])
-        new_target = self._live_previous_probe_wrapper(removed_info, remaining)
-        if new_target is removed_wrapper:
-            new_target = root
+    def _bypass_target_for(self, removed_info: Dict[str, Any]) -> Any:
+        """Return what callers of a removed wrapper should call instead."""
+        target = wrapper_call_target(removed_info.get("wrapper"))
+        if target is None:
+            target = removed_info.get("root_original", removed_info["original"])
+        return target
 
-        for active_info in remaining:
-            active_wrapper = active_info["wrapper"]
-            if getattr(active_wrapper, "__wrapped__", None) is removed_wrapper:
-                try:
-                    active_wrapper.__wrapped__ = new_target
-                except (AttributeError, TypeError):
-                    pass
+    def _bypass_removed_wrapper(self, removed_info: Dict[str, Any]) -> Any:
+        """Splice a removed wrapper out of every remaining probe's call path.
+
+        Any live injector wrapper that called the removed wrapper now calls
+        whatever the removed wrapper called, so no inactive Peeka wrapper stays
+        on the execution path (it would otherwise keep running as a
+        pass-through). Must be called with ``self._lock`` held.
+
+        Returns:
+            The bypass target used.
+        """
+        removed_wrapper = removed_info.get("wrapper")
+        target = self._bypass_target_for(removed_info)
+        if removed_wrapper is None:
+            return target
+
+        for active_info in self.instrumented.values():
+            active_wrapper = active_info.get("wrapper")
+            if active_wrapper is None or active_wrapper is removed_wrapper:
+                continue
+            if (
+                wrapper_call_target(active_wrapper) is removed_wrapper
+                or getattr(active_wrapper, "__wrapped__", None) is removed_wrapper
+            ):
+                retarget_wrapper_call(active_wrapper, removed_wrapper, target)
+            for key in ("original", "previous_wrapper"):
+                if active_info.get(key) is removed_wrapper:
+                    active_info[key] = target
+            if active_info.get("root_original") is removed_wrapper:
+                active_info["root_original"] = removed_info.get(
+                    "root_original", removed_info["original"]
+                )
+        return target
 
     def _live_previous_probe_wrapper(
         self,

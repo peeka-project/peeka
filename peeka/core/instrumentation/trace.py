@@ -150,15 +150,16 @@ class InjectorTraceMixin:
 
         @wraps(func)
         def wrapper(*args, **kwargs):
-            # Stage 0: Check if observation is still active
+            # Stage 0: Check if observation is still active.
+            # Never call func while holding injector._lock: func may be another
+            # Peeka wrapper that takes the same non-reentrant lock (deadlock).
             with injector._lock:
                 info = injector.instrumented.get(watch_id)
-                if info is None:
-                    return func(*args, **kwargs)
-
-                # Check if we've reached the observation limit
-                if times_limit > 0 and info["count"] >= times_limit:
-                    return func(*args, **kwargs)
+                passthrough = info is None or (
+                    times_limit > 0 and info["count"] >= times_limit
+                )
+            if passthrough:
+                return func(*args, **kwargs)
 
             # Extract self object for instance methods
             is_instance_method = config.get("_is_instance_method", False)
