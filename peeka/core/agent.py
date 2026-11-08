@@ -320,6 +320,9 @@ class PeekaAgent(
         "top": {"", "start"},
     }
 
+    # Seconds a log broadcast may wait on one client before evicting it.
+    _LOG_SEND_TIMEOUT = 1.0
+
     _QUIET_COMMAND_ACTIONS = {
         ("complete", ""),
         ("logger", "get"),
@@ -1252,13 +1255,75 @@ class PeekaAgent(
         obs_json = json.dumps(log_msg).encode("utf-8")
         frame = b"LOG:" + len(obs_json).to_bytes(4, "big") + obs_json
 
-        dead_connections = []
-        for conn in self._snapshot_client_connections():
-            if not self._send_frame_to_connection(conn, frame):
-                dead_connections.append(conn)
+        # Only stream connections read continuously; a control connection
+        # reads only while waiting for its own reply and would just discard
+        # these frames, so an idle one would fill up with logs.
+        #
+        # Every handler thread logs, so a blocking write here would let one
+        # client that stopped reading (full socket buffer) freeze the whole
+        # agent, including new clients' handshakes. Bound the write and evict
+        # a client that cannot take a small frame in time.
+        stalled_connections = []
+        for conn in self._snapshot_client_connections(kind="stream"):
+            if self._send_frame_bounded(conn, frame, self._LOG_SEND_TIMEOUT) is False:
+                stalled_connections.append(conn)
 
-        for conn in dead_connections:
-            self._unregister_client_connection(conn)
+        for conn in stalled_connections:
+            self._evict_client_connection(conn)
+
+    def _send_frame_bounded(
+        self, conn: socket.socket, frame: bytes, timeout: float
+    ) -> Optional[bool]:
+        """Write a whole frame to a client without blocking past ``timeout``.
+
+        Args:
+            conn: Tracked client connection.
+            frame: Complete framed message.
+            timeout: Maximum seconds to spend on this connection.
+
+        Returns:
+            True when the frame was written; None when it was skipped without
+            touching the socket (unknown connection, or another writer held the
+            connection for the whole timeout); False when the client did not
+            accept the frame in time or the socket failed. After False the
+            stream may hold a partial frame, so the connection must be dropped.
+        """
+        with self._connections_lock:
+            write_lock = self._client_write_locks.get(conn)
+        if write_lock is None:
+            return None
+
+        deadline = _rpl.perf_counter() + timeout
+        if not write_lock.acquire(True, timeout):
+            return None
+        try:
+            view = memoryview(frame)
+            sent = 0
+            while sent < len(view):
+                remaining = deadline - _rpl.perf_counter()
+                if remaining <= 0 or not _rpl.wait_writable(conn, remaining):
+                    return False
+                try:
+                    sent += conn.send(view[sent:], socket.MSG_DONTWAIT)
+                except (BlockingIOError, InterruptedError):
+                    continue
+            return True
+        except Exception:
+            return False
+        finally:
+            write_lock.release()
+
+    def _evict_client_connection(self, conn: socket.socket) -> None:
+        """Drop a client that stopped reading.
+
+        Shutting the socket down wakes its handler thread, which then runs
+        the normal disconnect path; the client sees the connection close.
+        """
+        self._unregister_client_connection(conn)
+        try:
+            conn.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
 
     def _notify_ready(self) -> None:
         """Notify the attacher that the agent is ready via TCP."""

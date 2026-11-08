@@ -7,6 +7,7 @@ monkey-patching. This module must be imported BEFORE any gevent hub init.
 
 import _socket
 import _thread
+import select
 import socket
 import sys
 import threading
@@ -74,6 +75,11 @@ _NATIVE_PERF_COUNTER = time.perf_counter
 _NATIVE_GET_IDENT = _get_original_runtime_attr(
     "threading", "get_ident", threading.get_ident
 )
+
+# select.poll is patched by gevent (and select.select by eventlet); a blocking
+# native thread must keep the original. poll is absent on some platforms.
+_NATIVE_POLL = _get_original_runtime_attr("select", "poll", getattr(select, "poll", None))
+_NATIVE_SELECT = _get_original_runtime_attr("select", "select", select.select)
 
 # Module-level thread name registry (keyed by thread ident).
 _THREAD_NAMES: Dict[int, str] = {}
@@ -187,6 +193,26 @@ def native_accept(server: Any) -> Tuple[Any, Any]:
     fd, address = server._accept()
     conn = _NATIVE_SOCKET(server.family, server.type, server.proto, fileno=fd)
     return conn, address
+
+
+def wait_writable(sock: Any, timeout: float) -> bool:
+    """Wait until a socket can accept more data without blocking.
+
+    Args:
+        sock: A connected socket.
+        timeout: Maximum seconds to wait; values <= 0 just poll once.
+
+    Returns:
+        True if the socket is writable (or has an error/hangup pending, which
+        the next send will surface), False if the timeout elapsed first.
+    """
+    timeout = max(0.0, timeout)
+    if _NATIVE_POLL is not None:
+        poller = _NATIVE_POLL()
+        poller.register(sock.fileno(), select.POLLOUT)
+        return bool(poller.poll(int(timeout * 1000)))
+    _, writable, errored = _NATIVE_SELECT([], [sock], [sock], timeout)
+    return bool(writable or errored)
 
 
 def get_ident() -> int:
