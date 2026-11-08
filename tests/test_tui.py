@@ -8,7 +8,7 @@ Tests verify:
 
 1. ProcessSelectorScreen renders with correct widgets
 
-2. MainScreen has all 10 tabs with correct labels
+2. MainScreen has all 12 tabs with correct labels
 
 3. Tab switching works and updates active state
 
@@ -1269,7 +1269,7 @@ class TestMainScreen:
 
     async def test_main_screen_has_correct_number_of_tabs(self):
 
-        """MainScreen has exactly 10 tab panes."""
+        """MainScreen has exactly 12 tab panes."""
 
         app = PeekaApp()
 
@@ -1295,7 +1295,7 @@ class TestMainScreen:
 
             panes = [c for c in switcher.children if isinstance(c, TabPane)]
 
-            assert len(panes) == 10
+            assert len(panes) == 12
 
 
 
@@ -1352,6 +1352,10 @@ class TestMainScreen:
                 "threads",
 
                 "top",
+
+                "profile",
+
+                "timeline",
 
             ]
 
