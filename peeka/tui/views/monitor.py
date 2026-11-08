@@ -73,6 +73,19 @@ class MonitorView(Container):
                     self._connect_own_stream_client()
         return self._stream_client
 
+    def _close_idle_stream_client(self) -> None:
+        """Close the stream connection once nothing streams through it.
+
+        A cancelled worker only notices on the next frame, so an idle stream
+        socket would stay open with nobody reading it while the agent keeps
+        queueing log frames into it. The next start opens a fresh one.
+        """
+        with self._stream_client_lock:
+            client = self._stream_client
+            self._stream_client = None
+        if client is not None:
+            client.disconnect()
+
     def _get_pattern_completions(self, prefix: str):
         """Get completions for pattern input."""
         if self._completion_source:
@@ -296,6 +309,7 @@ class MonitorView(Container):
                 pass
 
         self._workers.clear()
+        self._close_idle_stream_client()
 
         table = self.query_one("#stats-table", DataTable)
         table.clear()

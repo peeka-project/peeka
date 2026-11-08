@@ -218,6 +218,19 @@ class WatchView(Container):
                     self._connect_own_stream_client()
         return self._stream_client
 
+    def _close_idle_stream_client(self) -> None:
+        """Close the stream connection once nothing streams through it.
+
+        A cancelled worker only notices on the next frame, so an idle stream
+        socket would stay open with nobody reading it while the agent keeps
+        queueing log frames into it. The next start opens a fresh one.
+        """
+        with self._stream_client_lock:
+            client = self._stream_client
+            self._stream_client = None
+        if client is not None:
+            client.disconnect()
+
     async def action_start_watch(self) -> None:
         """Start watching (triggered by Enter key)."""
         await self._start_watch()
@@ -806,5 +819,6 @@ class WatchView(Container):
             except Exception:
                 pass
         self._active_watches.clear()
+        self._close_idle_stream_client()
 
         self.app.notify(f"Stopped {stopped_count} watch(es)", severity="information")
