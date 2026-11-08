@@ -502,6 +502,10 @@ def _has_injector():
         return False
 ```
 
+真实 import 只能证明 C 扩展在 **peeka 进程**里能加载。GDB 路径在启动调试器前还会用目标进程自己的解释器（`/proc/<pid>/exe`）跑一次 `ctypes.CDLL(<so>)` 探针（`_probe_injector_in_target`）；目标与 peeka 不在同一挂载命名空间时，会经 `nsenter --mount` 在目标的文件系统视图里执行，从而使用目标的 glibc。确定无法加载时直接报出原因（如 `GLIBC_2.34 not found`）；探针本身无法运行（无权限、超时、非 python 可执行文件）时保持原有行为。
+
+> 注意：peeka 目前**不支持**从宿主 attach 到容器内的进程。除了 so 路径在容器内不可见，agent 的 Unix socket 建在容器自己的 `/tmp`，注入时的 `127.0.0.1` 回连端口也处于不同网络命名空间。请在容器内运行 peeka（需 `--cap-add=SYS_PTRACE`）。跨命名空间时探针只负责尽早给出清晰的失败原因。
+
 ### 6.2 GDB dlopen 后的 GIL 死锁
 
 GDB dlopen 注入的 C 扩展创建 pthread 后，线程会在目标进程中调用 `PyGILState_Ensure()`。如果目标进程或调试器环境导致它长期无法获取 GIL，attach 会以超时失败。
