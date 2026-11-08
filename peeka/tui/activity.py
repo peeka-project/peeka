@@ -144,7 +144,13 @@ def make_activity_reporter(
 
 
 def make_client_info(app: object, source: str) -> Dict[str, Any]:
-    """Return stable identity metadata for a TUI socket connection."""
+    """Return stable identity metadata for a TUI socket connection.
+
+    Only ``*-stream`` connections read observation frames. Every other TUI
+    connection is request/response only, so it declines observations: the
+    agent then keeps it a control connection even after it sends a
+    ``watch``/``stack``/... start command.
+    """
     instance_id = getattr(app, "client_instance_id", None)
     if not instance_id:
         instance_id = f"tui-{os.getpid()}"
@@ -153,4 +159,5 @@ def make_client_info(app: object, source: str) -> Dict[str, Any]:
         "kind": "tui",
         "source": source,
         "pid": os.getpid(),
+        "observations": source.endswith("-stream"),
     }

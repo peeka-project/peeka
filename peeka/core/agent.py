@@ -675,6 +675,8 @@ class PeekaAgent(
         pid = raw_info.get("pid")
         if isinstance(pid, int) or (isinstance(pid, str) and pid.isdigit()):
             info["pid"] = str(pid)
+        if raw_info.get("observations") is False:
+            info["observations"] = False
         return info
 
     @staticmethod
@@ -698,6 +700,17 @@ class PeekaAgent(
         source = str(client_info.get("source", ""))
         kind = str(client_info.get("kind", ""))
         return kind == "stream" or source.endswith("-stream")
+
+    @staticmethod
+    def _client_info_declines_observations(client_info: Dict[str, Any]) -> bool:
+        """Return True when a control connection asked never to receive OBS frames.
+
+        Clients that read observations on a dedicated stream connection (the
+        TUI) send start commands over a control connection that nobody reads
+        between RPCs. Promoting it to a stream connection would fill its socket
+        buffer, get it evicted as a slow client, and break every later command.
+        """
+        return client_info.get("observations") is False
 
     @staticmethod
     def _format_client_label(client_id: int, client_info: Dict[str, Any]) -> str:
@@ -1173,6 +1186,7 @@ class PeekaAgent(
                     if (
                         result.get("status") == "success"
                         and self._command_opens_observation_stream(command)
+                        and not self._client_info_declines_observations(client_info)
                     ):
                         self._set_client_connection_kind(conn, "stream")
 
