@@ -21,7 +21,7 @@ description: 在 Omarchy/Hyprland（0.56+，Lua 配置）上，用真实 kitty �
 - 前后各跑一次 `tui-agent.sh state`，确认 monitor / workspace / special / window 一致后才能报告完成。
 - 不要用旧的 `hyprctl dispatch <name> <args>` 语法（Lua 配置下会报错），改用 `hl.dsp.*`；也不要用 `wtype` 或 `sendshortcut`（会作用到用户当前焦点）。
 - 截图默认保存到会话 scratchpad 或 `/tmp`；声称成功前必须用视觉工具检查：视图正确、有主题色（不是灰阶）。
-- 结束时 `tui-agent.sh stop <name>`（先发 `ctrl+q` 退出 TUI 再关窗口），除非用户要求保留窗口。只关 kitty 窗口不会结束容器里 `docker exec -it` 启动的进程，残留的 TUI 仍然 attach 着目标进程，会让下一次 attach 卡在 "Reused existing attachment" 之后。收尾时检查：`docker exec peeka-test-3.14 sh -c 'ps -eo pid,args | grep "[p]eeka.tui"'` 应该为空。
+- 结束时 `tui-agent.sh stop <name>`（先发 `ctrl+q` 退出 TUI 再关窗口），除非用户要求保留窗口。只关 kitty 窗口不会结束容器里 `docker exec -it` 启动的进程（容器内收不到 SIGHUP，stdout 写入也照常成功），残留的 TUI 会一直 attach 着目标进程、持续轮询，干扰下一次验证的日志和连接数。收尾时检查：`docker exec peeka-test-3.14 sh -c 'ps -eo pid,args | grep "[p]eeka.tui"'` 应该为空。
 
 ## 流程
 
@@ -43,6 +43,8 @@ $T stop p314; $T state                    # 对比前后状态
 - **切 tab**：数字键或字母键（见下方快捷键）只在焦点**不在**输入框时生效。切过去后焦点为空，按一次 `tab` 就进入该视图的第一个输入框（tab 栏不在焦点链里）。
 - **输入框里按 Enter** 会启动当前视图的动作（Watch / Trace / Stack / Monitor / Inspect），和点按钮效果一样；同时会关闭自动补全下拉框。
 - **输入框里按 Esc**：先关自动补全下拉框，再取消输入框焦点；焦点为空时再按 Esc 才是 Back（会 detach 并停止所有 watch/trace）。所以从输入框切到别的 tab 的方式是：先 `escape`，再按数字键。
+- `tab` 之后先 `sleep 0.3` 再 `send`：文字比焦点切换先到时，字母会被当成 tab 快捷键（`t`、`p` 等）。
+- 视图自己的绑定（Watch 的 `delete` = Stop All 等）只在焦点位于该视图内时生效；Esc 之后焦点为空，按了没反应。要停止就 Tab 到 Stop 按钮再 Enter。焦点在表格上时按 Esc 是 Back（会 detach），不是取消焦点。
 - 输入前用 `text` 确认焦点和当前视图，不要盲目连续发送按键。
 
 ## 快捷键
