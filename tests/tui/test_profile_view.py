@@ -3,7 +3,7 @@
 from pathlib import Path
 
 import pytest
-from textual.widgets import Button, DataTable, Static
+from textual.widgets import Button, DataTable
 
 from peeka.tui.app import PeekaApp
 from peeka.tui.screens.main import MainScreen

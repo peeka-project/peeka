@@ -5,6 +5,7 @@ import time
 import uuid
 from copy import deepcopy
 from threading import Lock
+from typing import Any
 from typing import Dict
 from typing import List
 from typing import Optional
@@ -15,14 +16,27 @@ from peeka.core.profile.models import ProfileSummary
 from peeka.core.profile.models import SampleRecord
 
 
+# Upper bound on samples kept across *stopped* sessions. Without it the
+# registry could retain max_sessions * max_samples full stacks (millions of
+# objects) inside the target process.
+DEFAULT_MAX_RETAINED_SAMPLES = 500000
+
+
 class ProfileRegistry:
     """Manage profile session lifecycles in memory with bounded retention."""
 
-    def __init__(self, max_sessions: int = 50) -> None:
+    def __init__(
+        self,
+        max_sessions: int = 50,
+        max_retained_samples: int = DEFAULT_MAX_RETAINED_SAMPLES,
+    ) -> None:
         if max_sessions < 0:
             raise ValueError("max_sessions must be greater than or equal to 0")
+        if max_retained_samples < 0:
+            raise ValueError("max_retained_samples must be greater than or equal to 0")
         self._lock: Lock = Lock()
         self._max_sessions: int = max_sessions
+        self._max_retained_samples: int = max_retained_samples
         self._sessions: Dict[str, ProfileSession] = {}
 
     def start(self, config: ProfileConfig) -> str:
@@ -90,6 +104,17 @@ class ProfileRegistry:
         with self._lock:
             return [deepcopy(session) for session in self._sessions.values()]
 
+    def list_session_infos(self) -> List[Dict[str, Any]]:
+        """Return lightweight metadata for all sessions without copying samples."""
+        with self._lock:
+            return [self._session_info(session) for session in self._sessions.values()]
+
+    def get_session_info(self, profile_id: str) -> Optional[Dict[str, Any]]:
+        """Return lightweight metadata for one session, or None if missing."""
+        with self._lock:
+            session = self._sessions.get(profile_id)
+            return None if session is None else self._session_info(session)
+
     def cleanup(
         self,
         older_than_secs: Optional[float] = None,
@@ -115,16 +140,28 @@ class ProfileRegistry:
 
         return removed
 
-    def add_sample(self, profile_id: str, sample: SampleRecord) -> None:
-        """Append a sample to a running session while respecting sample limits."""
+    def add_sample(self, profile_id: str, sample: SampleRecord) -> int:
+        """Append a sample to a running session while respecting sample limits.
+
+        The registry takes ownership of ``sample``; callers must not mutate it
+        afterwards. This avoids a deep copy on the hot sampling path.
+
+        Args:
+            profile_id: Target session identifier.
+            sample: Freshly built sample record.
+
+        Returns:
+            The session's sample count after the call, or ``-1`` when the
+            session is missing or no longer running.
+        """
         with self._lock:
             session = self._sessions.get(profile_id)
             if session is None or session.status != "running":
-                return
+                return -1
             max_samples = session.config.max_samples or 100000
-            if len(session.samples) >= max_samples:
-                return
-            session.samples.append(deepcopy(sample))
+            if len(session.samples) < max_samples:
+                session.samples.append(sample)
+            return len(session.samples)
 
     def get_session(self, profile_id: str) -> Optional[ProfileSession]:
         """Return a copy of the session if it exists."""
@@ -143,7 +180,12 @@ class ProfileRegistry:
             return True
 
     def _evict_if_needed(self, max_sessions: Optional[int] = None) -> int:
-        """Evict the oldest stopped sessions when the retention limit is exceeded."""
+        """Evict the oldest stopped sessions when a retention limit is exceeded.
+
+        Two bounds apply: the number of stopped sessions and the total number
+        of samples they hold. The most recently stopped session is always
+        kept, even if it alone exceeds the sample bound.
+        """
         limit = self._max_sessions if max_sessions is None else max_sessions
         if limit < 0:
             return 0
@@ -153,10 +195,6 @@ class ProfileRegistry:
             for session in self._sessions.values()
             if session.status == "stopped"
         ]
-        if len(stopped_sessions) <= limit:
-            return 0
-
-        removed = 0
         stopped_sessions.sort(
             key=lambda session: (
                 float("inf") if session.ended_at is None else session.ended_at,
@@ -164,11 +202,33 @@ class ProfileRegistry:
                 session.profile_id,
             )
         )
-        for session in stopped_sessions[: len(stopped_sessions) - limit]:
-            if session.profile_id in self._sessions:
-                del self._sessions[session.profile_id]
+        retained_samples = sum(len(session.samples) for session in stopped_sessions)
+
+        removed = 0
+        while stopped_sessions and (
+            len(stopped_sessions) > limit
+            or (
+                len(stopped_sessions) > 1
+                and retained_samples > self._max_retained_samples
+            )
+        ):
+            oldest = stopped_sessions.pop(0)
+            retained_samples -= len(oldest.samples)
+            if oldest.profile_id in self._sessions:
+                del self._sessions[oldest.profile_id]
                 removed += 1
         return removed
+
+    def _session_info(self, session: ProfileSession) -> Dict[str, Any]:
+        return {
+            "profile_id": session.profile_id,
+            "backend": session.backend,
+            "status": session.status,
+            "started_at": session.started_at,
+            "ended_at": session.ended_at,
+            "sample_count": len(session.samples),
+            "summary": session.summary.to_dict() if session.summary else {},
+        }
 
     def _new_profile_id(self) -> str:
         return "prof_" + uuid.uuid4().hex[:12]
@@ -188,3 +248,7 @@ class ProfileRegistry:
             overflow=overflow,
             dropped_events=dropped_events,
         )
+
+
+PROFILE_REGISTRY: ProfileRegistry = ProfileRegistry()
+"""Process-wide registry shared by the profile, top and dx commands."""

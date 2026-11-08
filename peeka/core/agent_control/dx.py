@@ -274,7 +274,7 @@ class AgentDXControlMixin:
     def _handle_dx_add_profile(self, command: Dict[str, Any]) -> Dict[str, Any]:
         """Handle dx.add_profile command."""
         try:
-            from peeka.commands.top import _PROFILE_REGISTRY
+            from peeka.core.profile.registry import PROFILE_REGISTRY
 
             dx_case_id = command.get("dx_case_id", "")
             profile_id = command.get("profile_id", "")
@@ -297,7 +297,7 @@ class AgentDXControlMixin:
                     "DX case does not belong to this client",
                 )
 
-            session = _PROFILE_REGISTRY.get_session(profile_id)
+            session = PROFILE_REGISTRY.get_session_info(profile_id)
             if session is None:
                 return self._dx_error(
                     "PROFILE_NOT_FOUND",
@@ -310,10 +310,10 @@ class AgentDXControlMixin:
                 title=f"Profile {profile_id}",
                 payload={
                     "profile_id": profile_id,
-                    "backend": session.backend,
-                    "status": session.status,
-                    "sample_count": len(session.samples),
-                    "summary": session.summary.to_dict() if session.summary else {},
+                    "backend": session["backend"],
+                    "status": session["status"],
+                    "sample_count": session["sample_count"],
+                    "summary": session["summary"],
                 },
             )
             if section is None:

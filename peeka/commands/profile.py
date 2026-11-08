@@ -10,12 +10,12 @@ import time
 from typing import Any, ClassVar, Dict, List, Optional, TYPE_CHECKING
 
 from peeka.commands.resource_owning import CleanupScope, ResourceOwningCommand
-from peeka.commands.top import _PROFILE_REGISTRY
 from peeka.core.profile.exact import ExactProfileSampler
 from peeka.core.profile.models import ProfileConfig, ProfileSession, SampleRecord, StackRecord
 from peeka.core.profile.processors import BuildTimelineProcessor
 from peeka.core.profile.processors import BuildTopListProcessor
 from peeka.core.profile.processors import ProcessedProfile
+from peeka.core.profile.registry import PROFILE_REGISTRY as _PROFILE_REGISTRY
 from peeka.core.profile.renderers import (
     JsonRenderer,
     PerfettoRenderer,
@@ -99,9 +99,39 @@ class ProfileCommand(ResourceOwningCommand):
             max_samples=100000 if max_samples is None else max_samples,
         )
         if config.backend == "exact":
+            if not params.get("experimental"):
+                return {
+                    "status": "error",
+                    "error": (
+                        "exact backend is experimental and disabled by default; "
+                        "pass experimental=true (CLI: --experimental) to enable it"
+                    ),
+                }
+            with ProfileCommand._sampling_lock:
+                active_sampling_id = self._get_active_sampling_profile_id()
+            if active_sampling_id is not None:
+                return {
+                    "status": "error",
+                    "error": (
+                        "exact and sampling profiles are mutually exclusive; "
+                        f"sampling profile already running: {active_sampling_id}"
+                    ),
+                    "profile_id": active_sampling_id,
+                }
             return self._start_exact(params, config)
 
         if config.backend == "sampling":
+            with ProfileCommand._exact_lock:
+                active_exact_id = self._active_exact_profile_id()
+            if active_exact_id is not None:
+                return {
+                    "status": "error",
+                    "error": (
+                        "exact and sampling profiles are mutually exclusive; "
+                        f"exact profile already running: {active_exact_id}"
+                    ),
+                    "profile_id": active_exact_id,
+                }
             with ProfileCommand._sampling_lock:
                 active_sampling_id = self._get_active_sampling_profile_id()
                 if active_sampling_id is not None:
@@ -145,7 +175,7 @@ class ProfileCommand(ResourceOwningCommand):
         )
         capability = sampler.check_capability()
         if not capability["available"]:
-            _PROFILE_REGISTRY.stop(profile_id)
+            _PROFILE_REGISTRY.remove_session(profile_id)
             return {
                 "status": "error",
                 "error": capability["reason"],
@@ -245,8 +275,8 @@ class ProfileCommand(ResourceOwningCommand):
         profile_id = ProfileCommand._exact_profile_id
         if profile_id is None:
             return None
-        session = _PROFILE_REGISTRY.get_session(profile_id)
-        if session is not None and session.status == "running":
+        session = _PROFILE_REGISTRY.get_session_info(profile_id)
+        if session is not None and session["status"] == "running":
             return profile_id
         ProfileCommand._exact_profile_id = None
         ProfileCommand._active_exact_sampler = None
@@ -286,11 +316,6 @@ class ProfileCommand(ResourceOwningCommand):
         if self._exact_sampler is sampler:
             self._exact_sampler = None
 
-    def _timer_matches_profile(self, profile_id: str) -> bool:
-        if self._exact_stop_timer is None:
-            return False
-        return getattr(self._exact_stop_timer, "_peeka_profile_id", None) == profile_id
-
     def _get_active_sampling_profile_id(self) -> Optional[str]:
         profile_id = ProfileCommand._active_sampling_profile_id
         thread = ProfileCommand._active_sampling_thread
@@ -323,34 +348,20 @@ class ProfileCommand(ResourceOwningCommand):
         ProfileCommand._active_sampling_profile_id = profile_id
         thread.start()
 
-    def _stop_sampling(self) -> None:
-        profile_id = self._sampling_profile_id
-        if self._sampling_stop_event is not None:
-            self._sampling_stop_event.set()
-        if self._sampling_thread is not None:
-            self._sampling_thread.join(timeout=2.0)
-        if profile_id is not None:
-            try:
-                _PROFILE_REGISTRY.stop(profile_id)
-            except KeyError:
-                logger.debug("sampling profile %s already removed", profile_id)
-        self._sampling_thread = None
-        self._sampling_stop_event = None
-        self._sampling_profile_id = None
-        if ProfileCommand._active_sampling_profile_id == profile_id:
-            ProfileCommand._active_sampling_thread = None
-            ProfileCommand._active_sampling_stop_event = None
-            ProfileCommand._active_sampling_profile_id = None
-
     def _stop_sampling_profile(self, profile_id: str) -> None:
         with ProfileCommand._sampling_lock:
-            if profile_id != ProfileCommand._active_sampling_profile_id:
+            if profile_id == ProfileCommand._active_sampling_profile_id:
+                thread = ProfileCommand._active_sampling_thread
+                stop_event = ProfileCommand._active_sampling_stop_event
+                ProfileCommand._active_sampling_thread = None
+                ProfileCommand._active_sampling_stop_event = None
+                ProfileCommand._active_sampling_profile_id = None
+            elif profile_id == self._sampling_profile_id:
+                # Stale per-instance handle that is no longer the active one.
+                thread = self._sampling_thread
+                stop_event = self._sampling_stop_event
+            else:
                 return
-            thread = ProfileCommand._active_sampling_thread
-            stop_event = ProfileCommand._active_sampling_stop_event
-            ProfileCommand._active_sampling_thread = None
-            ProfileCommand._active_sampling_stop_event = None
-            ProfileCommand._active_sampling_profile_id = None
             if self._sampling_profile_id == profile_id:
                 self._sampling_thread = None
                 self._sampling_stop_event = None
@@ -462,16 +473,16 @@ class ProfileCommand(ResourceOwningCommand):
         }
 
     def _list(self, params: Dict[str, Any]) -> Dict[str, Any]:  # noqa: ARG002
-        sessions = _PROFILE_REGISTRY.list_sessions()
+        sessions = _PROFILE_REGISTRY.list_session_infos()
         return {
             "status": "success",
             "sessions": [
                 {
-                    "profile_id": s.profile_id,
-                    "backend": s.backend,
-                    "status": s.status,
-                    "started_at": s.started_at,
-                    "sample_count": len(s.samples),
+                    "profile_id": s["profile_id"],
+                    "backend": s["backend"],
+                    "status": s["status"],
+                    "started_at": s["started_at"],
+                    "sample_count": s["sample_count"],
                 }
                 for s in sessions
             ],
@@ -532,7 +543,7 @@ class ProfileCommand(ResourceOwningCommand):
     def stop_active_resources(
         self, pattern: Optional[str], reason: str
     ) -> Dict[str, Any]:
-        sessions = _PROFILE_REGISTRY.list_sessions()
+        sessions = _PROFILE_REGISTRY.list_session_infos()
         stopped: List[str] = []
         errors: List[Dict[str, Any]] = []
 
@@ -562,7 +573,8 @@ class ProfileCommand(ResourceOwningCommand):
         if exact_timer is not None:
             exact_timer.cancel()
 
-        active_sampling_id = ProfileCommand._active_sampling_profile_id
+        with ProfileCommand._sampling_lock:
+            active_sampling_id = ProfileCommand._active_sampling_profile_id
         if active_sampling_id is not None:
             try:
                 self._stop_sampling_profile(active_sampling_id)
@@ -575,12 +587,11 @@ class ProfileCommand(ResourceOwningCommand):
                 )
                 errors.append({"profile_id": "sampling", "error": str(exc)})
 
-        if self._sampling_thread is not None:
+        local_sampling_id = self._sampling_profile_id
+        if self._sampling_thread is not None and local_sampling_id is not None:
             try:
-                profile_id = self._sampling_profile_id
-                self._stop_sampling_profile(profile_id)
-                if profile_id is not None:
-                    stopped.append(profile_id)
+                self._stop_sampling_profile(local_sampling_id)
+                stopped.append(local_sampling_id)
             except Exception as exc:
                 logger.error(
                     "[peeka Profile] sampling cleanup failed (%s)",
@@ -590,33 +601,34 @@ class ProfileCommand(ResourceOwningCommand):
                 errors.append({"profile_id": "sampling", "error": str(exc)})
 
         for session in sessions:
-            if session.status != "running":
+            session_id = session["profile_id"]
+            if session["status"] != "running":
                 continue
-            if session.profile_id in stopped:
+            if session_id in stopped:
                 continue
             try:
-                _PROFILE_REGISTRY.stop(session.profile_id)
-                stopped.append(session.profile_id)
+                _PROFILE_REGISTRY.stop(session_id)
+                stopped.append(session_id)
             except Exception as exc:
                 logger.error(
                     "[peeka Profile] stop_active_resources failed for %s (%s)",
-                    session.profile_id,
+                    session_id,
                     reason,
                     exc_info=True,
                 )
-                errors.append({"profile_id": session.profile_id, "error": str(exc)})
+                errors.append({"profile_id": session_id, "error": str(exc)})
 
         return {"stopped": stopped, "errors": errors}
 
     def list_active_resources(self) -> Dict[str, Any]:
-        sessions = _PROFILE_REGISTRY.list_sessions()
+        sessions = _PROFILE_REGISTRY.list_session_infos()
         active = [
             {
-                "profile_id": s.profile_id,
-                "backend": s.backend,
-                "started_at": s.started_at,
+                "profile_id": s["profile_id"],
+                "backend": s["backend"],
+                "started_at": s["started_at"],
             }
             for s in sessions
-            if s.status == "running"
+            if s["status"] == "running"
         ]
         return {"active": active}

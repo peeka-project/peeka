@@ -164,3 +164,19 @@ def _run_profile_with_client(args, client) -> int:
     finally:
         cli_connection.StreamingAgentClient = original_client
         cli_sessions._check_agent_attached = original_check
+
+
+def test_profile_start_parser_accepts_experimental_exact():
+    import argparse
+
+    from peeka.cli.handlers.profile import _build_start_command
+    from peeka.cli.parsers.profile import add_profile_parser
+
+    parser = argparse.ArgumentParser()
+    add_profile_parser(parser.add_subparsers(dest="command"))
+
+    args = parser.parse_args(["profile", "start", "--backend", "exact", "--experimental"])
+    assert _build_start_command(args)["experimental"] is True
+
+    args = parser.parse_args(["profile", "start"])
+    assert "experimental" not in _build_start_command(args)
