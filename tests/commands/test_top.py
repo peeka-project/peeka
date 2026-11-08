@@ -712,3 +712,44 @@ class TestTopCommand:
         assert _PROFILE_REGISTRY.get_session(start_profile_id) is not None
 
         top_command.execute({"action": "stop"})
+
+    def test_transient_top_does_not_record_raw_stacks(self, top_command):
+        """Without keep_profile, top keeps only aggregates, not raw samples."""
+        from peeka.commands.top import _PROFILE_REGISTRY
+
+        result = top_command.execute({"action": "start", "interval": 0.001})
+        profile_id = result["profile_id"]
+        time.sleep(0.05)
+
+        session = _PROFILE_REGISTRY.get_session(profile_id)
+        snapshot = top_command.execute({"action": "snapshot"})["snapshot"]
+        top_command.execute({"action": "stop"})
+
+        assert session is not None
+        assert session.samples == []
+        assert snapshot["total_samples"] > 0
+
+    def test_stop_tolerates_profile_session_removed_elsewhere(self, top_command):
+        """`profile stop` + eviction of top's session must not break top stop."""
+        from peeka.commands.top import _PROFILE_REGISTRY
+
+        result = top_command.execute(
+            {"action": "start", "interval": 0.01, "keep_profile": True}
+        )
+        _PROFILE_REGISTRY.stop(result["profile_id"])
+        _PROFILE_REGISTRY.remove_session(result["profile_id"])
+
+        stop_result = top_command.execute({"action": "stop"})
+
+        assert stop_result["status"] == "success"
+        assert top_command._top_id is None
+        assert top_command._profile_id is None
+
+    def test_snapshot_summary_reports_real_start_and_duration(self, top_command):
+        top_command.execute({"action": "start", "interval": 0.01})
+        time.sleep(0.02)
+        summary = top_command.execute({"action": "snapshot"})["snapshot"]["summary"]
+        top_command.execute({"action": "stop"})
+
+        assert summary["start_time"] > 0
+        assert summary["duration_ms"] > 0

@@ -84,6 +84,7 @@ class TopCommand(ResourceOwningCommand):
         self._client_session_id: Optional[str] = None
         self._job_id: Optional[str] = None
         self._keep_profile: bool = False
+        self._stats_started_at: float = 0.0
         self._greenlet_switch_counts: Dict[int, int] = {}
         self._greenlet_throw_count: int = 0
 
@@ -179,6 +180,7 @@ class TopCommand(ResourceOwningCommand):
             # Reset state
             self._stats.clear()
             self._total_samples = 0
+            self._stats_started_at = time.time()
             self._greenlet_switch_counts.clear()
             self._greenlet_throw_count = 0
             self._stop_event.clear()
@@ -259,7 +261,11 @@ class TopCommand(ResourceOwningCommand):
         snapshot = self._build_snapshot()
         if self._profile_id:
             profile_id = self._profile_id
-            _ = _PROFILE_REGISTRY.stop(profile_id)
+            try:
+                _ = _PROFILE_REGISTRY.stop(profile_id)
+            except KeyError:
+                # Already stopped and evicted via `profile stop`/cleanup.
+                logger.debug("top profile %s already removed", profile_id)
             if not self._keep_profile:
                 _PROFILE_REGISTRY.remove_session(profile_id)
 
@@ -302,6 +308,7 @@ class TopCommand(ResourceOwningCommand):
         with self._lock:
             self._stats.clear()
             self._total_samples = 0
+            self._stats_started_at = time.time()
 
         return {"status": "success", "message": "Statistics reset"}
 
@@ -361,6 +368,10 @@ class TopCommand(ResourceOwningCommand):
 
                 # Track which functions we've seen in this sample (for deduplication)
                 seen_in_sample: Set[str] = set()
+                # Raw stacks are only kept for --keep-profile; a transient
+                # top run must not accumulate up to max_samples full stacks
+                # in the target process.
+                profile_id = self._profile_id if self._keep_profile else None
 
                 # Process each thread
                 for thread_id, frame in frames.items():
@@ -375,13 +386,14 @@ class TopCommand(ResourceOwningCommand):
 
                     while current_frame is not None:
                         func_key = self._make_func_key(current_frame)
-                        stack.append(
-                            StackRecord(
-                                filename=current_frame.f_code.co_filename,
-                                lineno=current_frame.f_lineno,
-                                name=current_frame.f_code.co_name,
+                        if profile_id:
+                            stack.append(
+                                StackRecord(
+                                    filename=current_frame.f_code.co_filename,
+                                    lineno=current_frame.f_lineno,
+                                    name=current_frame.f_code.co_name,
+                                )
                             )
-                        )
 
                         with self._lock:
                             # Initialize function stats if not seen before
@@ -407,7 +419,7 @@ class TopCommand(ResourceOwningCommand):
                         current_frame = current_frame.f_back
                         is_leaf = False
 
-                    if self._profile_id:
+                    if profile_id:
                         stack.reverse()
                         sample = SampleRecord(
                             timestamp=time.time(),
@@ -415,7 +427,7 @@ class TopCommand(ResourceOwningCommand):
                             thread_name="",
                             stack=stack,
                         )
-                        _PROFILE_REGISTRY.add_sample(self._profile_id, sample)
+                        _PROFILE_REGISTRY.add_sample(profile_id, sample)
 
                 # Increment total sample count
                 with self._lock:
@@ -607,6 +619,7 @@ class TopCommand(ResourceOwningCommand):
             greenlet_throw_count = self._greenlet_throw_count
             profile_id = self._profile_id
             keep_profile = self._keep_profile
+            started_at = self._stats_started_at
 
         snapshot = {
             "type": "top_snapshot",
@@ -619,8 +632,10 @@ class TopCommand(ResourceOwningCommand):
             "functions": functions,
             "summary": {
                 "sample_count": total_samples,
-                "start_time": 0.0,
-                "duration_ms": 0.0,
+                "start_time": started_at,
+                "duration_ms": (
+                    max((time.time() - started_at) * 1000.0, 0.0) if started_at else 0.0
+                ),
             },
             "meta": dict(self._meta),
         }
