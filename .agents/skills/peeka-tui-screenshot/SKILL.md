@@ -1,143 +1,55 @@
 ---
 name: peeka-tui-screenshot
-description: 指导智能体在 Omarchy/Hyprland 上使用 tmux 控制的 Peeka 会话和全局 omarchy-headless-screenshot skill 截取 Peeka TUI 截图。用于记录或验证 Peeka TUI 画面、在目标 workspace 打开或复用 Terminal、启动 `peeka`、导航 Peeka TUI 视图、填写输入框和操作按钮，并在不打扰用户当前可见 workspace 的情况下进行视觉验证。
+description: 在 Omarchy/Hyprland（0.56+，Lua 配置）上，用真实 kitty 窗口驱动 Peeka TUI 并截图验证，全程不切换用户焦点、工作区、显示器或光标。用于记录/验证 Peeka TUI 画面、像真实用户一样操作 TUI（按键、输入框、按钮）、在 peeka-test 容器中做视觉验证。
 ---
 
-# Peeka TUI 截图
+# Peeka TUI 截图（真实终端，不打扰用户）
 
-使用这个 skill 准备 Peeka TUI 状态，通过全局 `$omarchy-headless-screenshot` skill 截图，并对生成图片做视觉验证。
+## 原理
 
-通过 `tmux` 控制 Peeka，不使用 Wayland 键盘注入。Terminal 只负责显示 tmux 会话；智能体用 `tmux send-keys` 操作 TUI，因此不需要让 Terminal 窗口获得焦点。
+- **显示**：在隐藏的 special workspace `special:tui-<name>` 上用 `[workspace … silent; float; size W H]` 打开一个真实的 kitty（使用用户自己的 kitty 配置和 Omarchy 主题）。用户不切换到这个 workspace 就看不到它，焦点也不会变。
+- **输入**：通过私有 unix socket 走 kitty 远程控制（`kitty @ send-text` / `send-key`）。按键经过 kitty 自己的编码，和真实用户的按键链路一致，不需要 tmux。
+- **读取**：`kitty @ get-text` 拿屏幕文本做断言；`grim -T <stableId>` 截取窗口像素（grim ≥ 1.5 的 toplevel 截图）。隐藏窗口的第一帧可能滞后，脚本会连截两次取最后一张。
+- 不需要建 headless 输出，不移动工作区，不碰 idle；显示器被 KVM 切走时也能截。
+
+所有操作都用 `scripts/tui-agent.sh`（本 skill 自带，路径相对 skill 目录）。
 
 ## 核心规则
 
-- Peeka TUI 截图必须基于 `$docker-build` skill 声明、创建、维护的 Docker 镜像和容器；不要使用本机 Python 进程截图，除非用户明确要求“本机 Python”。
-- 容器镜像由 `$docker-build` skill 创建和维护；需要 Python 3.8、3.12、3.14 测试容器时，先按该 skill 检查或构建 `peeka-test:<version>`，不要在本 skill 中复制镜像构建流程。
-- 执行截图前必须明确记录截图目标：Docker 镜像/容器名、Python 版本（例如 Python 3.14、Python 3.12、Python 3.8）、要截取的内容（具体界面或具体功能状态），以及容器内目标 Python 进程。
-- 如果用户没有明确指定基于哪个 Python 进程截图，默认使用 `peeka-test:3.14` 容器中的本项目 `examples/demo.py` 进程。
-- 不要对非活动 workspace 使用 `grim -g <inactive-window-geometry>`；它会截取当前可见输出中对应几何区域，而不是非活动 workspace。
-- 实际截图必须使用位于 `~/.codex/skills/omarchy-headless-screenshot` 的全局截图 skill。
-- 除非用户要求生成项目资产，否则截图保存在 `/tmp`。
-- 声称截图成功前，必须用可用的视觉工具检查生成图片；检查必须覆盖“正确视图”和“颜色/主题正常”，如果截图近似灰阶或颜色明显缺失，必须先修正终端/主题/环境后重新截图。
-- 如果切换过 Peeka tab，除非用户要求截取其他视图，否则用按键 `1` 恢复到 Dashboard。
-- 截图前后必须记录 Omarchy 自动锁屏状态。不要只依赖单一命令；至少检查 `systemctl --user is-active hypridle` 和 `pgrep -x hypridle`。如果任一检查显示截图前正在运行，结束后必须确保它仍在运行；如果截图前停止，结束后不要主动启动。
-- 截图前后必须检查全局截图脚本输出的 `STATE before` / `STATE after`。如果用户原本在 Omarchy/Hyprland special workspace（隐藏桌面/scratchpad）中，`special=` 必须一致；`monitor=`、`workspace=`、`window=` 也应尽量一致。不一致时先恢复用户状态，再报告。
+- 默认目标：`peeka-test:3.14` 容器（由 `$docker-build` 管理）里的 `examples/demo.py`。容器不在运行时先 `docker start peeka-test-3.14`。除非用户明确要求，否则不用本机 Python。
+- 截图前写明：容器名 / 镜像 tag / Python 版本 / 目标 PID / 要截的视图。
+- 前后各跑一次 `tui-agent.sh state`，确认 monitor / workspace / special / window 一致后才能报告完成。
+- 不要用旧的 `hyprctl dispatch <name> <args>` 语法（Lua 配置下会报错），改用 `hl.dsp.*`；也不要用 `wtype` 或 `sendshortcut`（会作用到用户当前焦点）。
+- 截图默认保存到会话 scratchpad 或 `/tmp`；声称成功前必须用视觉工具检查：视图正确、有主题色（不是灰阶）。
+- 结束时 `tui-agent.sh stop <name>`（先发 `ctrl+q` 退出 TUI 再关窗口），除非用户要求保留窗口。只关 kitty 窗口不会结束容器里 `docker exec -it` 启动的进程，残留的 TUI 仍然 attach 着目标进程，会让下一次 attach 卡在 "Reused existing attachment" 之后。收尾时检查：`docker exec peeka-test-3.14 sh -c 'ps -eo pid,args | grep "[p]eeka.tui"'` 应该为空。
 
-## 查找或打开 Peeka TUI
-
-发现已有 Peeka/Terminal 窗口：
+## 流程
 
 ```bash
-hyprctl clients -j | jq -r '.[] | [.workspace.id,.address,.class,.title,(.at|join(",")),(.size|join("x"))] | @tsv'
+T=.agents/skills/peeka-tui-screenshot/scripts/tui-agent.sh
+$T state                                  # 记录用户状态
+docker start peeka-test-3.14
+$T start p314 --size 1600x1000 -- docker exec -it peeka-test-3.14 python3 -m peeka.tui
+$T wait p314 'demo\.py' 20                # 进程选择器出现
+$T send p314 demo; $T key p314 enter     # 过滤只剩一个可 attach 进程时，Enter 直接 attach
+$T wait p314 'Attached to PID' 30
+$T shot p314 /tmp/peeka-dashboard.png
+$T stop p314; $T state                    # 对比前后状态
 ```
 
-如果已有窗口标题表明它是 Peeka（`Peeka`、`peeka`，或带 spinner 前缀的 `peeka`），并且位于目标 workspace，则优先复用该窗口。
+## 键盘交互要点（2026-11-07 实测，已对应修复）
 
-推荐启动模式：
+- **进程选择器**：过滤框里按 Enter，如果只剩一个可 attach 进程就直接 attach；剩多个时焦点移到表格，再按 Enter 选中高亮行。过滤框有内容时按 Esc 会清空过滤框，为空时 Esc 才退出。
+- **切 tab**：数字键或字母键（见下方快捷键）只在焦点**不在**输入框时生效。切过去后焦点为空，按一次 `tab` 就进入该视图的第一个输入框（tab 栏不在焦点链里）。
+- **输入框里按 Enter** 会启动当前视图的动作（Watch / Trace / Stack / Monitor / Inspect），和点按钮效果一样；同时会关闭自动补全下拉框。
+- **输入框里按 Esc**：先关自动补全下拉框，再取消输入框焦点；焦点为空时再按 Esc 才是 Back（会 detach 并停止所有 watch/trace）。所以从输入框切到别的 tab 的方式是：先 `escape`，再按数字键。
+- 输入前用 `text` 确认焦点和当前视图，不要盲目连续发送按键。
 
-```bash
-WS=5
-SESSION=peeka-tui-shot
+## 快捷键
 
-# 启动或复用一个运行 Peeka 的 detached tmux 会话。
-tmux has-session -t "$SESSION" 2>/dev/null || \
-  tmux new-session -d -s "$SESSION" "cd '$PWD' && uv run peeka"
+主 tab：`1` Dashboard、`2` Watch、`3` Trace、`4` Stack、`5` Monitor、`6` Memory、`7` Logger、`8` Inspect、`9` Threads、`0` Top、`p` Profile、`t` Timeline；`esc`/`q` Back、`ctrl+q` 退出、`?` 帮助。以 `peeka/tui/screens/main.py` 的 `BINDINGS` 为准。
 
-# 在目标 workspace 的 Terminal 中显示该 tmux 会话，但不切换用户当前可见 workspace。
-hyprctl dispatch exec "[workspace ${WS} silent] kitty --title ${SESSION} --directory '$PWD' bash -lc 'tmux attach -t ${SESSION}'"
-```
+## 备选方案
 
-注意：
-
-- `peeka` 没有直接的 `--pid` 选项。如果出现进程选择器，输入 PID 或过滤词后按 Enter。
-- 所有 TUI 交互都优先使用 `tmux send-keys`。不要依赖外部 `kitty @` 远程控制；它可能在非 TTY 智能体上下文中失败。
-- Omarchy 自带的 TUI launcher 是 `omarchy-launch-tui <command>`，实现方式是 `setsid uwsm-app -- xdg-terminal-exec --app-id=org.omarchy.<command> -e <command>`。
-
-## 导航 Peeka TUI
-
-主界面 tabs：
-
-| 按键 | 视图 |
-|-----|------|
-| `1` | Dashboard |
-| `2` | Watch |
-| `3` | Trace |
-| `4` | Stack |
-| `5` | Monitor |
-| `6` | Memory |
-| `7` | Logger |
-| `8` | Inspect |
-| `9` | Threads |
-| `0` | Top |
-
-常用视图快捷键：
-
-| 视图 | 按键 |
-|------|------|
-| Dashboard | `r` 刷新，`c` 清空 activity log |
-| Watch | `Enter` 开始，`Delete` 停止全部 |
-| Trace | `Enter` 开始，`Delete` 停止全部，`c` 清空 tree |
-| Stack | `Enter` 开始，`Delete` 停止全部 |
-| Monitor | `Enter` 开始，`Delete` 停止全部 |
-| Memory | `r` 刷新，`T` 切换 tracking |
-| Logger | `r` 刷新 |
-| Inspect | `Enter` inspect |
-| Threads | `r` 刷新 |
-| Top | `r` 重置 stats |
-
-输入框和按钮操作策略：
-
-- 尽量使用数字键切换视图。
-- 使用 `tmux send-keys -t "$SESSION" 2` 切换到 Watch，`3` 切换到 Trace，`1` 切换到 Dashboard，依此类推。
-- 使用 `tmux send-keys -t "$SESSION" Tab` 和 `tmux send-keys -t "$SESSION" BTab` 在输入框和按钮之间移动焦点。
-- 使用 `tmux send-keys -t "$SESSION" 'module.Class.method'` 向输入框输入内容。
-- 使用 `tmux send-keys -t "$SESSION" Enter` 点击按钮或提交输入。
-- 使用 `tmux send-keys -t "$SESSION" Delete`、`Escape` 或 `C-q` 执行停止、返回或退出流程。
-
-进程选择器 attach 示例：
-
-```bash
-tmux send-keys -t "$SESSION" "$PID" Enter
-```
-
-Watch 视图示例：
-
-```bash
-tmux send-keys -t "$SESSION" 2
-tmux send-keys -t "$SESSION" 'demo.Calculator.add' Enter
-```
-
-## 截图流程
-
-截图前先声明本次截图参数，例如：
-
-```text
-截图目标：Python 3.14 容器中的 examples/demo.py；Peeka Dashboard 视图。
-```
-
-容器镜像必须来自 `$docker-build` skill 管理的 `peeka-test:<version>`。截图时按用户指定的版本选择容器；没有指定版本时，优先使用 Python 3.14 作为 PEP 768 默认验证环境。不要为了绕过 attach 限制改用本机 Python；应改为启动或复用符合 `$docker-build` 约定的容器。
-
-如果 workspace 已准备好，只需要截取简单截图：
-
-```bash
-~/.codex/skills/omarchy-headless-screenshot/scripts/capture-headless-workspace.sh \
-  --workspace 3 \
-  --output /tmp/peeka-tui-dashboard.png \
-  --delay 1
-```
-
-然后检查 `/tmp/peeka-tui-dashboard.png`。
-
-如果截图前需要交互式准备，先使用 `tmux send-keys`，等待 UI 稳定后再运行全局截图脚本。除非 tmux 不可用且已在一次性 Terminal 中验证替代方案，否则避免使用 `wtype` 和 Hyprland `sendshortcut`。
-
-以全局截图 skill 的脚本作为安全处理和恢复 idle lock 的参考实现。
-
-## 验证清单
-
-- 项目内不能存在 `omarchy-headless-screenshot` 的副本；全局副本是唯一事实来源。
-- 截图必须显示用户请求的 Peeka 视图，而不是用户当前可见的浏览器或视频 workspace。
-- 截图必须来自 `$docker-build` 管理的容器环境；结果说明中列出容器名、镜像 tag、容器内目标 PID 和 Python 版本。
-- 视觉检查必须确认截图不是近似灰阶：能看到 Peeka/Textual 主题色、激活 tab 高亮、按钮/边框色彩或其他非灰色 UI 信号。
-- 任务结束后的 `hyprctl activeworkspace -j` 必须显示用户可见 workspace 已恢复。
-- 全局截图脚本的 `STATE before` / `STATE after` 必须显示用户 special workspace 状态已恢复；如果用户在隐藏桌面工作，不能只恢复普通 workspace id。
-- 如果截图工作开始前 `hypridle` 正在运行，结束后它也必须运行；如果开始前是停止状态，不要启动它。最终说明必须报告截图前后的 `hypridle` 状态，不能只报告“脚本应当恢复”。
+- 需要固定分辨率的整屏截图：先 `hyprctl output create headless <n>`，再用 `hyprctl eval 'hl.monitor({output="<n>", mode="1920x1080@60", position="20000x20000", scale=1})'` 把它放到远处，`grim -o <n>` 截图，最后 `hyprctl output remove <n>`。存在期间物理屏的全局坐标会临时被 auto 布局挪开。
+- 只要文本、不要像素：`herdr`（Omarchy 仓库已装，有 `pane send-keys / read / wait-output`）或 Textual `run_test()`（见 `$container-test`）。
