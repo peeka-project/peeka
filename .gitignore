@@ -39,3 +39,7 @@ Thumbs.db
 .agents/
 .claude/
 .alma-snapshots
+
+# uv lockfile: not committed. uv records full index URLs in it, so a lock made
+# behind a regional mirror would pin that mirror for everyone. CI uses pip.
+uv.lock
