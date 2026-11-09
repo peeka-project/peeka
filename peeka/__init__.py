@@ -4,7 +4,7 @@ import os
 import sys
 import tempfile
 
-__version__ = "0.1.20"
+__version__ = "0.1.21"
 
 # Cached for testability: tests can monkeypatch peeka._geteuid without
 # mutating the global os module.
