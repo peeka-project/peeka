@@ -3,7 +3,7 @@
 - 状态：Accepted（已修订 2026-07-04）
 - 日期：2026-06-26
 - 决策者：peeka 维护者
-- 相关计划：`.sisyphus/plans/trace-single-layer.md`
+- 实现：`1c2bf92 fix(trace): all backends record only direct callees with aggregation`
 
 ## 上下文
 

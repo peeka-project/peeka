@@ -3,7 +3,7 @@
 - 状态：Accepted
 - 日期：2026-07-01
 - 决策者：peeka 维护者
-- 相关计划：`.sisyphus/plans/attach-resource-hardening.md`
+- 实现：`f497efc refactor(core): centralize package resource resolution`
 
 ## 上下文
 

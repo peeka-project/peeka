@@ -3,7 +3,7 @@
 - 状态：Accepted
 - 日期：2026-07-04
 - 决策者：peeka 维护者
-- 相关计划：`.sisyphus/plans/agent-module-cache-cleanup-validation.md`（执行记录）
+- 实现：`f5f1137 test(attach): cover module cache cleanup and bootstrap output`
 
 ## 上下文
 

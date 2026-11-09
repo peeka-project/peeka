@@ -3,7 +3,7 @@
 - 状态：Accepted
 - 日期：2026-06-20
 - 决策者：peeka 维护者
-- 相关计划：`.sisyphus/plans/resource-owning-command-abc.md`（执行记录）
+- 实现：`c418a9f feat(commands): add ResourceOwningCommand ABC and CleanupScope enum` 及后续各命令迁移提交
 
 ## 上下文
 
