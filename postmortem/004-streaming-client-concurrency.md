@@ -5,13 +5,14 @@
 | **话题** | StreamingAgentClient 并发访问、专用连接策略与协议同步问题（含 BrokenPipe） |
 | **受影响组件** | core/client, tui views |
 | **最高严重级别** | SEV-1 (High) |
-| **事故次数** | 7 |
-| **时间跨度** | 2026-02-28 至 2026-05-04 |
+| **事故次数** | 8 |
+| **时间跨度** | 2026-02-28 至 2026-11-08 |
 
 ## 案例索引
 
 | # | 事故 | 严重级别 | 日期 |
 |---|------|----------|------|
+| [#8](#事故-8不读取的客户端连接阻塞-agent-日志广播导致新连接挂起) | 不读取的客户端连接阻塞 agent 日志广播导致新连接挂起 | SEV-1 | 2026-11-08 |
 | [#7](#事故-7streaming-client-连接标识缺失导致活动日志源歧义) | Streaming Client 连接标识缺失导致活动日志源歧义 | SEV-3 | 2026-05-04 |
 | [#6](#事故-6nframetrackstop-右对齐失败css-特异性) | nframe/Track/Stop 右对齐失败(CSS 特异性) | SEV-3 | 2026-03-10 |
 | [#5](#事故-5请求-响应视图重新引入专用客户端以抑制竞态) | 请求-响应视图重新引入专用客户端以抑制竞态 | SEV-1 | 2026-03-03 |
@@ -25,6 +26,97 @@
 ## 话题概述
 
 该话题体现了“共享连接 + 多线程 + 流式帧”组合下的系统性复杂度：读取竞争会破坏帧边界，发送并发会破坏长度前缀协议，异常后未排空 OBS 帧会导致后续请求响应错位；同时“专用客户端是否必要”在不同视图类型间被反复修正，反映连接模型边界在实践中逐步澄清。
+
+
+v0.1.21 的事故 #8 显示该话题已从“客户端并发”扩展到“服务端写路径”：只要 agent 假设所有连接都会持续读取，任何一个空闲连接都能冻结整个 agent。连接角色（control / stream）必须由协议显式声明，服务端写出必须有界。
+
+---
+
+## 事故 #8：不读取的客户端连接阻塞 agent 日志广播导致新连接挂起
+
+> **Tag 范围**：`v0.1.20` → `v0.1.21` | **严重级别**：SEV-1 | **日期**：2026-11-08
+
+### 概要
+
+agent 将每条日志帧以阻塞式 `sendall` 广播给所有客户端连接。一个不再读取的连接（空闲控制连接，或 watch 结束后遗留的 stream 连接）写满 socket 缓冲区后，所有写日志的 handler 线程永久阻塞，新客户端在 "Reused existing attachment" 之后挂起。TUI 侧同时存在两个会制造"无人读取连接"的缺陷，三者合并为一个事故组块。
+
+### 根因分析
+
+#### 类别
+Resource Management / Integration Error
+
+#### 分析
+三个缺陷共同构成故障链：
+
+1. **广播使用无界阻塞写**（`peeka/core/agent.py`）：日志广播遍历 `_snapshot_client_connections()`，对每个连接执行阻塞发送；任一对端停止读取即会把调用线程永久挂住，且该线程常持有日志路径，进而阻塞所有 handler。
+2. **TUI 控制连接被提升为 stream 连接**：TUI 在主连接上发送 watch/trace/stack/monitor 的 start 命令，在独立的 `*-stream` 连接上读取观测。agent 在首个 start 命令时把主连接提升为 stream 连接，OBS 帧在无人读取的主连接上堆积，最终连接被驱逐，后续 TUI 命令报 `No response received` / `Broken pipe`（`61c402d`）。
+3. **stop-all 后 stream socket 未关闭**：取消 stream worker 只会在下一帧到达时退出，socket 在无人读取的状态下保持打开（`13af8ba`）。
+
+核心模式：**"谁会持续读取"没有成为连接模型的一等属性**，广播路径默认所有连接都会读取。
+
+#### 致因提交
+致因提交无法确定性定位。广播逻辑的候选来源为 `d5ad67f`（2026-05-03，fix(core): improve attach reliability and error surfacing）附近对 `_send_frame_to_connection` 的引入；TUI 控制/流连接分离来自本话题 #2/#5 的专用连接策略。
+
+### 复现
+
+#### 前置条件
+- 已 attach 的目标进程；agent 会持续输出日志。
+
+#### 步骤
+1. 在 TUI 中启动并停止 watch（或保持一个空闲控制连接不读取）。
+2. 让 agent 继续产生日志，直到该连接的 socket 发送缓冲区写满。
+3. 新开一个 CLI 客户端执行任意命令。
+
+#### 预期行为
+新客户端正常获得响应；不读取的连接被隔离或断开。
+
+#### 实际行为
+新客户端在 "Reused existing attachment" 后无响应；TUI 后续命令报 `Broken pipe`。
+
+### 修复
+
+#### 修复提交
+
+| 提交 | 作者 | 日期 | 描述 |
+|------|------|------|------|
+| [`b5435d9`](https://github.com/peeka-project/peeka/commit/b5435d9) | lufeihaidao | 2026-11-08 | fix(core): stop one non-reading client from freezing the agent |
+| [`61c402d`](https://github.com/peeka-project/peeka/commit/61c402d) | lufeihaidao | 2026-11-08 | fix(tui): keep TUI control connections out of the observation stream |
+| [`13af8ba`](https://github.com/peeka-project/peeka/commit/13af8ba) | lufeihaidao | 2026-11-08 | fix(tui): close the stream connection after stopping everything |
+
+#### 变更内容
+- 日志帧只发往 stream 连接，并以按连接加锁、带截止时间的非阻塞发送（`MSG_DONTWAIT` + `_rpl.wait_writable`）写出；1 秒内无法写出的连接被 `shutdown` 并移除（`_evict_client_connection`）。
+- TUI 的 client info 对非 stream 连接声明 `observations=false`，agent 不再提升拒绝观测的连接；CLI 连接行为不变。
+- TUI 每次 stop-all 结束时关闭 stream 连接，下次 start 重新建立。
+
+#### 验证
+新增 `tests/test_agent_log_broadcast.py`（162 行）覆盖慢客户端驱逐与非 stream 连接不接收日志；TUI 侧新增 stop-all 关闭连接测试。
+
+### 影响
+
+- **受影响用户**：长时间使用 TUI 或在同一目标上反复 attach 的用户。
+- **持续时间**：自日志广播引入至 v0.1.21。
+- **数据影响**：无数据损坏；表现为 agent 无响应，需重启目标进程恢复。
+
+### 经验教训
+
+#### 做得好的方面
+- 修复把"慢客户端"从无界阻塞改为有界写 + 驱逐，属于通用防护而非针对单一场景。
+
+#### 可以改进的方面
+- 连接是否持续读取应由协议显式声明，而不是由服务端根据首个命令推断。
+
+#### 行动项
+
+| 行动 | 优先级 | 状态 |
+|------|--------|------|
+| agent 所有向客户端写出的路径统一使用有界发送 | P1 | 待处理 |
+| 为"空闲控制连接 + 持续日志"增加长时间运行的集成测试 | P2 | 待处理 |
+
+### 预防
+
+- **立即执行**：禁止在 agent 中对客户端 socket 使用无超时的 `sendall`。
+- **短期**：在 client info 协议中显式区分 control / stream 连接角色。
+- **长期**：为每个连接建立独立的发送队列，彻底隔离慢消费者。
 
 ---
 

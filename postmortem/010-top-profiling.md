@@ -5,13 +5,14 @@
 | **话题** | Top 命令线程过滤与 TopView 客户端生命周期/并发访问问题，以及 Agent 响应帧并发写入导致 JSON 损坏 |
 | **受影响组件** | commands/top.py, tui/views/top.py, core/agent.py |
 | **最高严重级别** | SEV-1 (High) |
-| **事故次数** | 5 |
-| **时间跨度** | 2026-02-26 至 2026-04-26 |
+| **事故次数** | 6 |
+| **时间跨度** | 2026-02-26 至 2026-07-17 |
 
 ## 案例索引
 
 | # | 事故 | 严重级别 | 日期 |
 |---|------|----------|------|
+| [#6](#事故-6profile-子系统开发期集中暴露的生命周期与并发缺陷) | Profile 子系统开发期集中暴露的生命周期与并发缺陷 | SEV-3 | 2026-07-17 |
 | [#5](#事故-5agent-并发响应帧写入导致-top-命令-json-损坏) | Agent 并发响应帧写入导致 top 命令 JSON 损坏 | SEV-1 | 2026-04-26 |
 | [#4](#事故-4topview-共享客户端引发套接字竞争与数据显示失败) | TopView 共享客户端引发套接字竞争与数据显示失败 | SEV-1 | 2026-02-26 |
 | [#3](#事故-3topview-profiling-初始化挂在错误生命周期点) | TopView profiling 初始化挂在错误生命周期点 | SEV-2 | 2026-02-26 |
@@ -25,6 +26,88 @@
 该话题在同一天集中暴露出 Top 体系的两类系统性问题：一是采样过滤逻辑错误导致"采样全空"或误过滤；二是 TopView 生命周期与连接模型设计不当导致数据不显示或错乱。核心模式是"线程/连接语义误判 + 缺少流式并发约束"。
 
 2026-04-26 新增第三类问题：Agent 多连接并发 `sendall` 导致响应帧头部与 body 被不同连接交错写入，客户端收到损坏的 JSON 帧（长度字段与内容不匹配），`top` 命令结果无法解析。根本原因是两次独立 `sendall` 调用之间缺乏互斥锁，与套接字写入操作的非原子性有关。
+
+
+v0.1.21 起 `top` 基于 `profile` 子系统的临时 ProfileSession 采样。事故 #6 记录了该子系统在发布前集中暴露的生命周期、互斥与加锁缺陷，说明后台采样类命令应先定义状态机与所有权再实现。
+
+---
+
+## 事故 #6：Profile 子系统开发期集中暴露的生命周期与并发缺陷
+
+> **Tag 范围**：`v0.1.20` → `v0.1.21` | **严重级别**：SEV-3 | **日期**：2026-07-17
+
+### 概要
+
+v0.1.21 引入 `profile` 子系统（`ProfileSession` / `ProfileRegistry`、sampling 与 exact 后端、渲染器），并让 `top` 改为基于临时 ProfileSession 采样。在发布前的开发与评审中，2026-07-17 至 07-18 以及 11-08 共产生约 30 个 profile/top 相关 fix，集中在四类问题：会话生命周期未闭合、多实例/多后端互斥缺失、共享状态未加锁、CLI ↔ agent 参数未透传。这些缺陷均在发布前修复，未影响已发布版本，按代表性合并为一个事故组块。
+
+### 根因分析
+
+#### 类别
+Resource Management / Race Condition / Integration Error
+
+#### 分析
+- **生命周期未闭合**：sampling 后端循环未启动（`8d1f36e`）、duration 到期或事件上限时未 finalize（`71fc492`、`b98a572`、`4b5fd15`）、cleanup 未停止采样资源和 registry 会话（`d08ac88`、`4e8b7e6`、`488a15e`）、`top` 删除了非临时 profile（`676e79a`）。
+- **互斥缺失**：重复 sampling start 未拒绝（`ee8f3fd`）、exact profiler 可多实例（`6a18b7c`）、exact 与 sampling 可同时运行使开销互相干扰（`7815855`）、跨命令实例无法停止活动 profile（`e826465`）；`check_capability` 会静默替换并在之后清除用户已安装的 `sys.setprofile`。
+- **共享状态未加锁**：exact profiler 状态与 sampling 生命周期缺乏串行化（`a54074e`、`0539e9b`），registry 驱逐不在 cleanup 锁内（`a0ea133`）。
+- **CLI ↔ agent 契约**：`--keep-profile`、dx add-profile 的 client context、snapshot 输出格式未透传或未生效（`d029548`、`65d4088`、`79545e6`）——与 009 话题同类。
+
+共同根因：新子系统同时引入了"资源所有命令 + 后台线程 + 全局 profiler 钩子 + 跨实例 registry"，但最初的实现按单路径正常流程编写，未先定义状态机与所有权。
+
+#### 致因提交
+新功能实现提交 `2e859c9`..`77e6e8d`（2026-07-14 至 07-17，feat(profile) 系列）。
+
+### 复现
+以上问题均在发布前通过单元测试与代码评审发现；典型复现为：启动 `profile start --duration 1` 后等待到期，`profile list` 仍显示运行中且采样线程未退出。
+
+### 修复
+
+#### 修复提交（代表性）
+
+| 提交 | 作者 | 日期 | 描述 |
+|------|------|------|------|
+| [`71fc492`](https://github.com/peeka-project/peeka/commit/71fc492) | lufeihaidao | 2026-07-17 | fix(profile): finalize sampling profiles on duration expiry |
+| [`6a18b7c`](https://github.com/peeka-project/peeka/commit/6a18b7c) | lufeihaidao | 2026-07-18 | fix(profile): enforce single exact profiler |
+| [`a54074e`](https://github.com/peeka-project/peeka/commit/a54074e) | lufeihaidao | 2026-07-18 | fix(profile): lock exact profiler state |
+| [`0539e9b`](https://github.com/peeka-project/peeka/commit/0539e9b) | lufeihaidao | 2026-07-18 | fix(profile): serialize sampling profile lifecycle |
+| [`e826465`](https://github.com/peeka-project/peeka/commit/e826465) | lufeihaidao | 2026-07-18 | fix(profile): stop active profiles across instances |
+| [`7815855`](https://github.com/peeka-project/peeka/commit/7815855) | lufeihaidao | 2026-11-08 | fix(profile): gate the exact backend and make it exclusive with sampling |
+| [`5311b22`](https://github.com/peeka-project/peeka/commit/5311b22) | lufeihaidao | 2026-11-08 | fix(top): keep raw stacks only with --keep-profile and survive evicted sessions |
+
+其余 profile/top fix 合并到本组块（见分析中的分类列表）。
+
+#### 变更内容
+- `ProfileCommand` 以类级 `_exact_lock` / `_sampling_lock` 串行化两种后端的生命周期，exact 与 sampling 互斥，exact 需 `experimental=true`。
+- duration 到期、事件/样本上限、cleanup、detach 都走统一的 finalize/stop 路径；registry 驱逐在 cleanup 锁内进行。
+- capability 检查在已有 profiler 时拒绝而不是替换；检查失败时删除空会话。
+- `top` 只在 `--keep-profile` 时保留原始栈，并能在会话被驱逐后继续运行。
+
+#### 验证
+profile/top 单元测试覆盖到期、上限、重复启动、互斥与跨实例停止。
+
+### 影响
+
+- **受影响用户**：无（发布前修复）。
+- **数据影响**：无。
+
+### 经验教训
+
+#### 做得好的方面
+- 在发布前通过逐项评审把问题全部拦截。
+
+#### 可以改进的方面
+- 约 30 个补丁型 fix 说明实现前缺少"状态机 + 所有权 + 并发"设计；应在 feat 阶段先写这些契约测试。
+
+#### 行动项
+
+| 行动 | 优先级 | 状态 |
+|------|--------|------|
+| 新增资源所有命令时，先编写 start/stop/expire/cleanup/detach 契约测试模板 | P1 | 待处理 |
+
+### 预防
+
+- **立即执行**：新增后台线程或全局钩子的命令，必须声明互斥规则和 finalize 路径。
+- **短期**：在 `ResourceOwningCommand` 文档中加入生命周期检查清单。
+- **长期**：为资源所有命令提供通用的生命周期状态机基类。
 
 ---
 

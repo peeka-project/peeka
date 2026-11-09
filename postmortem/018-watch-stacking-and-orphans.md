@@ -5,13 +5,14 @@
 | **话题** | Watch/Trace/Stack/Monitor 探针在重叠 pattern 下的堆叠顺序、归属权管理与孤立清理安全性 |
 | **受影响组件** | core/injector, core/instrumentation/registry, commands/monitor, commands/reset, cli/streaming |
 | **最高严重级别** | SEV-1 (High) |
-| **事故次数** | 4 |
-| **时间跨度** | 2026-06-13 至 2026-06-15 |
+| **事故次数** | 5 |
+| **时间跨度** | 2026-06-13 至 2026-11-08 |
 
 ## 案例索引
 
 | # | 事故 | 严重级别 | 日期 |
 |---|------|----------|------|
+| [#5](#事故-5已停止的-trace-wrapper-持锁调用下层-wrapper-导致目标线程死锁) | 已停止的 trace wrapper 持锁调用下层 wrapper 导致目标线程死锁 | SEV-1 | 2026-11-08 |
 | [#4](#事故-4混合探针与-monitor-卸载破坏-wrapper-链和别名恢复) | 混合探针与 Monitor 卸载破坏 wrapper 链和别名恢复 | SEV-1 | 2026-06-15 |
 | [#3](#事故-3watch-探针恢复逻辑在非线性卸载下破坏堆叠) | Watch 探针恢复逻辑在非线性卸载下破坏堆叠 | SEV-1 | 2026-06-13 |
 | [#2](#事故-2liveness-检查异常导致孤立探针被误清理) | Liveness 检查异常导致孤立探针被误清理 | SEV-2 | 2026-06-13 |
@@ -24,6 +25,102 @@
 该话题聚焦于 Peeka 的“探针堆叠”设计。当多个用户或会话同时 `watch` 同一个函数时，Peeka 采用类似于 Python 装饰器的堆叠机制。事故暴露了该机制在三个方面的脆弱性：卸载时的原始函数恢复逻辑（简单恢复导致中间层丢失）、孤立探针清理的安全性（异常路径误杀）、以及缺乏显式的堆叠组（group）管理导致的归属权漂移。
 
 v0.1.18 进一步证明该问题不局限于 watch：monitor、trace、stack 与 watch 可以共同包裹同一个函数槽位。若 monitor stop 只恢复自己记录的 `original`，或者 CLI 清理仍按 pattern 执行 broad reset，就会误杀其他活跃探针、留下 stale `__wrapped__` 链，或让模块别名指向与 canonical slot 不一致的 callable。探针生命周期必须以“共享 wrapper 链 + 资源所有者边界”为基本模型。
+
+
+v0.1.21 的事故 #5 补全了另一个维度：除了恢复顺序，wrapper 在锁内调用下一层 callable 会在堆叠时直接死锁；卸载还必须同步修正闭包中的实际调用目标，而不仅是 `__wrapped__` 元数据。
+
+---
+
+## 事故 #5：已停止的 trace wrapper 持锁调用下层 wrapper 导致目标线程死锁
+
+> **Tag 范围**：`v0.1.20` → `v0.1.21` | **严重级别**：SEV-1 | **日期**：2026-11-08
+
+### 概要
+
+trace wrapper 在其探针已停止或已达到 `-n` 次数上限时，仍在持有不可重入的 injector 锁期间调用下一层 callable。当下一层是另一个 watch/stack/trace wrapper 时，目标线程死锁（例如 `watch f` + `trace f -n 1`，第二次调用 `f` 永久挂起）。同时，卸载只重连了剩余 wrapper 的 `__wrapped__`，没有修正其闭包中真正调用的目标，已停止的 wrapper 会继续留在调用路径上。
+
+### 根因分析
+
+#### 类别
+Race Condition（锁顺序）/ Logic Error
+
+#### 分析
+`peeka/core/instrumentation/trace.py` 原逻辑：
+
+```python
+with lock:
+    if info is None:
+        return func(*args, **kwargs)
+    if times_limit > 0 and info["count"] >= times_limit:
+        return func(*args, **kwargs)
+```
+
+`func` 可能是同样需要获取该锁的上层/下层 wrapper，锁不可重入，因此直接死锁。另一方面，registry 卸载时只更新 `__wrapped__` 元数据，不更新 wrapper 闭包实际调用的对象，monitor 也不会收到下层 wrapper 被移除的通知，导致"已停止 wrapper 仍在执行路径上"成为常态，放大了上面的死锁窗口。
+
+这是本话题 #3/#4 的延续：堆叠链的"元数据视图"（`__wrapped__`）与"执行视图"（闭包调用目标）不一致。
+
+#### 致因提交
+致因提交无法确定性定位；pass-through 分支位于锁内的写法自 trace wrapper 初版即存在，堆叠场景在 #4（v0.1.18）之后才被广泛覆盖。
+
+### 复现
+
+#### 前置条件
+- 目标进程中存在被频繁调用的函数 `f`。
+
+#### 步骤
+1. `peeka-cli watch f`
+2. `peeka-cli trace f -n 1`
+3. 让 `f` 被调用两次。
+
+#### 预期行为
+第二次调用直接穿透已达上限的 trace wrapper，watch 继续正常观测。
+
+#### 实际行为
+第二次调用 `f` 永久挂起，目标线程死锁。
+
+### 修复
+
+#### 修复提交
+
+| 提交 | 作者 | 日期 | 描述 |
+|------|------|------|------|
+| [`2057291`](https://github.com/peeka-project/peeka/commit/2057291) | lufeihaidao | 2026-11-08 | fix(core): prevent deadlock from stopped probe wrappers on stacked targets |
+
+#### 变更内容
+- trace：在锁内只决定是否 pass-through，释放锁后再调用 `func`。
+- registry：移除 wrapper 时，把它从所有剩余探针的调用路径中摘除（闭包 + `__wrapped__` + `original` / `previous_wrapper` / `root_original`），与 monitor 共享 `wrapper_call_target` / `retarget_wrapper_call`。
+- injector 新增 `add_wrapper_removed_listener`，monitor 以弱引用订阅，在下层 wrapper 被移除时重定向自身 wrapper。
+- monitor stop 独立更新 `owned_root_original`，最终恢复不会落在已停止的 monitor wrapper 上。
+
+#### 验证
+新增停止顺序矩阵测试：18 种组合 × 全部排列 × plain/`functools.wraps`，外加 reset/detach，断言路由、别名同步、调用路径无陈旧 wrapper、调用无死锁且完全恢复。
+
+### 影响
+
+- **受影响用户**：在同一函数上叠加多个探针（尤其带 `-n` 的 trace）的用户。
+- **持续时间**：trace 支持与其他探针堆叠以来至 v0.1.21。
+- **数据影响**：目标业务线程挂起，属于对生产进程的直接影响。
+
+### 经验教训
+
+#### 做得好的方面
+- 以穷举停止顺序矩阵替代单个回归用例，覆盖了此前几次事故的同类组合。
+
+#### 可以改进的方面
+- "持锁调用用户代码/下一层 callable"是可以静态识别的反模式，此前未建立检查。
+
+#### 行动项
+
+| 行动 | 优先级 | 状态 |
+|------|--------|------|
+| 审计所有 wrapper，确保不在持有 injector 锁时调用下一层 callable | P0 | 已完成（本次修复） |
+| 在代码评审清单中加入"锁内不得调用被包装函数" | P1 | 待处理 |
+
+### 预防
+
+- **立即执行**：所有 wrapper 采用"锁内决策、锁外调用"的模式。
+- **短期**：保留停止顺序矩阵测试作为任何 wrapper 链改动的必跑用例。
+- **长期**：以单一的链式数据结构管理执行路径，避免元数据与闭包目标分离。
 
 ---
 

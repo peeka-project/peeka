@@ -5,13 +5,14 @@
 | **话题** | Runtime Primitives Layer (RPL) 的引入与稳定化 — 在 agent/attach 路径中替换裸 stdlib 调用，以抵御 gevent/eventlet monkey-patching |
 | **受影响组件** | `peeka/core/runtime/primitives.py`、`peeka/core/attach.py`、`peeka/core/agent.py`、`tests/runtime/` |
 | **最高严重级别** | SEV-1 (High) |
-| **事故次数** | 4 |
-| **时间跨度** | 2026-05-17 至 2026-05-26 |
+| **事故次数** | 5 |
+| **时间跨度** | 2026-05-17 至 2026-11-08 |
 
 ## 案例索引
 
 | # | 事故 | 严重级别 | 日期 |
 |---|------|----------|------|
+| [#5](#事故-5rpl-在-gevent-下发放绿色锁且-integrity_check-恒为-ok) | RPL 在 gevent 下发放绿色锁且 integrity_check 恒为 ok | SEV-2 | 2026-11-08 |
 | [#4](#事故-4gevent-data-plane-兼容矩阵契约漂移) | gevent data-plane 兼容矩阵契约漂移 | SEV-2 | 2026-05-26 |
 | [#3](#事故-3rpl-混沌测试与-rlock-版本检查与设计语义脱节) | RPL 混沌测试与 RLock 版本检查与设计语义脱节 | SEV-3 | 2026-05-24 |
 | [#2](#事故-2attach-notify-server-在-pep-768-路径上调用了被遮蔽的-acceptaccept-在被-monkey-patch-时不安全) | attach notify server 在 PEP 768 路径上调用了被遮蔽的 `accept()`（accept 在被 monkey-patch 时不安全） | SEV-1 | 2026-05-24 |
@@ -31,6 +32,90 @@
 4. **公开兼容矩阵合同漂移**：gevent data-plane 策略在首次实现时合并了 trace backend 字符串、把 stack 标为 degraded，并让 top 继续报告 frame-walk backend。这些值会进入 JSONL `meta`，属于外部可观察契约，必须用冻结矩阵测试守住。
 
 RPL 是 peeka 在异步/协程框架下生存的基础设施。其设计合同必须在源代码和测试中同时清晰表达，任何"现态检测"的语义都属于反模式，应交由真正的端到端 chaos 用例覆盖。
+
+
+事故 #5（v0.1.21）再次说明：仅“捕获原始引用”并不足以保证原生性——`threading.RLock` 工厂与 `threading.Event` 内部 Condition 仍会取到被 patch 的实现；完整性检查必须断言发放对象的类型与来源。
+
+---
+
+## 事故 #5：RPL 在 gevent 下发放绿色锁且 integrity_check 恒为 ok
+
+> **Tag 范围**：`v0.1.20` → `v0.1.21` | **严重级别**：SEV-2 | **日期**：2026-11-08
+
+### 概要
+
+在真实 gevent 26.9 下验证发现：`threading` 被 patch 后，RPL 的 `allocate_rlock()` 返回基于 gevent 锁的纯 Python `threading._RLock`，`create_event()` 返回的 `threading.Event` 也在 gevent 化的 Condition 上等待，peeka agent 线程可能阻塞在 greenlet 感知的锁上。同时 `integrity_check` 只检查原语非空且可调用，而捕获失败时总会回退到当前模块属性，因此结果实际上恒为 `ok=true`——eventlet 预先 patch 时 RPL 持有的是绿色实现却仍报告健康。
+
+### 根因分析
+
+#### 类别
+Dependency Issue / Missing Validation
+
+#### 分析
+- `threading.RLock` 是工厂函数，gevent patch 后会返回 `_PyRLock`；`threading.Event` 即便通过 `get_original` 拿到原始类，其内部 `Condition` 仍从已被 patch 的 `threading` 全局取锁。RPL 原实现只保证"捕获了函数引用"，没有保证"发放的对象是 C 运行时实现"。
+- `integrity_check` 的判断条件与"原生性"无关：captured 引用总存在，所以无法检测降级。这与本话题 #1（自创身份判断）属于同一类问题：**完整性检查必须检查真正关心的不变量**。
+
+#### 致因提交
+
+| 提交 | 作者 | 日期 | 描述 |
+|------|------|------|------|
+| `0bc114c` | lufeihaidao | 2026-05-17 | feat(runtime): add RPL primitives module with eager capture |
+
+### 复现
+
+#### 前置条件
+- 目标进程已执行 `gevent.monkey.patch_all()`（或 eventlet `monkey_patch()`）后再 attach。
+
+#### 步骤
+1. attach 目标进程并查询 patch status / `rpl_integrity`。
+2. 检查 RPL 发放的 rlock / event 类型。
+
+#### 预期行为
+RPL 发放 `_thread` 原生类型；捕获降级时 `integrity_check` 报告并指明回退来源。
+
+#### 实际行为
+发放 gevent/eventlet 实现，`integrity_check` 仍为 `ok=true`。
+
+### 修复
+
+#### 修复提交
+
+| 提交 | 作者 | 日期 | 描述 |
+|------|------|------|------|
+| [`a7ca456`](https://github.com/peeka-project/peeka/commit/a7ca456) | lufeihaidao | 2026-11-08 | fix(core): keep RPL rlock and event native under gevent |
+| [`a0ef19d`](https://github.com/peeka-project/peeka/commit/a0ef19d) | lufeihaidao | 2026-11-08 | fix(core): verify native identity in RPL integrity_check |
+
+#### 变更内容
+- `allocate_rlock()` 改用 C 实现的 `_thread.RLock`（gevent 不会替换），失败时回退到捕获的 `threading.RLock` 工厂；`LockFactory.create_rlock` 委托给它。
+- `create_event()` 返回仅基于 `_NATIVE_ALLOCATE_LOCK` 构建的 `_NativeEvent`，提供 peeka 用到的 `threading.Event` 接口。
+- `*_native` 语义改为"发放的原语是 C 运行时实现"：捕获函数必须是 C builtin，新分配的 lock/rlock/event 必须是 `_thread` 类型；新增 `capture_source` 字段说明每个原语的来源（`gevent.get_original` / `module_attr` / `_socket`）；移除恒为真的 `captured_at_import`。
+- 文档说明 `ok` 与 `stdlib_origin` 的区别，并明确 eventlet 仅被检测、不被保护。
+
+#### 验证
+新增针对真实 gevent / eventlet 的子进程测试（未安装时跳过）。
+
+### 影响
+
+- **受影响用户**：在 gevent/eventlet 应用上使用 peeka 的用户。
+- **持续时间**：v0.1.14（RPL 引入）至 v0.1.21。
+- **数据影响**：无；风险为 agent 线程被 greenlet 调度阻塞，以及健康状态误报。
+
+### 经验教训
+
+#### 可以改进的方面
+- 只用 mock 验证 monkey-patch 场景不足以发现工厂函数与 Condition 内部取锁的行为。
+
+#### 行动项
+
+| 行动 | 优先级 | 状态 |
+|------|--------|------|
+| 在 CI 中安装 gevent/eventlet 以运行真实子进程测试 | P1 | 待处理 |
+
+### 预防
+
+- **立即执行**：完整性检查必须断言对象类型/来源，而不是引用存在性。
+- **短期**：对 RPL 新增原语时同步增加真实 monkey-patch 环境测试。
+- **长期**：将 RPL 原语清单与 `capture_source` 纳入诊断输出的稳定契约。
 
 ---
 

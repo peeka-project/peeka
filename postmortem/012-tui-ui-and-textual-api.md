@@ -5,13 +5,14 @@
 | **话题** | TUI 样式可用性、Textual API 兼容、DataTable/TraceView 交互细节缺陷 |
 | **受影响组件** | tui/views, tui/screens, tui/app CSS, tui/views/trace.py |
 | **最高严重级别** | SEV-1 (High) |
-| **事故次数** | 7 |
-| **时间跨度** | 2026-02-07 至 2026-07-04 |
+| **事故次数** | 8 |
+| **时间跨度** | 2026-02-07 至 2026-11-07 |
 
 ## 案例索引
 
 | # | 事故 | 严重级别 | 日期 |
 |---|------|----------|------|
+| [#8](#事故-8tui-焦点链断裂导致视图快捷键失效与按键误触) | TUI 焦点链断裂导致视图快捷键失效与按键误触 | SEV-2 | 2026-11-07 |
 | [#7](#事故-7traceview-活动追踪状态选择与参数语义漂移) | TraceView 活动追踪状态、选择与参数语义漂移 | SEV-2 | 2026-07-04 |
 | [#6](#事故-6自动滚动抢占光标用户无法稳定浏览历史) | 自动滚动抢占光标，用户无法稳定浏览历史 | SEV-2 | 2026-03-06 |
 | [#5](#事故-5helpwatchtrace-残留-lsp-错误签名api-未同步) | help/watch/trace 残留 LSP 错误（签名/API 未同步） | SEV-3 | 2026-02-14 |
@@ -27,6 +28,82 @@
 该话题涵盖 TUI 维度的四类问题：其一，Textual API 升级导致的兼容性断裂；其二，DataTable 更新 API 误用引发渲染异常；其三，UI/交互细节（样式、自动滚动）降低可用性；其四，TraceView 在活动追踪状态、表格选择、聚合节点数据和命令参数语义上的契约漂移。问题具有“跨视图复制扩散”和“UI 状态与 Agent 资源状态分离不足”的特征，说明组件级模式沉淀与回归测试覆盖仍需加强。
 
 2026-07-04 的新增事故说明，流式 TUI 不仅要渲染 observation，还要把用户选择、后台 worker、Agent resource、表格行状态和快捷键行为作为同一个状态机验证。否则 Clear 看似只是清 UI，实际没有停止 trace；新 trace 启动后没有自动选中，用户看不到第一条 observation；`min_duration` 还会因 `int()` 解析而拒绝合法小数。
+
+
+事故 #8 表明 Textual 的焦点模型本身就是交互契约的一部分：视图绑定只有在焦点位于视图内时才生效，标签栏、Esc、Enter 的语义必须和视图绑定一起设计与测试。
+
+---
+
+## 事故 #8：TUI 焦点链断裂导致视图快捷键失效与按键误触
+
+> **Tag 范围**：`v0.1.20` → `v0.1.21` | **严重级别**：SEV-2 | **日期**：2026-11-07
+
+### 概要
+
+切换标签页或在输入框按 Esc 后焦点被清空，定义在视图上的快捷键（Delete = Stop All、r = Refresh 等）不再生效，也不会出现在 footer 中；首次 Tab 落在标签栏上，期间输入的字母被当作标签快捷键（t → Timeline、p → Profile）；输入框内 Enter 不触发视图动作；输入框内 Esc 直接触发 detach。
+
+### 根因分析
+
+#### 类别
+Logic Error（焦点模型）
+
+#### 分析
+Textual 只把按键分发给焦点所在 widget 及其祖先。peeka 的视图本身不可聚焦，绑定定义在视图上，一旦焦点被清空，按键直接冒泡到 `MainScreen`，视图绑定既不触发也不显示。标签栏可聚焦又引入了额外的焦点停留点，并与单字母标签快捷键冲突。Esc / Enter 在输入框中的语义（退出输入 vs. detach、提交视图动作）未被显式定义。
+
+这与本话题 #7 相同：交互状态只在 UI 层局部处理，没有作为整体状态机验证。
+
+#### 致因提交
+致因提交无法确定性定位；问题随视图/标签页结构调整（`e48a39d` 合并 Performance 标签、`334483c` 命令面板）而集中暴露。
+
+### 复现
+
+#### 步骤
+1. 打开 TUI，按数字键切换到 Watch 标签页。
+2. 按 Delete 或 r。
+3. 按 Tab，再输入字母 `t`。
+
+#### 预期行为
+Delete/r 触发视图动作；一次 Tab 进入视图输入框，字母写入输入框。
+
+#### 实际行为
+快捷键无效；Tab 落在标签栏，字母 `t` 切换到 Timeline。
+
+### 修复
+
+#### 修复提交
+
+| 提交 | 作者 | 日期 | 描述 |
+|------|------|------|------|
+| [`dc33d50`](https://github.com/peeka-project/peeka/commit/dc33d50) | lufeihaidao | 2026-11-07 | fix(tui): leave text entry on Esc before detaching |
+| [`a0cc6fc`](https://github.com/peeka-project/peeka/commit/a0cc6fc) | lufeihaidao | 2026-11-07 | fix(tui): start the view action on Enter inside an input |
+| [`e59e2e7`](https://github.com/peeka-project/peeka/commit/e59e2e7) | lufeihaidao | 2026-11-07 | fix(tui): keep the main tab strip out of the focus chain |
+| [`9b9eeee`](https://github.com/peeka-project/peeka/commit/9b9eeee) | lufeihaidao | 2026-11-08 | fix(tui): focus the active view so its key bindings work |
+
+#### 变更内容
+- 主标签栏设为不可聚焦：切换后一次 Tab 即聚焦视图首个输入框，无焦点时数字键仍可切换标签。
+- 每个视图可聚焦，并在标签激活和 Esc 离开输入框时获得焦点；视图未绑定的按键（数字、q、Esc）仍冒泡至 `MainScreen`。
+- 输入框内 Esc 先退出文本输入，再次 Esc 才 detach；输入框内 Enter 启动视图动作。
+
+#### 验证
+`tests/tui/test_main_input_keys.py` 新增焦点与按键分发测试。
+
+### 影响
+
+- **受影响用户**：所有 TUI 用户。
+- **数据影响**：无；误触 Esc 可能意外 detach。
+
+### 经验教训
+
+#### 行动项
+
+| 行动 | 优先级 | 状态 |
+|------|--------|------|
+| 为每个视图的绑定增加"切换标签后立即可用"的测试 | P1 | 待处理 |
+
+### 预防
+
+- **立即执行**：新增视图绑定时验证其在标签切换和 Esc 之后仍可触发。
+- **短期**：在 `tui-ux-guardrails` 中写明焦点模型（视图可聚焦、标签栏不可聚焦、Esc/Enter 语义）。
 
 ---
 

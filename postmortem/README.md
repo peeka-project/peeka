@@ -1,6 +1,6 @@
 # Postmortem 索引
 
-生成日期：2026-07-05
+生成日期：2026-11-09
 
 ## 话题列表
 
@@ -9,33 +9,35 @@
 | [001](./001-docs-gh-pages.md) | 文档与 GitHub Pages 构建/链接/主题问题 | SEV-0 | docs, gh-pages | 6 | 2026-03-18 |
 | [002](./002-tui-memory-view.md) | TUI Memory View 布局、GC 表格、刷新与交互 | SEV-1 | tui | 13 | 2026-03-10 |
 | [003](./003-tui-autocomplete.md) | TUI 自动补全：缓存、触发、光标、`__main__` | SEV-2 | tui | 5 | 2026-03-05 |
-| [004](./004-streaming-client-concurrency.md) | StreamingAgentClient 并发与 BrokenPipe | SEV-1 | core | 6 | 2026-03-10 |
+| [004](./004-streaming-client-concurrency.md) | StreamingAgentClient 并发与 BrokenPipe | SEV-1 | core | 8 | 2026-11-08 |
 | [005](./005-tui-threading-and-lifecycle.md) | TUI 线程模型、主线程阻塞与关机生命周期 | SEV-1 | tui | 9 | 2026-06-23 |
 | [006](./006-attach-and-agent-lifecycle.md) | 进程 Attach 就绪探测与 Agent 生命周期 | SEV-0 | core | 10 | 2026-06-25 |
 | [007](./007-gdb-injection-and-python38.md) | GDB 注入路径与 Python 3.8 兼容性 | SEV-1 | core | 4 | 2026-03-24 |
 | [008](./008-injector-and-tracing.md) | DecoratorInjector 实例方法、`__main__` 解析与 trace 调用树 | SEV-1 | core, commands | 4 | 2026-07-04 |
 | [009](./009-cli-commands-and-payloads.md) | CLI 命令分发、参数键与 JSONL payload 契约漂移 | SEV-1 | cli, core | 9 | 2026-06-25 |
-| [010](./010-top-profiling.md) | Top 命令线程过滤、TopView 并发与 Agent 响应帧竞态 | SEV-1 | core, tui | 5 | 2026-04-26 |
+| [010](./010-top-profiling.md) | Top 命令线程过滤、TopView 并发与 Agent 响应帧竞态 | SEV-1 | core, tui | 6 | 2026-07-17 |
 | [011](./011-docker-build-and-images.md) | Docker 镜像构建、镜像源与容器进程模型 | SEV-2 | docker | 5 | 2026-03-01 |
-| [012](./012-tui-ui-and-textual-api.md) | TUI 样式、DataTable API 与 Textual 兼容 | SEV-1 | tui | 7 | 2026-07-04 |
+| [012](./012-tui-ui-and-textual-api.md) | TUI 样式、DataTable API 与 Textual 兼容 | SEV-1 | tui | 8 | 2026-11-07 |
 | [013](./013-tests-and-examples.md) | 测试期望、demo 日志与测试维护 | SEV-2 | tests | 4 | 2026-06-07 |
 | [014](./014-security-safeeval.md) | simpleeval 异常处理与 fail-closed 安全机制 | SEV-0 | core | 1 | 2026-01-29 |
 | [015](./015-basecommand-and-command-system.md) | BaseCommand 缺少 agent 参数 | SEV-1 | commands | 1 | 2026-02-05 |
 | [016](./016-dependencies.md) | 依赖配置问题：版本约束不兼容与格式废弃 | SEV-3 | dependencies | 2 | 2026-04-12 |
-| [017](./017-rpl-primitives-rollout.md) | Runtime Primitives Layer (RPL) 的引入与稳定化 | SEV-1 | core | 4 | 2026-05-26 |
-| [018](./018-watch-stacking-and-orphans.md) | Watch 嵌套堆叠与孤立清理 | SEV-1 | core | 4 | 2026-06-15 |
-| [019](./019-trace-sanitization-and-gevent.md) | Trace 数据清理与 Gevent 检测 | SEV-1 | core, commands | 2 | 2026-06-13 |
+| [017](./017-rpl-primitives-rollout.md) | Runtime Primitives Layer (RPL) 的引入与稳定化 | SEV-1 | core | 5 | 2026-11-08 |
+| [018](./018-watch-stacking-and-orphans.md) | Watch 嵌套堆叠与孤立清理 | SEV-1 | core | 5 | 2026-11-08 |
+| [019](./019-trace-sanitization-and-gevent.md) | Trace 数据清理与 Gevent 检测 | SEV-1 | core, commands | 3 | 2026-11-07 |
 | [020](./020-agent-observation-queue.md) | Agent 观测队列与序列化性能 | SEV-1 | core | 2 | 2026-06-13 |
 | [021](./021-process-discovery-and-runtime-environment.md) | 进程发现与运行时环境适应性 | SEV-2 | core, runtime | 1 | 2026-06-24 |
+| [022](./022-release-pipeline-and-wheels.md) | 发布流水线、wheel 构建矩阵与工具版本漂移 | SEV-1 | ci, packaging | 2 | 2026-11-09 |
 
 ## 统计
 
-- **话题总数**：21
-- **事故总次数**：104
-- **按最高严重级别**：SEV-0: 3, SEV-1: 13, SEV-2: 4, SEV-3: 1, SEV-4: 0
+- **话题总数**：22
+- **事故总次数**：112
+- **按最高严重级别**：SEV-0: 3, SEV-1: 14, SEV-2: 4, SEV-3: 1, SEV-4: 0
 - **按组件**：
   - core: 9 个话题（004, 006, 007, 008, 014, 017, 018, 019, 020, 021）
   - tui: 7 个话题（002, 003, 005, 010, 012, 013, 018）
+  - ci/packaging: 1 个话题（022）
   - cli: 1 个话题（009）
   - docker: 1 个话题（011）
   - docs: 1 个话题（001）
@@ -45,16 +47,17 @@
   - Race Condition: 话题 004, 006, 010, 020
   - Logic Error: 话题 008, 009, 010, 014, 018, 019, 020
   - Missing Validation: 话题 002, 005, 009, 018
-  - Configuration Error: 话题 001, 002, 009, 011, 016
+  - Configuration Error: 话题 001, 002, 009, 011, 016, 022
   - Type Error: 话题 007, 019
   - Regression: 话题 001, 003, 012, 013
   - Integration Error: 话题 004, 015
   - Resource Management: 话题 006
   - Environment Assumption / Missing Fallback: 话题 021
-- **最近一次分析范围**：`v0.1.19..HEAD`
-- **分析的 fix 提交总数**：18
-- **入选事故组块数**：2
-- **跳过/合并的 fix 提交数**：16
+  - Dependency Issue: 话题 017, 022
+- **最近一次分析范围**：`v0.1.20..v0.1.21`
+- **分析的 fix 提交总数**：51
+- **入选事故组块数**：8
+- **跳过/合并的 fix 提交数**：43
 
 ## 共性问题
 
@@ -66,11 +69,20 @@
 - **TUI ↔ Agent 契约稳定性**（话题 009, 015）— 命令参数与输出契约漂移仍是回归主因。
 - **Trace 输出模型迁移的跨层契约同步**（话题 008）— `children` → `direct_callees` 的 schema 变更需要同时收敛 backend、CLI、TUI drill-down 和文档示例，否则会出现公开字段漂移和深度栈不变量缺口。
 - **流式 TUI 资源与选择状态一致性**（话题 012）— Clear、自动选择、参数解析等交互不能只操作 UI 层，必须和 Agent 端 active resource、后台 stream worker 作为同一状态机验证。
+- **慢消费者与锁内调用**（话题 004, 018）— v0.1.21 暴露两类“一个组件卡住拖垮全局”的模式：agent 对不读取的连接做无界阻塞写，以及 wrapper 在持有不可重入锁时调用下一层 wrapper。写出必须有界，锁内只做决策、锁外调用。
+- **发布流水线的隐式外部假设**（话题 022）— runner 标签下线、wheel 与发布工作流互不依赖、CI 工具不锁版本，都只在 tag 推送时暴露。
 
 ## 最近更新
 
 | 日期 | 话题 | 事故 | 变更说明 |
 |------|------|------|----------|
+| 2026-11-09 | [022](./022-release-pipeline-and-wheels.md) | #1-2 | 新增话题：PyPI 只发布单一 glibc 2.34 wheel、CI 未锁定 ruff 导致 release gate 失败（v0.1.21） |
+| 2026-11-09 | [004](./004-streaming-client-concurrency.md) | #8 | 新增事故：不读取的连接阻塞 agent 日志广播（v0.1.21） |
+| 2026-11-09 | [018](./018-watch-stacking-and-orphans.md) | #5 | 新增事故：已停止 trace wrapper 持锁调用导致死锁（v0.1.21） |
+| 2026-11-09 | [017](./017-rpl-primitives-rollout.md) | #5 | 新增事故：RPL 在 gevent 下发放绿色锁、integrity_check 恒为 ok（v0.1.21） |
+| 2026-11-09 | [012](./012-tui-ui-and-textual-api.md) | #8 | 新增事故：TUI 焦点链断裂导致快捷键失效（v0.1.21） |
+| 2026-11-09 | [019](./019-trace-sanitization-and-gevent.md) | #3 | 新增事故：gevent trace 策略收窄后丢失 runtime_meta（v0.1.21） |
+| 2026-11-09 | [010](./010-top-profiling.md) | #6 | 新增事故：Profile 子系统开发期生命周期与并发缺陷（v0.1.21） |
 | 2026-07-04 | [012](./012-tui-ui-and-textual-api.md) | #7 | 新增事故：TraceView 活动追踪状态、选择与参数语义漂移（v0.1.20） |
 | 2026-07-04 | [008](./008-injector-and-tracing.md) | #4 | 新增事故：Trace 直接被调函数聚合与 stdlib 跳过栈不变量漂移（v0.1.20） |
 | 2026-06-25 | [021](./021-process-discovery-and-runtime-environment.md) | #1 | 新增话题：sudo 环境下 pycache 写入失败与 /proc 不可用时进程发现中断（v0.1.19） |
