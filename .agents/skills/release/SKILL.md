@@ -53,7 +53,7 @@ pip index versions peeka
 The release process consists of 6 phases executed sequentially. Each phase must succeed before proceeding to the next.
 
 ```
-Phase 1: Parse & Validate Input
+Phase 1: Parse & Validate Input (incl. unpushed commit review + release gate)
   ↓
 Phase 2: Pre-release Postmortem Check (regression prevention gate)
   ↓
@@ -223,7 +223,147 @@ fi
 ✓ Version files in sync
 ```
 
-### 1.4 Release Gate: Run the CI-equivalent Local Check
+### 1.4 Review Unpushed Commits for Squashing
+
+Before the release gate, check whether local commits that have **not been pushed yet** should be combined, so the released history stays readable. This step only proposes; the user decides.
+
+**Scope — unpushed commits only**:
+```bash
+git fetch origin master
+git log --reverse --format='%h %s' origin/master..HEAD
+```
+
+- Never rewrite commits that are already on `origin/master` (or any tag): that would require a force push of the main branch.
+- If `origin/master..HEAD` is empty, print `✓ No unpushed commits — skipping commit review` and continue to 1.5.
+- Skip merge commits; if the unpushed range contains a merge commit, report it and do not rebase across it.
+
+**Find squash candidates** (read `git show --stat <hash>` for each, and the diff when unsure):
+
+| Candidate | Signal |
+|-----------|--------|
+| Follow-up fix to an unpushed commit | Same files/scope, message like "fix …", "address review", "follow-up" right after the commit it repairs |
+| Lint / format / typo only | Only ruff, import order, whitespace or spelling changes to code from another unpushed commit |
+| Test-only patch for an unpushed change | Fixes or adjusts tests added by a nearby unpushed commit |
+| Repeated tiny tweaks | Several commits adjusting the same threshold, string or style (see the "提交粒度规则" in `CLAUDE.md` / `AGENTS.md`) |
+
+Do **not** propose squashing:
+- Commits with different intents, even in the same module (one commit should express one intent).
+- A `fix:` that repairs a bug which already shipped — it must stay visible for Phase 6 postmortem analysis.
+- Commits that touch unrelated areas just because they are small.
+
+**Report and ask**:
+```
+=== Unpushed Commit Review ===
+Unpushed commits: N (origin/master..HEAD)
+
+Proposed squash groups:
+  [1] abc1234 feat(profile): add exact backend
+      └─ def5678 fix(profile): fix ruff re-exports in exact backend   (lint follow-up)
+  [2] 1112223 fix(tui): keep tab strip out of focus chain
+      └─ 4445556 test(tui): adjust focus test for tab strip           (test follow-up)
+
+Left as-is: M commits
+```
+
+Present the groups to the user and ask which (if any) to apply. If there are no candidates, print `✓ Unpushed commit review: nothing to squash` and continue. Do not squash without the user's confirmation.
+
+**Apply confirmed groups** (non-interactive; `git rebase -i` cannot be driven interactively here, so a small helper edits the rebase todo). Write the helper to the system temp dir — not into the repository:
+
+```bash
+squash_helper="$(python3 -c 'import tempfile; print(tempfile.gettempdir())')/peeka_squash_todo.py"
+cat > "$squash_helper" <<'PY'
+#!/usr/bin/env python3
+"""GIT_SEQUENCE_EDITOR helper: turn approved follow-up commits into fixups.
+
+Usage (from the repo root):
+    SQUASH_GROUPS="abc1234:def5678,9990001 1112223:4445556" \
+    GIT_SEQUENCE_EDITOR="python3 $squash_helper" \
+    git rebase -i "$(git merge-base origin/master HEAD)"
+
+SQUASH_GROUPS is a space-separated list of ``target:fixup[,fixup...]`` groups
+(short or full hashes). Each fixup line is moved directly after its target and
+changed from ``pick`` to ``fixup``, keeping the target's commit message.
+Commits not mentioned keep their original order.
+"""
+
+import os
+import sys
+from typing import Dict, List
+
+
+def _matches(line_hash: str, wanted: str) -> bool:
+    return line_hash.startswith(wanted) or wanted.startswith(line_hash)
+
+
+def main(todo_path: str) -> int:
+    groups: Dict[str, List[str]] = {}
+    for group in os.environ.get("SQUASH_GROUPS", "").split():
+        target, _, fixups = group.partition(":")
+        groups[target] = [f for f in fixups.split(",") if f]
+    if not groups:
+        print("SQUASH_GROUPS is empty; leaving the todo unchanged", file=sys.stderr)
+        return 0
+
+    with open(todo_path, encoding="utf-8") as fh:
+        lines = fh.read().splitlines()
+
+    picks = [l for l in lines if l.startswith("pick ")]
+    rest = [l for l in lines if not l.startswith("pick ")]
+
+    def find(wanted: str) -> str:
+        hits = [l for l in picks if _matches(l.split()[1], wanted)]
+        if len(hits) != 1:
+            raise SystemExit(f"commit {wanted!r} matched {len(hits)} todo lines")
+        return hits[0]
+
+    fixup_lines = {}
+    for target, fixups in groups.items():
+        find(target)
+        fixup_lines[target] = [find(f) for f in fixups]
+    moved = {l for ls in fixup_lines.values() for l in ls}
+
+    out: List[str] = []
+    for line in picks:
+        if line in moved:
+            continue
+        out.append(line)
+        for target, fls in fixup_lines.items():
+            if _matches(line.split()[1], target):
+                out.extend("fixup " + l[len("pick "):] for l in fls)
+
+    with open(todo_path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(out + rest) + "\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1]))
+PY
+```
+
+Then run the rebase:
+
+```bash
+base=$(git merge-base origin/master HEAD)
+backup="backup/pre-release-squash-$(date +%Y%m%d%H%M%S)"
+git branch "$backup"          # safety net; delete after a successful release
+
+# One "target:fixup[,fixup...]" group per approved squash group.
+# Each fixup is moved right after its target and folded in with the target's message.
+SQUASH_GROUPS="abc1234:def5678 1112223:4445556" \
+GIT_SEQUENCE_EDITOR="python3 $squash_helper" \
+  git rebase -i "$base"
+```
+
+`fixup` keeps the target commit's message. If the combined commit needs a better message and it is the tip, use `git commit --amend -m "<message>"`; otherwise keep the target's message rather than adding another rebase.
+
+**After squashing**:
+- `git log --oneline origin/master..HEAD` — confirm the new history matches the approved groups.
+- `git diff "$backup" HEAD` — must be empty (squashing must not change the tree).
+- If a rebase conflict happens, run `git rebase --abort`, report it, and continue the release without squashing.
+- Continue to 1.5; the release gate then runs on the final history.
+
+### 1.5 Release Gate: Run the CI-equivalent Local Check
 
 Before changing versions or creating tags, run the repository release gate:
 
@@ -721,6 +861,9 @@ Summary:
 | Working directory has uncommitted changes | Error, abort | `Error: Working directory has uncommitted changes: M file.py` |
 | Not on `master` branch | Error, abort | `Error: Must be on master branch (currently on develop)` |
 | Version mismatch between files | Error, abort | `Error: Version mismatch between files` |
+| Unpushed commits contain follow-up fixes | Propose squash groups, apply only the ones the user approves | `Proposed squash groups: [1] ...` |
+| No unpushed commits | Skip the commit review | `✓ No unpushed commits — skipping commit review` |
+| Rebase conflict while squashing | `git rebase --abort`, keep history, continue release | `Warning: squash aborted (conflict); releasing without squashing` |
 | Network error during push | Error, retry | `Error: Failed to push to origin. Check network connection.` |
 | GitHub Actions workflow fails before PyPI publish | Fix, commit, move local tag, force-update the same tag | `git tag -f -a vX.Y.Z -m "Release vX.Y.Z"` then `git push --force ... vX.Y.Z` |
 | GitHub Actions workflow fails after PyPI publish succeeds | Do not reuse the version; fix and bump a new patch version | `Error: vX.Y.Z already published to PyPI; release vX.Y.(Z+1)` |
@@ -878,6 +1021,7 @@ $ /release minor
 ✓ Working directory clean
 ✓ On master branch
 ✓ Version files in sync
+✓ Unpushed commit review: nothing to squash
 ✓ bash scripts/release_check.sh passed
 
 # === Phase 2: Pre-release Postmortem Check ===
