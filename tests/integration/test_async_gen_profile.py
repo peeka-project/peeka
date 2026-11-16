@@ -37,7 +37,7 @@ class TestAsyncGenProfile:
             injector = DecoratorInjector(agent)
 
             watch_id = injector.inject(
-                "test_module_asyncgen.stream_items", {"depth": 2, "times": -1}
+                "test_module_asyncgen.stream_items", {"depth": 2, "times": -1, "emit_execution_profile_stdout": True}
             )
 
             stdout_capture = io.StringIO()
@@ -88,7 +88,7 @@ class TestAsyncGenProfile:
             injector = DecoratorInjector(agent)
 
             watch_id = injector.inject(
-                "test_module_asyncgen_aclose.stream_items", {"depth": 2, "times": -1}
+                "test_module_asyncgen_aclose.stream_items", {"depth": 2, "times": -1, "emit_execution_profile_stdout": True}
             )
 
             stdout_capture = io.StringIO()
@@ -145,7 +145,7 @@ class TestCoroutineProfile:
             injector = DecoratorInjector(agent)
 
             watch_id = injector.inject(
-                "test_module_coro.simple_coro", {"depth": 2, "times": -1}
+                "test_module_coro.simple_coro", {"depth": 2, "times": -1, "emit_execution_profile_stdout": True}
             )
 
             stdout_capture = io.StringIO()
@@ -195,7 +195,7 @@ class TestCoroutineProfile:
             injector = DecoratorInjector(agent)
 
             watch_id = injector.inject(
-                "test_module_shield.shielded_coro", {"depth": 2, "times": -1}
+                "test_module_shield.shielded_coro", {"depth": 2, "times": -1, "emit_execution_profile_stdout": True}
             )
 
             stdout_capture = io.StringIO()
@@ -223,3 +223,29 @@ class TestCoroutineProfile:
 
         finally:
             del sys.modules["test_module_shield"]
+
+
+@pytest.mark.asyncio
+async def test_async_watch_default_stdout_is_empty():
+    async def coroutine():
+        return 42
+
+    async def stream():
+        yield 42
+
+    module = type(sys)("test_default_async_stdout")
+    module.coroutine = coroutine
+    module.stream = stream
+    sys.modules[module.__name__] = module
+    injector = DecoratorInjector(MockAgent())
+    try:
+        injector.inject(module.__name__ + ".coroutine", {})
+        injector.inject(module.__name__ + ".stream", {})
+        capture = io.StringIO()
+        with redirect_stdout(capture):
+            assert await module.coroutine() == 42
+            assert [item async for item in module.stream()] == [42]
+        assert capture.getvalue() == ""
+    finally:
+        injector.uninject_all()
+        sys.modules.pop(module.__name__, None)

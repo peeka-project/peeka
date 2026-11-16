@@ -85,31 +85,43 @@ class DecoratorInjector(
         Raises:
             ValueError: If target function cannot be found
         """
-        # Resolve target
-        target_info = self._resolve_target(pattern)
-        if target_info is None:
-            raise ValueError(f"Cannot find target: {pattern}")
-
-        target_func, parent_obj, attr_name = target_info
-        alias_bindings = self._find_module_aliases(target_func, parent_obj, attr_name)
-        is_coroutine_function = inspect.iscoroutinefunction(target_func)
-
-        # Generate watch ID
-        watch_id = self._generate_watch_id()
-
-        # Detect if this is an instance method (parent is a class)
-        is_instance_method = inspect.isclass(parent_obj)
-        watch_config["_is_instance_method"] = is_instance_method
-
-        # Create wrapper
-        wrapper = self._create_wrapper(target_func, watch_id, watch_config)
-        stored_config = {
-            key: value for key, value in watch_config.items() if key != "_probe_context"
-        }
-
         with self._lock:
+            # Resolve target
+            target_info = self._resolve_target(pattern)
+            if target_info is None:
+                raise ValueError(f"Cannot find target: {pattern}")
+
+            target_func, parent_obj, attr_name = target_info
+            descriptor_kind, raw_descriptor, defined_in_dict = self._inspect_descriptor(
+                parent_obj, attr_name
+            )
+            alias_bindings = self._find_module_aliases(target_func, parent_obj, attr_name)
+            is_coroutine_function = inspect.iscoroutinefunction(target_func)
+
+            # Generate watch ID
+            watch_id = self._generate_watch_id()
+
+            # Detect if this is an instance method (parent is a class)
+            is_instance_method = (
+                inspect.isclass(parent_obj) and descriptor_kind != "staticmethod"
+            )
+            watch_config = dict(watch_config)
+            watch_config["_is_instance_method"] = is_instance_method
+
+            # Create wrapper
+            wrapper = self._create_wrapper(target_func, watch_id, watch_config)
+            stored_config = {
+                key: value for key, value in watch_config.items() if key != "_probe_context"
+            }
+
             # Store original function info for restoration
             info = {
+                "descriptor_kind": descriptor_kind,
+                "raw_descriptor": raw_descriptor,
+                "defined_in_dict": defined_in_dict,
+                "root_descriptor_kind": descriptor_kind,
+                "root_raw_descriptor": raw_descriptor,
+                "root_defined_in_dict": defined_in_dict,
                 "pattern": pattern,
                 "original": target_func,
                 "wrapper": wrapper,
@@ -153,10 +165,12 @@ class DecoratorInjector(
             self.instrumented[watch_id] = info
 
             # Replace the function
-            self._replace_function(parent_obj, attr_name, wrapper)
+            self._replace_function(
+                parent_obj, attr_name, wrapper, descriptor_kind=descriptor_kind
+            )
             self._replace_aliases(alias_bindings, wrapper)
 
-        return watch_id
+            return watch_id
 
     def _get_watch_wrapper_group(
         self, target_func: Callable[..., Any]
@@ -207,30 +221,37 @@ class DecoratorInjector(
         Raises:
             ValueError: If target function cannot be found
         """
-        # Resolve target
-        target_info = self._resolve_target(pattern)
-        if target_info is None:
-            raise ValueError(f"Cannot find target: {pattern}")
-
-        target_func, parent_obj, attr_name = target_info
-        alias_bindings = self._find_module_aliases(target_func, parent_obj, attr_name)
-
-        # Generate watch ID
-        watch_id = f"trace_{uuid.uuid4().hex[:8]}"
-
-        # Detect if this is an instance method
-        is_instance_method = inspect.isclass(parent_obj)
-        trace_config["_is_instance_method"] = is_instance_method
-        if force_backend is not None:
-            trace_config["_force_backend"] = force_backend
-
-        # Create trace wrapper
-        wrapper = self._create_trace_wrapper(target_func, watch_id, trace_config)
-        stored_config = {
-            key: value for key, value in trace_config.items() if key != "_probe_context"
-        }
-
         with self._lock:
+            # Resolve target
+            target_info = self._resolve_target(pattern)
+            if target_info is None:
+                raise ValueError(f"Cannot find target: {pattern}")
+
+            target_func, parent_obj, attr_name = target_info
+            descriptor_kind, raw_descriptor, defined_in_dict = self._inspect_descriptor(
+                parent_obj, attr_name
+            )
+            alias_bindings = self._find_module_aliases(target_func, parent_obj, attr_name)
+
+            # Generate watch ID
+            watch_id = f"trace_{uuid.uuid4().hex[:8]}"
+
+            # Detect if this is an instance method
+            is_instance_method = (
+                inspect.isclass(parent_obj) and descriptor_kind != "staticmethod"
+            )
+            trace_config = dict(trace_config)
+            trace_config["_is_instance_method"] = is_instance_method
+            trace_config["_is_coroutine_function"] = inspect.iscoroutinefunction(target_func)
+            if force_backend is not None:
+                trace_config["_force_backend"] = force_backend
+
+            # Create trace wrapper
+            wrapper = self._create_trace_wrapper(target_func, watch_id, trace_config)
+            stored_config = {
+                key: value for key, value in trace_config.items() if key != "_probe_context"
+            }
+
             shared_group = self._get_active_wrapper_info(target_func)
             if shared_group is None:
                 group_key = (id(parent_obj), str(attr_name))
@@ -247,6 +268,12 @@ class DecoratorInjector(
 
             # Store original function info for restoration
             self.instrumented[watch_id] = {
+                "descriptor_kind": descriptor_kind,
+                "raw_descriptor": raw_descriptor,
+                "defined_in_dict": defined_in_dict,
+                "root_descriptor_kind": descriptor_kind,
+                "root_raw_descriptor": raw_descriptor,
+                "root_defined_in_dict": defined_in_dict,
                 "pattern": pattern,
                 "original": target_func,
                 "wrapper": wrapper,
@@ -262,10 +289,12 @@ class DecoratorInjector(
             }
 
             # Replace the function
-            self._replace_function(parent_obj, attr_name, wrapper)
+            self._replace_function(
+                parent_obj, attr_name, wrapper, descriptor_kind=descriptor_kind
+            )
             self._replace_aliases(alias_bindings, wrapper)
 
-        return watch_id
+            return watch_id
 
     def _create_wrapper(
         self, func: Callable[..., Any], watch_id: str, config: Dict[str, Any]

@@ -1,6 +1,7 @@
 """Instrumentation registry and reset helpers."""
 
 import fnmatch
+import inspect
 import logging
 import time as _time
 import uuid
@@ -79,8 +80,11 @@ class InjectorRegistryMixin:
 
     if TYPE_CHECKING:
         def _replace_function(
-            self, parent: Any, attr_name: str, new_func: Callable[..., Any]
+            self, parent: Any, attr_name: str, new_func: Callable[..., Any],
+            descriptor_kind: Optional[str] = None,
         ) -> None: ...
+
+        def _restore_target_attribute(self, info: Dict[str, Any]) -> None: ...
 
         def _restore_aliases(self, info: Dict[str, Any]) -> None: ...
 
@@ -107,7 +111,7 @@ class InjectorRegistryMixin:
                 self._restore_wrapper_stack(info)
             else:
                 # Restore original function
-                self._replace_function(info["parent"], info["attr_name"], info["original"])
+                self._restore_target_attribute(info)
                 self._restore_aliases(info)
 
             bypass_target = self._bypass_removed_wrapper(info)
@@ -136,10 +140,8 @@ class InjectorRegistryMixin:
                         group_key = info["wrapper_group_key"]
                         if group_key in restored_wrapper_groups:
                             continue
-                        self._replace_function(
-                            info["parent"],
-                            info["attr_name"],
-                            info.get("root_original", info["original"]),
+                        self._restore_target_attribute(
+                            dict(info, original=info.get("root_original", info["original"]))
                         )
                         self._restore_watch_aliases(
                             info,
@@ -149,9 +151,7 @@ class InjectorRegistryMixin:
                         restored_wrapper_groups.add(group_key)
                         continue
 
-                    self._replace_function(
-                        info["parent"], info["attr_name"], info["original"]
-                    )
+                    self._restore_target_attribute(info)
                     self._restore_aliases(info)
                 except Exception:
                     logger.debug(
@@ -376,18 +376,21 @@ class InjectorRegistryMixin:
         group_key = info["wrapper_group_key"]
         remaining = self._active_probe_infos_in_group(group_key)
         current = getattr(info["parent"], info["attr_name"], None)
+        if info.get("descriptor_kind") in ("staticmethod", "classmethod"):
+            raw = inspect.getattr_static(info["parent"], info["attr_name"])
+            current = raw.__func__ if isinstance(raw, (staticmethod, classmethod)) else raw
         removed_wrapper = info.get("wrapper")
 
         if remaining:
             if current is removed_wrapper:
                 replacement = self._live_previous_probe_wrapper(info, remaining)
-                self._replace_function(info["parent"], info["attr_name"], replacement)
+                self._replace_function(info["parent"], info["attr_name"], replacement, descriptor_kind=info.get("descriptor_kind"))
                 self._restore_watch_aliases(info, replacement)
             return
 
         replacement = info.get("root_original", info["original"])
         if current is removed_wrapper:
-            self._replace_function(info["parent"], info["attr_name"], replacement)
+            self._restore_target_attribute(dict(info, original=replacement))
             self._restore_watch_aliases(info, replacement)
 
     def add_wrapper_removed_listener(

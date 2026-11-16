@@ -149,11 +149,14 @@ def _detect_coroutine_marker(coro_obj: Optional[Any]) -> Optional[str]:
 
 
 class ExecutionProfile:
-    """Collect and print async execution profile data once."""
+    """Collect async execution profile data, optionally emitting it to stdout."""
 
     def __init__(
-        self, func_name: str, mode: str, include_marker: bool = False
+        self, func_name: str, mode: str, include_marker: bool = False,
+        emit_stdout: bool = False,
     ) -> None:
+        self.emit_stdout = emit_stdout
+        self.last_profile = None
         self.func_name = func_name
         self.mode = mode
         self.include_marker = include_marker
@@ -213,7 +216,9 @@ class ExecutionProfile:
             profile["marker"] = marker
         if error_msg is not None:
             profile["error"] = error_msg
-        print(json.dumps(profile), flush=True)
+        self.last_profile = profile
+        if self.emit_stdout:
+            print(json.dumps(profile), flush=True)
 
 
 class CallObserver:
@@ -244,8 +249,14 @@ class CallObserver:
             }
             if duration_cost is not None:
                 local_vars["cost"] = duration_cost
-            safe_evaluator.names = local_vars
-            return bool(safe_evaluator.eval(self.factory.condition_express))
+            evaluator = SimpleEval(
+                names=local_vars,
+                functions=safe_evaluator.functions,
+                allowed_attrs=BASIC_ALLOWED_ATTRS,
+            )
+            return bool(evaluator.eval(
+                self.factory.condition_express, self.factory.condition_ast
+            ))
         except Exception:
             return False
 
@@ -372,7 +383,7 @@ class WatchWrapperFactory:
                     "bool": bool,
                 },
             )
-            safe_evaluator.parse(self.condition_express)
+            self.condition_ast = safe_evaluator.parse(self.condition_express)
             return safe_evaluator
         except SyntaxError as e:
             raise ValueError(f"Invalid condition expression: {e}")
@@ -430,7 +441,10 @@ class WatchWrapperFactory:
             if self.before and observer.should_observe():
                 observer.send_observation("AtEnter")
 
-            profile = ExecutionProfile(_format_func_name(func), "async_generator")
+            profile = ExecutionProfile(
+                _format_func_name(func), "async_generator",
+                emit_stdout=bool(self.config.get("emit_execution_profile_stdout", False)),
+            )
             yield_count = 0
             try:
                 async_gen = func(*args, **kwargs)
@@ -526,7 +540,8 @@ class WatchWrapperFactory:
                 observer.send_observation("AtEnter")
 
             profile = ExecutionProfile(
-                _format_func_name(func), "coroutine", include_marker=True
+                _format_func_name(func), "coroutine", include_marker=True,
+                emit_stdout=bool(self.config.get("emit_execution_profile_stdout", False)),
             )
             coroutine_obj = None
             try:

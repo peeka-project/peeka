@@ -103,6 +103,7 @@ well:
 """
 
 import ast
+from contextvars import ContextVar
 import operator as op
 import sys
 import warnings
@@ -479,7 +480,14 @@ class SimpleEval(object):  # pylint: disable=too-few-public-methods
     0
     """
 
-    expr = ""
+    @property
+    def expr(self):
+        """Expression text belongs to the current evaluation context."""
+        return self._expression_context.get()
+
+    @expr.setter
+    def expr(self, value):
+        self._expression_context.set(value)
 
     def __init__(self, operators=None, functions=None, names=None, allowed_attrs=None):
         """
@@ -493,6 +501,7 @@ class SimpleEval(object):  # pylint: disable=too-few-public-methods
         if names is None:
             names = DEFAULT_NAMES.copy()
 
+        self._expression_context = ContextVar("simpleeval_expression", default="")
         self.operators = operators
         self.functions = functions
         self.names = names
@@ -566,9 +575,11 @@ class SimpleEval(object):  # pylint: disable=too-few-public-methods
         names previously set up."""
 
         # set a copy of the expression aside, so we can give nice errors...
-        self.expr = expr
-
-        return self._eval(previously_parsed or self.parse(expr))
+        token = self._expression_context.set(expr)
+        try:
+            return self._eval(previously_parsed or self.parse(expr))
+        finally:
+            self._expression_context.reset(token)
 
     def _eval(self, node):
         """The internal evaluator used on each node in the parsed tree."""

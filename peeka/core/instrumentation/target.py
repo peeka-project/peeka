@@ -1,6 +1,7 @@
 """Target resolution and function replacement helpers."""
 
 import importlib
+import inspect
 import logging
 import sys
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -81,7 +82,11 @@ class InjectorTargetMixin:
                 parent = obj
                 attr_name = attr
                 try:
-                    obj = getattr(obj, attr)
+                    raw_attr = inspect.getattr_static(obj, attr) if inspect.isclass(obj) else None
+                    if j == len(attrs) - 1 and isinstance(raw_attr, (staticmethod, classmethod)):
+                        obj = raw_attr.__func__
+                    else:
+                        obj = getattr(obj, attr)
                 except AttributeError:
                     obj = None
                     break
@@ -91,18 +96,47 @@ class InjectorTargetMixin:
 
         return None
 
-    def _replace_function(
-        self, parent: Any, attr_name: str, new_func: Callable[..., Any]
-    ) -> None:
-        """
-        Replace a function/method on its parent object.
+    def _inspect_descriptor(
+        self, parent_obj: Any, attr_name: str
+    ) -> Tuple[Optional[str], Any, bool]:
+        """Inspect a descriptor, retaining the original slot metadata for stacks."""
+        if not inspect.isclass(parent_obj):
+            return None, None, False
+        raw = inspect.getattr_static(parent_obj, attr_name)
+        kind = (
+            "staticmethod" if isinstance(raw, staticmethod)
+            else "classmethod" if isinstance(raw, classmethod) else None
+        )
+        for info in self.instrumented.values():
+            if info["parent"] is parent_obj and info["attr_name"] == attr_name:
+                return (
+                    info.get("root_descriptor_kind", info.get("descriptor_kind", kind)),
+                    info.get("root_raw_descriptor", info.get("raw_descriptor", raw)),
+                    info.get("root_defined_in_dict", info.get("defined_in_dict", True)),
+                )
+        return kind, raw, attr_name in parent_obj.__dict__
 
-        Args:
-            parent: The parent object (module, class, or instance)
-            attr_name: Name of the attribute to replace
-            new_func: New function to set
-        """
-        setattr(parent, attr_name, new_func)
+    def _replace_function(
+        self, parent_obj: Any, attr_name: str, new_func: Callable[..., Any],
+        descriptor_kind: Optional[str] = None,
+    ) -> None:
+        """Replace a callable while preserving its descriptor binding."""
+        if not isinstance(new_func, (staticmethod, classmethod)):
+            if descriptor_kind == "staticmethod":
+                new_func = staticmethod(new_func)
+            elif descriptor_kind == "classmethod":
+                new_func = classmethod(new_func)
+        setattr(parent_obj, attr_name, new_func)
+
+    def _restore_target_attribute(self, info: Dict[str, Any]) -> None:
+        """Restore the original descriptor, removing inherited-slot overrides."""
+        if info.get("descriptor_kind") in ("staticmethod", "classmethod") and inspect.isclass(info["parent"]):
+            if info.get("defined_in_dict", True):
+                setattr(info["parent"], info["attr_name"], info.get("raw_descriptor", info["original"]))
+            else:
+                delattr(info["parent"], info["attr_name"])
+        else:
+            self._replace_function(info["parent"], info["attr_name"], info["original"])
 
     def _find_module_aliases(
         self, target_func: Callable[..., Any], parent: Any, attr_name: str

@@ -264,3 +264,163 @@ class TestProbeInstrumentation:
             assert probes[0].summary["last_error"] == "boom"
         finally:
             command.execute({"action": "stop"})
+
+
+@pytest.mark.parametrize("kind", ["staticmethod", "classmethod"])
+@pytest.mark.parametrize("inherited", [False, True])
+@pytest.mark.parametrize("stop_order", [(0, 1), (1, 0), None])
+def test_descriptor_watch_restoration(monkeypatch, kind, inherited, stop_order):
+    import inspect
+
+    from peeka.core.injector import DecoratorInjector
+
+    def static(value):
+        return value + 1
+
+    def class_method(cls, value):
+        assert cls is target
+        return value + 1
+
+    descriptor = staticmethod(static) if kind == "staticmethod" else classmethod(class_method)
+    base = type("Base", (), {"method": descriptor})
+    target = type("Child", (base,), {}) if inherited else base
+    module = _install_module("descriptor_watch_module", Target=target)
+    agent = _new_agent()
+    observations = _capture_observations(monkeypatch, agent)
+    injector = DecoratorInjector(agent)
+    try:
+        ids = [injector.inject("descriptor_watch_module.Target.method", {}) for _ in range(2)]
+        assert module.Target.method(10) == 11
+        assert module.Target().method(20) == 21
+        assert [obs["params"] for obs in observations] == [[10], [10], [20], [20]]
+        if kind == "staticmethod":
+            assert all(obs["target"] is None for obs in observations)
+        if stop_order is None:
+            assert injector.uninject_all() == 2
+        else:
+            injector.uninject(ids[stop_order[0]])
+            observations.clear()
+            assert target.method(30) == 31
+            assert target().method(40) == 41
+            assert len(observations) == 2
+            injector.uninject(ids[stop_order[1]])
+        assert inspect.getattr_static(target, "method") is descriptor
+        assert ("method" in target.__dict__) is (not inherited)
+        assert target.method(50) == 51
+        assert target().method(60) == 61
+    finally:
+        injector.uninject_all()
+        sys.modules.pop(module.__name__, None)
+
+
+@pytest.mark.parametrize("trace", [False, True])
+def test_concurrent_inject_is_atomic(monkeypatch, trace):
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+
+    from peeka.core.injector import DecoratorInjector
+
+    module = _install_module("atomic_watch_module", watched=lambda value: value)
+    injector = DecoratorInjector(_new_agent())
+    original = module.watched
+    entered = threading.Event()
+    release = threading.Event()
+    second_started = threading.Event()
+    second_resolved = threading.Event()
+    resolve = injector._resolve_target
+    calls = []
+
+    def blocking_resolve(pattern):
+        calls.append(pattern)
+        if len(calls) == 1:
+            entered.set()
+            assert release.wait(5)
+        else:
+            second_resolved.set()
+        return resolve(pattern)
+
+    monkeypatch.setattr(injector, "_resolve_target", blocking_resolve)
+
+    def install(second=False):
+        if second:
+            second_started.set()
+        if trace:
+            return injector.inject_trace("atomic_watch_module.watched", {}, force_backend="wrapper_only")
+        return injector.inject("atomic_watch_module.watched", {})
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(install)
+            assert entered.wait(5)
+            second = pool.submit(install, True)
+            assert second_started.wait(5)
+            try:
+                assert not second_resolved.wait(0.1)
+            finally:
+                release.set()
+            ids = [first.result(timeout=5), second.result(timeout=5)]
+        assert injector.instrumented[ids[1]]["original"] is injector.instrumented[ids[0]]["wrapper"]
+        assert module.watched(42) == 42
+        injector.uninject(ids[0])
+        injector.uninject(ids[1])
+        assert module.watched is original
+    finally:
+        release.set()
+        injector.uninject_all()
+        sys.modules.pop(module.__name__, None)
+
+
+def test_concurrent_watch_conditions_are_isolated(monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+
+    from peeka.core.injector import DecoratorInjector
+    from peeka.core.safeeval.simpleeval import SimpleEval
+
+    module = _install_module("isolated_watch_module", watched=lambda value: value)
+    agent = _new_agent()
+    observations = _capture_observations(monkeypatch, agent)
+    injector = DecoratorInjector(agent)
+    barrier = threading.Barrier(2)
+    original_eval = SimpleEval.eval
+
+    def synchronized_eval(self, expr, previously_parsed=None):
+        barrier.wait(timeout=5)
+        return original_eval(self, expr, previously_parsed)
+
+    monkeypatch.setattr(SimpleEval, "eval", synchronized_eval)
+    try:
+        injector.inject("isolated_watch_module.watched", {"condition": "params[0] == 1"})
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(module.watched, [1, 2]))
+        assert results == [1, 2]
+        assert [obs["params"] for obs in observations] == [[1]]
+    finally:
+        injector.uninject_all()
+        sys.modules.pop(module.__name__, None)
+
+
+def test_shared_simpleeval_expression_context_is_isolated():
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+
+    from peeka.core.safeeval.simpleeval import NameNotDefined, SimpleEval
+
+    barrier = threading.Barrier(2)
+
+    def rendezvous():
+        barrier.wait(timeout=5)
+        return True
+
+    evaluator = SimpleEval(functions={"rendezvous": rendezvous})
+
+    def evaluate(name):
+        expression = "rendezvous() and " + name
+        with pytest.raises(NameNotDefined) as error:
+            evaluator.eval(expression)
+        return error.value.expression
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        assert list(pool.map(evaluate, ["missing_a", "missing_b"])) == [
+            "rendezvous() and missing_a", "rendezvous() and missing_b"
+        ]
