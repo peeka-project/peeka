@@ -1,10 +1,14 @@
 """Trace backend implementations."""
 
+import dis
 import os
 import sys
 import time
 from collections import defaultdict
 from typing import Any, Callable, Dict, List, Optional, Tuple
+
+from peeka.core.runtime import primitives as _rpl
+from peeka.core.runtime.compat import BACKEND_WRAPPER_ONLY
 
 
 def _format_trace_function(code: Any, frame: Optional[Any] = None) -> str:
@@ -82,6 +86,117 @@ def _is_builtin_or_stdlib(code: Any) -> bool:
 
 
 class InjectorTraceBackendsMixin:
+
+    async def _trace_coroutine(
+        self,
+        func: Callable[..., Any],
+        args: Tuple[Any, ...],
+        kwargs: Dict[str, Any],
+        skip_builtin: bool,
+        min_duration: float,
+        effective_backend: Optional[str],
+        use_monitoring: bool,
+    ) -> List[Dict[str, Any]]:
+        """Await a root coroutine while collecting its direct Python callees.
+
+        Match the actual parent frame rather than a global depth counter: the
+        event loop can run unrelated tasks while the root is suspended. Keep
+        suspended callee frames until their final return so await time is included.
+        """
+        coroutine = func(*args, **kwargs)
+        root_frame = getattr(coroutine, "cr_frame", None)
+        target_thread_id = _rpl.get_ident()
+        pending: Dict[int, Dict[str, Any]] = {}
+        completed: List[Dict[str, Any]] = []
+        tool_id = None
+        prev_trace = None
+        settrace_enabled = False
+
+        def on_start(frame):
+            if frame.f_back is not root_frame or root_frame is None:
+                return
+            code = frame.f_code
+            if skip_builtin and _is_builtin_or_stdlib(code):
+                return
+            key = id(frame)
+            if key not in pending:
+                pending[key] = {
+                    "function": _format_trace_function(code, frame),
+                    "filename": code.co_filename,
+                    "lineno": code.co_firstlineno,
+                    "start_time": time.perf_counter(),
+                }
+
+        def on_return(frame):
+            entry = pending.pop(id(frame), None)
+            if entry is not None:
+                duration_ms = (time.perf_counter() - entry.pop("start_time")) * 1000
+                if duration_ms >= min_duration:
+                    entry["duration_ms"] = round(duration_ms, 3)
+                    completed.append(entry)
+
+        def monitoring_start(code, offset):
+            if _rpl.get_ident() != target_thread_id:
+                return
+            on_start(sys._getframe(1))
+
+        def monitoring_return(code, offset, value):
+            if _rpl.get_ident() != target_thread_id:
+                return
+            on_return(sys._getframe(1))
+
+        def local_trace(frame, event, arg):
+            if event == "call":
+                on_start(frame)
+            elif event == "return":
+                # settrace also reports a return when a coroutine yields.
+                opcode = frame.f_code.co_code[frame.f_lasti]
+                if dis.opname[opcode] != "YIELD_VALUE":
+                    on_return(frame)
+            return local_trace
+
+        start_time = time.perf_counter()
+        root: Dict[str, Any] = {
+            "depth": 0,
+            "function": f"{func.__module__}.{func.__qualname__}",
+            "filename": getattr(getattr(func, "__code__", None), "co_filename", "unknown"),
+            "lineno": getattr(getattr(func, "__code__", None), "co_firstlineno", 0),
+        }
+        try:
+            if effective_backend != BACKEND_WRAPPER_ONLY:
+                if use_monitoring:
+                    for candidate_id in range(5, -1, -1):
+                        try:
+                            sys.monitoring.use_tool_id(candidate_id, "peeka-trace")
+                            tool_id = candidate_id
+                            break
+                        except ValueError:
+                            continue
+                if tool_id is not None:
+                    events = sys.monitoring.events
+                    sys.monitoring.register_callback(tool_id, events.PY_START, monitoring_start)
+                    sys.monitoring.register_callback(tool_id, events.PY_RETURN, monitoring_return)
+                    sys.monitoring.register_callback(tool_id, events.PY_UNWIND, monitoring_return)
+                    sys.monitoring.set_events(
+                        tool_id, events.PY_START | events.PY_RETURN | events.PY_UNWIND
+                    )
+                else:
+                    prev_trace = sys.gettrace()
+                    sys.settrace(local_trace)
+                    settrace_enabled = True
+            try:
+                root["_result"] = await coroutine
+            except Exception as exc:
+                root["_exception"] = exc
+        finally:
+            if tool_id is not None:
+                sys.monitoring.set_events(tool_id, 0)
+                sys.monitoring.free_tool_id(tool_id)
+            if settrace_enabled:
+                sys.settrace(prev_trace)
+            root["duration_ms"] = round((time.perf_counter() - start_time) * 1000, 3)
+            root["direct_callees"] = _aggregate_callees(completed)
+        return [root]
 
     def _trace_with_wrapper_only(
         self,
@@ -161,11 +276,14 @@ class InjectorTraceBackendsMixin:
         Returns:
             Single-element list containing the root node with direct_callees.
         """
+        target_thread_id = _rpl.get_ident()
         call_stack: List[Dict[str, Any]] = []
         completed_calls: List[Dict[str, Any]] = []
 
         def monitoring_callback(code, instruction_offset, *callback_args, is_unwind=False):
             """Callback for sys.monitoring events."""
+            if _rpl.get_ident() != target_thread_id:
+                return
             # Determine event type based on callback args
             if len(callback_args) == 0:
                 # PY_START event
@@ -406,6 +524,7 @@ class InjectorTraceBackendsMixin:
             return local_trace
 
         # Enable trace only during function execution
+        prev_trace = sys.gettrace()
         sys.settrace(local_trace)
         start_time = time.perf_counter()
 
@@ -450,4 +569,4 @@ class InjectorTraceBackendsMixin:
             return [root_node]
 
         finally:
-            sys.settrace(None)
+            sys.settrace(prev_trace)

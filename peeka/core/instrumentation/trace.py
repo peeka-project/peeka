@@ -1,5 +1,6 @@
 """Trace wrapper and backend helpers."""
 
+import inspect
 import logging
 import sys
 import threading
@@ -15,6 +16,8 @@ from peeka.core.runtime.compat import (
 from peeka.core.safeeval.simpleeval import BASIC_ALLOWED_ATTRS, SimpleEval
 
 logger = logging.getLogger(__name__)
+
+SAFE_FUNCTIONS = {"len": len, "str": str, "int": int, "float": float, "bool": bool}
 
 
 _GEVENT_PATCHED_CACHE: Optional[bool] = None
@@ -119,13 +122,7 @@ class InjectorTraceMixin:
             try:
                 safe_evaluator = SimpleEval(
                     allowed_attrs=BASIC_ALLOWED_ATTRS,
-                    functions={
-                        "len": len,
-                        "str": str,
-                        "int": int,
-                        "float": float,
-                        "bool": bool,
-                    },
+                    functions=SAFE_FUNCTIONS,
                 )
                 safe_evaluator.parse(condition_express)
             except SyntaxError as e:
@@ -148,19 +145,34 @@ class InjectorTraceMixin:
                 and hasattr(sys, "monitoring")
             )
 
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            # Stage 0: Check if observation is still active.
-            # Never call func while holding injector._lock: func may be another
-            # Peeka wrapper that takes the same non-reentrant lock (deadlock).
+        def is_active() -> bool:
             with injector._lock:
                 info = injector.instrumented.get(watch_id)
-                passthrough = info is None or (
+                return info is not None and not (
                     times_limit > 0 and info["count"] >= times_limit
                 )
-            if passthrough:
-                return func(*args, **kwargs)
 
+        def select_backend() -> Optional[str]:
+            # Runtime gevent check: if gevent was lazy-loaded after injection and
+            # we are using the global sys.settrace tracer, force downgrade to
+            # wrapper_only to avoid sys.settrace / greenlet hub conflicts.
+            # sys.monitoring is per-tool and does not need this protection.
+            effective_backend = force_backend
+            if (
+                not use_monitoring
+                and effective_backend != BACKEND_WRAPPER_ONLY
+                and _is_gevent_patched_now()
+            ):
+                effective_backend = BACKEND_WRAPPER_ONLY
+
+            return effective_backend
+
+        def finish_trace(
+            call_tree: List[Dict[str, Any]],
+            args: Any,
+            kwargs: Dict[str, Any],
+            effective_backend: Optional[str],
+        ) -> Any:
             # Extract self object for instance methods
             is_instance_method = config.get("_is_instance_method", False)
             target_self = args[0] if args and is_instance_method else None
@@ -178,46 +190,14 @@ class InjectorTraceMixin:
                     }
                     if duration_cost is not None:
                         local_vars["cost"] = duration_cost
-                    safe_evaluator.names = local_vars
-                    return bool(safe_evaluator.eval(condition_express))
+                    evaluator = SimpleEval(
+                        names=local_vars,
+                        allowed_attrs=BASIC_ALLOWED_ATTRS,
+                        functions=SAFE_FUNCTIONS,
+                    )
+                    return bool(evaluator.eval(condition_express))
                 except Exception:
                     return False
-
-            # Build call tree
-            call_tree = []
-
-            # Runtime gevent check: if gevent was lazy-loaded after injection and
-            # we are using the global sys.settrace tracer, force downgrade to
-            # wrapper_only to avoid sys.settrace / greenlet hub conflicts.
-            # sys.monitoring is per-tool and does not need this protection.
-            effective_backend = force_backend
-            if (
-                not use_monitoring
-                and effective_backend != BACKEND_WRAPPER_ONLY
-                and _is_gevent_patched_now()
-            ):
-                effective_backend = BACKEND_WRAPPER_ONLY
-
-            if effective_backend == BACKEND_WRAPPER_ONLY:
-                call_tree = injector._trace_with_wrapper_only(func, args, kwargs)
-            elif use_monitoring:
-                # Use sys.monitoring for Python 3.12+
-                call_tree = injector._trace_with_monitoring(
-                    func,
-                    args,
-                    kwargs,
-                    skip_builtin,
-                    min_duration,
-                )
-            else:
-                # Fallback to sys.settrace for older Python versions
-                call_tree = injector._trace_with_settrace(
-                    func,
-                    args,
-                    kwargs,
-                    skip_builtin,
-                    min_duration,
-                )
 
             # Calculate total duration
             total_duration = call_tree[0]["duration_ms"] if call_tree else 0
@@ -322,6 +302,47 @@ class InjectorTraceMixin:
 
             return None
 
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            if not is_active():
+                return func(*args, **kwargs)
+            effective_backend = select_backend()
+            if effective_backend == BACKEND_WRAPPER_ONLY:
+                call_tree = injector._trace_with_wrapper_only(func, args, kwargs)
+            elif use_monitoring:
+                # Use sys.monitoring for Python 3.12+
+                call_tree = injector._trace_with_monitoring(
+                    func,
+                    args,
+                    kwargs,
+                    skip_builtin,
+                    min_duration,
+                )
+            else:
+                # Fallback to sys.settrace for older Python versions
+                call_tree = injector._trace_with_settrace(
+                    func,
+                    args,
+                    kwargs,
+                    skip_builtin,
+                    min_duration,
+                )
+
+            return finish_trace(call_tree, args, kwargs, effective_backend)
+
+        @wraps(func)
+        async def async_trace_wrapper(*args, **kwargs):
+            if not is_active():
+                return await func(*args, **kwargs)
+            effective_backend = select_backend()
+            call_tree = await injector._trace_coroutine(
+                func, args, kwargs, skip_builtin, min_duration,
+                effective_backend, use_monitoring,
+            )
+            return finish_trace(call_tree, args, kwargs, effective_backend)
+
+        if inspect.iscoroutinefunction(func) or bool(config.get("_is_coroutine_function")):
+            return async_trace_wrapper
         return wrapper
 
     def _count_nodes(self, call_tree: List[Dict[str, Any]]) -> int:

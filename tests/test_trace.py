@@ -1025,3 +1025,243 @@ class TestMonitoringCallbackLazyFormatting:
             f"user_helper must appear as direct callee after stdlib exception unwind; "
             f"got: {direct_callee_names}"
         )
+
+
+class TestTraceRuntimeIsolation:
+    @pytest.fixture
+    def traced(self):
+        from peeka.core.injector import DecoratorInjector
+
+        agent = MockAgent()
+        injector = DecoratorInjector(agent)
+
+        def build(func, **config):
+            watch_id = "runtime-isolation"
+            injector.instrumented[watch_id] = {"count": 0}
+            return injector._create_trace_wrapper(func, watch_id, config), agent
+
+        return build
+
+    @pytest.mark.skipif(not hasattr(sys, "monitoring"), reason="requires sys.monitoring")
+    @pytest.mark.parametrize("unwind", [False, True])
+    def test_monitoring_ignores_other_thread_events(self, unwind):
+        import threading
+
+        from peeka.core.instrumentation.trace_backends import InjectorTraceBackendsMixin
+
+        root_started = threading.Event()
+        helper_started = threading.Event()
+        worker_done = threading.Event()
+        errors = []
+
+        def noise():
+            return 100
+
+        def shared_helper(worker=False):
+            if worker:
+                if unwind:
+                    raise ValueError("other thread")
+                return 7
+            helper_started.set()
+            assert worker_done.wait(2)
+            time.sleep(0.02)
+            return 42
+
+        def worker():
+            try:
+                assert root_started.wait(2)
+                noise()
+                assert helper_started.wait(2)
+                try:
+                    shared_helper(True)
+                except ValueError:
+                    pass
+            except BaseException as exc:
+                errors.append(exc)
+            finally:
+                worker_done.set()
+
+        def target():
+            root_started.set()
+            time.sleep(0.02)
+            return shared_helper()
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+        try:
+            tree = InjectorTraceBackendsMixin()._trace_with_monitoring(
+                target, (), {}, skip_builtin=True, min_duration=0
+            )
+        finally:
+            thread.join(3)
+        assert not thread.is_alive()
+        assert not errors
+        assert tree[0]["_result"] == 42
+        callees = tree[0]["direct_callees"]
+        assert len(callees) == 1
+        assert callees[0]["function"].endswith("shared_helper")
+        assert callees[0]["count"] == 1
+        assert callees[0]["total_ms"] >= 15
+
+    @pytest.mark.parametrize("raises", [False, True])
+    def test_settrace_restores_existing_tracer(self, raises):
+        from peeka.core.instrumentation.trace_backends import InjectorTraceBackendsMixin
+
+        def previous(frame, event, arg):
+            return previous
+
+        def target():
+            if raises:
+                raise ValueError("failure")
+            return 42
+
+        original = sys.gettrace()
+        try:
+            sys.settrace(previous)
+            tree = InjectorTraceBackendsMixin()._trace_with_settrace(
+                target, (), {}, skip_builtin=True, min_duration=0
+            )
+            assert sys.gettrace() is previous
+            if raises:
+                assert isinstance(tree[0]["_exception"], ValueError)
+            else:
+                assert tree[0]["_result"] == 42
+        finally:
+            sys.settrace(original)
+
+    def test_conditions_use_separate_evaluators(self, traced, monkeypatch):
+        from concurrent.futures import ThreadPoolExecutor
+        import threading
+
+        import peeka.core.instrumentation.trace as trace_module
+
+        barrier = threading.Barrier(2)
+        evaluator_ids = []
+        original_eval = trace_module.SimpleEval.eval
+
+        def synchronized_eval(evaluator, expression, *args, **kwargs):
+            evaluator_ids.append(id(evaluator))
+            barrier.wait(timeout=3)
+            return original_eval(evaluator, expression, *args, **kwargs)
+
+        monkeypatch.setattr(trace_module.SimpleEval, "eval", synchronized_eval)
+        wrapper, agent = traced(
+            lambda value: value,
+            condition="params[0] == 1",
+            _force_backend=BACKEND_WRAPPER_ONLY,
+        )
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            assert list(pool.map(wrapper, [1, 2])) == [1, 2]
+        assert len(set(evaluator_ids)) == 2
+        assert len(agent._observations) == 1
+
+    @pytest.mark.parametrize("backend", ["wrapper_only", "settrace", "sys_monitoring"])
+    @pytest.mark.parametrize("raises", [False, True])
+    def test_coroutine_measures_await_and_callees(self, traced, backend, raises):
+        import asyncio
+        import inspect
+
+        if backend == "sys_monitoring" and not hasattr(sys, "monitoring"):
+            pytest.skip("requires sys.monitoring")
+
+        def direct_helper():
+            return 42
+
+        async def async_helper():
+            await asyncio.sleep(0.02)
+            return 3
+
+        async def target():
+            await async_helper()
+            result = direct_helper()
+            if raises:
+                raise ValueError("async failure")
+            return result
+
+        wrapper, agent = traced(target, _force_backend=backend)
+        assert inspect.iscoroutinefunction(wrapper)
+        assert wrapper.__name__ == target.__name__
+        coroutine = wrapper()
+        assert agent._observations == []
+        if raises:
+            with pytest.raises(ValueError, match="async failure"):
+                asyncio.run(coroutine)
+        else:
+            assert asyncio.run(coroutine) == 42
+        assert len(agent._observations) == 1
+        observation = agent._observations[0]
+        assert observation["total_duration_ms"] >= 15
+        if raises:
+            assert observation["exception"] == {
+                "type": "ValueError", "message": "async failure"
+            }
+        if backend == BACKEND_WRAPPER_ONLY:
+            assert observation["call_tree"] == []
+        else:
+            callees = observation["call_tree"]
+            assert {entry["function"].rsplit(".", 1)[-1] for entry in callees} == {
+                "async_helper", "direct_helper"
+            }
+            async_entry = next(c for c in callees if c["function"].endswith("async_helper"))
+            assert async_entry["count"] == 1
+            assert async_entry["total_ms"] >= 15
+
+    def test_coroutine_metadata_and_inactive_passthrough(self, traced):
+        import asyncio
+        import inspect
+
+        async def target(value):
+            await asyncio.sleep(0)
+            return value
+
+        @functools.wraps(target)
+        def decorated(*args, **kwargs):
+            return target(*args, **kwargs)
+
+        wrapper, agent = traced(
+            decorated, _is_coroutine_function=True,
+            _force_backend=BACKEND_WRAPPER_ONLY, times=1,
+        )
+        assert inspect.iscoroutinefunction(wrapper)
+        assert asyncio.run(wrapper(1)) == 1
+        assert asyncio.run(wrapper(2)) == 2
+        assert len(agent._observations) == 1
+
+    @pytest.mark.parametrize("backend", ["settrace", "sys_monitoring"])
+    def test_coroutine_ignores_other_tasks_and_restores_tracer(self, traced, backend):
+        import asyncio
+
+        if backend == "sys_monitoring" and not hasattr(sys, "monitoring"):
+            pytest.skip("requires sys.monitoring")
+
+        def previous(frame, event, arg):
+            return previous
+
+        def unrelated_helper():
+            return 100
+
+        async def unrelated():
+            await asyncio.sleep(0)
+            unrelated_helper()
+
+        async def target():
+            await asyncio.sleep(0.02)
+            return 42
+
+        wrapper, agent = traced(target, _force_backend=backend)
+
+        async def run():
+            background = asyncio.create_task(unrelated())
+            original = sys.gettrace()
+            try:
+                sys.settrace(previous)
+                assert await wrapper() == 42
+                assert sys.gettrace() is previous
+            finally:
+                sys.settrace(original)
+            await background
+
+        asyncio.run(run())
+        assert len(agent._observations) == 1
+        names = [entry["function"] for entry in agent._observations[0]["call_tree"]]
+        assert not any("unrelated" in name for name in names)
