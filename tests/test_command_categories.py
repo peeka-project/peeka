@@ -84,6 +84,8 @@ class TestCommandCategories:
     @pytest.mark.parametrize(
         "cmd_name,expected_category",
         [
+            ("StackCommand", "probe"),
+            ("TopCommand", "probe"),
             ("WatchCommand", "probe"),
             ("TraceCommand", "probe"),
             ("ResetCommand", "mutation"),

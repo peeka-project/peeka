@@ -228,7 +228,7 @@ class ObservationManager:
             self._buffer.clear()
             return count
 
-    def clear_all(self) -> Dict[str, int]:
+    def clear_all(self, include_top: bool = False) -> Dict[str, int]:
         """
         Clear all watches and buffer.
 
@@ -236,9 +236,12 @@ class ObservationManager:
             Dict with counts of cleared items
         """
         with self._lock:
-            watch_count = len(self._watches)
+            to_clear = [watch_id for watch_id in self._watches
+                        if include_top or not watch_id.startswith("top_")]
+            watch_count = len(to_clear)
             buffer_count = len(self._buffer)
-            self._watches.clear()
+            for watch_id in to_clear:
+                del self._watches[watch_id]
             self._buffer.clear()
             return {
                 "watches_cleared": watch_count,

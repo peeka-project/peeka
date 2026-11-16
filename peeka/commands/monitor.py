@@ -5,13 +5,25 @@ This command tracks performance metrics (call count, success/fail rate,
 response time statistics) for injected functions with periodic output.
 """
 
+import contextlib
 import fnmatch
 from functools import wraps
 import logging
-import threading
 import uuid
 import weakref
-from typing import Any, ClassVar, Dict, List, Optional, Set, TYPE_CHECKING, Tuple, cast
+from typing import (
+    Any,
+    Callable,
+    ClassVar,
+    Dict,
+    Iterator,
+    List,
+    Optional,
+    Set,
+    TYPE_CHECKING,
+    Tuple,
+    cast,
+)
 
 from peeka.commands.resource_owning import CleanupScope, ResourceOwningCommand
 from peeka.core.instrumentation.registry import retarget_wrapper_call, wrapper_call_target
@@ -21,6 +33,28 @@ from peeka.core.runtime import primitives as _rpl
 
 if TYPE_CHECKING:
     from peeka.core.agent import PeekaAgent
+
+
+class _NativeThreadHandle:
+    """Small handle around RPL native threads with Thread-like test hooks."""
+
+    def __init__(self, target: Callable[..., None], args: Tuple[Any, ...], name: str):
+        self._done_event = _rpl.create_event()
+        self.name = name
+        self.daemon = True
+        self.ident = _rpl.start_thread(self._run, args=(target, args), name=name)
+
+    def _run(self, target: Callable[..., None], args: Tuple[Any, ...]) -> None:
+        try:
+            target(*args)
+        finally:
+            self._done_event.set()
+
+    def is_alive(self) -> bool:
+        return not self._done_event.is_set()
+
+    def join(self, timeout: Optional[float] = None) -> None:
+        self._done_event.wait(timeout=timeout)
 
 
 class MonitorCommand(ResourceOwningCommand):
@@ -114,6 +148,25 @@ class MonitorCommand(ResourceOwningCommand):
     def _supports_probe_instrumentation(self) -> bool:
         return hasattr(self.agent, "probe_registry") and hasattr(self.agent, "track_probe_context")
 
+    @contextlib.contextmanager
+    def _injector_lock(self) -> Iterator[None]:
+        """Hold the injector lock (if any) while reading/mutating ``instrumented``.
+
+        Lock ordering: the injector lock must always be acquired BEFORE
+        ``self._lock``. The injector invokes wrapper-removed listeners (which
+        take ``self._lock``) outside its own lock, so this order never inverts.
+        """
+        injector_lock = getattr(getattr(self.agent, "injector", None), "_lock", None)
+        if (
+            injector_lock is None
+            or not hasattr(injector_lock, "__enter__")
+            or not hasattr(injector_lock, "__exit__")
+        ):
+            yield
+            return
+        with injector_lock:
+            yield
+
     def _start_monitor(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Start monitoring a function pattern."""
         self.validate_params(params, ["pattern"])
@@ -171,15 +224,14 @@ class MonitorCommand(ResourceOwningCommand):
                 except Exception:
                     pass
 
-            # Start periodic output timer
-            stop_event = threading.Event()
-            timer_thread = threading.Thread(
-                target=self._periodic_output_loop,
-                args=(watch_id, cycle, cycles, stop_event),
+            # Start periodic output timer (native RPL primitives so the timer
+            # never blocks on gevent/eventlet-patched threading objects).
+            stop_event = _rpl.create_event()
+            timer_thread = _NativeThreadHandle(
+                self._periodic_output_loop,
+                (watch_id, cycle, cycles, stop_event),
                 name=f"peeka-monitor-{watch_id}",
-                daemon=True,
             )
-            timer_thread.start()
 
             self._monitors[watch_id]["stop_event"] = stop_event
             self._monitors[watch_id]["timer_thread"] = timer_thread
@@ -213,22 +265,30 @@ class MonitorCommand(ResourceOwningCommand):
         return wrapper
 
     def _known_peeka_root_for_wrapper(self, target_func: Any) -> Any:
-        """Return root original when target_func is a live Peeka injector wrapper."""
+        """Return root original when target_func is a live Peeka injector wrapper.
+
+        Must be called without ``self._lock`` held (acquires the injector lock
+        first, then ``self._lock``).
+        """
         injector = getattr(self.agent, "injector", None)
-        instrumented = getattr(injector, "instrumented", {})
-        if not isinstance(instrumented, dict):
-            return None
+        with self._injector_lock():
+            instrumented = getattr(injector, "instrumented", {})
+            if not isinstance(instrumented, dict):
+                return None
 
-        for active_probe in instrumented.values():
-            if active_probe.get("wrapper") is target_func:
-                return active_probe.get("root_original", active_probe.get("original"))
+            for active_probe in instrumented.values():
+                if active_probe.get("wrapper") is target_func:
+                    return active_probe.get(
+                        "root_original", active_probe.get("original")
+                    )
 
-        for active_monitor in self._monitors.values():
-            if active_monitor.get("wrapper") is target_func:
-                return active_monitor.get(
-                    "owned_root_original",
-                    active_monitor.get("original"),
-                )
+            with self._lock:
+                for active_monitor in self._monitors.values():
+                    if active_monitor.get("wrapper") is target_func:
+                        return active_monitor.get(
+                            "owned_root_original",
+                            active_monitor.get("original"),
+                        )
 
         return None
 
@@ -260,7 +320,7 @@ class MonitorCommand(ResourceOwningCommand):
         retarget_wrapper_call(wrapper, old_target, new_target)
 
     def _periodic_output_loop(
-        self, watch_id: str, cycle: int, cycles: int, stop_event: threading.Event
+        self, watch_id: str, cycle: int, cycles: int, stop_event: Any
     ) -> None:
         """Periodically output statistics."""
         if not self._supports_probe_instrumentation():
@@ -328,7 +388,7 @@ class MonitorCommand(ResourceOwningCommand):
                 self.agent.untrack_probe_context(watch_id)
 
     def _periodic_output_loop_legacy(
-        self, watch_id: str, cycle: int, cycles: int, stop_event: threading.Event
+        self, watch_id: str, cycle: int, cycles: int, stop_event: Any
     ) -> None:
         """Legacy best-effort monitor loop for agents without ProbeRegistry."""
         cycle_count = 0
@@ -371,23 +431,23 @@ class MonitorCommand(ResourceOwningCommand):
             return {"status": "error", "error": "Missing watch_id"}
 
         with self._lock:
-            if watch_id not in self._monitors:
+            monitor_info = self._monitors.get(watch_id)
+            if monitor_info is None:
                 return {"status": "error", "error": f"Monitor not found: {watch_id}"}
-
-            monitor_info = self._monitors.pop(watch_id)
-
-            # Signal stop to timer thread
             stop_event = monitor_info.get("stop_event")
+            timer_thread = monitor_info.get("timer_thread")
             if stop_event:
                 stop_event.set()
 
-            # Wait for timer thread to finish (short timeout)
-            timer_thread = monitor_info.get("timer_thread")
-            timer_thread_alive = False
-            if timer_thread:
-                timer_thread.join(timeout=2)
-                timer_thread_alive = timer_thread.is_alive()
+        timer_thread_alive = False
+        if timer_thread:
+            timer_thread.join(timeout=2)
+            timer_thread_alive = timer_thread.is_alive()
 
+        with self._injector_lock(), self._lock:
+            if self._monitors.get(watch_id) is not monitor_info:
+                return {"status": "error", "error": f"Monitor not found: {watch_id}"}
+            self._monitors.pop(watch_id)
             injector = getattr(self.agent, "injector", None)
             instrumented = getattr(injector, "instrumented", {})
 

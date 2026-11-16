@@ -32,7 +32,7 @@ class StackCommand(BaseCommand):
         stack mymodule.func -n 3 --condition "params[0] > 100"
     """
 
-    category: ClassVar[str] = "snapshot"
+    category: ClassVar[str] = "probe"
     allows_concurrent: ClassVar[bool] = False
 
     def __init__(self, agent: "PeekaAgent"):

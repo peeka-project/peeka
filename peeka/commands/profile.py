@@ -10,6 +10,7 @@ import time
 from typing import Any, ClassVar, Dict, List, Optional, TYPE_CHECKING
 
 from peeka.commands.resource_owning import CleanupScope, ResourceOwningCommand
+from peeka.core.runtime import primitives as _rpl
 from peeka.core.profile.exact import ExactProfileSampler
 from peeka.core.profile.models import ProfileConfig, ProfileSession, SampleRecord, StackRecord
 from peeka.core.profile.processors import BuildTimelineProcessor
@@ -36,6 +37,24 @@ _RENDERER_MAP = {
 }
 
 
+class _NativeThreadHandle:
+    def __init__(self, target: Any, args: tuple, name: str):
+        self._done_event = _rpl.create_event()
+        self.ident = _rpl.start_thread(self._run, args=(target, args), name=name)
+
+    def _run(self, target: Any, args: tuple) -> None:
+        try:
+            target(*args)
+        finally:
+            self._done_event.set()
+
+    def is_alive(self) -> bool:
+        return not self._done_event.is_set()
+
+    def join(self, timeout: Optional[float] = None) -> None:
+        self._done_event.wait(timeout=timeout)
+
+
 class ProfileCommand(ResourceOwningCommand):
     """Manage profile sessions in the shared ProfileRegistry.
 
@@ -52,21 +71,21 @@ class ProfileCommand(ResourceOwningCommand):
     cleanup_scope: CleanupScope = CleanupScope.DETACH_ONLY
     category: ClassVar[str] = "snapshot"
     allows_concurrent: ClassVar[bool] = False
-    _exact_lock: ClassVar[threading.Lock] = threading.Lock()
+    _exact_lock: ClassVar[Any] = _rpl.allocate_lock()
     _exact_profile_id: ClassVar[Optional[str]] = None
     _active_exact_sampler: ClassVar[Optional[ExactProfileSampler]] = None
     _active_exact_stop_timer: ClassVar[Optional[threading.Timer]] = None
-    _sampling_lock: ClassVar[threading.Lock] = threading.Lock()
-    _active_sampling_thread: ClassVar[Optional[threading.Thread]] = None
-    _active_sampling_stop_event: ClassVar[Optional[threading.Event]] = None
+    _sampling_lock: ClassVar[Any] = _rpl.allocate_lock()
+    _active_sampling_thread: ClassVar[Optional[_NativeThreadHandle]] = None
+    _active_sampling_stop_event: ClassVar[Optional[Any]] = None
     _active_sampling_profile_id: ClassVar[Optional[str]] = None
 
     def __init__(self, agent: Optional["PeekaAgent"] = None):
         super().__init__(agent)
         self._exact_sampler: Optional[ExactProfileSampler] = None
         self._exact_stop_timer: Optional[threading.Timer] = None
-        self._sampling_thread: Optional[threading.Thread] = None
-        self._sampling_stop_event: Optional[threading.Event] = None
+        self._sampling_thread: Optional[_NativeThreadHandle] = None
+        self._sampling_stop_event: Optional[Any] = None
         self._sampling_profile_id: Optional[str] = None
 
     def execute(self, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -329,24 +348,22 @@ class ProfileCommand(ResourceOwningCommand):
         return None
 
     def _start_sampling(self, profile_id: str, config: ProfileConfig) -> None:
-        stop_event = threading.Event()
+        stop_event = _rpl.create_event()
         self._sampling_stop_event = stop_event
         self._sampling_profile_id = profile_id
         deadline = None
         if config.duration_ms is not None:
             deadline = time.time() + config.duration_ms / 1000.0
         interval = max(float(config.interval_ms) / 1000.0, 0.001)
-        thread = threading.Thread(
+        thread = _NativeThreadHandle(
             target=self._sampling_loop,
             args=(profile_id, interval, stop_event, deadline),
             name=f"peeka-profile-{profile_id}",
-            daemon=True,
         )
         self._sampling_thread = thread
         ProfileCommand._active_sampling_thread = thread
         ProfileCommand._active_sampling_stop_event = stop_event
         ProfileCommand._active_sampling_profile_id = profile_id
-        thread.start()
 
     def _stop_sampling_profile(self, profile_id: str) -> None:
         with ProfileCommand._sampling_lock:
@@ -380,7 +397,7 @@ class ProfileCommand(ResourceOwningCommand):
         self,
         profile_id: str,
         interval: float,
-        stop_event: threading.Event,
+        stop_event: Any,
         deadline: Optional[float],
     ) -> None:
         expired = False

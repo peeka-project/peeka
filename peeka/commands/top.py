@@ -55,7 +55,7 @@ class _NativeThreadHandle:
 class TopCommand(ResourceOwningCommand):
     """Sampling profiler that collects CPU profiling statistics."""
 
-    category: ClassVar[str] = "snapshot"
+    category: ClassVar[str] = "probe"
     allows_concurrent: ClassVar[bool] = False
     is_resource_owner: bool = True
     cleanup_scope: CleanupScope = CleanupScope.DETACH_ONLY

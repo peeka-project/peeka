@@ -538,3 +538,47 @@ class TestStackWrapperGroupLifecycle:
         assert mod.fn is original_fn, (
             "original function must be restored after both probes stopped"
         )
+
+
+def test_observer_clear_all_preserves_top_watches():
+    from peeka.core.observer import ObservationManager
+
+    observer = ObservationManager()
+    observer.register_watch("top_1", "top")
+    observer.register_watch("watch_1", "example")
+    assert observer.clear_all()["watches_cleared"] == 1
+    assert observer.unregister_watch("watch_1") is None
+    assert observer.clear_all(include_top=True)["watches_cleared"] == 1
+    assert observer.unregister_watch("top_1") is None
+
+
+def test_monitor_join_does_not_hold_monitor_lock():
+    import threading
+    from types import SimpleNamespace
+    from peeka.commands.monitor import MonitorCommand
+
+    command = MonitorCommand(SimpleNamespace())
+    wrapper = lambda: None
+    parent = SimpleNamespace(func=wrapper)
+    finished = threading.Event()
+
+    class Timer:
+        def join(self, timeout):
+            def periodic_output():
+                with command._lock:
+                    finished.set()
+            worker = threading.Thread(target=periodic_output)
+            worker.start()
+            worker.join(timeout=0.5)
+            assert finished.is_set(), "join held the monitor lock"
+
+        def is_alive(self):
+            return False
+
+    command._monitors["monitor_1"] = {
+        "stop_event": threading.Event(), "timer_thread": Timer(),
+        "wrapper": wrapper, "original": wrapper, "parent": parent,
+        "attr_name": "func",
+    }
+    command.manager = SimpleNamespace(stop_monitor=lambda watch_id: {})
+    assert command._stop_monitor({"monitor_id": "monitor_1"})["status"] == "success"
