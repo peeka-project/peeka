@@ -789,13 +789,16 @@ class TestMonitorCommand:
 
         time.sleep(0.5)
 
-        assert threading.active_count() > initial_thread_count
+        timer_thread = monitor_cmd._monitors[watch_id]["timer_thread"]
+        assert timer_thread.is_alive()
 
         params_stop = {"action": "stop", "watch_id": watch_id}
         monitor_cmd.execute(params_stop)
 
         time.sleep(0.5)
 
+        assert not timer_thread.is_alive()
+        assert watch_id not in monitor_cmd._monitors
         assert threading.active_count() == initial_thread_count
 
     def test_monitor_status_action(self, monitor_cmd, test_module):

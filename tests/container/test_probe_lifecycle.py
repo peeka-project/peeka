@@ -90,7 +90,10 @@ def _wait_for_process_exit(container, pid: str, timeout_seconds: float = 5.0) ->
             return
         time.sleep(0.5)
 
-    assert False, f"Background watch process {pid} did not exit"
+    _, process_details = exec_in_container(
+        container, f"ps -o pid,ppid,pgid,sid,stat,args -p {pid}; cat /tmp/watch*.txt", timeout=5
+    )
+    assert False, f"Background watch process {pid} did not exit: {process_details}"
 
 
 def _get_os_thread_count(container, pid: str) -> int:
@@ -102,6 +105,23 @@ def _get_os_thread_count(container, pid: str) -> int:
     )
     assert exit_code == 0, f"OS thread count failed:\n{output}"
     return int(output.strip())
+
+
+def _capture_idle_thread_count(container, pid: str) -> int:
+    """Warm up the lazy stream infrastructure before measuring idle threads."""
+    exit_code, output = exec_in_container(
+        container,
+        "python -m peeka.cli.main watch '__main__.Calculator.add' -n 1",
+        timeout=20,
+    )
+    assert exit_code == 0, f"Warm-up watch failed: {output}"
+    samples = []
+    for _ in range(30):
+        samples.append(_get_os_thread_count(container, pid))
+        if len(samples) >= 5 and len(set(samples[-5:])) == 1:
+            return samples[-1]
+        time.sleep(0.1)
+    raise AssertionError(f"Idle thread count did not stabilize: {samples}")
 
 
 def _wait_for_thread_baseline(container, pid: str, baseline_count: int) -> None:
@@ -181,7 +201,7 @@ class TestProbeLifecycle:
         assert exit_code == 0, f"Attach failed:\n{output}"
 
         # Step 2: Capture baseline thread count
-        baseline_count = _get_os_thread_count(container, pid)
+        baseline_count = _capture_idle_thread_count(container, pid)
         print(f"Baseline thread count: {baseline_count}")
 
         # Step 3: Start watch probe in background
@@ -256,7 +276,7 @@ class TestProbeLifecycle:
         assert exit_code == 0, f"Attach failed:\n{output}"
 
         # Capture baseline thread count
-        baseline_count = _get_os_thread_count(container, pid)
+        baseline_count = _capture_idle_thread_count(container, pid)
         print(f"Baseline thread count: {baseline_count}")
 
         # Run 5 cycles
