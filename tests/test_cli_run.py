@@ -1,9 +1,15 @@
 # pyright: reportPrivateUsage=false
 
 """Basic tests for peeka-cli run command argument parsing"""
+import os
 import subprocess
 import sys
+import time
 import types
+import uuid
+from pathlib import Path
+
+import pytest
 
 from peeka.cli.handlers.run import _build_run_command
 from peeka.cli.streaming import stream_counted_limit
@@ -177,3 +183,185 @@ def test_run_cleanup_sends_stop_not_detach() -> None:
         assert stop_cmd[id_key] == watch_id, (
             f"{command_type}: stop command {id_key} must be {watch_id!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# bootstrap.py: single execution + instrumentation survives .import-ready/.go
+# ---------------------------------------------------------------------------
+
+_BOOTSTRAP_SCRIPT_TEMPLATE = '''\
+import os
+import sys
+import threading
+import time
+
+LOG = {log!r}
+READY = {ready!r}
+INSTRUMENTED = {instrumented!r}
+
+
+def _append(line):
+    with open(LOG, "a") as fh:
+        fh.write(line + "\\n")
+
+
+def _instrument_when_ready(modname):
+    # Mimics peeka: wrap module.fn after .import-ready, before .go.
+    def run():
+        while not os.path.exists(READY):
+            time.sleep(0.005)
+        mod = sys.modules[modname]
+        original = mod.fn
+
+        def wrapper(*a, **k):
+            _append("wrapped")
+            return original(*a, **k)
+
+        mod.fn = wrapper
+        with open(INSTRUMENTED, "w") as fh:
+            fh.write("ok")
+
+    threading.Thread(target=run, daemon=True).start()
+
+
+def _start(func):
+    # Decorator: runs at definition time (Step 2), exactly once.
+    _instrument_when_ready({modname!r})
+    return func
+
+
+_append("top")
+
+
+@_start
+def fn():
+    _append("fn")
+    return 7
+
+
+{tail}
+'''
+
+_GUARD_TAIL = '''\
+if __name__ == "__main__":
+    _append("same=%s" % (sys.modules["__main__"] is sys.modules[{modname!r}]))
+    _append("argv=%s" % ",".join(sys.argv[1:]))
+    fn()
+'''
+
+_NO_GUARD_TAIL = '''\
+_append("same=%s" % (sys.modules["__main__"] is sys.modules[{modname!r}]))
+_append("argv=%s" % ",".join(sys.argv[1:]))
+fn()
+'''
+
+
+@pytest.mark.parametrize("with_guard", [True, False], ids=["main-guard", "no-guard"])
+def test_bootstrap_runs_top_level_once_and_keeps_instrumentation(tmp_path, with_guard):
+    sid = uuid.uuid4().hex
+    modname = f"peeka_bs_{sid[:8]}"
+    script = tmp_path / f"{modname}.py"
+    log = tmp_path / "log.txt"
+    instrumented = tmp_path / "instrumented.flag"
+    import_ready = f"/tmp/peeka_{sid}.import-ready"
+    go = f"/tmp/peeka_{sid}.go"
+
+    tail = (_GUARD_TAIL if with_guard else _NO_GUARD_TAIL).format(modname=modname)
+    script.write_text(
+        _BOOTSTRAP_SCRIPT_TEMPLATE.format(
+            log=str(log),
+            ready=import_ready,
+            instrumented=str(instrumented),
+            modname=modname,
+            tail=tail,
+        )
+    )
+
+    template = (
+        Path(__file__).resolve().parents[1] / "peeka" / "core" / "bootstrap.py"
+    ).read_text()
+    code = (
+        template.replace("{{SESSION_ID}}", sid)
+        .replace("{{SCRIPT_PATH}}", str(script))
+        .replace("{{SCRIPT_DIR}}", str(tmp_path))
+        .replace("{{SCRIPT_ARGS}}", repr(["a", "b"]))
+    )
+    bootstrap = tmp_path / "bootstrap_run.py"
+    bootstrap.write_text(code)
+
+    proc = subprocess.Popen(
+        [sys.executable, str(bootstrap)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        deadline = time.time() + 20
+        while not os.path.exists(import_ready):
+            assert proc.poll() is None, proc.communicate()
+            assert time.time() < deadline, "bootstrap never became import-ready"
+            time.sleep(0.01)
+        while not instrumented.exists():
+            assert proc.poll() is None, proc.communicate()
+            assert time.time() < deadline, "instrumentation never applied"
+            time.sleep(0.01)
+
+        with open(go, "w") as fh:
+            fh.write(str(os.getpid()))
+
+        stdout, stderr = proc.communicate(timeout=20)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.communicate()
+        for path in (import_ready, go):
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    assert proc.returncode == 0, stderr
+    lines = log.read_text().splitlines()
+    # Top-level side effect ran exactly once, and the wrapper applied between
+    # .import-ready and .go was not overwritten by a second definition of fn.
+    assert lines.count("top") == 1, lines
+    assert lines.count("wrapped") == 1, lines
+    assert lines.count("fn") == 1, lines
+    assert lines.index("wrapped") < lines.index("fn")
+    assert "same=True" in lines
+    assert "argv=a,b" in lines
+
+
+@pytest.mark.parametrize("source", [
+    'x = 1\nx += 1\nx = 3\nprint(x)\n',
+    'x = 1\nx += 1\ndef f(value=x):\n    return value\nx = 3\nprint(f(), x)\n',
+    'def f():\n    return "before"\nif __name__ == "__main__":\n    print(f())\ndef f():\n    return "after"\nprint(f())\n',
+    'import sys\nprint(__name__, sys.argv[1:])\ndef f():\n    pass\nprint("done")\n',
+    'events = []\ndef effect():\n    events.append("effect")\n    return 1\ntry:\n    class C:\n        x = effect()\n        y = missing\nexcept NameError:\n    pass\nprint(events)\n',
+    'from __future__ import annotations\ndef f(x: Missing) -> Missing:\n    return x\nprint(f.__annotations__)\n',
+])
+def test_bootstrap_preserves_script_execution_order(tmp_path, source):
+    """Compare observable semantics against Python executing the same script."""
+    script = tmp_path / "ordered_script.py"
+    script.write_text(source)
+    sid = uuid.uuid4().hex
+    template = (Path(__file__).resolve().parents[1] / "peeka/core/bootstrap.py").read_text()
+    bootstrap = tmp_path / "bootstrap_run.py"
+    bootstrap.write_text(
+        template.replace("{{SESSION_ID}}", sid)
+        .replace("{{SCRIPT_PATH}}", str(script))
+        .replace("{{SCRIPT_DIR}}", str(tmp_path))
+        .replace("{{SCRIPT_ARGS}}", repr(["a", "b"]))
+    )
+    go = Path(f"/tmp/peeka_{sid}.go")
+    go.write_text(str(os.getpid()))
+    try:
+        expected = subprocess.run([sys.executable, str(script), "a", "b"],
+                                  capture_output=True, text=True, timeout=10)
+        actual = subprocess.run([sys.executable, str(bootstrap)],
+                                capture_output=True, text=True, timeout=10)
+        assert actual.returncode == expected.returncode == 0, actual.stderr
+        assert actual.stdout == expected.stdout
+    finally:
+        go.unlink(missing_ok=True)
+        Path(f"/tmp/peeka_{sid}.import-ready").unlink(missing_ok=True)
