@@ -615,3 +615,32 @@ class TestAutoCompleteAndCommandConcurrency:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+def test_stream_disconnect_can_reenter_reader_from_signal_cleanup():
+    """Signal cleanup runs on the reader thread while recv holds its lock."""
+    client = StreamingAgentClient("/tmp/unused-peeka-test.sock")
+    completed = threading.Event()
+
+    class DisconnectingSocket:
+        def recv(self, size):
+            client.disconnect()
+            return b""
+
+        def shutdown(self, how):
+            pass
+
+        def close(self):
+            pass
+
+    client._sock = DisconnectingSocket()
+
+    def read():
+        list(client.stream_observations())
+        completed.set()
+
+    thread = threading.Thread(target=read, daemon=True)
+    thread.start()
+    assert completed.wait(2), "disconnect deadlocked on its own stream read lock"
+    thread.join(timeout=1)
+    assert client._sock is None

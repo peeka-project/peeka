@@ -176,7 +176,8 @@ class StreamingAgentClient:
         # Serialises socket reads and ``_buffer`` mutations performed by
         # ``stream_observations`` so concurrent readers never interleave
         # partial frames. Never held while yielding to the caller.
-        self._stream_read_lock = threading.Lock()
+        # Signal handlers may disconnect on the same thread during recv().
+        self._stream_read_lock = threading.RLock()
         self._activity_reporter = activity_reporter
         self._client_info = _build_client_info(client_info, "cli")
         self._identify_on_connect = client_info is not None
