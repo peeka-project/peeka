@@ -17,7 +17,7 @@ import threading
 import time as _time
 import traceback
 from pathlib import Path
-from typing import Any, Deque, Dict, List, Optional, Tuple, cast
+from typing import Any, Deque, Dict, List, Optional, Set, Tuple, cast
 
 from peeka.core import probes as probes_module
 from peeka.core.agent_control.clients import AgentClientControlMixin
@@ -124,8 +124,34 @@ def _schedule_signal_restore_on_main_thread(
     return False
 
 
+def _canonical_agent_module():
+    """Return the importable agent module shared by injected scripts."""
+    module = sys.modules.get("peeka.core.agent")
+    if module is None:
+        import importlib
+        module = importlib.import_module("peeka.core.agent")
+    return module
+
+
+def _recv_exact(conn: Any, size: int) -> bytes:
+    """Read a complete frame segment, returning empty bytes on EOF."""
+    chunks = []
+    while size:
+        chunk = conn.recv(size)
+        if not chunk:
+            return b""
+        chunks.append(chunk)
+        size -= len(chunk)
+    return b"".join(chunks)
+
+
+_MAX_COMMAND_FRAME_BYTES = 16 * 1024 * 1024
+
+
 def _get_client_registry():
     """Lazily initialize and return the global client registry singleton."""
+    if __name__ != "peeka.core.agent":
+        return _canonical_agent_module()._get_client_registry()
     global _client_registry
     if _client_registry is None:
         from peeka.core.client_sessions import ClientRegistry
@@ -135,6 +161,8 @@ def _get_client_registry():
 
 def _get_consumer_registry():
     """Lazily initialize and return the global result consumer registry singleton."""
+    if __name__ != "peeka.core.agent":
+        return _canonical_agent_module()._get_consumer_registry()
     global _consumer_registry
     if _consumer_registry is None:
         from peeka.core.result_consumers import ResultConsumerRegistry
@@ -144,6 +172,8 @@ def _get_consumer_registry():
 
 def _get_dx_case_registry():
     """Lazily initialize and return the global DX case registry singleton."""
+    if __name__ != "peeka.core.agent":
+        return _canonical_agent_module()._get_dx_case_registry()
     global _dx_case_registry
     if _dx_case_registry is None:
         from peeka.core.dx_cases import DXCaseRegistry
@@ -385,7 +415,7 @@ class PeekaAgent(
         self.sock_path = f"/tmp/peeka_{session_id}.sock"
         self.server: Optional[socket.socket] = None
         self.command_handlers: Dict[str, Any] = {}
-        self._client_connections: List[socket.socket] = []
+        self._client_connections: Set[Any] = set()
         self._client_connection_kinds: Dict[socket.socket, str] = {}
         self._client_write_locks: Dict[socket.socket, Any] = {}
         self._connections_lock = _rpl.allocate_lock()  # DOMAIN: native_thread
@@ -397,7 +427,7 @@ class PeekaAgent(
         self._observation_flush_event = _rpl.create_event()
         self._flush_thread_running = False
         self._flush_thread_id: Optional[int] = None
-        self._mutation_lock: threading.RLock = threading.RLock()  # DOMAIN: mixed (command orchestration)
+        self._mutation_lock = _rpl.allocate_rlock()  # DOMAIN: mixed (command orchestration)
 
         self._client_counter = 0
         self.observer = ObservationManager()
@@ -422,7 +452,7 @@ class PeekaAgent(
         self._recent_errors: List[Dict[str, Any]] = []
         self._error_ring_lock = _rpl.allocate_lock()  # DOMAIN: native_thread
         self._stopped: bool = False
-        self._stop_lock = threading.Lock()
+        self._stop_lock = _rpl.allocate_lock()
         self._last_cleanup_summary: Dict[str, Any] = {}
         self._prev_sigterm_handler: Any = None
         self._sigterm_handler_ref: Any = None
@@ -767,6 +797,10 @@ class PeekaAgent(
 
             assert self.server is not None
             self.server.bind(self.sock_path)
+            try:
+                os.chmod(self.sock_path, 0o600)
+            except OSError:
+                pass
             self.server.listen(5)
             # Set a timeout so accept() doesn't block forever,
             # allowing the accept loop to check self.running periodically.
@@ -830,7 +864,7 @@ class PeekaAgent(
     ) -> int:
         """Track a live client connection and initialize its write lock."""
         with self._connections_lock:
-            self._client_connections.append(conn)
+            self._client_connections.add(conn)
             self._client_connection_kinds[conn] = kind
             self._client_write_locks[conn] = _rpl.allocate_lock()
             connection_count = len(self._client_connections)
@@ -955,7 +989,7 @@ class PeekaAgent(
                 dead_connections.append(conn)
 
         for conn in dead_connections:
-            self._unregister_client_connection(conn)
+            self._evict_client_connection(conn)
 
     def _encode_observation_frame(self, observation: Any) -> Optional[bytes]:
         """Encode one queued observation as an OBS frame."""
@@ -1047,38 +1081,88 @@ class PeekaAgent(
                 stats["slow_evicted_count"] = stats.get("slow_evicted_count", 0) + 1
                 stats["evicted_count"] = stats.get("evicted_count", 0) + 1
 
+    def _send_fallback_frames_with_timeout(
+        self,
+        conn: socket.socket,
+        frames: bytes,
+        write_lock: Optional[Any],
+        timeout: float,
+    ) -> bool:
+        """Bounded fallback write for mock/wrapper transports without fileno()."""
+        done = _rpl.create_event()
+        result: Dict[str, bool] = {"ok": False}
+
+        def _worker() -> None:
+            acquired = True
+            if write_lock is not None:
+                acquired = bool(write_lock.acquire(True, timeout))
+            if not acquired:
+                done.set()
+                return
+            try:
+                conn.sendall(frames)
+                result["ok"] = True
+            except Exception:
+                pass
+            finally:
+                if write_lock is not None:
+                    write_lock.release()
+                done.set()
+
+        _rpl.start_thread(_worker, name="peeka-observation-send-fallback")
+        if not done.wait(timeout=timeout):
+            return False
+        return result["ok"]
+
     def _send_observation_frames_with_timeout(
         self, conn: socket.socket, frames: bytes, timeout: float = 0.1
     ) -> bool:
         """Send observation frames with a bounded per-connection timeout."""
+        deadline = _rpl.perf_counter() + timeout
+        with self._connections_lock:
+            write_lock = self._client_write_locks.get(conn)
         try:
-            conn.settimeout(timeout)
-        except Exception:
-            pass
+            conn.fileno()
+            send = conn.send
+        except (AttributeError, TypeError, OSError):
+            return self._send_fallback_frames_with_timeout(
+                conn, frames, write_lock, timeout
+            )
 
-        done = _rpl.allocate_lock()
-        done.acquire()
-        result = {"success": False}
-
-        def send_frames() -> None:
-            try:
-                result["success"] = self._send_frame_to_connection(conn, frames)
-            finally:
+        if write_lock is not None and not write_lock.acquire(True, timeout):
+            return False
+        try:
+            view = memoryview(frames)
+            sent = 0
+            use_fallback = False
+            while sent < len(view):
+                remaining = deadline - _rpl.perf_counter()
+                if remaining <= 0 or not _rpl.wait_writable(conn, remaining):
+                    return False
                 try:
-                    done.release()
-                except Exception:
-                    pass
-
-        try:
-            _rpl.start_thread(send_frames, name="peeka-observation-send")
-            if not done.acquire(blocking=True, timeout=timeout):
-                return False
-            return bool(result["success"])
+                    count = send(view[sent:], socket.MSG_DONTWAIT)
+                except (BlockingIOError, InterruptedError):
+                    continue
+                except TypeError:
+                    if sent:
+                        return False
+                    use_fallback = True
+                    break
+                if not count:
+                    return False
+                sent += count
+            if not use_fallback:
+                return True
+        except Exception:
+            return False
         finally:
-            try:
-                conn.settimeout(None)
-            except Exception:
-                pass
+            if write_lock is not None:
+                write_lock.release()
+
+        remaining = max(0.001, deadline - _rpl.perf_counter())
+        return self._send_fallback_frames_with_timeout(
+            conn, frames, write_lock, remaining
+        )
 
     def _signal_observation_queue_drain(self) -> None:
         """Signal the flush worker to stop and wake any pending wait."""
@@ -1137,12 +1221,14 @@ class PeekaAgent(
         client_label = self._format_client_label(client_id, client_info)
 
         try:
-            while True:
-                length_bytes = conn.recv(4)
+            while getattr(self, "running", True) and not getattr(self, "_stopped", False):
+                length_bytes = _recv_exact(conn, 4)
                 if not length_bytes:
                     break
 
                 length = int.from_bytes(length_bytes, "big")
+                if length <= 0 or length > _MAX_COMMAND_FRAME_BYTES:
+                    break
                 data = b""
                 while len(data) < length:
                     chunk = conn.recv(min(length - len(data), 4096))
@@ -1322,7 +1408,11 @@ class PeekaAgent(
         self._unregister_client_connection(conn)
         try:
             conn.shutdown(socket.SHUT_RDWR)
-        except OSError:
+        except Exception:
+            pass
+        try:
+            conn.close()
+        except Exception:
             pass
 
     def _notify_ready(self) -> None:

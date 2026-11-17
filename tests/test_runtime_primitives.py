@@ -127,3 +127,18 @@ class TestIntegrityCheck:
         expected_keys = set(NATIVE_KEYS) | {"capture_source", "status", "ok"}
         assert set(result.keys()) == expected_keys
         assert "captured_at_import" not in result
+
+
+def test_thread_name_is_removed_after_exit():
+    from peeka.core.runtime import primitives
+
+    done = primitives.allocate_lock()
+    done.acquire()
+    ident = primitives.start_thread(lambda: done.release(), name="temporary-test")
+    assert done.acquire(timeout=2)
+    # The target may release the lock just before the wrapper's finally runs.
+    deadline = primitives.perf_counter() + 2
+    while ident in primitives._THREAD_NAMES and primitives.perf_counter() < deadline:
+        import time
+        time.sleep(0.001)
+    assert ident not in primitives._THREAD_NAMES

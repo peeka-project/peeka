@@ -146,3 +146,69 @@ class TestConsumerIntegration:
         assert len(records) == 1
         assert records[0]["source_type"] == "probe"
         assert records[0]["payload"]["event_id"] == event.event_id
+
+
+def test_script_namespace_uses_canonical_consumer_registry():
+    from pathlib import Path
+    from peeka.core import agent
+
+    namespace = {"__name__": "injected_agent", "__file__": agent.__file__}
+    exec(compile(Path(agent.__file__).read_text(), agent.__file__, "exec"), namespace)
+    assert namespace["_get_consumer_registry"]() is agent._get_consumer_registry()
+
+
+def test_recv_exact_handles_fragmented_header_and_eof():
+    import socket
+    from peeka.core.agent import _recv_exact
+
+    left, right = socket.socketpair()
+    try:
+        left.sendall(b"ab")
+        left.sendall(b"cd")
+        assert _recv_exact(right, 4) == b"abcd"
+        left.close()
+        assert _recv_exact(right, 4) == b""
+    finally:
+        left.close()
+        right.close()
+
+
+def test_oversized_command_closes_connection():
+    import socket
+    import threading
+    from peeka.core.agent import PeekaAgent, _MAX_COMMAND_FRAME_BYTES
+
+    agent = PeekaAgent("frame-limit-test")
+    left, right = socket.socketpair()
+    thread = threading.Thread(target=agent._handle_client, args=(right, 1))
+    thread.start()
+    left.sendall((_MAX_COMMAND_FRAME_BYTES + 1).to_bytes(4, "big"))
+    thread.join(2)
+    try:
+        assert not thread.is_alive()
+        assert left.recv(1) == b""
+    finally:
+        left.close()
+        agent.stop()
+
+
+def test_stop_interrupts_blocked_client():
+    import socket
+    import threading
+    import time
+    from peeka.core.agent import PeekaAgent
+
+    agent = PeekaAgent("socket-stop-test")
+    left, right = socket.socketpair()
+    thread = threading.Thread(target=agent._handle_client, args=(right, 1))
+    thread.start()
+    deadline = time.monotonic() + 2
+    while not agent._snapshot_client_connections() and time.monotonic() < deadline:
+        time.sleep(0.001)
+    try:
+        agent.stop()
+        thread.join(2)
+        assert not thread.is_alive()
+        assert left.recv(1) == b""
+    finally:
+        left.close()

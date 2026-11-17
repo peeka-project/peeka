@@ -1,5 +1,7 @@
 """Lifecycle cleanup helpers for resource-owning command handlers."""
 
+import socket
+
 from typing import Any, Dict, List, Optional
 
 __all__ = [
@@ -57,6 +59,29 @@ def shutdown_agent_resources(
             )
             step_errors[step_name] = str(exc)
             return None
+
+    # Wake blocked socket readers before potentially lengthy cleanup.
+    lock = getattr(agent, "_connections_lock", None)
+    if lock is not None:
+        with lock:
+            connections = list(getattr(agent, "_client_connections", ()))
+    else:
+        connections = list(getattr(agent, "_client_connections", ()))
+    queue_lock = getattr(agent, "_observation_queue_lock", None)
+    if queue_lock is not None:
+        with queue_lock:
+            connections += list(getattr(agent, "_observation_queues", {}))
+    else:
+        connections += list(getattr(agent, "_observation_queues", {}))
+    for conn in connections:
+        try:
+            conn.shutdown(socket.SHUT_RDWR)
+        except Exception:
+            pass
+        try:
+            conn.close()
+        except Exception:
+            pass
 
     resource_owners_result = run_step(
         "stop_resource_owners",

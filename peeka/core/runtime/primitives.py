@@ -135,10 +135,24 @@ def start_thread(
     if not daemon:
         raise ValueError("daemon=False is not supported; only daemon=True is allowed")
 
-    ident = _NATIVE_START_NEW_THREAD(target, args)
-    if name is not None:
-        _THREAD_NAMES[ident] = name
-    return ident
+    ready = _NATIVE_ALLOCATE_LOCK()
+    ready.acquire()
+
+    def run() -> None:
+        ready.acquire()
+        ready.release()
+        try:
+            target(*args)
+        finally:
+            _THREAD_NAMES.pop(_NATIVE_GET_IDENT(), None)
+
+    try:
+        ident = _NATIVE_START_NEW_THREAD(run, ())
+        if name is not None:
+            _THREAD_NAMES[ident] = name
+        return ident
+    finally:
+        ready.release()
 
 
 def allocate_lock() -> Any:
