@@ -173,6 +173,10 @@ class StreamingAgentClient:
         self._buffer = b""
         self._stop_event = threading.Event()
         self._send_lock = threading.Lock()
+        # Serialises socket reads and ``_buffer`` mutations performed by
+        # ``stream_observations`` so concurrent readers never interleave
+        # partial frames. Never held while yielding to the caller.
+        self._stream_read_lock = threading.Lock()
         self._activity_reporter = activity_reporter
         self._client_info = _build_client_info(client_info, "cli")
         self._identify_on_connect = client_info is not None
@@ -273,7 +277,8 @@ class StreamingAgentClient:
             except Exception:
                 pass
             self._sock = None
-        self._buffer = b""
+        with self._stream_read_lock:
+            self._buffer = b""
         if had_socket:
             self._report_activity("INFO", "disconnected")
 
@@ -369,21 +374,29 @@ class StreamingAgentClient:
             return
 
         while not self._stop_event.is_set():
+            # Read and parse under the lock, but yield outside of it so a
+            # slow consumer never blocks other users of the socket/buffer.
+            pending = []
+            should_break = False
             try:
-                chunk = self._sock.recv(4096)
-                if not chunk:
-                    if not self._stop_event.is_set():
-                        self._report_activity("WARNING", "observation stream closed by peer")
-                    break
-
-                self._buffer += chunk
-
-                while True:
-                    obs = self._extract_observation()
-                    if obs is None:
+                with self._stream_read_lock:
+                    sock = self._sock
+                    if sock is None:
                         break
-                    yield obs
-
+                    chunk = sock.recv(4096)
+                    if not chunk:
+                        if not self._stop_event.is_set():
+                            self._report_activity(
+                                "WARNING", "observation stream closed by peer"
+                            )
+                        should_break = True
+                    else:
+                        self._buffer += chunk
+                        while True:
+                            obs = self._extract_observation()
+                            if obs is None:
+                                break
+                            pending.append(obs)
             except socket.timeout:
                 continue
             except OSError as e:
@@ -392,8 +405,16 @@ class StreamingAgentClient:
                 break
             except Exception:
                 if not self._stop_event.is_set():
-                    self._report_activity("WARNING", "observation stream crashed unexpectedly")
+                    self._report_activity(
+                        "WARNING", "observation stream crashed unexpectedly"
+                    )
                 logger.debug("Unexpected error in stream_observations", exc_info=True)
+                break
+
+            for obs in pending:
+                yield obs
+
+            if should_break:
                 break
 
     def _extract_observation(self) -> Optional[Dict[str, Any]]:

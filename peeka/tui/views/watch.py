@@ -16,7 +16,7 @@ from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Button, DataTable, Input, Static, Tree
 from textual.widgets.tree import TreeNode
-from textual.worker import get_current_worker
+from textual.worker import Worker, get_current_worker
 
 from peeka.tui.activity import make_activity_reporter, make_client_info
 from peeka.tui.completion import CompletionSource
@@ -145,6 +145,8 @@ class WatchView(Container):
         self._client: Optional["StreamingAgentClient"] = None
         self._stream_client: Optional["StreamingAgentClient"] = None
         self._stream_client_lock: threading.Lock = threading.Lock()
+        # Single shared reader that fans observations out to every watch.
+        self._stream_worker: Optional[Worker] = None
         self._socket_path: Optional[str] = None
         self._observations: Deque[dict] = deque(maxlen=self.MAX_OBSERVATIONS)
         self._obs_counter: int = 0
@@ -369,9 +371,17 @@ class WatchView(Container):
             worker = watch_info.get("worker")
             if worker:
                 worker.cancel()
+        self._cancel_stream_worker()
         if self._stream_client:
             self._stream_client.disconnect()
             self._stream_client = None
+
+    def _cancel_stream_worker(self) -> None:
+        """Cancel the shared stream reader (if any) and forget it."""
+        worker = self._stream_worker
+        self._stream_worker = None
+        if worker is not None:
+            worker.cancel()
 
     def cleanup_for_exit(self) -> None:
         """Stop all watches and reset instrumented functions before TUI exit."""
@@ -420,6 +430,7 @@ class WatchView(Container):
                     pass
 
         self._active_watches.clear()
+        self._cancel_stream_worker()
         if self._stream_client:
             self._stream_client.disconnect()
             self._stream_client = None
@@ -646,43 +657,52 @@ class WatchView(Container):
             "runtime": runtime,
         }
 
-        worker = self.run_worker(
-            lambda: self._stream_observations(watch_id, pattern),
-            thread=True,
-            exclusive=False,
-        )
-        self._active_watches[watch_id]["worker"] = worker
+        # One shared reader serves every watch; competing readers on the same
+        # stream socket would each drop the other watches' observations.
+        stream_worker = self._stream_worker
+        if stream_worker is None or getattr(stream_worker, "is_finished", False):
+            stream_worker = self.run_worker(
+                lambda: self._stream_observations(),
+                thread=True,
+                exclusive=False,
+            )
+            self._stream_worker = stream_worker
+        self._active_watches[watch_id]["worker"] = stream_worker
 
         self.app.notify(f"Watching: {pattern}", severity="information")
 
         pattern_widget.value = ""
         self.query_one("#watch-condition", Input).value = ""
 
-    def _stream_observations(self, watch_id: str, pattern: str):
-        """Stream observations in background thread."""
+    def _stream_observations(
+        self, watch_id: Optional[str] = None, pattern: Optional[str] = None
+    ) -> None:
+        """Shared reader: fan observations out to every active watch.
+
+        Args:
+            watch_id: Unused; kept for backward compatibility.
+            pattern: Unused; kept for backward compatibility.
+        """
         stream = self._ensure_stream_client() or self._client
         if not stream:
             return
 
         worker = get_current_worker()
-        local_count = 0
 
         for observation in stream.stream_observations():
             if worker.is_cancelled:
                 break
 
             obs_watch_id = observation.get("watch_id")
-            if obs_watch_id != watch_id:
+            info = self._active_watches.get(obs_watch_id) if obs_watch_id else None
+            if info is None:
                 continue
 
-            local_count += 1
-            count = local_count
-
-            if watch_id in self._active_watches:
-                self._active_watches[watch_id]["count"] = count
+            info["count"] += 1
+            count = info["count"]
 
             self.app.call_from_thread(
-                self._add_observation, watch_id, count, observation
+                self._add_observation, obs_watch_id, count, observation
             )
 
     def _add_observation(self, watch_id: str, count: int, observation: dict) -> None:
@@ -775,6 +795,9 @@ class WatchView(Container):
             return
 
         stopped_count = 0
+
+        # Every watch shares one reader; cancel it once, up front.
+        self._cancel_stream_worker()
 
         for watch_id, watch_info in list(self._active_watches.items()):
             stream_worker = watch_info.get("worker")

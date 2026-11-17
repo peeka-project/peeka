@@ -1,5 +1,7 @@
 """Tests for WatchView - streaming data flow and error handling."""
 
+import threading
+
 import pytest
 from textual.containers import Vertical
 from textual.widgets import DataTable, Static
@@ -8,7 +10,7 @@ from peeka.tui.app import PeekaApp
 from peeka.tui.screens.main import MainScreen
 from peeka.tui.views.watch import WatchView
 from peeka.tui.widgets.autocomplete_input import AutoCompleteInput
-from tests.tui.conftest import make_patch_status_response
+from tests.tui.conftest import MockStreamingAgentClient, make_patch_status_response
 
 
 class TestWatchView:
@@ -820,3 +822,138 @@ class TestWatchViewLayout:
             banner_idx = child_ids.index("watch-runtime-banner")
             list_idx = child_ids.index("watch-list")
             assert controls_idx < banner_idx < list_idx
+
+
+class _GatedStreamClient(MockStreamingAgentClient):
+    """Stream client whose single shared generator waits for a release event."""
+
+    def __init__(self, observations):
+        super().__init__(observations=observations)
+        self.release = threading.Event()
+        self.stream_calls = 0
+
+    def stream_observations(self):
+        self.stream_calls += 1
+        if not self.connected:
+            return
+        self.release.wait(timeout=10)
+        yield from list(self.observations)
+
+
+class _TwoWatchCommandClient(MockStreamingAgentClient):
+    """Command client that hands out w1, w2, ... for successive watch starts."""
+
+    def __init__(self):
+        super().__init__()
+        self._watch_seq = 0
+
+    def send_command(self, command):
+        if command.get("type") == "watch" and command.get("action") == "start":
+            self.commands_received.append(command)
+            self._watch_seq += 1
+            return {"status": "success", "watch_id": f"w{self._watch_seq}"}
+        return {"status": "success"}
+
+
+def _obs(watch_id, i):
+    return {
+        "watch_id": watch_id,
+        "func_name": f"module.{watch_id}",
+        "params": [i],
+        "kwargs": {},
+        "returnObj": i,
+        "cost": 0.1,
+        "success": True,
+    }
+
+
+class TestWatchViewSharedStream:
+    """Concurrent watches share one reader and keep their own observations."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_two_concurrent_watches_both_receive_observations(self):
+        client = _TwoWatchCommandClient()
+        client.connect()
+        observations = [
+            _obs("w1", 0),
+            _obs("w2", 0),
+            _obs("w1", 1),
+            _obs("w2", 1),
+            _obs("w2", 2),
+            _obs("w3-unknown", 0),
+        ]
+        stream_client = _GatedStreamClient(observations)
+        stream_client.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            watch_view = app.screen.query_one("WatchView", WatchView)
+            watch_view.set_client(client)
+            watch_view._stream_client = stream_client
+
+            pattern_input = watch_view.query_one("#watch-pattern", AutoCompleteInput)
+            pattern_input.value = "module.one"
+            await watch_view._start_watch()
+            pattern_input.value = "module.two"
+            await watch_view._start_watch()
+
+            w1 = watch_view._active_watches["w1"]
+            w2 = watch_view._active_watches["w2"]
+            assert w1["worker"] is not None
+            # Single shared reader, not one competing reader per watch.
+            assert w1["worker"] is w2["worker"]
+            assert w1["worker"] is watch_view._stream_worker
+            assert stream_client.stream_calls == 1
+
+            stream_client.release.set()
+            await w1["worker"].wait()
+            await pilot.pause()
+
+            assert w1["count"] == 2
+            assert w2["count"] == 3
+
+            obs_table = watch_view.query_one("#observations-table", DataTable)
+            assert obs_table.row_count == 5
+
+            watch_table = watch_view.query_one("#watch-table", DataTable)
+            assert watch_table.get_cell("w1", "Obs") == "2"
+            assert watch_table.get_cell("w2", "Obs") == "3"
+
+    @pytest.mark.asyncio
+    @pytest.mark.tui
+    async def test_stop_all_cancels_shared_worker(self):
+        client = _TwoWatchCommandClient()
+        client.connect()
+        stream_client = _GatedStreamClient([])
+        stream_client.connect()
+
+        app = PeekaApp()
+        async with app.run_test() as pilot:
+            main_screen = MainScreen(
+                pid=12345, session_id="test-session", socket_path="/tmp/test.sock"
+            )
+            await app.push_screen(main_screen)
+            await pilot.pause()
+
+            watch_view = app.screen.query_one("WatchView", WatchView)
+            watch_view.set_client(client)
+            watch_view._stream_client = stream_client
+
+            pattern_input = watch_view.query_one("#watch-pattern", AutoCompleteInput)
+            pattern_input.value = "module.one"
+            await watch_view._start_watch()
+            assert watch_view._stream_worker is not None
+
+            stream_client.release.set()
+            await watch_view._stop_all_watches()
+            await pilot.pause()
+
+            assert watch_view._stream_worker is None
+            assert not watch_view._active_watches
