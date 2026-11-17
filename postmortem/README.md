@@ -1,6 +1,6 @@
 # Postmortem 索引
 
-生成日期：2026-11-09
+生成日期：2026-11-17
 
 ## 话题列表
 
@@ -9,12 +9,12 @@
 | [001](./001-docs-gh-pages.md) | 文档与 GitHub Pages 构建/链接/主题问题 | SEV-0 | docs, gh-pages | 6 | 2026-03-18 |
 | [002](./002-tui-memory-view.md) | TUI Memory View 布局、GC 表格、刷新与交互 | SEV-1 | tui | 13 | 2026-03-10 |
 | [003](./003-tui-autocomplete.md) | TUI 自动补全：缓存、触发、光标、`__main__` | SEV-2 | tui | 5 | 2026-03-05 |
-| [004](./004-streaming-client-concurrency.md) | StreamingAgentClient 并发与 BrokenPipe | SEV-1 | core | 8 | 2026-11-08 |
+| [004](./004-streaming-client-concurrency.md) | StreamingAgentClient 并发与 BrokenPipe | SEV-1 | core | 9 | 2026-11-17 |
 | [005](./005-tui-threading-and-lifecycle.md) | TUI 线程模型、主线程阻塞与关机生命周期 | SEV-1 | tui | 9 | 2026-06-23 |
-| [006](./006-attach-and-agent-lifecycle.md) | 进程 Attach 就绪探测与 Agent 生命周期 | SEV-0 | core | 10 | 2026-06-25 |
+| [006](./006-attach-and-agent-lifecycle.md) | 进程 Attach 就绪探测与 Agent 生命周期 | SEV-0 | core | 12 | 2026-11-17 |
 | [007](./007-gdb-injection-and-python38.md) | GDB 注入路径与 Python 3.8 兼容性 | SEV-1 | core | 4 | 2026-03-24 |
-| [008](./008-injector-and-tracing.md) | DecoratorInjector 实例方法、`__main__` 解析与 trace 调用树 | SEV-1 | core, commands | 4 | 2026-07-04 |
-| [009](./009-cli-commands-and-payloads.md) | CLI 命令分发、参数键与 JSONL payload 契约漂移 | SEV-1 | cli, core | 9 | 2026-06-25 |
+| [008](./008-injector-and-tracing.md) | DecoratorInjector 实例方法、`__main__` 解析与 trace 调用树 | SEV-1 | core, commands | 6 | 2026-11-17 |
+| [009](./009-cli-commands-and-payloads.md) | CLI 命令分发、参数键与 JSONL payload 契约漂移 | SEV-1 | cli, core | 10 | 2026-11-17 |
 | [010](./010-top-profiling.md) | Top 命令线程过滤、TopView 并发与 Agent 响应帧竞态 | SEV-1 | core, tui | 6 | 2026-07-17 |
 | [011](./011-docker-build-and-images.md) | Docker 镜像构建、镜像源与容器进程模型 | SEV-2 | docker | 5 | 2026-03-01 |
 | [012](./012-tui-ui-and-textual-api.md) | TUI 样式、DataTable API 与 Textual 兼容 | SEV-1 | tui | 8 | 2026-11-07 |
@@ -32,7 +32,7 @@
 ## 统计
 
 - **话题总数**：22
-- **事故总次数**：112
+- **事故总次数**：119
 - **按最高严重级别**：SEV-0: 3, SEV-1: 14, SEV-2: 4, SEV-3: 1, SEV-4: 0
 - **按组件**：
   - core: 9 个话题（004, 006, 007, 008, 014, 017, 018, 019, 020, 021）
@@ -54,10 +54,26 @@
   - Resource Management: 话题 006
   - Environment Assumption / Missing Fallback: 话题 021
   - Dependency Issue: 话题 017, 022
-- **最近一次分析范围**：`v0.1.20..v0.1.21`
-- **分析的 fix 提交总数**：51
-- **入选事故组块数**：8
-- **跳过/合并的 fix 提交数**：43
+- **最近一次分析范围**：`v0.1.21..v0.1.22`
+- **分析的 fix 提交总数**：9
+- **入选事故组块数**：6
+- **跳过/合并的 fix 提交数**：3（2 个 follow-up 合并、1 个 reference-only）
+
+## v0.1.22 候选筛选说明
+
+已逐项阅读本轮 9 个 fix 的实际 diff，并对照已有话题全文：
+
+| 提交 | 决策 | 归属与理由 |
+|------|------|------------|
+| 9b6f65e | include | 008 #5：描述符绑定与每次调用上下文隔离 |
+| 19c4a9d、8873544 | include / merge | 008 #6：协程执行期追踪及旧解释器 follow-up |
+| f8cb264 | include | 009 #10：双执行与发布前重排回归 |
+| 4fccc7f、cd3ba40 | include / merge | 004 #9：单 reader 分发及信号重入 follow-up |
+| efae7b3 | include | 006 #11：规范模块 registry 身份；有界写和连接关闭同时延续 004 #8、006 #3/#9 的既有预防原则 |
+| dee1fbe | include | 006 #12：PID 作用域与 PermissionError 语义 |
+| 14a0e3c | reference-only | monitor 锁外 join、共享状态锁顺序、RPL 原语迁移，延续 018 #5、017 #5 与 006 #10，避免重复事故块；停止顺序矩阵和 Python 3.12 runtime 专项通过 |
+
+`90554d6` 为测试基线修正，不计入 fix 事故；预热后仍严格检查五轮启停的线程恢复。发布前门禁为 1570 passed、2 skipped，Ruff 通过；容器首轮 98 passed，发现的 6 个生命周期失败修复后全数通过。TUI/run 专项 45 passed，真实 run 冒烟测试通过。
 
 ## 共性问题
 
@@ -76,6 +92,10 @@
 
 | 日期 | 话题 | 事故 | 变更说明 |
 |------|------|------|----------|
+| 2026-11-17 | [004](./004-streaming-client-concurrency.md) | #9 | v0.1.22：多 watch 分发和信号重入 |
+| 2026-11-17 | [006](./006-attach-and-agent-lifecycle.md) | #11-12 | v0.1.22：registry 身份、连接关闭和 PID 隔离 |
+| 2026-11-17 | [008](./008-injector-and-tracing.md) | #5-6 | v0.1.22：描述符和异步追踪语义 |
+| 2026-11-17 | [009](./009-cli-commands-and-payloads.md) | #10 | v0.1.22：run 单次执行与顺序保持 |
 | 2026-11-09 | [022](./022-release-pipeline-and-wheels.md) | #1-2 | 新增话题：PyPI 只发布单一 glibc 2.34 wheel、CI 未锁定 ruff 导致 release gate 失败（v0.1.21） |
 | 2026-11-09 | [004](./004-streaming-client-concurrency.md) | #8 | 新增事故：不读取的连接阻塞 agent 日志广播（v0.1.21） |
 | 2026-11-09 | [018](./018-watch-stacking-and-orphans.md) | #5 | 新增事故：已停止 trace wrapper 持锁调用导致死锁（v0.1.21） |
