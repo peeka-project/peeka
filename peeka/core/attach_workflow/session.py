@@ -17,7 +17,9 @@ class AttachSessionMixin:
 
     def _check_existing_attachment(self) -> Optional[Tuple[str, int]]:
         """
-        Check if there's already an active Peeka agent attached to any process.
+        Check if there's already an active Peeka agent attached to the target
+        process (``self.pid``).  Sessions that belong to other live PIDs are
+        ignored so several Python processes can be attached on one host.
         Returns (session_id, pid) tuple if found, None otherwise.
 
         Validates by both process existence AND agent responsiveness to avoid
@@ -41,11 +43,23 @@ class AttachSessionMixin:
                 if pid_file.exists():
                     try:
                         attached_pid = int(pid_file.read_text().strip())
+                        target_pid = getattr(self, "pid", None)
                         try:
                             os.kill(attached_pid, 0)
-                        except (ProcessLookupError, PermissionError):
+                        except ProcessLookupError:
+                            # Dead PID: leftover files are stale.
                             stale += 1
                             self._cleanup_stale_files(sock_file, pid_file, ready_file)
+                            continue
+                        except PermissionError:
+                            # Live process owned by another user: never delete
+                            # its files. Only consider it if it is our target.
+                            if target_pid is None or attached_pid != target_pid:
+                                continue
+
+                        # A live session for a different PID must not block
+                        # attaching to a new target process.
+                        if target_pid is not None and attached_pid != target_pid:
                             continue
 
                         if self._is_agent_responsive(str(sock_file)):

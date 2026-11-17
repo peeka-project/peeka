@@ -18,6 +18,7 @@ from peeka.core import agent as agent_module
 from peeka.core.agent import PeekaAgent, _init_agent
 from peeka.core.attach import ProcessAttacher
 from peeka.core.attach_workflow import capability
+from peeka.core.attach_workflow import session as attach_session_module
 
 
 class TestRTLDConstants:
@@ -997,3 +998,101 @@ class TestAgentScriptBootstrap:
             attacher._create_agent_script("print('hello')")
 
         assert not agent_script_path.exists()
+
+
+class TestCheckExistingAttachmentMultiPid:
+    """_check_existing_attachment must isolate sessions per target PID."""
+
+    @pytest.fixture
+    def session_dir(self, monkeypatch):
+        import shutil
+        import socket as socket_module
+        import tempfile
+        from pathlib import Path
+
+        # AF_UNIX paths are short-limited; use a compact temp directory.
+        class _SessionDir(type(Path())):
+            pass
+
+        root = _SessionDir(tempfile.mkdtemp(prefix="pk"))
+        socks = []
+
+        def make_session(session_id, pid):
+            sock_path = root / f"peeka_{session_id}.sock"
+            s = socket_module.socket(socket_module.AF_UNIX, socket_module.SOCK_STREAM)
+            s.bind(str(sock_path))
+            socks.append(s)
+            (root / f"peeka_{session_id}.pid").write_text(str(pid))
+            (root / f"peeka_{session_id}.ready").write_text("ready")
+            return sock_path
+
+        monkeypatch.setattr(attach, "Path", lambda *_a, **_k: root)
+        root.make_session = make_session  # type: ignore[attr-defined]
+        yield root
+        for s in socks:
+            s.close()
+        shutil.rmtree(root, ignore_errors=True)
+
+    def test_permission_error_keeps_files_and_skips_other_pid(
+        self, session_dir, monkeypatch
+    ):
+        sock_path = session_dir.make_session("other", 4242)
+
+        def fake_kill(pid, sig):
+            raise PermissionError(1, "Operation not permitted")
+
+        monkeypatch.setattr(attach_session_module.os, "kill", fake_kill)
+        attacher = ProcessAttacher(9999)
+
+        assert attacher._check_existing_attachment() is None
+        assert sock_path.exists()
+        assert (session_dir / "peeka_other.pid").exists()
+        assert (session_dir / "peeka_other.ready").exists()
+
+    def test_permission_error_for_own_target_is_still_reused(
+        self, session_dir, monkeypatch
+    ):
+        session_dir.make_session("mine", 4242)
+
+        def fake_kill(pid, sig):
+            raise PermissionError(1, "Operation not permitted")
+
+        monkeypatch.setattr(attach_session_module.os, "kill", fake_kill)
+        monkeypatch.setattr(
+            ProcessAttacher, "_is_agent_responsive", classmethod(lambda cls, p: True)
+        )
+        attacher = ProcessAttacher(4242)
+
+        assert attacher._check_existing_attachment() == ("mine", 4242)
+        assert (session_dir / "peeka_mine.pid").exists()
+
+    def test_dead_pid_is_cleaned_up(self, session_dir, monkeypatch):
+        sock_path = session_dir.make_session("dead", 4242)
+
+        def fake_kill(pid, sig):
+            raise ProcessLookupError(3, "No such process")
+
+        monkeypatch.setattr(attach_session_module.os, "kill", fake_kill)
+        attacher = ProcessAttacher(9999)
+
+        assert attacher._check_existing_attachment() is None
+        assert not sock_path.exists()
+        assert not (session_dir / "peeka_dead.pid").exists()
+
+    def test_live_session_of_other_pid_does_not_block_new_pid(
+        self, session_dir, monkeypatch
+    ):
+        sock_path = session_dir.make_session("first", 4242)
+        monkeypatch.setattr(attach_session_module.os, "kill", lambda pid, sig: None)
+        monkeypatch.setattr(
+            ProcessAttacher, "_is_agent_responsive", classmethod(lambda cls, p: True)
+        )
+
+        # Attaching to a different PID is not blocked by the live session...
+        assert ProcessAttacher(9999)._check_existing_attachment() is None
+        # ...and the other process's session files are left untouched.
+        assert sock_path.exists()
+        assert (session_dir / "peeka_first.pid").exists()
+
+        # The matching PID still reuses its own session.
+        assert ProcessAttacher(4242)._check_existing_attachment() == ("first", 4242)
