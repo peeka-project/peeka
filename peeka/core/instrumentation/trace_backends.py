@@ -150,8 +150,17 @@ class InjectorTraceBackendsMixin:
                 on_start(frame)
             elif event == "return":
                 # settrace also reports a return when a coroutine yields.
-                opcode = frame.f_code.co_code[frame.f_lasti]
-                if dis.opname[opcode] != "YIELD_VALUE":
+                code = frame.f_code.co_code
+                offset = frame.f_lasti
+                opcode = dis.opname[code[offset]]
+                # CPython 3.8/3.9 rewinds f_lasti before YIELD_FROM while
+                # suspended, so the return event points to its predecessor.
+                legacy_yield = (
+                    sys.version_info < (3, 10)
+                    and offset + 2 < len(code)
+                    and dis.opname[code[offset + 2]] == "YIELD_FROM"
+                )
+                if opcode not in ("YIELD_VALUE", "YIELD_FROM") and not legacy_yield:
                     on_return(frame)
             return local_trace
 
