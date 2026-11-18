@@ -65,8 +65,14 @@ def shutdown_agent_resources(
     if lock is not None:
         with lock:
             connections = list(getattr(agent, "_client_connections", ()))
+            detaching_connections = set(
+                getattr(agent, "_detaching_connections", ()) or ()
+            )
     else:
         connections = list(getattr(agent, "_client_connections", ()))
+        detaching_connections = set(
+            getattr(agent, "_detaching_connections", ()) or ()
+        )
     queue_lock = getattr(agent, "_observation_queue_lock", None)
     if queue_lock is not None:
         with queue_lock:
@@ -74,6 +80,8 @@ def shutdown_agent_resources(
     else:
         connections += list(getattr(agent, "_observation_queues", {}))
     for conn in connections:
+        if conn in detaching_connections:
+            continue
         try:
             conn.shutdown(socket.SHUT_RDWR)
         except Exception:
@@ -119,6 +127,16 @@ def shutdown_agent_resources(
     }
 
 
+def _snapshot_handlers(agent: Any) -> List[Any]:
+    """Return a consistent snapshot of registered command handlers."""
+    handlers_lock = getattr(agent, "_handlers_lock", None)
+    handlers = getattr(agent, "command_handlers", {}) or {}
+    if handlers_lock is not None:
+        with handlers_lock:
+            return list(handlers.values())
+    return list(handlers.values())
+
+
 def stop_resource_owners_for_detach(agent: Any, logger: Any) -> Dict[str, Any]:
     """Stop resource-owning command resources before detach teardown.
 
@@ -133,8 +151,7 @@ def stop_resource_owners_for_detach(agent: Any, logger: Any) -> Dict[str, Any]:
     """
     handlers_stopped: List[str] = []
     errors: List[Dict[str, Any]] = []
-    handlers = getattr(agent, "command_handlers", {}) or {}
-    snapshot = list(handlers.values())
+    snapshot = _snapshot_handlers(agent)
 
     for handler in snapshot:
         if not _is_resource_owner(handler):
@@ -181,8 +198,7 @@ def stop_resource_owners_for_reset(
     """
     handlers_stopped: List[str] = []
     errors: List[Dict[str, Any]] = []
-    handlers = getattr(agent, "command_handlers", {}) or {}
-    snapshot = list(handlers.values())
+    snapshot = _snapshot_handlers(agent)
 
     for handler in snapshot:
         if not _is_resource_owner(handler):

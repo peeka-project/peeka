@@ -11,6 +11,7 @@ This module provides memory diagnostic capabilities including:
 import gc
 import os
 import sys
+import threading
 import time
 import tracemalloc
 from collections import defaultdict
@@ -35,6 +36,9 @@ class MemoryCommand(ResourceOwningCommand):
         self.agent = agent
         self._snapshots: List[tracemalloc.Snapshot] = []
         self._started_by_peeka: bool = False
+        self._owned_nframe: Optional[int] = None
+        self._ownership_sentinel: Optional[bytearray] = None
+        self._lock = threading.Lock()
 
     def execute(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -138,6 +142,33 @@ class MemoryCommand(ResourceOwningCommand):
             "gc": {"enabled": gc_enabled, "counts": gc_counts, "stats": gc_stats_data},
         }
 
+    def _owns_tracemalloc_locked(self) -> bool:
+        """Return True iff the currently active tracemalloc session is still Peeka's."""
+        if not self._started_by_peeka:
+            return False
+        if not tracemalloc.is_tracing():
+            self._started_by_peeka = False
+            self._owned_nframe = None
+            self._ownership_sentinel = None
+            return False
+        if (
+            self._owned_nframe is not None
+            and tracemalloc.get_traceback_limit() != self._owned_nframe
+        ):
+            self._started_by_peeka = False
+            self._owned_nframe = None
+            self._ownership_sentinel = None
+            return False
+        if (
+            self._ownership_sentinel is not None
+            and tracemalloc.get_object_traceback(self._ownership_sentinel) is None
+        ):
+            self._started_by_peeka = False
+            self._owned_nframe = None
+            self._ownership_sentinel = None
+            return False
+        return True
+
     def _start_tracking(self, nframe: int) -> Dict[str, Any]:
         """
         Start tracemalloc with specified frame depth.
@@ -148,25 +179,34 @@ class MemoryCommand(ResourceOwningCommand):
         Returns:
             Dict containing start status
         """
-        was_running = tracemalloc.is_tracing()
+        with self._lock:
+            was_running = tracemalloc.is_tracing()
 
-        if not was_running:
-            tracemalloc.start(nframe)
-            self._started_by_peeka = True
-            return {
-                "status": "success",
-                "action": "start",
-                "message": f"tracemalloc started with nframe={nframe}",
-                "nframe": nframe,
-                "was_already_running": False,
-            }
-        else:
-            return {
-                "status": "success",
-                "action": "start",
-                "message": "tracemalloc already active (nframe may differ from requested)",
-                "was_already_running": True,
-            }
+            if not was_running:
+                tracemalloc.start(nframe)
+                self._started_by_peeka = True
+                self._owned_nframe = nframe
+                sentinel = bytearray(64)
+                self._ownership_sentinel = (
+                    sentinel
+                    if tracemalloc.get_object_traceback(sentinel) is not None
+                    else None
+                )
+                return {
+                    "status": "success",
+                    "action": "start",
+                    "message": f"tracemalloc started with nframe={nframe}",
+                    "nframe": nframe,
+                    "was_already_running": False,
+                }
+            else:
+                self._owns_tracemalloc_locked()
+                return {
+                    "status": "success",
+                    "action": "start",
+                    "message": "tracemalloc already active (nframe may differ from requested)",
+                    "was_already_running": True,
+                }
 
     def _stop_tracking(self) -> Dict[str, Any]:
         """
@@ -175,51 +215,67 @@ class MemoryCommand(ResourceOwningCommand):
         Returns:
             Dict containing stop status
         """
-        was_running = tracemalloc.is_tracing()
-
-        if was_running:
-            tracemalloc.stop()
+        with self._lock:
+            was_running = tracemalloc.is_tracing()
             self._started_by_peeka = False
-            return {
-                "status": "success",
-                "action": "stop",
-                "message": "tracemalloc stopped",
-                "was_running": True,
-            }
-        else:
-            return {
-                "status": "success",
-                "action": "stop",
-                "message": "tracemalloc was not running",
-                "was_running": False,
-            }
+            self._owned_nframe = None
+            self._ownership_sentinel = None
+
+            if was_running:
+                tracemalloc.stop()
+                return {
+                    "status": "success",
+                    "action": "stop",
+                    "message": "tracemalloc stopped",
+                    "was_running": True,
+                }
+            else:
+                return {
+                    "status": "success",
+                    "action": "stop",
+                    "message": "tracemalloc was not running",
+                    "was_running": False,
+                }
 
     def stop_active_resources(
         self, pattern: Optional[str], reason: str
     ) -> Dict[str, Any]:
-        """Stop tracemalloc resources started by Peeka and clear snapshots."""
+        """Stop tracemalloc resources still owned by Peeka and clear snapshots."""
         stopped: List[Dict[str, str]] = []
+        skipped: List[Dict[str, str]] = []
         errors: List[Dict[str, str]] = []
 
-        if self._started_by_peeka:
+        with self._lock:
+            was_started_by_peeka = self._started_by_peeka
+            owns_tracemalloc = self._owns_tracemalloc_locked()
+
+            if owns_tracemalloc:
+                try:
+                    tracemalloc.stop()
+                    self._started_by_peeka = False
+                    self._owned_nframe = None
+                    self._ownership_sentinel = None
+                    stopped.append({"resource": "tracemalloc"})
+                except Exception as exc:
+                    errors.append({"resource": "tracemalloc", "error": str(exc)})
+            elif was_started_by_peeka and tracemalloc.is_tracing():
+                skipped.append(
+                    {"resource": "tracemalloc", "reason": "externally_restarted"}
+                )
+
             try:
-                tracemalloc.stop()
-                self._started_by_peeka = False
-                stopped.append({"resource": "tracemalloc"})
+                self._snapshots = []
             except Exception as exc:
-                errors.append({"resource": "tracemalloc", "error": str(exc)})
+                errors.append({"resource": "snapshots", "error": str(exc)})
 
-        try:
-            self._snapshots = []
-        except Exception as exc:
-            errors.append({"resource": "snapshots", "error": str(exc)})
-
-        return {"stopped": stopped, "errors": errors}
+        return {"stopped": stopped, "skipped": skipped, "errors": errors}
 
     def list_active_resources(self) -> Dict[str, Any]:
         """List active tracemalloc resources or retained snapshots."""
-        is_tracing = tracemalloc.is_tracing()
-        snapshot_count = len(self._snapshots)
+        with self._lock:
+            owns_tracemalloc = self._owns_tracemalloc_locked()
+            is_tracing = tracemalloc.is_tracing()
+            snapshot_count = len(self._snapshots)
         if not is_tracing and snapshot_count == 0:
             return {"active": []}
 
@@ -227,7 +283,7 @@ class MemoryCommand(ResourceOwningCommand):
             "active": [
                 {
                     "resource": "tracemalloc",
-                    "started_by_peeka": self._started_by_peeka,
+                    "started_by_peeka": owns_tracemalloc,
                     "is_tracing": is_tracing,
                     "snapshot_count": snapshot_count,
                 }

@@ -7,6 +7,7 @@ This code is injected into the target process and handles command execution
 from collections import deque
 
 import atexit
+import fnmatch
 import json
 import logging
 import os
@@ -313,6 +314,75 @@ def _write_session_log(
         pass
 
 
+class _NativeCondition:
+    """Condition variable built exclusively on RPL native locks and events."""
+
+    def __init__(self, lock: Any) -> None:
+        self._lock = lock
+        self._waiters: List[Any] = []
+
+    def wait(self, timeout: Optional[float] = None) -> bool:
+        """Release ``lock``, wait for notify_all or timeout, and reacquire ``lock``."""
+        waiter = _rpl.create_event()
+        self._waiters.append(waiter)
+        self._lock.release()
+        try:
+            return bool(waiter.wait(timeout=timeout))
+        finally:
+            self._lock.acquire()
+            try:
+                self._waiters.remove(waiter)
+            except ValueError:
+                pass
+
+    def wait_for(self, predicate: Any, timeout: Optional[float] = None) -> bool:
+        """Wait until ``predicate()`` is true or ``timeout`` elapses."""
+        deadline = _rpl.perf_counter() + timeout if timeout is not None else None
+        while not predicate():
+            if deadline is not None:
+                remaining = deadline - _rpl.perf_counter()
+                if remaining <= 0:
+                    return False
+                self.wait(timeout=remaining)
+            else:
+                self.wait(timeout=None)
+        return True
+
+    def notify_all(self) -> None:
+        """Wake all threads currently waiting on this condition."""
+        waiters = list(self._waiters)
+        self._waiters.clear()
+        for waiter in waiters:
+            waiter.set()
+
+
+class _InflightCommand:
+    """Tracks one in-flight command execution for stop/reset coordination."""
+
+    def __init__(
+        self,
+        cmd_id: int,
+        cmd_type: str,
+        action: str,
+        pattern: Optional[str],
+        is_reset_scoped: bool,
+        handler: Any,
+        thread_id: int,
+        reset_epoch: int,
+    ) -> None:
+        self.cmd_id = cmd_id
+        self.cmd_type = cmd_type
+        self.action = action
+        self.pattern = pattern
+        self.is_reset_scoped = is_reset_scoped
+        self.handler = handler
+        self.thread_id = thread_id
+        self.reset_epoch = reset_epoch
+        self.cancelled_by_stop: bool = False
+        self.superseded_by_reset: bool = False
+        self.reset_patterns: List[Optional[str]] = []
+
+
 class PeekaAgent(
     AgentTargetControlMixin,
     AgentProbeControlMixin,
@@ -352,6 +422,11 @@ class PeekaAgent(
 
     # Seconds a log broadcast may wait on one client before evicting it.
     _LOG_SEND_TIMEOUT = 1.0
+    _STOP_DRAIN_TIMEOUT = 0.15
+    _STOP_CONCURRENT_WAIT_TIMEOUT = 5.0
+    _RESET_DRAIN_TIMEOUT = 0.05
+    _START_RESET_WAIT_TIMEOUT = 1.0
+    _DETACH_RESPONSE_TIMEOUT = 2.0
 
     _QUIET_COMMAND_ACTIONS = {
         ("complete", ""),
@@ -452,7 +527,19 @@ class PeekaAgent(
         self._recent_errors: List[Dict[str, Any]] = []
         self._error_ring_lock = _rpl.allocate_lock()  # DOMAIN: native_thread
         self._stopped: bool = False
+        self._stopping: bool = False
+        self._stop_owner_tid: Optional[int] = None
+        self._stop_done_event: Any = _rpl.create_event()
         self._stop_lock = _rpl.allocate_lock()
+        self._handlers_lock = _rpl.allocate_lock()
+        self._gate_lock = _rpl.allocate_lock()
+        self._gate_cond = _NativeCondition(self._gate_lock)
+        self._inflight_commands: Dict[int, _InflightCommand] = {}
+        self._inflight_seq: int = 0
+        self._active_reset_count: int = 0
+        self._reset_epoch: int = 0
+        self._detaching_connections: Set[Any] = set()
+        self._thread_connections: Dict[int, Any] = {}
         self._last_cleanup_summary: Dict[str, Any] = {}
         self._prev_sigterm_handler: Any = None
         self._sigterm_handler_ref: Any = None
@@ -594,8 +681,60 @@ class PeekaAgent(
             pass
 
     # ------------------------------------------------------------------ #
-    #  Lazy command handler loading                                      #
+    #  Lazy command handler loading & command gate                       #
     # ------------------------------------------------------------------ #
+
+    def _get_handlers_lock(self) -> Any:
+        lock = getattr(self, "_handlers_lock", None)
+        if lock is None:
+            lock = _rpl.allocate_lock()
+            self._handlers_lock = lock
+        return lock
+
+    def _get_stop_done_event(self) -> Any:
+        event = getattr(self, "_stop_done_event", None)
+        if event is None:
+            event = _rpl.create_event()
+            self._stop_done_event = event
+        return event
+
+    def _ensure_gate_state(self) -> Tuple[Any, _NativeCondition]:
+        lock = getattr(self, "_gate_lock", None)
+        cond = getattr(self, "_gate_cond", None)
+        if lock is None or cond is None:
+            lock = _rpl.allocate_lock()
+            cond = _NativeCondition(lock)
+            self._gate_lock = lock
+            self._gate_cond = cond
+        if not hasattr(self, "_inflight_commands"):
+            self._inflight_commands = {}
+        if not hasattr(self, "_inflight_seq"):
+            self._inflight_seq = 0
+        if not hasattr(self, "_active_reset_count"):
+            self._active_reset_count = 0
+        if not hasattr(self, "_reset_epoch"):
+            self._reset_epoch = 0
+        if not hasattr(self, "_stopping"):
+            self._stopping = bool(getattr(self, "_stopped", False))
+        return lock, cond
+
+    def _mark_detaching_connection(self, conn: Any) -> None:
+        conn_lock = getattr(self, "_connections_lock", None)
+        if conn_lock is not None:
+            with conn_lock:
+                detaching = getattr(self, "_detaching_connections", None)
+                if detaching is None:
+                    detaching = set()
+                    self._detaching_connections = detaching
+                detaching.add(conn)
+
+    def _unmark_detaching_connection(self, conn: Any) -> None:
+        conn_lock = getattr(self, "_connections_lock", None)
+        if conn_lock is not None:
+            with conn_lock:
+                detaching = getattr(self, "_detaching_connections", None)
+                if detaching is not None:
+                    detaching.discard(conn)
 
     def _get_handler(self, cmd_type: str) -> Optional[Any]:
         """Return the handler for *cmd_type*, importing lazily if needed."""
@@ -613,9 +752,13 @@ class PeekaAgent(
 
             mod = importlib.import_module(module_path)
             cls = getattr(mod, class_name)
-            handler = cls(self)  # type: ignore[abstract]
-            self.command_handlers[cmd_type] = handler
-            return handler
+            candidate = cls(self)  # type: ignore[abstract]
+            with self._get_handlers_lock():
+                existing = self.command_handlers.get(cmd_type)
+                if existing is not None:
+                    return existing
+                self.command_handlers[cmd_type] = candidate
+                return candidate
         except Exception:
             self._emit_log(
                 "ERROR",
@@ -623,6 +766,328 @@ class PeekaAgent(
                 traceback.format_exc(),
             )
             return None
+
+    @staticmethod
+    def _is_reset_scoped_command(handler: Any, command: Dict[str, Any]) -> bool:
+        """Return True when a command starts resources torn down by reset."""
+        if handler is None:
+            return False
+        action = str(command.get("action") or "")
+        if action not in ("", "start"):
+            return False
+        if getattr(handler, "is_resource_owner", False) is True:
+            scope = getattr(handler, "cleanup_scope", None)
+            return getattr(scope, "value", None) == "detach_and_reset"
+        return getattr(type(handler), "category", None) == "probe"
+
+    @staticmethod
+    def _reset_pattern_matches(
+        reset_patterns: List[Optional[str]], cmd_pattern: Optional[str]
+    ) -> bool:
+        """Return True if any recorded reset pattern covers ``cmd_pattern``."""
+        for reset_pattern in reset_patterns:
+            if reset_pattern is None:
+                return True
+            if cmd_pattern is None or fnmatch.fnmatch(cmd_pattern, reset_pattern):
+                return True
+        return False
+
+    def _finish_cancelled_command_job(self, result: Any) -> None:
+        """Move any job started by a rolled-back command to a terminal state."""
+        if not isinstance(result, dict):
+            return
+        job_id = result.get("job_id")
+        if not job_id:
+            return
+        try:
+            job_reg = self._job_registry()
+            job = job_reg.get(job_id)
+            if job is not None:
+                from peeka.core.jobs import TERMINAL_STATUSES
+
+                if job.status not in TERMINAL_STATUSES:
+                    job_reg.set_status(
+                        job_id,
+                        "cancelled",
+                        last_error={
+                            "code": "COMMAND_ROLLED_BACK",
+                            "message": "Command rolled back due to concurrent stop or reset",
+                        },
+                    )
+                if job.foreground and job.client_session_id:
+                    self._get_client_registry().clear_foreground_job(
+                        job.client_session_id,
+                        expected_job_id=job_id,
+                    )
+        except Exception:
+            pass
+
+    def _rollback_inflight_for_stop(
+        self, token: _InflightCommand, result: Any
+    ) -> Dict[str, Any]:
+        """Roll back any runtime state created by a command that finished after stop."""
+        from peeka.core.agent_control.lifecycle import _is_resource_owner
+
+        if token.handler is not None and _is_resource_owner(token.handler):
+            try:
+                token.handler.stop_active_resources(pattern=None, reason="detach")
+            except Exception:
+                pass
+
+        if isinstance(result, dict):
+            watch_id = result.get("watch_id")
+            if watch_id:
+                try:
+                    self.stop_probe_context(watch_id)
+                except Exception:
+                    pass
+                try:
+                    self.injector.uninject(watch_id)
+                except Exception:
+                    pass
+                try:
+                    self.observer.unregister_watch(watch_id)
+                except Exception:
+                    pass
+            probe_id = result.get("probe_id")
+            if probe_id and hasattr(self, "probe_registry"):
+                try:
+                    from peeka.core.probes import TERMINAL_STATUSES as PROBE_TERMINAL
+
+                    probe = self.probe_registry.get(probe_id)
+                    if probe is not None and probe.status not in PROBE_TERMINAL:
+                        self.probe_registry.set_status(probe_id, "stopped")
+                    self._finish_probe_job(probe_id, "cancelled")
+                except Exception:
+                    pass
+
+        try:
+            self.stop_probe_contexts_by_type(self.list_tracked_probe_types())
+        except Exception:
+            pass
+        try:
+            self.injector.uninject_all()
+        except Exception:
+            pass
+        try:
+            self.observer.clear_all()
+        except Exception:
+            pass
+        try:
+            self.probe_registry.cleanup(older_than_seconds=0, completed_only=True)
+        except Exception:
+            pass
+        self._finish_cancelled_command_job(result)
+        return {
+            "status": "error",
+            "error_code": "AGENT_STOPPING",
+            "message": "Agent stopped while command was in flight",
+            "error": "AGENT_STOPPING: Agent stopped while command was in flight",
+        }
+
+    def _rollback_inflight_for_reset(
+        self, token: _InflightCommand, result: Any
+    ) -> Dict[str, Any]:
+        """Roll back any reset-scoped state installed by a superseded start command."""
+        from peeka.core.agent_control.lifecycle import _is_resource_owner
+
+        watch_id = result.get("watch_id") if isinstance(result, dict) else None
+        if token.handler is not None and _is_resource_owner(token.handler):
+            try:
+                if watch_id:
+                    token.handler.execute({"action": "stop", "watch_id": watch_id})
+                else:
+                    stop_pattern = token.pattern
+                    if stop_pattern is None and token.reset_patterns:
+                        stop_pattern = token.reset_patterns[-1]
+                    token.handler.stop_active_resources(
+                        pattern=stop_pattern, reason="reset"
+                    )
+            except Exception:
+                pass
+
+        if watch_id:
+            try:
+                self.stop_probe_context(watch_id)
+            except Exception:
+                pass
+            try:
+                self.injector.uninject(watch_id)
+            except Exception:
+                pass
+            try:
+                self.observer.unregister_watch(watch_id)
+            except Exception:
+                pass
+
+        if isinstance(result, dict):
+            probe_id = result.get("probe_id")
+            if probe_id and hasattr(self, "probe_registry"):
+                try:
+                    from peeka.core.probes import TERMINAL_STATUSES as PROBE_TERMINAL
+
+                    probe = self.probe_registry.get(probe_id)
+                    if probe is not None and probe.status not in PROBE_TERMINAL:
+                        self.probe_registry.set_status(probe_id, "stopped")
+                    self._finish_probe_job(probe_id, "cancelled")
+                except Exception:
+                    pass
+
+        self._finish_cancelled_command_job(result)
+        return {
+            "status": "error",
+            "error_code": "RESET_IN_PROGRESS",
+            "message": "Command superseded by concurrent reset",
+            "error": "RESET_IN_PROGRESS: Command superseded by concurrent reset",
+        }
+
+    def _is_agent_stopped(self) -> bool:
+        """Return True when the agent is stopped or shutting down."""
+        return bool(
+            getattr(self, "_stopping", False)
+            or getattr(self, "_stopped", False)
+            or not getattr(self, "running", True)
+        )
+
+    def track_probe_context(
+        self,
+        stream_key: str,
+        probe_context: ProbeContext,
+        probe_type: str,
+    ) -> None:
+        """Track an active probe context unless the agent is stopping/stopped."""
+        if self._is_agent_stopped():
+            cleanup = getattr(self, "_cleanup_orphaned_probe_context", None)
+            if callable(cleanup):
+                cleanup(stream_key, probe_context, probe_type)
+            else:
+                try:
+                    probe_context.__exit__(None, None, None)
+                except Exception:
+                    pass
+            return
+        super().track_probe_context(stream_key, probe_context, probe_type)
+
+    def _execute_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute a command behind stop and reset-vs-start coordination gates."""
+        cmd_type = str(command.get("type", "") or "")
+        action = str(command.get("action") or "")
+
+        if cmd_type == "detach":
+            return super()._execute_command(command)
+
+        gate_lock, gate_cond = self._ensure_gate_state()
+        is_reset = cmd_type == "reset" and action != "list"
+        handler = None if ("command" in command and command.get("command") == "ping") else self._get_handler(cmd_type)
+        is_reset_scoped = (not is_reset) and self._is_reset_scoped_command(handler, command)
+        raw_pattern = command.get("pattern")
+        pattern = raw_pattern if isinstance(raw_pattern, str) else None
+        tid = _rpl.get_ident()
+
+        with gate_lock:
+            if getattr(self, "_stopping", False) or getattr(self, "_stopped", False):
+                return {
+                    "status": "error",
+                    "error_code": "AGENT_STOPPING",
+                    "message": "Agent is stopping",
+                    "error": "AGENT_STOPPING: Agent is stopping",
+                }
+
+            if is_reset_scoped and self._active_reset_count > 0:
+                gate_cond.wait_for(
+                    lambda: (
+                        self._active_reset_count == 0
+                        or getattr(self, "_stopping", False)
+                        or getattr(self, "_stopped", False)
+                    ),
+                    timeout=self._START_RESET_WAIT_TIMEOUT,
+                )
+                if getattr(self, "_stopping", False) or getattr(self, "_stopped", False):
+                    return {
+                        "status": "error",
+                        "error_code": "AGENT_STOPPING",
+                        "message": "Agent is stopping",
+                        "error": "AGENT_STOPPING: Agent is stopping",
+                    }
+                if self._active_reset_count > 0:
+                    return {
+                        "status": "error",
+                        "error_code": "RESET_IN_PROGRESS",
+                        "message": "Reset is in progress",
+                        "error": "RESET_IN_PROGRESS: Reset is in progress",
+                    }
+
+            if is_reset:
+                self._active_reset_count += 1
+                self._reset_epoch += 1
+                reset_epoch = self._reset_epoch
+                pre_existing_starts = [
+                    tok
+                    for tok in self._inflight_commands.values()
+                    if tok.is_reset_scoped and tok.reset_epoch < reset_epoch
+                ]
+                if pre_existing_starts:
+                    gate_cond.wait_for(
+                        lambda: (
+                            all(
+                                tok.cmd_id not in self._inflight_commands
+                                for tok in pre_existing_starts
+                            )
+                            or getattr(self, "_stopping", False)
+                            or getattr(self, "_stopped", False)
+                        ),
+                        timeout=self._RESET_DRAIN_TIMEOUT,
+                    )
+                    if getattr(self, "_stopping", False) or getattr(self, "_stopped", False):
+                        self._active_reset_count = max(0, self._active_reset_count - 1)
+                        gate_cond.notify_all()
+                        return {
+                            "status": "error",
+                            "error_code": "AGENT_STOPPING",
+                            "message": "Agent is stopping",
+                            "error": "AGENT_STOPPING: Agent is stopping",
+                        }
+                    for tok in pre_existing_starts:
+                        if tok.cmd_id in self._inflight_commands:
+                            tok.superseded_by_reset = True
+                            tok.reset_patterns.append(pattern)
+
+            self._inflight_seq += 1
+            token = _InflightCommand(
+                cmd_id=self._inflight_seq,
+                cmd_type=cmd_type,
+                action=action,
+                pattern=pattern,
+                is_reset_scoped=is_reset_scoped,
+                handler=handler,
+                thread_id=tid,
+                reset_epoch=self._reset_epoch,
+            )
+            self._inflight_commands[token.cmd_id] = token
+
+        result: Any = None
+        try:
+            result = super()._execute_command(command)
+        finally:
+            with gate_lock:
+                self._inflight_commands.pop(token.cmd_id, None)
+                if is_reset:
+                    self._active_reset_count = max(0, self._active_reset_count - 1)
+                gate_cond.notify_all()
+                stopped_during_call = (
+                    token.cancelled_by_stop
+                    or getattr(self, "_stopping", False)
+                    or getattr(self, "_stopped", False)
+                )
+                superseded_by_reset = token.superseded_by_reset
+
+        if stopped_during_call:
+            return self._rollback_inflight_for_stop(token, result)
+        if superseded_by_reset and self._reset_pattern_matches(
+            token.reset_patterns, token.pattern
+        ):
+            return self._rollback_inflight_for_reset(token, result)
+        return result
 
     def _emit_log(
         self, level: str, message: str, details: Optional[str] = None
@@ -789,6 +1254,8 @@ class PeekaAgent(
         return "success " + " ".join(details[:3])
 
     def start(self) -> bool:
+        if getattr(self, "_stopping", False) or getattr(self, "_stopped", False):
+            return False
         try:
             self.server = _rpl.create_socket("AF_UNIX", "SOCK_STREAM")
 
@@ -835,17 +1302,37 @@ class PeekaAgent(
                     self.server.close()
                 except OSError:
                     pass
+                self.server = None
             self._cleanup_session_files()
+            try:
+                atexit.unregister(self.stop)
+            except Exception:
+                pass
+            self._uninstall_exit_hooks()
             msg = f"[peeka Agent] Start failed: {e}"
             self._emit_log("ERROR", msg, traceback.format_exc())
             return False
 
     def _accept_loop(self) -> None:
-        while self.running:
+        while (
+            self.running
+            and not getattr(self, "_stopping", False)
+            and not getattr(self, "_stopped", False)
+        ):
             try:
                 if self.server is None:
                     break
                 conn, _ = _rpl.native_accept(self.server)
+                if (
+                    not self.running
+                    or getattr(self, "_stopping", False)
+                    or getattr(self, "_stopped", False)
+                ):
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                    break
                 self._client_counter += 1
                 _rpl.start_thread(self._handle_client, (conn, self._client_counter))
             except socket.timeout:
@@ -855,7 +1342,7 @@ class PeekaAgent(
                 # Server socket closed (stop() called) — exit cleanly
                 break
             except Exception as e:
-                if self.running:
+                if self.running and not getattr(self, "_stopping", False):
                     msg = f"[peeka Agent] Accept error: {e}"
                     self._emit_log("ERROR", msg, traceback.format_exc())
 
@@ -1221,7 +1708,11 @@ class PeekaAgent(
         client_label = self._format_client_label(client_id, client_info)
 
         try:
-            while getattr(self, "running", True) and not getattr(self, "_stopped", False):
+            while (
+                getattr(self, "running", True)
+                and not getattr(self, "_stopping", False)
+                and not getattr(self, "_stopped", False)
+            ):
                 length_bytes = _recv_exact(conn, 4)
                 if not length_bytes:
                     break
@@ -1260,6 +1751,7 @@ class PeekaAgent(
                         identified = True
 
                 command = self._strip_client_info(raw_command)
+                is_detach = str(command.get("type", "") or "") == "detach"
                 if self._is_client_hello(command):
                     result = {"status": "success", "client": client_label}
                 else:
@@ -1270,10 +1762,13 @@ class PeekaAgent(
                             "INFO",
                             f"[peeka Agent] {client_label} -> {command_summary}",
                         )
+                    if is_detach:
+                        self._mark_detaching_connection(conn)
                     result = self._execute_command(command)
 
                     if (
-                        result.get("status") == "success"
+                        not is_detach
+                        and result.get("status") == "success"
                         and self._command_opens_observation_stream(command)
                         and not self._client_info_declines_observations(client_info)
                     ):
@@ -1295,6 +1790,11 @@ class PeekaAgent(
 
                 response = json.dumps(result).encode("utf-8")
                 response_frame = len(response).to_bytes(4, "big") + response
+                if is_detach:
+                    self._send_observation_frames_with_timeout(
+                        conn, response_frame, timeout=self._DETACH_RESPONSE_TIMEOUT
+                    )
+                    break
                 if not self._send_frame_to_connection(conn, response_frame):
                     break
 
@@ -1302,8 +1802,16 @@ class PeekaAgent(
             msg = f"[peeka Agent] Client error: {e}"
             self._emit_log("ERROR", msg, traceback.format_exc())
         finally:
+            self._unmark_detaching_connection(conn)
             connection_total = self._unregister_client_connection(conn)
-            conn.close()
+            try:
+                conn.shutdown(socket.SHUT_RDWR)
+            except Exception:
+                pass
+            try:
+                conn.close()
+            except Exception:
+                pass
             self._emit_log(
                 "INFO",
                 f"[peeka Agent] {client_label} disconnected ({connection_total} total)",
@@ -1429,61 +1937,113 @@ class PeekaAgent(
             # Non-fatal: attacher will fall back to .ready file polling.
             pass
 
+    def _close_gate_and_drain_inflight(self, current_tid: int) -> None:
+        """Close command entry and wait boundedly for in-flight commands to finish."""
+        gate_lock, gate_cond = self._ensure_gate_state()
+        with gate_lock:
+            self._stopping = True
+            gate_cond.notify_all()
+            pending = [
+                tok
+                for tok in self._inflight_commands.values()
+                if tok.thread_id != current_tid and tok.cmd_type != "detach"
+            ]
+            if pending:
+                gate_cond.wait_for(
+                    lambda: all(
+                        tok.cmd_id not in self._inflight_commands for tok in pending
+                    ),
+                    timeout=self._STOP_DRAIN_TIMEOUT,
+                )
+                for tok in pending:
+                    if tok.cmd_id in self._inflight_commands:
+                        tok.cancelled_by_stop = True
+
     def stop(self) -> None:
-        if self._stopped:
+        current_tid = _rpl.get_ident()
+        done_event = self._get_stop_done_event()
+        if getattr(self, "_stopped", False) and done_event.is_set():
             return
-        with self._stop_lock:
-            if self._stopped:
-                return
-            self._stopped = True
 
-        logger = logging.getLogger(__name__)
-        # probe types discovered dynamically from agent state — do not hardcode
-        self._last_cleanup_summary = shutdown_agent_resources(
-            self, logger, self.list_tracked_probe_types()
-        )
+        stop_lock = getattr(self, "_stop_lock", None)
+        if stop_lock is None:
+            stop_lock = _rpl.allocate_lock()
+            self._stop_lock = stop_lock
 
-        self.running = False
-        self._signal_observation_queue_drain()
+        wait_for_owner = False
+        with stop_lock:
+            if getattr(self, "_stopped", False):
+                if getattr(self, "_stop_owner_tid", None) == current_tid:
+                    return
+                wait_for_owner = True
+            else:
+                self._stopped = True
+                self._stopping = True
+                self._stop_owner_tid = current_tid
 
-        drain_deadline = _time.monotonic() + 0.3
-        while _time.monotonic() < drain_deadline:
-            with self._observation_queue_lock:
-                total_queued = sum(len(queue) for queue in self._observation_queues.values())
-            if total_queued == 0:
-                break
-            _time.sleep(0.01)
-
-        with self._observation_queue_lock:
-            for conn, queue in list(self._observation_queues.items()):
-                remaining = len(queue)
-                if remaining <= 0:
-                    continue
-                stats = self._observation_queue_stats.get(conn)
-                if stats is not None:
-                    stats["drain_dropped"] = stats.get("drain_dropped", 0) + remaining
-                    stats["drain_dropped_count"] = stats.get("drain_dropped_count", 0) + remaining
-                queue.clear()
-        if self.server:
-            try:
-                self.server.close()
-            except OSError:
-                pass
-
-        self._cleanup_session_files()
-
-        # Remove self from the global agent registry
-        agents = cast(Optional[Dict[str, "PeekaAgent"]], getattr(sys, "_peeka_agents", None))
-        if agents is not None:
-            keys_to_remove = [k for k, v in agents.items() if v is self]
-            for k in keys_to_remove:
-                del agents[k]
+        if wait_for_owner:
+            done_event.wait(timeout=self._STOP_CONCURRENT_WAIT_TIMEOUT)
+            return
 
         try:
-            atexit.unregister(self.stop)
-        except Exception:
-            pass
-        self._uninstall_exit_hooks()
+            self.running = False
+            self._close_gate_and_drain_inflight(current_tid)
+
+            logger = logging.getLogger(__name__)
+            # probe types discovered dynamically from agent state — do not hardcode
+            self._last_cleanup_summary = shutdown_agent_resources(
+                self, logger, self.list_tracked_probe_types()
+            )
+
+            self._signal_observation_queue_drain()
+
+            drain_deadline = _time.monotonic() + 0.3
+            while _time.monotonic() < drain_deadline:
+                with self._observation_queue_lock:
+                    total_queued = sum(
+                        len(queue) for queue in self._observation_queues.values()
+                    )
+                if total_queued == 0:
+                    break
+                _time.sleep(0.01)
+
+            with self._observation_queue_lock:
+                for conn, queue in list(self._observation_queues.items()):
+                    remaining = len(queue)
+                    if remaining <= 0:
+                        continue
+                    stats = self._observation_queue_stats.get(conn)
+                    if stats is not None:
+                        stats["drain_dropped"] = stats.get("drain_dropped", 0) + remaining
+                        stats["drain_dropped_count"] = (
+                            stats.get("drain_dropped_count", 0) + remaining
+                        )
+                    queue.clear()
+            if self.server:
+                try:
+                    self.server.close()
+                except OSError:
+                    pass
+
+            self._cleanup_session_files()
+
+            # Remove self from the global agent registry
+            agents = cast(
+                Optional[Dict[str, "PeekaAgent"]], getattr(sys, "_peeka_agents", None)
+            )
+            if agents is not None:
+                keys_to_remove = [k for k, v in agents.items() if v is self]
+                for k in keys_to_remove:
+                    del agents[k]
+
+            try:
+                atexit.unregister(self.stop)
+            except Exception:
+                pass
+            self._uninstall_exit_hooks()
+        finally:
+            self._stop_owner_tid = None
+            done_event.set()
 
     def _uninstall_exit_hooks(self) -> None:
         prev_sigterm_handler = getattr(self, "_prev_sigterm_handler", None)

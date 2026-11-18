@@ -44,6 +44,7 @@ class LoggerCommand(ResourceOwningCommand):
         super().__init__()
         self.agent = agent
         self._original_levels: Dict[str, int] = {}
+        self._applied_levels: Dict[str, int] = {}
         self._levels_lock = threading.Lock()
 
     def execute(self, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -151,6 +152,7 @@ class LoggerCommand(ResourceOwningCommand):
         with self._levels_lock:
             if name not in self._original_levels:
                 self._original_levels[name] = logger.level
+            self._applied_levels[name] = new_level
 
         # Set new level (outside lock to respect lock-ordering rule)
         logger.setLevel(new_level)
@@ -165,24 +167,33 @@ class LoggerCommand(ResourceOwningCommand):
         }
 
     def stop_active_resources(self, pattern: Optional[str], reason: str) -> Dict[str, Any]:
-        """Stop active resources by restoring original logger levels."""
+        """Stop active resources by restoring Peeka-owned logger levels."""
         stopped: List[str] = []
+        skipped: List[Dict[str, Any]] = []
         errors: List[Dict[str, Any]] = []
         with self._levels_lock:
-            to_restore = {
-                name: level
+            to_restore = [
+                (name, level, self._applied_levels.get(name))
                 for name, level in self._original_levels.items()
                 if pattern is None or fnmatch.fnmatch(name, pattern)
-            }
-        for name, original_level in to_restore.items():
+            ]
+        for name, original_level, applied_level in to_restore:
             try:
-                logging.getLogger(name).setLevel(original_level)
+                logger_obj = logging.getLogger(name)
+                if applied_level is not None and logger_obj.level != applied_level:
+                    with self._levels_lock:
+                        self._original_levels.pop(name, None)
+                        self._applied_levels.pop(name, None)
+                    skipped.append({"name": name, "reason": "externally_modified"})
+                    continue
+                logger_obj.setLevel(original_level)
                 stopped.append(name)
                 with self._levels_lock:
                     self._original_levels.pop(name, None)
+                    self._applied_levels.pop(name, None)
             except Exception as exc:
                 errors.append({"name": name, "error": str(exc)})
-        return {"stopped": stopped, "errors": errors}
+        return {"stopped": stopped, "skipped": skipped, "errors": errors}
 
     def list_active_resources(self) -> Dict[str, Any]:
         """List loggers with modified levels."""
