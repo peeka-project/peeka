@@ -69,8 +69,10 @@ class TopCommand(ResourceOwningCommand):
 
         # Threading
         self._stop_event: Any = _rpl.create_event()
+        self._thread_stop_events: Dict[int, Any] = {}
         self._sampling_thread: Optional[_NativeThreadHandle] = None
         self._observation_thread: Optional[_NativeThreadHandle] = None
+        self._stopping: bool = False
         self._lock: Any = _rpl.allocate_lock()
 
         # Configuration
@@ -123,6 +125,42 @@ class TopCommand(ResourceOwningCommand):
     def _supports_probe_instrumentation(self) -> bool:
         return self.agent is not None and hasattr(self.agent, "probe_registry")
 
+    def _is_agent_stopped(self) -> bool:
+        return self.agent is not None and bool(getattr(self.agent, "_stopped", False))
+
+    def _reap_dead_threads_locked(self) -> None:
+        sampling_alive = (
+            self._sampling_thread is not None and self._sampling_thread.is_alive()
+        )
+        observation_alive = (
+            self._observation_thread is not None and self._observation_thread.is_alive()
+        )
+        if not sampling_alive and self._sampling_thread is not None:
+            ident = getattr(self._sampling_thread, "ident", None)
+            if ident is not None:
+                self._thread_stop_events.pop(ident, None)
+            if self._stopping:
+                self._sampling_thread = None
+        if not observation_alive and self._observation_thread is not None:
+            ident = getattr(self._observation_thread, "ident", None)
+            if ident is not None:
+                self._thread_stop_events.pop(ident, None)
+            if self._stopping:
+                self._observation_thread = None
+        if self._stopping and not sampling_alive and not observation_alive:
+            self._stopping = False
+            self._sampling_thread = None
+            self._observation_thread = None
+            self._top_id = None
+            self._profile_id = None
+            self._client_session_id = None
+            self._job_id = None
+
+    def _resolve_thread_stop_event(self) -> Any:
+        ident = _rpl.get_ident()
+        with self._lock:
+            return self._thread_stop_events.get(ident, self._stop_event)
+
     def _start(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
         Start sampling profiler.
@@ -134,14 +172,40 @@ class TopCommand(ResourceOwningCommand):
             Dict with top_id and status
         """
         with self._lock:
+            if self._is_agent_stopped():
+                return {"status": "error", "error": "agent is stopped"}
+
+            self._reap_dead_threads_locked()
+            sampling_alive = (
+                self._sampling_thread is not None and self._sampling_thread.is_alive()
+            )
+            observation_alive = (
+                self._observation_thread is not None
+                and self._observation_thread.is_alive()
+            )
+
+            if self._stopping and (sampling_alive or observation_alive):
+                return {
+                    "status": "error",
+                    "error": "Profiler is still stopping; background thread still alive",
+                    "top_id": self._top_id,
+                }
+
             # Check if already running
-            if self._sampling_thread is not None and self._sampling_thread.is_alive():
+            if sampling_alive:
                 return {
                     "status": "success",
                     "top_id": self._top_id,
                     "profile_id": self._profile_id,
                     "message": "Profiler already running",
                     "meta": dict(self._meta),
+                }
+
+            if observation_alive:
+                return {
+                    "status": "error",
+                    "error": "Observation thread still alive",
+                    "top_id": self._top_id,
                 }
 
             gevent_state = probe()
@@ -178,13 +242,15 @@ class TopCommand(ResourceOwningCommand):
             self._job_id = params.get("job_id")
             self._keep_profile = params.get("keep_profile", False)
 
-            # Reset state
+            # Reset state with a fresh independent cancellation event.
             self._stats.clear()
             self._total_samples = 0
-            self._stats_started_at = time.time()
+            self._stats_started_at = _rpl.time_now()
             self._greenlet_switch_counts.clear()
             self._greenlet_throw_count = 0
-            self._stop_event.clear()
+            self._stopping = False
+            stop_event = _rpl.create_event()
+            self._stop_event = stop_event
 
             # Register watch
             if self.agent:
@@ -199,6 +265,9 @@ class TopCommand(ResourceOwningCommand):
                 target=sampling_target,
                 name=f"peeka-top-{self._top_id}",
             )
+            sampling_ident = getattr(self._sampling_thread, "ident", None)
+            if sampling_ident is not None:
+                self._thread_stop_events[sampling_ident] = stop_event
             self._profile_id = _PROFILE_REGISTRY.start(
                 ProfileConfig(
                     backend="sampling",
@@ -217,6 +286,9 @@ class TopCommand(ResourceOwningCommand):
                     target=observation_target,
                     name=f"peeka-top-obs-{self._top_id}",
                 )
+                obs_ident = getattr(self._observation_thread, "ident", None)
+                if obs_ident is not None:
+                    self._thread_stop_events[obs_ident] = stop_event
 
             return {
                 "status": "success",
@@ -235,24 +307,46 @@ class TopCommand(ResourceOwningCommand):
             Dict with final statistics snapshot
         """
         with self._lock:
-            if self._sampling_thread is None or not self._sampling_thread.is_alive():
+            sampling_thread = self._sampling_thread
+            observation_thread = self._observation_thread
+            sampling_alive_before = (
+                sampling_thread is not None and sampling_thread.is_alive()
+            )
+            observation_alive_before = (
+                observation_thread is not None and observation_thread.is_alive()
+            )
+            if (sampling_thread is None and observation_thread is None) or (
+                not sampling_alive_before
+                and not observation_alive_before
+                and not self._stopping
+            ):
+                self._reap_dead_threads_locked()
                 return {"status": "error", "error": "Profiler not running"}
 
+            self._stopping = True
             top_id = self._top_id
+            profile_id = self._profile_id
+            keep_profile = self._keep_profile
+            stop_event = self._stop_event
 
             # Signal threads to stop
-            self._stop_event.set()
+            stop_event.set()
 
         # Wait for threads to finish (outside lock to avoid deadlock)
         thread_errors = []
-        if self._sampling_thread:
-            self._sampling_thread.join(timeout=2.0)
-            if self._sampling_thread.is_alive():
-                thread_errors.append("sampling thread still alive after join timeout")
-        if self._observation_thread:
-            self._observation_thread.join(timeout=2.0)
-            if self._observation_thread.is_alive():
-                thread_errors.append("observation thread still alive after join timeout")
+        if sampling_thread:
+            sampling_thread.join(timeout=2.0)
+        if observation_thread:
+            observation_thread.join(timeout=2.0)
+
+        sampling_alive = sampling_thread is not None and sampling_thread.is_alive()
+        observation_alive = (
+            observation_thread is not None and observation_thread.is_alive()
+        )
+        if sampling_alive:
+            thread_errors.append("sampling thread still alive after join timeout")
+        if observation_alive:
+            thread_errors.append("observation thread still alive after join timeout")
 
         # Unregister watch
         if self.agent and top_id:
@@ -260,24 +354,35 @@ class TopCommand(ResourceOwningCommand):
 
         # Build final snapshot
         snapshot = self._build_snapshot()
-        if self._profile_id:
-            profile_id = self._profile_id
+        if profile_id:
             try:
                 _ = _PROFILE_REGISTRY.stop(profile_id)
             except KeyError:
                 # Already stopped and evicted via `profile stop`/cleanup.
                 logger.debug("top profile %s already removed", profile_id)
-            if not self._keep_profile:
+            if not keep_profile:
                 _PROFILE_REGISTRY.remove_session(profile_id)
 
-        # Clean up
+        # Clean up dead handles only; keep stopping handle when still alive.
         with self._lock:
-            self._sampling_thread = None
-            self._observation_thread = None
-            self._top_id = None
-            self._profile_id = None
-            self._client_session_id = None
-            self._job_id = None
+            if not sampling_alive and self._sampling_thread is sampling_thread:
+                ident = getattr(sampling_thread, "ident", None)
+                if ident is not None:
+                    self._thread_stop_events.pop(ident, None)
+                self._sampling_thread = None
+            if not observation_alive and self._observation_thread is observation_thread:
+                ident = getattr(observation_thread, "ident", None)
+                if ident is not None:
+                    self._thread_stop_events.pop(ident, None)
+                self._observation_thread = None
+            if not sampling_alive and not observation_alive:
+                self._stopping = False
+                self._top_id = None
+                self._profile_id = None
+                self._client_session_id = None
+                self._job_id = None
+            else:
+                self._stopping = True
 
         if thread_errors:
             return {"status": "error", "error": "; ".join(thread_errors)}
@@ -320,49 +425,71 @@ class TopCommand(ResourceOwningCommand):
         logger = logging.getLogger(__name__)
 
         with self._lock:
+            self._reap_dead_threads_locked()
             top_id = self._top_id
+            has_threads = (
+                self._sampling_thread is not None
+                or self._observation_thread is not None
+            )
 
-        if top_id is None:
+        if top_id is None and not has_threads:
             return {"stopped": [], "errors": []}
 
+        resource_id = top_id or "top"
         try:
             result = self._stop({"top_id": top_id})
             if result.get("status") == "success":
-                return {"stopped": [{"top_id": top_id}], "errors": []}
+                return {"stopped": [{"top_id": resource_id}], "errors": []}
 
             error_message = str(result.get("error", "Unknown error"))
             logger.error(
                 "[peeka Top] stop_active_resources failed for %s (%s): %s",
-                top_id,
+                resource_id,
                 reason,
                 error_message,
             )
-            return {"stopped": [], "errors": [{"top_id": top_id, "error": error_message}]}
+            return {
+                "stopped": [],
+                "errors": [{"top_id": resource_id, "error": error_message}],
+            }
         except Exception as exc:
             logger.error(
                 "[peeka Top] stop_active_resources failed for %s (%s)",
-                top_id,
+                resource_id,
                 reason,
                 exc_info=True,
             )
-            return {"stopped": [], "errors": [{"top_id": top_id, "error": str(exc)}]}
+            return {"stopped": [], "errors": [{"top_id": resource_id, "error": str(exc)}]}
 
     def list_active_resources(self) -> Dict[str, Any]:
         """List the active top sampler if one is running."""
         with self._lock:
-            is_running = (
-                self._top_id is not None
-                and self._sampling_thread is not None
-                and self._sampling_thread.is_alive()
+            self._reap_dead_threads_locked()
+            sampling_alive = (
+                self._sampling_thread is not None and self._sampling_thread.is_alive()
             )
-            if not is_running:
+            observation_alive = (
+                self._observation_thread is not None
+                and self._observation_thread.is_alive()
+            )
+            if not sampling_alive and not observation_alive:
                 return {"active": []}
 
-            return {"active": [{"top_id": self._top_id, "running": True}]}
+            return {
+                "active": [
+                    {
+                        "top_id": self._top_id,
+                        "running": not self._stopping,
+                        "stopping": self._stopping,
+                    }
+                ]
+            }
 
     def _sampling_loop(self) -> None:
         """Background thread that periodically samples all thread stacks."""
-        while not self._stop_event.is_set():
+        stop_event = self._resolve_thread_stop_event()
+        current_thread_id = _rpl.get_ident()
+        while not stop_event.is_set():
             try:
                 # Sample all thread frames
                 frames = sys._current_frames()
@@ -377,7 +504,10 @@ class TopCommand(ResourceOwningCommand):
                 # Process each thread
                 for thread_id, frame in frames.items():
                     # Skip peeka's own threads (if filtering enabled)
-                    if self._filter_peeka and self._is_peeka_thread(thread_id, frame):
+                    if self._filter_peeka and (
+                        thread_id == current_thread_id
+                        or self._is_peeka_thread(thread_id, frame)
+                    ):
                         continue
 
                     # Walk frame stack from leaf to root
@@ -423,7 +553,7 @@ class TopCommand(ResourceOwningCommand):
                     if profile_id:
                         stack.reverse()
                         sample = SampleRecord(
-                            timestamp=time.time(),
+                            timestamp=_rpl.time_now(),
                             thread_id=thread_id,
                             thread_name="",
                             stack=stack,
@@ -439,7 +569,7 @@ class TopCommand(ResourceOwningCommand):
                 pass
 
             # Sleep using Event.wait for responsive shutdown
-            if self._stop_event.wait(timeout=self._interval):
+            if stop_event.wait(timeout=self._interval):
                 break
 
     def _greenlet_module_available(self) -> bool:
@@ -516,6 +646,7 @@ class TopCommand(ResourceOwningCommand):
         if self.agent is None or self._top_id is None:
             return
 
+        stop_event = self._resolve_thread_stop_event()
         probe_config = {
             "interval": self._interval,
             "stream": self._stream,
@@ -533,15 +664,18 @@ class TopCommand(ResourceOwningCommand):
         ) as probe:
             self.agent.track_probe_context(self._top_id, probe, "top")
             try:
-                self._send_periodic_observations(probe)
+                self._send_periodic_observations(probe, stop_event=stop_event)
             finally:
                 self.agent.untrack_probe_context(self._top_id)
 
-    def _send_periodic_observations(self, probe: ProbeContext) -> None:
+    def _send_periodic_observations(
+        self, probe: ProbeContext, stop_event: Optional[Any] = None
+    ) -> None:
         """Background loop that sends periodic observation updates."""
         observation_interval = 1.0
+        event_handle = stop_event if stop_event is not None else self._resolve_thread_stop_event()
 
-        while not self._stop_event.is_set():
+        while not event_handle.is_set():
             if probe.should_stop():
                 break
 
@@ -554,14 +688,15 @@ class TopCommand(ResourceOwningCommand):
             if self.agent:
                 self.agent._send_observation(snapshot)
 
-            if self._stop_event.wait(timeout=observation_interval):
+            if event_handle.wait(timeout=observation_interval):
                 break
 
     def _send_periodic_observations_legacy(self) -> None:
         """Legacy best-effort streaming path for agents without ProbeRegistry."""
         observation_interval = 1.0
+        stop_event = self._resolve_thread_stop_event()
 
-        while not self._stop_event.is_set():
+        while not stop_event.is_set():
             try:
                 snapshot = self._build_snapshot()
                 if self.agent:
@@ -569,7 +704,7 @@ class TopCommand(ResourceOwningCommand):
             except Exception:
                 pass
 
-            if self._stop_event.wait(timeout=observation_interval):
+            if stop_event.wait(timeout=observation_interval):
                 break
 
     def _build_snapshot(self) -> Dict[str, Any]:
