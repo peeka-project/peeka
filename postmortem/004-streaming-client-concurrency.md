@@ -5,13 +5,14 @@
 | **话题** | StreamingAgentClient 并发访问、专用连接策略与协议同步问题（含 BrokenPipe） |
 | **受影响组件** | core/client, tui views |
 | **最高严重级别** | SEV-1 (High) |
-| **事故次数** | 9 |
-| **时间跨度** | 2026-02-28 至 2026-11-17 |
+| **事故次数** | 10 |
+| **时间跨度** | 2026-02-28 至 2026-11-18 |
 
 ## 案例索引
 
 | # | 事故 | 严重级别 | 日期 |
 |---|------|----------|------|
+| [#10](#事故-10rpc-发送后超时断流未使连接失效及连接代次跨代污染) | RPC 发送后超时断流未使连接失效及连接代次跨代污染 | SEV-1 | 2026-11-18 |
 | [#9](#事故-9多-watch-竞争读取及信号清理重入死锁) | 多 watch 竞争读取及信号清理重入死锁 | SEV-1 | 2026-11-17 |
 | [#8](#事故-8不读取的客户端连接阻塞-agent-日志广播导致新连接挂起) | 不读取的客户端连接阻塞 agent 日志广播导致新连接挂起 | SEV-1 | 2026-11-08 |
 | [#7](#事故-7streaming-client-连接标识缺失导致活动日志源歧义) | Streaming Client 连接标识缺失导致活动日志源歧义 | SEV-3 | 2026-05-04 |
@@ -32,6 +33,96 @@
 v0.1.21 的事故 #8 显示该话题已从“客户端并发”扩展到“服务端写路径”：只要 agent 假设所有连接都会持续读取，任何一个空闲连接都能冻结整个 agent。连接角色（control / stream）必须由协议显式声明，服务端写出必须有界。
 
 v0.1.22 补充：同一 WatchView 每个 watch 启动独立 reader，互相消费后丢弃其他 watch 的事件。读取加锁后又在发布前暴露信号处理器重入 disconnect 的死锁。
+
+v0.1.22 后 `master`（`490fb8e`，未发布）补充：修复 RPC 发送后超时/截断/解析失败未失效连接导致下一次请求读到迟到帧、迟到 `connect()`/`hello` 或旧 `read_observations()` 生成器跨连接代次污染新 socket 与缓冲区，以及锁内调用 `activity_reporter` 的风险。
+
+---
+
+## 事故 #10：RPC 发送后超时断流未使连接失效及连接代次跨代污染
+
+> **Tag 范围**：`v0.1.22` → `HEAD`（`master` 未发布，不含当前工作树未提交改动） | **严重级别**：SEV-1 | **日期**：2026-11-18
+
+### 概要
+
+`StreamingAgentClient` 与 `AgentClient` 在请求已写入 socket 后若发生读超时、半包截断或 JSON 解析失败，原连接可能仍滞留服务端稍后才发出的响应帧；若不立即使连接失效，下一次 RPC 会误读上一轮的响应。同时，`connect()`、`hello` 握手与旧的 `read_observations()` 流式生成器之间缺少单调递增的连接代次（`connection_generation`）保护，并发 `disconnect()` 或快速重连时会出现迟到分支污染新 socket 与缓冲区，且锁内回调 `activity_reporter` 存在阻塞/重入风险。
+
+### 根因分析
+
+#### 类别
+Race Condition / Resource Management
+
+#### 分析
+1. **发送后失败未使连接失效且缺乏不确定结果语义**（[client.py](../peeka/core/client.py)）：当请求帧已调用 `sendall` 后在等待响应头/响应体阶段超时、收到截断帧或解析失败时，服务端可能已经收到并执行了该非幂等控制命令（如 start/stop/reset）。若复用同一连接，后续 RPC 会读到前一次迟到的响应；若盲目自动重试，又会重复执行写操作。
+2. **缺少连接代次与 `_active_rpc` 所有权校验**：`connect()` 阻塞在 `socket.connect()` 或 `hello` 握手期间，若另一线程并发调用 `disconnect()` 或再次 `connect()`，迟到完成的旧 `connect()` 会直接覆盖 `self._sock` 或误清重连后的 `self._buffer`；同理，旧的 `read_observations()` 生成器在重连后若不校验代次，会继续从新的 `self._sock` 读取观测帧。
+3. **持锁触发回调**：在持有 `_send_lock` 或 `_stream_read_lock` 时直接调用 `_report_activity()`，增加了锁外回调重入客户端状态时的死锁风险。
+
+#### 致因提交
+连接复用与流式循环经历多轮演化，缺乏显式连接代次状态机与 post-send 不确定性错误处理。
+
+### 复现
+
+#### 前置条件
+- `AgentClient` 或已连接的 `StreamingAgentClient`。
+
+#### 步骤
+1. 在 `send_command()` 已发送请求后注入读超时、截断响应或损坏 JSON，随后发起第二次 `send_command()` 或重连。
+2. 在 `connect()` 或 `hello` 握手阻塞期间并发执行 `disconnect()` 与新一轮 `connect()`。
+3. 在 `read_observations()` 运行中执行 `disconnect()` + `connect()`，观察旧生成器是否继续从新 socket 读取。
+
+#### 预期行为
+- 发送后失败立即失效当前 socket 并返回 `outcome_uncertain=True`、`retried=False`，不自动重试、不污染后续重连；发送前序列化错误保持健康连接可复用。
+- 迟到的 `connect()` / `hello` 失败与旧 `read_observations()` 只能按其所属 `(sock, connection_generation)` 收尾，绝不关闭、覆盖或清空新一代次连接状态。
+
+#### 实际行为
+修复前：超时或断流后残留帧错位、重连竞态可能使有效连接被旧连接流程关闭或清空缓冲、旧流式生成器跨重连窃读。
+
+### 修复
+
+#### 修复提交
+
+| 提交 | 作者 | 日期 | 描述 |
+|------|------|------|------|
+| `490fb8e` | lufeihaidao | 2026-11-18 | `fix(core): guard client RPC failure invalidation, connect ownership, and stream generation` |
+
+#### 变更内容
+- **发送后失败语义与即时失效**：[client.py](../peeka/core/client.py) 新增 `_uncertain_rpc_error()`；`AgentClient`（基于 `send_attempted`）和 `StreamingAgentClient`（`_fail_post_send_rpc()`）在请求已发出后发生超时、EOF、截断控制/观测帧或 JSON 解析异常时，立即按 `(expected_sock, expected_generation)` 失效连接并返回 `error_code="TRANSPORT_ERROR"`、`outcome_uncertain=True`、`retried=False`。
+- **连接代次与锁序**：`StreamingAgentClient` 引入 `_state_lock`（锁序 `_send_lock -> _stream_read_lock -> _state_lock`）、`_connection_generation`、`_active_rpc` 与 `_invalidate_connection_with_generation()`；`connect()`、`_identify_connection()`、`send_command()` 与 `read_observations()` 全链路校验 `(expected_sock, expected_generation)`，重连后旧生成器立即退出且不清空新缓冲区。
+- **锁外报告状态**：`send_command()` 与 `read_observations()` 将 `_report_activity()` 移至释放 `_send_lock` / `_stream_read_lock` 之后执行。
+
+#### 验证
+在 Python 3.9.25 本地虚拟环境中运行 `uv run pytest tests/test_rpc_generation_regressions.py -q`，全部 25 项回归测试通过，覆盖：
+- `TestRpcFailureNoReuseOrRetry`（超时/截断响应/截断控制帧/解析失败失效且不重试、发送前序列化异常保活、失败后重连无错位、`AgentClient` 发送后超时语义）
+- `TestTrailingFramesAndReaderGeneration`（RPC 后排空尾部 OBS/LOG 帧、缓冲尾帧立即 yield、旧生成器在 disconnect+reconnect 或直接 reconnect 后停止读取新 socket）
+- `TestReporterLockReleaseAndConcurrency`（锁外执行 `activity_reporter`、同线程信号重入与并发 reader、陈旧失效不清空重连缓冲）
+- `TestConnectDisconnectOwnership`（`connect()`/`hello` 阻塞期间并发断开或被新连接取代时的代次所有权保护）
+
+### 影响
+
+- **受影响用户**：在连接抖动、高并发重连或发生 RPC 超时后继续复用客户端的 CLI/TUI 场景。
+- **持续时间**：存在于 `v0.1.22` 及更早版本，已在 `master` (`490fb8e`) 修复，尚未发布到 PyPI。
+- **数据影响**：无持久化数据损坏，消除了并发重连错帧与误重试风险。
+
+### 经验教训
+
+- **做得好的方面**：把“发送前失败”与“发送后失败”在协议语义和错误字段上明确分离，并引入单调递增代次代替仅靠 `self._sock is not None` 的布尔判断。
+- **可以改进的方面**：早期客户端状态转换散落在各方法内，缺乏统一的连接所有权令牌。
+
+#### 行动项
+
+| 行动 | 优先级 | 状态 |
+|------|--------|------|
+| 保留 [test_rpc_generation_regressions.py](../tests/test_rpc_generation_regressions.py) 作为客户端代次与 RPC 失效契约门禁 | P0 | 已完成 |
+
+### 预防
+
+- **立即执行**：任何新增客户端 RPC 路径都必须区分 pre-send 与 post-send 失败，post-send 失败必须失效当前连接且禁止自动重试非幂等命令。
+- **短期**：涉及 `_sock` 生命周期的状态切换统一经过 `_state_lock` 与 `_connection_generation` 校验，回调/日志上报保持在锁外执行。
+- **长期**：保持连接代次模型与流式 reader 生命周期绑定。
+
+### 参考
+
+- 实现：[peeka/core/client.py](../peeka/core/client.py)
+- 防复发测试：[tests/test_rpc_generation_regressions.py](../tests/test_rpc_generation_regressions.py)
 
 ---
 

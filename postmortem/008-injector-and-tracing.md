@@ -5,13 +5,15 @@
 | **话题** | DecoratorInjector 在实例方法识别、`__main__` 解析与 trace 调用树构建/聚合中的故障 |
 | **受影响组件** | core/injector, core/instrumentation/trace_backends, commands/trace |
 | **最高严重级别** | SEV-1 (High) |
-| **事故次数** | 6 |
-| **时间跨度** | 2026-01-29 至 2026-11-17 |
+| **事故次数** | 8 |
+| **时间跨度** | 2026-01-29 至 2026-11-18 |
 
 ## 案例索引
 
 | # | 事故 | 严重级别 | 日期 |
 |---|------|----------|------|
+| [#8](#事故-8watch-观测异常与异步调用期签名及内建异常隔离) | watch 观测异常与异步调用期签名及内建异常隔离 | SEV-1 | 2026-11-18 |
+| [#7](#事故-7共享-tracer-分发隔离与父子探针透明穿透) | 共享 tracer 分发隔离与父子探针透明穿透 | SEV-1 | 2026-11-18 |
 | [#6](#事故-6协程追踪未覆盖-await-且旧版暂停事件被重复计数) | 协程追踪未覆盖 await 且旧版暂停事件被重复计数 | SEV-2 | 2026-11-17 |
 | [#5](#事故-5探针替换丢失描述符绑定与条件求值共享状态) | 探针替换丢失描述符绑定与条件求值共享状态 | SEV-1 | 2026-11-17 |
 | [#4](#事故-4trace-直接被调函数聚合与-stdlib-跳过栈不变量漂移) | Trace 直接被调函数聚合与 stdlib 跳过栈不变量漂移 | SEV-2 | 2026-07-04 |
@@ -30,6 +32,183 @@
 v0.1.22 补充：静态方法和类方法被替换成普通函数后，参数绑定和卸载恢复发生变化；并发 watch 调用还会共享条件求值上下文。
 
 v0.1.22 补充：同步 trace wrapper 仅测量 coroutine 对象创建。新增异步追踪在发布前又被 Python 3.9 测试发现把一次 await 子调用计为两次。
+
+v0.1.22 后 `master`（`9c60625`、`b27968b`、`654f3b4`、`235ec6a`，未发布）补充：构建每进程/每线程共享 tracer 分发器与透明探针帧穿透（解决并发协程/greenlet 串扰、第三方 tracer 被覆盖及父子探针遮蔽 `direct_callees`）；同时全面加固 watch 的观测/格式化故障隔离、真实调用期异步参数绑定与内建异常名防遮蔽。
+
+---
+
+## 事故 #8：watch 观测异常与异步调用期签名及内建异常隔离
+
+> **Tag 范围**：`v0.1.22` → `HEAD`（`master` 未发布，不含当前工作树未提交改动） | **严重级别**：SEV-1 | **日期**：2026-11-18
+
+### 概要
+
+对 `watch` 透明性进行全路径审计后发现三类侵入业务语义的问题（`9c60625`、`b27968b`、`235ec6a`）：格式化与观测准备/发送异常会泄漏到被观测函数（甚至触发自定义 `self.__bool__` 或吞掉自定义 `BaseException`）；通用 `*args, **kwargs` 异步包装器延迟了参数 `TypeError` 的抛出时机，且直接用 `inspect.signature()` 会受到 `__wrapped__` / `__signature__` 误导；动态生成的异步生成器包装代码中直接引用裸名 `StopAsyncIteration` / `BaseException` / `GeneratorExit`，当被观测函数存在同名参数时会发生名称遮蔽。
+
+### 根因分析
+
+#### 类别
+Logic Error / Type Error
+
+#### 分析
+1. **格式化与观测错误泄漏及 `self` 隐式求真**（[formatting.py](../peeka/core/instrumentation/formatting.py)、[watch.py](../peeka/core/instrumentation/watch.py)）：当参数或返回值包含 `__str__` / `__repr__` 抛错的字典键、损坏的容器子类、覆写 `__ne__` 的 `float` 子类或不可打印异常时，观测格式化会直接抛出异常破坏业务返回；条件求值或辅助路径中若对 `self` 做真值判断会触发 `__bool__`/`__len__`；非 `Exception` 的自定义 `BaseException` 未按原样透明穿透。
+2. **异步函数/异步生成器的调用期参数校验失真**：使用通用 `async def wrapper(*args, **kwargs)` 时，错误入参在调用 `f(bad)` 生成协程/异步生成器对象时不会立即抛 `TypeError`，而是延迟到 `await` / `anext` 才触发。若通过 `inspect.signature(func)` 重建形参，又会被外层 `@functools.wraps` 或自定义 `__signature__` 误导，无法反映 `func` 真实绑定形参（如 `partial`、`MethodType` 或被包装对象的签名）。
+3. **动态生成代码的异常内建名遮蔽**：`WatchWrapperFactory` 动态编译的异步生成器包装体在函数体内部使用了 `except StopAsyncIteration:`、`except BaseException:`、`except GeneratorExit:`；若被观测函数的形参恰好名为 `BaseException`、`StopAsyncIteration` 或 `GeneratorExit`，Python 局部作用域会把这些异常类名解析为入参变量，触发 `TypeError` 或错捕。
+
+#### 致因提交
+- 格式化与观测边界保护缺失自早期 `formatting.py` / `watch.py` 演变积累；
+- 通用 `*args, **kwargs` 与裸名异常块引入自 `watch.py` 异步包装器实现及 `b27968b` 动态签名编译。
+
+### 复现
+
+#### 前置条件
+- 对含异常 `__repr__` 对象、自定义 `BaseException`、`@functools.wraps`/`partial` 修饰的 `async def` / `async def` + `yield`（且参数可能名为 `BaseException`/`StopAsyncIteration`/`GeneratorExit`）安装 `watch`。
+
+#### 步骤
+1. 对返回损坏容器/坏键字典或抛出不可打印异常的函数执行 `watch`；对定义了 `__bool__` 抛错的对象方法执行 `watch`。
+2. 对被 `watch` 的异步函数/异步生成器传入错误实参，验证是否在调用点（`await` 之前）立即抛出 `TypeError`。
+3. 对参数名为 `BaseException` 或 `StopAsyncIteration` 的异步生成器安装 `watch` 并正常迭代、抛错或关闭。
+
+#### 预期行为
+观测层任何格式化、事件准备、marker 检测或发送异常都不改变原函数返回值、异常类型及调用点 `TypeError` 绑定语义；异步生成器参加 `loop.shutdown_asyncgens()` 且内建异常捕获不受用户形参名影响。
+
+#### 实际行为
+修复前：业务调用因格式化/观测报错失败、无效调用延迟报错或签名不符、同名字形参遮蔽内建异常导致异步生成器包装器崩溃。
+
+### 修复
+
+#### 修复提交
+
+| 提交 | 作者 | 日期 | 描述 |
+|------|------|------|------|
+| `9c60625` | lufeihaidao | 2026-11-18 | `fix(core): isolate watch/formatting failures and preserve async protocols` |
+| `b27968b` | lufeihaidao | 2026-11-18 | `fix(core): preserve async signatures for call-time validation and py3.8 compat` |
+| `235ec6a` | lufeihaidao | 2026-11-18 | `fix(core): preserve async call-time binding and isolate builtin exception names` |
+
+#### 变更内容
+- **全链路观测隔离**：[formatting.py](../peeka/core/instrumentation/formatting.py) 使用 `math.isnan` / `math.isinf`、`_safe_key_str()` 与按类型异常兜底；[watch.py](../peeka/core/instrumentation/watch.py) 对准备/发送/marker 检测做隔离，`self` 仅使用 `is None` 判断，保持自定义 `BaseException` 原样透传及同步函数返回协程时的同步任务调度。
+- **真实调用期签名提取与 Python 3.8 兼容**：新增 `_extract_function_signature()`、`_bind_leading_positional()`、`_apply_partial_signature()`、`_extract_runtime_signature()`，从 `FunctionType.__code__`、`MethodType` 与 `functools.partial` 推导真实调用期签名（不跟随 `__wrapped__` / `__signature__`），配合 `WatchWrapperFactory` 生成保留形参、默认值和异步协议（含 `shutdown_asyncgens`）的包装器。
+- **异常类名防遮蔽**：在动态编译异步生成器包装体的局部命名空间注入带防冲突前缀的 `{prefix}StopAsyncIteration`、`{prefix}BaseException`、`{prefix}GeneratorExit`，彻底隔离用户参数命名空间。
+
+#### 验证
+在 Python 3.9.25 本地虚拟环境中运行 `uv run pytest tests/test_watch_transparency_regressions.py -q`，全部 18 项回归测试通过，覆盖：
+- `TestFormattingIsolation`、`TestObservationIsolation`、`TestSelfTruthinessSafety`、`TestSyncTaskSchedulingAndAsyncProtocol`
+- `TestAsyncSignatureAndCallTimeValidation`（含调用期 `TypeError`、wraps/partial/task 修饰符签名、参数名冲突与实例方法、堆叠重定目标、自定义 `__signature__` 与参数名遮蔽 `StopAsyncIteration`/`BaseException`/`GeneratorExit`）
+
+### 影响
+
+- **受影响用户**：对复杂业务对象、`async def` / 异步生成器或使用 `@functools.wraps` / `partial` 的函数执行 `watch` 的场景。
+- **持续时间**：`9c60625`、`b27968b`、`235ec6a` 已合入 `master`（未发布），`v0.1.22` 仍受影响。
+- **数据影响**：无持久化数据损坏。
+
+### 经验教训
+
+- **做得好的方面**：从“观测失败绝不干扰宿主控制流”和“包装器在调用点必须保持零可察觉签名偏差”两条不变量出发，一次性补齐异常对象、truthiness、异步协议与命名空间遮蔽边界。
+- **可以改进的方面**：代码生成式包装器在设计之初未把语言内建异常引用纳入命名冲突前缀管理。
+
+#### 行动项
+
+| 行动 | 优先级 | 状态 |
+|------|--------|------|
+| 保留 [test_watch_transparency_regressions.py](../tests/test_watch_transparency_regressions.py) 作为观测透明性与异步签名门禁 | P0 | 已完成 |
+
+### 预防
+
+- **立即执行**：动态生成的 wrapper 代码不得直接引用未加冲突回避前缀的异常或辅助标识名。
+- **短期**：涉及 wrapper 重建或签名校验时，使用 `_extract_runtime_signature()` 验证真实调用期绑定而非仅依赖 `inspect.signature(..., follow_wrapped=True)`。
+- **长期**：把“调用点参数校验与异常透明性”固化为所有探针 wrapper 的统一合同。
+
+### 参考
+
+- 实现：[peeka/core/instrumentation/watch.py](../peeka/core/instrumentation/watch.py)、[peeka/core/instrumentation/formatting.py](../peeka/core/instrumentation/formatting.py)
+- 防复发测试：[tests/test_watch_transparency_regressions.py](../tests/test_watch_transparency_regressions.py)
+
+---
+
+## 事故 #7：共享 tracer 分发隔离与父子探针透明穿透
+
+> **Tag 范围**：`v0.1.22` → `HEAD`（`master` 未发布，不含当前工作树未提交改动） | **严重级别**：SEV-1 | **日期**：2026-11-18
+
+### 概要
+
+`trace` 在并发协程、同线程 greenlet 切换、既有第三方 tracer 共存以及“父函数 `trace` + 子函数 `watch`/`monitor`/`trace`”嵌套场景下暴露出共享钩子与栈帧隔离缺陷（`654f3b4`）：并发协程各自申请/清空 `sys.monitoring` slot 或 `sys.settrace` 会彼此踩踏并浪费有限的 6 个 monitoring slot；gevent 下仅靠 `thread_id` 过滤会让其他 greenlet 的调用混入当前 trace；父子探针嵌套时，子探针的 wrapper 与分发帧打断 `frame.f_back` 的直接调用关系，导致 `direct_callees` 丢失真实业务子调用。
+
+### 根因分析
+
+#### 类别
+Race Condition / Logic Error / Integration Error
+
+#### 分析
+1. **独占式 tracer 钩子安装与卸载**（[trace_backends.py](../peeka/core/instrumentation/trace_backends.py)）：每次 `trace` 调用各自注册并释放 `sys.monitoring` tool ID 或调用 `sys.settrace()`，已取消或先退出的协程可能提前清空或覆盖活跃兄弟协程甚至第三方（coverage/debugger）的 tracer；高并发协程还会迅速耗尽 `sys.monitoring` 仅有的 6 个 tool slot。
+2. **上下文识别粒度不足**：仅按 OS `thread_id` 过滤事件，在 gevent 同一 OS 线程内切换 greenlet 时无法隔离同线程其他 greenlet 的函数调用。
+3. **探针内部帧干扰 `f_back` 直接调用判定**：当被 trace 的父函数调用同样被 `watch`、`monitor` 或 `trace` 包裹的子函数时，子函数外层的 Peeka wrapper/dispatch 帧插在 `parent_frame` 与真实子业务帧之间，使 `frame.f_back is root_frame` 失效；同时 `_sanitize_call_tree_node` 尚未剥离由 backend 上报的内部 `_downgraded_backend` / `_downgrade_reason` 字段（参见 [019-trace-sanitization-and-gevent.md](./019-trace-sanitization-and-gevent.md)）。
+
+#### 致因提交
+源自 `trace` 后端最初按单次独占调用设计，未抽象进程/线程级共享分发器与透明探针帧识别表。
+
+### 复现
+
+#### 前置条件
+- 并发运行多个异步 `trace` 协程（或取消其中一个）、或存在既有的第三方 `sys.settrace`、或在 gevent 同线程内切换 greenlet、或对父子函数同时启用 `trace` + `watch`/`monitor`/`trace`。
+
+#### 步骤
+1. 并发执行 10 个协程 `trace`，或取消一个正在等待的 `trace` 协程同时保持兄弟协程继续运行。
+2. 在已有第三方 tracer 时运行异步 `trace`，检查第三方 tracer 是否仍收到事件且结束时恢复完整。
+3. 在 gevent 下或 `sys.monitoring` 6 个 slot 全满时运行同步/异步 `trace`。
+4. 父函数启用 `trace`，子函数启用 `watch`（带条件）/ `monitor` / `trace`，检查父函数 `direct_callees` 与子函数是否被跳过。
+
+#### 预期行为
+多协程共享单个 `sys.monitoring` slot 或每 OS 线程共享一个 `sys.settrace` 链式分发器；既有的第三方 tracer 全程受保护；同线程不同 greenlet 严格隔离；gevent 下 slot 耗尽平稳降级为 `wrapper_only` 并生成 `runtime_meta`；父子探针叠加时 `direct_callees` 只展示真实业务子调用，且带条件的 `watch` 不会因跳过机制丢失或产生错误开销。
+
+#### 实际行为
+修复前：协程取消误清兄弟协程或第三方 tracer、10 协程耗尽 slot、greenlet 事件串扰、父子探针叠加导致 `direct_callees` 丢失子业务调用或混入 Peeka 包装帧。
+
+### 修复
+
+#### 修复提交
+
+| 提交 | 作者 | 日期 | 描述 |
+|------|------|------|------|
+| `654f3b4` | lufeihaidao | 2026-11-18 | `fix(core): isolate trace hooks via shared dispatchers and transparent probe wrappers` |
+
+#### 变更内容
+- **共享 tracer 分发器与 session 隔离**：[trace_backends.py](../peeka/core/instrumentation/trace_backends.py) 引入 `_TraceSession`（按 `thread_id` 与 `target_greenlet` 精确匹配）、`_SharedMonitoringDispatcher`（单 tool ID 服务全部活跃线程/协程会话，含 `atexit` 与槽位耗尽回退）和 `_ThreadSettraceDispatcher`（每 OS 线程单一 `sys.settrace` 入口，保留并链式调用 `_prev_global_trace`）。
+- **透明探针帧穿透**：定义 `_WRAPPER_DISPATCH_SPECS`、`_is_peeka_wrapper_dispatch_code()`、`_walk_back_peeka()` 与 `_unwrap_peeka_wrappers()`，在判定 `root_frame` 与直接子调用时透明跳过 Peeka 探针包装与分发帧。
+- **gevent slot 耗尽降级与字段清理**：`sys.monitoring` tool slot 在 gevent 下耗尽时降级为 `wrapper_only` 并通过 `_downgraded_backend` / `_downgrade_reason` 传递至 [trace.py](../peeka/core/instrumentation/trace.py) 转换为 `runtime_meta`，`_sanitize_call_tree_node()` 在序列化前剥离内部字段。
+
+#### 验证
+在 Python 3.9.25 本地虚拟环境中运行 `uv run pytest tests/test_trace_dispatch_and_isolation.py -q`：
+- Python 3.9.25 下运行 `tests/test_trace_dispatch_and_isolation.py`，12 项通过，14 项跳过。
+- **未在本机实测项**：其余 13 项依赖 `sys.monitoring`（Python 3.12+）或 `greenlet` 模块的用例（涵盖 10 协程共享单 slot、gevent 降级、真实 greenlet 切换及父子探针监控集成）在当前 Python 3.9.25 环境中跳过，尚未在当前轮次本地复核 Python 3.12/3.14 运行结果。
+
+### 影响
+
+- **受影响用户**：使用异步 `trace`、gevent、第三方覆盖率/调试器或父子多探针叠加的用户。
+- **持续时间**：`654f3b4` 已合入 `master`（未发布），`v0.1.22` 仍受影响。
+- **数据影响**：无持久化数据损坏，显著降低了并发与嵌套场景下调用树丢失或错计风险。
+
+### 经验教训
+
+- **做得好的方面**：把 `sys.monitoring` 与 `sys.settrace` 从“单次调用独占全局资源”重构为“进程/线程级共享分发器 + 会话上下文隔离”，同时把包装帧穿透规则收敛到 `_WRAPPER_DISPATCH_SPECS`。
+- **可以改进的方面**：当前本地开发环境为 Python 3.9.25，需确保 Python 3.12+ 与 `greenlet` 容器矩阵执行后才可宣称全矩阵验证完成。
+
+#### 行动项
+
+| 行动 | 优先级 | 状态 |
+|------|--------|------|
+| 保留 [test_trace_dispatch_and_isolation.py](../tests/test_trace_dispatch_and_isolation.py) 并确保发布前在 Python 3.12+/3.14 及 greenlet 环境下执行完整矩阵 | P0 | 待在 3.12+/3.14 环境复核 |
+
+### 预防
+
+- **立即执行**：新增探针 wrapper 或 dispatch 入口函数若会出现在业务调用栈中，必须同步登记到 `_WRAPPER_DISPATCH_SPECS` 以便 `_walk_back_peeka()` 透明跳过。
+- **短期**：任何对 `trace_backends.py` 的改动都必须验证“既有的第三方 `sys.gettrace()` 全程存活且不被吞事件”。
+- **长期**：禁止在业务调用路径中直接调用裸 `sys.settrace(None)` 或独占申请未注册的 `sys.monitoring` tool slot，统一走共享分发器。
+
+### 参考
+
+- 实现：[peeka/core/instrumentation/trace_backends.py](../peeka/core/instrumentation/trace_backends.py)、[peeka/core/instrumentation/trace.py](../peeka/core/instrumentation/trace.py)
+- 防复发测试：[tests/test_trace_dispatch_and_isolation.py](../tests/test_trace_dispatch_and_isolation.py)
+- 相关话题：[019-trace-sanitization-and-gevent.md](./019-trace-sanitization-and-gevent.md)、[ADR 0002](../docs/adr/0002-trace-direct-callee-semantics.md)
 
 ---
 

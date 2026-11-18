@@ -5,13 +5,14 @@
 | **话题** | 进程 attach 就绪探测、会话文件清理、accept 循环时序与 agent 线程生命周期问题 |
 | **受影响组件** | core/attach, core/agent, tui process attach flow |
 | **最高严重级别** | SEV-0 (Critical) |
-| **事故次数** | 12 |
-| **时间跨度** | 2026-02-26 至 2026-11-17 |
+| **事故次数** | 13 |
+| **时间跨度** | 2026-02-26 至 2026-11-18 |
 
 ## 案例索引
 
 | # | 事故 | 严重级别 | 日期 |
 |---|------|----------|------|
+| [#13](#事故-13stopreset-门控缺失与外部资源所有权及引导路径漂移) | stop/reset 门控缺失与外部资源所有权及引导路径漂移 | SEV-1 | 2026-11-18 |
 | [#12](#事故-12已有会话检查跨-pid-阻止附加并误清理无权限进程) | 已有会话检查跨 PID 阻止附加并误清理无权限进程 | SEV-2 | 2026-11-17 |
 | [#11](#事故-11注入命名空间分裂-registry-与连接清理缺口) | 注入命名空间分裂 registry 与连接清理缺口 | SEV-2 | 2026-11-17 |
 | [#10](#事故-10probecontext-退出失败与-monitor-top-停止超时未暴露) | ProbeContext 退出失败与 monitor/top 停止超时未暴露 | SEV-2 | 2026-06-25 |
@@ -42,6 +43,98 @@
 v0.1.22 补充：通过脚本注入的 agent 与导入的 peeka.core.agent 可能持有不同 registry，导致控制面与观测分发无法共享状态；停止时也需要主动唤醒阻塞连接。
 
 v0.1.22 补充：已有活跃会话检查未限制目标 PID，导致同机第二个进程被阻止附加；PermissionError 被错误视为进程不存在。
+
+v0.1.22 后 `master`（`0f75d99`、`e2a6589`，未发布）补充：为 `stop`/`reset`/`start` 之间建立在途命令门控与回滚机制、保留 `detach` 回复通道与外部所有权边界、保护 warming/暂时无响应会话不被误删，并修正 `bootstrap.py` 覆写早期 `sys.argv` 修改与注入脚本根路径偏差。
+
+---
+
+## 事故 #13：stop/reset 门控缺失与外部资源所有权及引导路径漂移
+
+> **Tag 范围**：`v0.1.22` → `HEAD`（`master` 未发布，不含当前工作树未提交改动） | **严重级别**：SEV-1 | **日期**：2026-11-18
+
+### 概要
+
+`v0.1.22` 之后在生命周期与引导链路的深化审计中发现两类问题：其一是 `PeekaAgent` 的 `stop()` / `reset()` 与并发 `start` 命令缺乏执行门控与回滚协调，且存在 `detach` 连接提前关闭、handler 并发重复构造、`start()` 失败后退出钩子未回滚、外部修改 logger/`tracemalloc` 被误还原、以及 warming/短暂无响应会话被误删（`e2a6589`）；其二是 `bootstrap.py` 在 Step 5 覆盖用户脚本早期对 `sys.argv` 的原地修改，以及 `attach_workflow/readiness.py` 插入错误的 `peeka_root` 导致隔离环境下注入脚本无法导入 `peeka`（`0f75d99`）。
+
+### 根因分析
+
+#### 类别
+Race Condition / Resource Management / Configuration Error
+
+#### 分析
+1. **stop/reset 与在途命令缺少门控协调**（[agent.py](../peeka/core/agent.py)、[lifecycle.py](../peeka/core/agent_control/lifecycle.py)）：若某个 `watch` 或后台 `worker` 命令在 `stop()` / `reset()` 启动前已通过最初状态检查并正在创建包装器或后台线程，待其完成时 `stop()` / `reset()` 的清理已掠过该资源，造成包装器或线程泄露；同时并发 `stop()` 可能不等待首个 `stop` 完成 cleanup 就返回，而 `shutdown_agent_resources()` 若立即 `shutdown` 所有客户端连接会让发起 `detach` 的连接丢失最终响应。此外 `_get_handler()` 缺少互斥保护可能实例化多份命令 handler，`start()` 异常路径未回滚已安装的 `SIGTERM` / `sys.excepthook` / `atexit` 钩子。
+2. **外部所有权边界缺失**（[logger.py](../peeka/commands/logger.py)、[memory.py](../peeka/commands/memory.py)）：Peeka 设置日志级别或开启 `tracemalloc` 后，若宿主业务代码自行修改了 logger 级别或重启了 `tracemalloc`，`detach` 时仍按旧快照还原会覆盖业务状态。
+3. **会话扫描过于激进**（[session.py](../peeka/core/attach_workflow/session.py)）：缺少 `.pid` 的刚创建（warming）会话或短暂无 ping 响应但进程仍存活的会话，会在 scan 阶段被直接清理。
+4. **引导路径与 `sys.argv` 覆写**（[bootstrap.py](../peeka/core/bootstrap.py)、[readiness.py](../peeka/core/attach_workflow/readiness.py)）：`bootstrap.py` Step 5 再次执行 `sys.argv = [script_path] + script_args`，覆盖了用户脚本在早期阶段对 `sys.argv` 的原地修改；`readiness.py` 使用 `Path(__file__).resolve().parent.parent.parent`（等价于 `parents[2]`，即 `peeka/peeka` 包目录本身），在 `python -BIS` 隔离环境下无法 `import peeka.core.agent`。
+
+#### 致因提交
+- 生命周期门控与所有权缺口源于多命令并发路径在早期设计中未引入统一在途命令表与外部变更比对；
+- `bootstrap.py` 的 `sys.argv` 赋值继承自 `f8cb264` 前后的两阶段引导；`readiness.py` 路径层级自模块拆包迁入 `attach_workflow/` 后少向上一级。
+
+### 复现
+
+#### 前置条件
+- 运行中的 `PeekaAgent` 并发处理 `start` 与 `stop`/`reset`/`detach`；或通过 `peeka-cli run` / `python -BIS` 引导注入目标脚本。
+
+#### 步骤
+1. 让 `watch` 或后台 `worker` 阻塞在执行中途，并发触发 `agent.stop()` 或 `reset`，恢复执行后检查包装器与线程是否残留。
+2. 在 Peeka 调整 logger 级别或启动 `tracemalloc` 后，由外部代码覆盖级别或重启 `tracemalloc`，再执行 `detach`。
+3. 构造缺少 `.pid` 的 warming 会话目录或暂时无 ping 响应的存活会话，执行会话扫描。
+4. 用 `bootstrap.py` 运行包含 `sys.argv.pop()` 的脚本，或在 `python -BIS` 下执行 `_create_agent_script()` 生成的引导脚本。
+
+#### 预期行为
+- 在途命令在 `stop`/`reset` 后完成时自动回滚，并发 `stop` 等待清理完成，`detach` 连接可靠收到最终响应后关闭，外部修改的 logger/`tracemalloc` 与 warming/存活会话均被保留；
+- 用户脚本对 `sys.argv` 的早期修改保留到 `__main__`，隔离 Python 下 `_create_agent_script()` 可直接导入 `peeka.core.agent`。
+
+#### 实际行为
+修复前：在途命令回写残留资源、`detach` 响应丢失、外部状态与 warming 会话被破坏、`sys.argv` 变更被覆盖、隔离环境下 `ModuleNotFoundError: No module named 'peeka'`。
+
+### 修复
+
+#### 修复提交
+
+| 提交 | 作者 | 日期 | 描述 |
+|------|------|------|------|
+| `0f75d99` | lufeihaidao | 2026-11-18 | `fix(attach): preserve bootstrap sys.argv mutations and agent import root` |
+| `e2a6589` | lufeihaidao | 2026-11-18 | `fix(core): gate stop/reset command execution, harden ownership and session scan` |
+
+#### 变更内容
+- **命令执行门控与清理协调**：[agent.py](../peeka/core/agent.py) 新增 `_NativeCondition`、`_InflightCommand`、`_gate_lock`、`_reset_epoch` 与 `_stop_done_event`，串行化 `stop()`、`reset()` 与并发 `start` 命令并对被取消/被 superseded 的在途命令执行回滚；`_detaching_connections` 在 `shutdown_agent_resources()` 中豁免当前 `detach` 连接以保证最终回复写出；`_handlers_lock` 保障 `_get_handler()` 单例发布；`start()` 失败时回滚信号与 `atexit` 钩子。
+- **外部所有权保护与会话保留**：[logger.py](../peeka/commands/logger.py) 记录 `_applied_levels`，若检测到外部改动则返回 `skipped: externally_modified`；[memory.py](../peeka/commands/memory.py) 保护外部重启的 `tracemalloc`；[session.py](../peeka/core/attach_workflow/session.py) 保留无 `.pid` 的 warming 会话和短暂无响应但进程仍存活的会话。
+- **引导脚本修正**：[bootstrap.py](../peeka/core/bootstrap.py) 移除 Step 5 多余 `sys.argv` 重赋值；[readiness.py](../peeka/core/attach_workflow/readiness.py) 改为 `.resolve().parents[3]`。
+
+#### 验证
+在 Python 3.9.25 本地虚拟环境中运行回归测试全部通过：
+- `uv run pytest tests/test_agent_lifecycle_regressions.py -q`（13 passed）：覆盖 `TestStopInflightAndConcurrency`、`TestDetachBoundedFinalReply`、`TestResetAndStartCoordination`、`TestSingleHandlerPublication`、`TestStartFailureHookRollback`、`TestExternalOwnershipProtection`、`TestSessionScanPreservation`；
+- `uv run pytest tests/test_bootstrap_regressions.py -q`（3 passed）：覆盖 `TestBootstrapArgvPreservation`、`TestAttachAgentScriptImportRoot`（含 `python -BIS` 真实子进程验证）。
+
+### 影响
+
+- **受影响用户**：高并发控制面操作（stop/reset/detach 与观测并行）、宿主自管 logger/`tracemalloc`、多进程会话清理、以及以 `run` 或隔离环境注入的用户。
+- **持续时间**：`e2a6589` 与 `0f75d99` 已合入 `master`（未发布），`v0.1.22` 及更早版本仍受影响。
+- **数据影响**：无持久化数据损坏，避免了宿主配置与活跃会话误删。
+
+### 经验教训
+
+- **做得好的方面**：通过可注入 gate hook 的并发测试精确复现 stop/reset/start 交错窗口，并把外部所有权校验显式写进 `cleanup_summary` 的 `skipped` 字段。
+- **可以改进的方面**：模块目录层级调整（如迁入 `attach_workflow/`）后缺少隔离 Python 环境（`-BIS`）下的路径导入回归测试。
+
+#### 行动项
+
+| 行动 | 优先级 | 状态 |
+|------|--------|------|
+| 保留 [test_agent_lifecycle_regressions.py](../tests/test_agent_lifecycle_regressions.py) 与 [test_bootstrap_regressions.py](../tests/test_bootstrap_regressions.py) 作为并发门控与隔离导入门禁 | P0 | 已完成 |
+
+### 预防
+
+- **立即执行**：所有可能修改全局状态（日志级别、`tracemalloc`、信号处理器）的命令在还原前必须校验当前值是否仍为 Peeka 所写入。
+- **短期**：模块文件移动层级时必须同步核对 `Path(__file__).resolve().parents[N]` 并跑隔离解释器导入检查。
+- **长期**：保持控制面命令（`start`/`reset`/`stop`）通过统一的 `_InflightCommand` 门控协议协调。
+
+### 参考
+
+- 实现：[peeka/core/agent.py](../peeka/core/agent.py)、[peeka/core/agent_control/lifecycle.py](../peeka/core/agent_control/lifecycle.py)、[peeka/core/attach_workflow/session.py](../peeka/core/attach_workflow/session.py)、[peeka/core/attach_workflow/readiness.py](../peeka/core/attach_workflow/readiness.py)、[peeka/core/bootstrap.py](../peeka/core/bootstrap.py)
+- 防复发测试：[tests/test_agent_lifecycle_regressions.py](../tests/test_agent_lifecycle_regressions.py)、[tests/test_bootstrap_regressions.py](../tests/test_bootstrap_regressions.py)
 
 ---
 
