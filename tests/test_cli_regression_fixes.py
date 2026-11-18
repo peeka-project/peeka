@@ -6,11 +6,15 @@ import argparse
 import errno
 import json
 import os
+import signal
+import socket
 import sys
+import tempfile
+import threading
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import pytest
 
@@ -437,3 +441,401 @@ class TestCLIStreamFilteringAndRunConfigReuse:
         stop_cmds = [c for c in fake_client.commands_received if c.get("action") == "stop"]
         assert start_cmds[0]["times"] == -1
         assert stop_cmds == [{"type": cmd_type, "action": "stop", "watch_id": "probe_run_1"}]
+
+
+def _encode_wire_frame(payload: Dict[str, Any], prefix: bytes = b"") -> bytes:
+    """Encode a JSON message in the Peeka agent wire protocol."""
+    body = json.dumps(payload).encode("utf-8")
+    return prefix + len(body).to_bytes(4, "big") + body
+
+
+class _RealProtocolRunServer:
+    """In-process AF_UNIX agent server implementing the Peeka wire protocol."""
+
+    def __init__(
+        self,
+        sock_path: str,
+        watch_id: str,
+        stream_chunks: List[bytes],
+        close_after_frames: bool = True,
+        on_frames_sent: Optional[Callable[[], None]] = None,
+        on_stop_received: Optional[Callable[[], None]] = None,
+    ) -> None:
+        self.sock_path = sock_path
+        self.watch_id = watch_id
+        self.stream_chunks = stream_chunks
+        self.close_after_frames = close_after_frames
+        self.on_frames_sent = on_frames_sent
+        self.on_stop_received = on_stop_received
+        self.stop_commands: List[Dict[str, Any]] = []
+        self.stop_event = threading.Event()
+        self._listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self._listener.bind(sock_path)
+        self._listener.listen(8)
+        self._listener.settimeout(0.05)
+        self._conns: List[socket.socket] = []
+        self._lock = threading.Lock()
+        self._thread = threading.Thread(target=self._serve, daemon=True)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def close(self) -> None:
+        self.stop_event.set()
+        try:
+            self._listener.close()
+        except OSError:
+            pass
+        with self._lock:
+            conns = list(self._conns)
+        for conn in conns:
+            try:
+                conn.close()
+            except OSError:
+                pass
+        self._thread.join(timeout=2.0)
+
+    def _serve(self) -> None:
+        while not self.stop_event.is_set():
+            try:
+                conn, _ = self._listener.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            with self._lock:
+                self._conns.append(conn)
+            threading.Thread(
+                target=self._handle_conn, args=(conn,), daemon=True
+            ).start()
+
+    @staticmethod
+    def _recv_exact(conn: socket.socket, size: int) -> bytes:
+        buf = bytearray()
+        while len(buf) < size:
+            chunk = conn.recv(size - len(buf))
+            if not chunk:
+                return b""
+            buf.extend(chunk)
+        return bytes(buf)
+
+    def _handle_conn(self, conn: socket.socket) -> None:
+        try:
+            len_bytes = self._recv_exact(conn, 4)
+            if not len_bytes:
+                return
+            req_len = int.from_bytes(len_bytes, "big")
+            raw_req = self._recv_exact(conn, req_len)
+            if not raw_req:
+                return
+            cmd = json.loads(raw_req.decode("utf-8"))
+            action = cmd.get("action")
+
+            if action == "start":
+                conn.sendall(
+                    _encode_wire_frame(
+                        {"status": "success", "watch_id": self.watch_id}
+                    )
+                )
+                for chunk in self.stream_chunks:
+                    conn.sendall(chunk)
+                if self.close_after_frames:
+                    conn.shutdown(socket.SHUT_WR)
+                    conn.close()
+                if self.on_frames_sent is not None:
+                    self.on_frames_sent()
+                if not self.close_after_frames:
+                    self.stop_event.wait(timeout=5.0)
+            elif action == "stop":
+                with self._lock:
+                    self.stop_commands.append(cmd)
+                conn.sendall(_encode_wire_frame({"status": "success"}))
+                if self.on_stop_received is not None:
+                    self.on_stop_received()
+                conn.close()
+            else:
+                conn.sendall(_encode_wire_frame({"status": "success"}))
+                conn.close()
+        except OSError:
+            pass
+
+
+class TestCmdRunStreamLifecycleRegressions:
+    """Regression tests for cmd_run buffered frames, waitpid, exit codes, and EOF/no-EOF."""
+
+    @staticmethod
+    def _run_with_real_protocol(
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        obs_argv: List[str],
+        stream_chunks: List[bytes],
+        *,
+        close_after_frames: bool,
+        child_exit_event: threading.Event,
+        child_status: int,
+        release_exit_on_frames: bool = False,
+        release_exit_on_stop: bool = False,
+    ) -> Tuple[int, List[Dict[str, Any]], List[Tuple[int, int]]]:
+        script = tmp_path / "target.py"
+        script.write_text("def work():\n    return 1\n")
+
+        waitpid_calls: List[Tuple[int, int]] = []
+        reap_count = [0]
+        wait_lock = threading.Lock()
+        child_pid = 4242
+
+        def _fake_waitpid(pid: int, options: int) -> Tuple[int, int]:
+            with wait_lock:
+                waitpid_calls.append((pid, options))
+                assert reap_count[0] == 0, (
+                    f"Duplicate os.waitpid({pid}, {options}) after child already reaped: {waitpid_calls}"
+                )
+            if options == os.WNOHANG:
+                if not child_exit_event.is_set():
+                    return (0, 0)
+            else:
+                assert child_exit_event.wait(timeout=3.0), "Timed out waiting for child exit event"
+            with wait_lock:
+                assert reap_count[0] == 0, (
+                    f"Duplicate os.waitpid({pid}, {options}) after child already reaped: {waitpid_calls}"
+                )
+                reap_count[0] += 1
+                return (pid, child_status)
+
+        with tempfile.TemporaryDirectory(dir="/tmp") as sock_dir:
+            sock_path = os.path.join(sock_dir, "peeka_testrun.sock")
+            server = _RealProtocolRunServer(
+                sock_path=sock_path,
+                watch_id="probe_run_1",
+                stream_chunks=stream_chunks,
+                close_after_frames=close_after_frames,
+                on_frames_sent=(
+                    child_exit_event.set if release_exit_on_frames else None
+                ),
+                on_stop_received=(
+                    child_exit_event.set if release_exit_on_stop else None
+                ),
+            )
+            server.start()
+
+            class _FakeProc:
+                pid = child_pid
+
+                def poll(self) -> Optional[int]:
+                    return os.WEXITSTATUS(child_status) if child_exit_event.is_set() else None
+
+            class _FakeAttacher:
+                def __init__(self, pid: int, **kwargs: Any) -> None:
+                    self.pid = pid
+
+                def attach(self) -> bool:
+                    return True
+
+                def get_socket_path(self) -> str:
+                    return sock_path
+
+                def cleanup(self) -> None:
+                    pass
+
+            real_exists = cli_run.os.path.exists
+            monkeypatch.setattr(cli_run.uuid, "uuid4", lambda: "test-run-proto")
+            monkeypatch.setattr(
+                cli_run.os.path,
+                "exists",
+                lambda p: True if str(p).endswith(".import-ready") else real_exists(p),
+            )
+            monkeypatch.setattr(cli_run.subprocess, "Popen", lambda *a, **kw: _FakeProc())
+            monkeypatch.setattr(cli_run, "ProcessAttacher", _FakeAttacher)
+            monkeypatch.setattr(cli_run.os, "kill", lambda pid, sig: None)
+            monkeypatch.setattr(cli_run.os, "waitpid", _fake_waitpid)
+            monkeypatch.setattr(
+                sys,
+                "argv",
+                ["peeka-cli", "run", str(script), "--", *obs_argv],
+            )
+
+            try:
+                args = argparse.Namespace(script_path=str(script), remaining=None)
+                exit_code = cli_run.cmd_run(args)
+            finally:
+                server.close()
+
+        assert reap_count[0] == 1, f"Expected exactly 1 reap, got {reap_count[0]}: {waitpid_calls}"
+        return exit_code, server.stop_commands, waitpid_calls
+
+    @pytest.mark.parametrize("cmd_type", ["trace", "stack"])
+    @pytest.mark.parametrize("close_after_frames", [True, False], ids=["eof", "no-eof"])
+    def test_buffered_observations_not_dropped_when_child_exits_after_first_log(
+        self,
+        tmp_path: Path,
+        capsys,
+        monkeypatch: pytest.MonkeyPatch,
+        cmd_type: str,
+        close_after_frames: bool,
+    ) -> None:
+        """2bbee72 regression: WNOHANG exit after first LOG frame must still emit buffered OBS frames."""
+        log_frame = _encode_wire_frame(
+            {"type": "log", "level": "INFO", "message": "[peeka Agent] started"},
+            prefix=b"LOG:",
+        )
+        obs1 = _encode_wire_frame(
+            {"watch_id": "probe_run_1", "seq": 1, "func_name": "mod.work"},
+            prefix=b"OBS:",
+        )
+        obs2 = _encode_wire_frame(
+            {"watch_id": "probe_run_1", "seq": 2, "func_name": "mod.work"},
+            prefix=b"OBS:",
+        )
+
+        # Child reports exited immediately once frames are sent, while LOG + 2 OBS are buffered.
+        child_exit_event = threading.Event()
+        exit_code, _, _ = self._run_with_real_protocol(
+            monkeypatch,
+            tmp_path,
+            [cmd_type, "mod.work"],
+            [log_frame + obs1 + obs2],
+            close_after_frames=close_after_frames,
+            child_exit_event=child_exit_event,
+            child_status=(7 << 8),
+            release_exit_on_frames=True,
+        )
+
+        printed = [
+            json.loads(line)
+            for line in capsys.readouterr().out.strip().splitlines()
+            if line
+        ]
+        assert [obs["seq"] for obs in printed] == [1, 2]
+        assert exit_code == 7
+
+    @pytest.mark.parametrize(
+        "child_status,expected_exit_code",
+        [
+            (42 << 8, 42),
+            (signal.SIGTERM, 128 + signal.SIGTERM),
+        ],
+        ids=["nonzero-exit", "signaled-exit"],
+    )
+    def test_normal_eof_reaps_once_and_preserves_exit_code(
+        self,
+        tmp_path: Path,
+        capsys,
+        monkeypatch: pytest.MonkeyPatch,
+        child_status: int,
+        expected_exit_code: int,
+    ) -> None:
+        """Normal EOF drains observations, reaps once, and preserves original exit/signal code."""
+        obs1 = _encode_wire_frame(
+            {"watch_id": "probe_run_1", "seq": 1, "func_name": "mod.work"},
+            prefix=b"OBS:",
+        )
+        obs2 = _encode_wire_frame(
+            {"watch_id": "probe_run_1", "seq": 2, "func_name": "mod.work"},
+            prefix=b"OBS:",
+        )
+
+        child_exit_event = threading.Event()
+        # Child finishes shortly after stream EOF (blocking waitpid observes exit).
+        timer = threading.Timer(0.05, child_exit_event.set)
+        timer.daemon = True
+        timer.start()
+        try:
+            exit_code, _, waitpid_calls = self._run_with_real_protocol(
+                monkeypatch,
+                tmp_path,
+                ["trace", "mod.work"],
+                [obs1, obs2],
+                close_after_frames=True,
+                child_exit_event=child_exit_event,
+                child_status=child_status,
+            )
+        finally:
+            timer.cancel()
+
+        printed = [
+            json.loads(line)
+            for line in capsys.readouterr().out.strip().splitlines()
+            if line
+        ]
+        assert [obs["seq"] for obs in printed] == [1, 2]
+        assert exit_code == expected_exit_code
+        assert waitpid_calls[-1] == (4242, 0)
+
+    @pytest.mark.parametrize("close_after_frames", [True, False], ids=["eof", "no-eof"])
+    def test_zero_frames_exits_without_hang_and_preserves_exit_code(
+        self,
+        tmp_path: Path,
+        capsys,
+        monkeypatch: pytest.MonkeyPatch,
+        close_after_frames: bool,
+    ) -> None:
+        """Zero matching frames exits cleanly on EOF or child exit without overwriting exit code."""
+        noise_log = _encode_wire_frame(
+            {"type": "log", "level": "INFO", "message": "startup"},
+            prefix=b"LOG:",
+        )
+        foreign_obs = _encode_wire_frame(
+            {"watch_id": "foreign_probe", "seq": 99},
+            prefix=b"OBS:",
+        )
+
+        child_exit_event = threading.Event()
+        timer = threading.Timer(0.05, child_exit_event.set)
+        timer.daemon = True
+        timer.start()
+        try:
+            exit_code, _, _ = self._run_with_real_protocol(
+                monkeypatch,
+                tmp_path,
+                ["stack", "mod.work"],
+                [noise_log, foreign_obs],
+                close_after_frames=close_after_frames,
+                child_exit_event=child_exit_event,
+                child_status=(5 << 8),
+            )
+        finally:
+            timer.cancel()
+
+        assert capsys.readouterr().out.strip() == ""
+        assert exit_code == 5
+
+    @pytest.mark.parametrize("cmd_type", ["trace", "stack"])
+    def test_limit_hit_sends_stop_and_preserves_original_exit_code(
+        self,
+        tmp_path: Path,
+        capsys,
+        monkeypatch: pytest.MonkeyPatch,
+        cmd_type: str,
+    ) -> None:
+        """Hitting -n stops after N matching frames, sends stop RPC, and keeps child exit code."""
+        frames = (
+            _encode_wire_frame({"type": "log", "message": "boot"}, prefix=b"LOG:")
+            + _encode_wire_frame({"watch_id": "other", "seq": 0}, prefix=b"OBS:")
+            + _encode_wire_frame({"watch_id": "probe_run_1", "seq": 1}, prefix=b"OBS:")
+            + _encode_wire_frame({"watch_id": "probe_run_1", "seq": 2}, prefix=b"OBS:")
+            + _encode_wire_frame({"watch_id": "probe_run_1", "seq": 3}, prefix=b"OBS:")
+        )
+
+        child_exit_event = threading.Event()
+        exit_code, stop_commands, _ = self._run_with_real_protocol(
+            monkeypatch,
+            tmp_path,
+            [cmd_type, "mod.work", "-n", "2"],
+            [frames],
+            close_after_frames=False,
+            child_exit_event=child_exit_event,
+            child_status=(3 << 8),
+            release_exit_on_stop=True,
+        )
+
+        printed = [
+            json.loads(line)
+            for line in capsys.readouterr().out.strip().splitlines()
+            if line
+        ]
+        assert [obs["seq"] for obs in printed] == [1, 2]
+        assert len(stop_commands) == 1
+        assert stop_commands[0]["type"] == cmd_type
+        assert stop_commands[0]["action"] == "stop"
+        assert stop_commands[0]["watch_id"] == "probe_run_1"
+        assert exit_code == 3

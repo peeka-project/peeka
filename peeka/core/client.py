@@ -8,6 +8,7 @@ from contextlib import contextmanager
 import json
 import logging
 import os
+import select
 import socket
 import threading
 import uuid
@@ -215,6 +216,7 @@ class StreamingAgentClient:
         self._sock: Optional[socket.socket] = None
         self._buffer = b""
         self._stop_event = threading.Event()
+        self._stream_finish_event = threading.Event()
         self._send_lock = threading.Lock()
         # Serialises socket reads and ``_buffer`` mutations performed by
         # ``stream_observations`` so concurrent readers never interleave
@@ -384,6 +386,7 @@ class StreamingAgentClient:
                         self._connection_generation += 1
                         published_gen = self._connection_generation
                         self._stop_event.clear()
+                        self._stream_finish_event.clear()
                         self._buffer = b""
                         stale = False
 
@@ -433,6 +436,16 @@ class StreamingAgentClient:
         """Close the connection and signal streaming loops to stop."""
         if self._invalidate_connection():
             self._report_activity("INFO", "disconnected")
+
+    def finish_stream(self) -> None:
+        """Stop waiting for new stream frames once buffered data is drained.
+
+        Unlike ``disconnect()``, this preserves buffered and already-delivered
+        observations so ``stream_observations()`` can yield them before exiting.
+        """
+        with self._state_lock:
+            if self._sock is not None:
+                self._stream_finish_event.set()
 
     def _fail_post_send_rpc(
         self,
@@ -582,13 +595,77 @@ class StreamingAgentClient:
             frames.append(obs)
         return frames
 
+    @staticmethod
+    def _socket_has_fileno(sock: Any) -> bool:
+        """Return True if ``sock`` exposes a valid OS file descriptor."""
+        try:
+            fd = sock.fileno()
+        except Exception:
+            return False
+        return isinstance(fd, int) and not isinstance(fd, bool) and fd >= 0
+
+    def _append_stream_chunk(self, chunk: bytes, reader_gen: int) -> bool:
+        """Append ``chunk`` to ``_buffer`` while still bound to ``reader_gen``."""
+        with self._state_lock:
+            if (
+                self._stop_event.is_set()
+                or self._connection_generation != reader_gen
+            ):
+                return False
+            self._buffer += chunk
+            return True
+
+    def _drain_ready_socket_bytes(
+        self, sock: Any, reader_gen: int
+    ) -> Tuple[bool, bool]:
+        """Read any already-queued bytes from ``sock`` without blocking.
+
+        Returns:
+            ``(saw_eof, aborted)`` where ``saw_eof`` indicates the peer closed
+            the connection and ``aborted`` indicates stop/reconnect occurred.
+        """
+        if self._socket_has_fileno(sock):
+            while True:
+                try:
+                    readable, _, _ = select.select([sock], [], [], 0.0)
+                except (OSError, ValueError):
+                    return True, False
+                if not readable:
+                    return False, False
+                chunk = sock.recv(4096)
+                if not chunk:
+                    return True, False
+                if not self._append_stream_chunk(chunk, reader_gen):
+                    return False, True
+
+        if not (hasattr(sock, "gettimeout") and hasattr(sock, "settimeout")):
+            return False, False
+
+        prev_timeout = sock.gettimeout()
+        try:
+            sock.settimeout(0.0)
+            while True:
+                try:
+                    chunk = sock.recv(4096)
+                except (BlockingIOError, socket.timeout, TimeoutError):
+                    return False, False
+                if not chunk:
+                    return True, False
+                if not self._append_stream_chunk(chunk, reader_gen):
+                    return False, True
+        finally:
+            try:
+                sock.settimeout(prev_timeout)
+            except Exception:
+                pass
+
     def stream_observations(self) -> Generator[Dict[str, Any], None, None]:
         """
         Yield observations as they arrive from the agent.
 
         This generator blocks waiting for observations. Use with a timeout
-        or run in a separate thread. Exits when connection closes, reconnects
-        to a new generation, or encounters an error.
+        or run in a separate thread. Exits when connection closes, ``finish_stream()``
+        completes draining, reconnects to a new generation, or encounters an error.
         """
         with self._state_lock:
             if not self._sock:
@@ -612,6 +689,7 @@ class StreamingAgentClient:
                         ):
                             should_break = True
                         sock = self._sock
+                        finishing = self._stream_finish_event.is_set()
 
                     if not should_break:
                         # Parse any trailing complete frames already buffered
@@ -620,30 +698,55 @@ class StreamingAgentClient:
 
                     if not should_break and not pending:
                         assert sock is not None
-                        chunk = sock.recv(4096)
-                        if not chunk:
-                            with self._state_lock:
-                                same_gen = (
-                                    not self._stop_event.is_set()
-                                    and self._connection_generation == reader_gen
-                                )
-                            if same_gen:
-                                pending_activity = (
-                                    "WARNING",
-                                    "observation stream closed by peer",
-                                )
-                            should_break = True
-                        else:
+                        if not finishing and self._socket_has_fileno(sock):
+                            poll_timeout = (
+                                min(0.05, self.timeout)
+                                if self.timeout is not None and self.timeout > 0
+                                else 0.05
+                            )
+                            readable, _, _ = select.select([sock], [], [], poll_timeout)
                             with self._state_lock:
                                 if (
                                     self._stop_event.is_set()
                                     or self._connection_generation != reader_gen
+                                    or self._sock is None
                                 ):
                                     should_break = True
                                 else:
-                                    self._buffer += chunk
-                            if not should_break:
-                                pending = self._drain_buffered_observations()
+                                    finishing = self._stream_finish_event.is_set()
+                            if not should_break and not readable and not finishing:
+                                continue
+
+                        if not should_break:
+                            if finishing:
+                                saw_eof, aborted = self._drain_ready_socket_bytes(
+                                    sock, reader_gen
+                                )
+                                if aborted:
+                                    should_break = True
+                                else:
+                                    pending = self._drain_buffered_observations()
+                                    if saw_eof or not pending:
+                                        should_break = True
+                            else:
+                                chunk = sock.recv(4096)
+                                if not chunk:
+                                    with self._state_lock:
+                                        same_gen = (
+                                            not self._stop_event.is_set()
+                                            and self._connection_generation == reader_gen
+                                        )
+                                    if same_gen:
+                                        pending_activity = (
+                                            "WARNING",
+                                            "observation stream closed by peer",
+                                        )
+                                    should_break = True
+                                else:
+                                    if not self._append_stream_chunk(chunk, reader_gen):
+                                        should_break = True
+                                    else:
+                                        pending = self._drain_buffered_observations()
             except socket.timeout:
                 continue
             except OSError as e:

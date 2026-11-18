@@ -678,3 +678,100 @@ class TestStreamingAgentClientActivityReporting:
             server.close()
             if os.path.exists(sock_path):
                 os.unlink(sock_path)
+
+
+class TestStreamingAgentClientFinishStream:
+    """Test graceful stream termination without dropping buffered frames."""
+
+    def test_finish_stream_drains_buffered_and_socket_frames_without_eof(self):
+        """finish_stream() yields buffered and socket-queued frames then exits without EOF."""
+        client_sock, server_sock = socket.socketpair()
+        client = StreamingAgentClient("/fake/path", timeout=5.0)
+        client._sock = cast(Any, client_sock)
+
+        try:
+            log_payload = json.dumps({"type": "log", "message": "init"}).encode()
+            obs1_payload = json.dumps({"watch_id": "w1", "seq": 1}).encode()
+            obs2_payload = json.dumps({"watch_id": "w1", "seq": 2}).encode()
+
+            # Pre-buffer first frame and keep remaining two in kernel socket buffer (no EOF).
+            client._buffer = (
+                b"LOG:" + len(log_payload).to_bytes(4, "big") + log_payload
+            )
+            server_sock.sendall(
+                b"OBS:"
+                + len(obs1_payload).to_bytes(4, "big")
+                + obs1_payload
+                + b"OBS:"
+                + len(obs2_payload).to_bytes(4, "big")
+                + obs2_payload
+            )
+
+            reader = client.stream_observations()
+            first = next(reader)
+            assert first == {"type": "log", "message": "init"}
+
+            client.finish_stream()
+            rest = list(reader)
+            assert rest == [
+                {"watch_id": "w1", "seq": 1},
+                {"watch_id": "w1", "seq": 2},
+            ]
+            assert client._buffer == b""
+        finally:
+            client.disconnect()
+            server_sock.close()
+
+    def test_finish_stream_unblocks_idle_reader_with_no_frames(self):
+        """finish_stream() stops an idle stream_observations() even when peer stays open."""
+        client_sock, server_sock = socket.socketpair()
+        client = StreamingAgentClient("/fake/path", timeout=5.0)
+        client._sock = cast(Any, client_sock)
+
+        collected = []
+        done = threading.Event()
+
+        def consume():
+            collected.extend(client.stream_observations())
+            done.set()
+
+        try:
+            thread = threading.Thread(target=consume, daemon=True)
+            thread.start()
+            time.sleep(0.03)
+            client.finish_stream()
+            assert done.wait(timeout=1.5), "stream_observations() hung after finish_stream()"
+            thread.join(timeout=1.0)
+            assert collected == []
+        finally:
+            client.disconnect()
+            server_sock.close()
+
+    def test_connect_clears_finish_stream_state(self):
+        """Reconnecting clears previous finish_stream() state for the new generation."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory(dir="/tmp") as tmpdir:
+            sock_path = os.path.join(tmpdir, "reconn_finish.sock")
+            server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            server.bind(sock_path)
+            server.listen(2)
+            client = StreamingAgentClient(sock_path, timeout=0.5)
+
+            try:
+                assert client.connect()["status"] == "success"
+                conn1, _ = server.accept()
+                client.finish_stream()
+                assert list(client.stream_observations()) == []
+                conn1.close()
+
+                assert client.connect()["status"] == "success"
+                conn2, _ = server.accept()
+                obs = json.dumps({"seq": 42}).encode()
+                conn2.sendall(b"OBS:" + len(obs).to_bytes(4, "big") + obs)
+                conn2.close()
+
+                assert list(client.stream_observations()) == [{"seq": 42}]
+            finally:
+                client.disconnect()
+                server.close()

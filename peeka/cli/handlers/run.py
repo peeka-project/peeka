@@ -7,6 +7,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import types
 import uuid
@@ -93,6 +94,15 @@ def _build_run_command(
         return command
 
     return None
+
+
+def _decode_wait_status(status: int) -> int:
+    """Convert a raw ``os.waitpid`` status into a shell-compatible exit code."""
+    if os.WIFEXITED(status):
+        return os.WEXITSTATUS(status)
+    if os.WIFSIGNALED(status):
+        return 128 + os.WTERMSIG(status)
+    return 1
 
 
 def _prepare_run_command(
@@ -258,6 +268,40 @@ def cmd_run(args) -> int:
             child_pid, suppress_startup_messages=True, session_id=session_id
         )
 
+        reap_lock = threading.RLock()
+        child_exited = False
+        exit_code = 0
+        socket_path: Optional[str] = None
+
+        def _reap_child(blocking: bool = False) -> bool:
+            """Reap ``child_pid`` at most once and record its decoded exit code."""
+            nonlocal child_exited, exit_code
+            with reap_lock:
+                if child_exited:
+                    return True
+                options = 0 if blocking else os.WNOHANG
+                try:
+                    pid, status = os.waitpid(child_pid, options)
+                except ChildProcessError:
+                    child_exited = True
+                    exit_code = 1
+                    return True
+                if pid == child_pid:
+                    child_exited = True
+                    exit_code = _decode_wait_status(status)
+                    return True
+                return False
+
+        def _unlink_session_files() -> None:
+            if not socket_path:
+                return
+            sock_file = Path(socket_path)
+            sid = sock_file.stem.replace("peeka_", "")
+            sock_dir = sock_file.parent
+            for suffix in ("pid", "ready"):
+                (sock_dir / f"peeka_{sid}.{suffix}").unlink(missing_ok=True)
+            sock_file.unlink(missing_ok=True)
+
         try:
             attached = attacher.attach()
             if not attached:
@@ -268,9 +312,9 @@ def cmd_run(args) -> int:
                 )
                 try:
                     os.kill(child_pid, signal.SIGKILL)
-                    os.waitpid(child_pid, 0)
                 except Exception:
                     pass
+                _reap_child(blocking=True)
                 attacher.cleanup()
                 return 1
 
@@ -281,40 +325,28 @@ def cmd_run(args) -> int:
 
             # Signal handlers: forward to child process then cleanup
             def cleanup_and_exit(signum=None, frame=None):
-                exit_code = 0
                 try:
                     if signum is not None:
-                        os.kill(child_pid, signum)
-                    # Detach
-                    streaming_client = StreamingAgentClient(socket_path)
-                    streaming_client.connect()
-                    streaming_client.send_command({"type": "detach"})
-                    streaming_client.disconnect()
-                    # Cleanup socket/pid files
-                    sid = Path(socket_path).stem.replace("peeka_", "")
-                    pid_file = Path(f"/tmp/peeka_{sid}.pid")
-                    ready_file = Path(f"/tmp/peeka_{sid}.ready")
-                    sock_file = Path(socket_path)
-                    pid_file.unlink(missing_ok=True)
-                    ready_file.unlink(missing_ok=True)
-                    sock_file.unlink(missing_ok=True)
-                    # Reap child
-                    exit_code = 0
-                    try:
-                        _, exit_code = os.waitpid(child_pid, 0)
-                    except ChildProcessError:
-                        pass
+                        try:
+                            os.kill(child_pid, signum)
+                        except ProcessLookupError:
+                            pass
+                    if not _reap_child(blocking=False):
+                        try:
+                            detach_client = StreamingAgentClient(socket_path)
+                            if detach_client.connect().get("status") == "success":
+                                detach_client.send_command({"type": "detach"})
+                            detach_client.disconnect()
+                        except Exception:
+                            pass
+                    _unlink_session_files()
+                    _reap_child(blocking=True)
                 except Exception:
                     pass
                 finally:
                     attacher.cleanup()
                     if signum is not None:
-                        if os.WIFEXITED(exit_code):
-                            sys.exit(os.WEXITSTATUS(exit_code))
-                        elif os.WIFSIGNALED(exit_code):
-                            sys.exit(128 + os.WTERMSIG(exit_code))
-                        else:
-                            sys.exit(1)
+                        sys.exit(exit_code)
 
             signal.signal(signal.SIGINT, cleanup_and_exit)
             signal.signal(signal.SIGTERM, cleanup_and_exit)
@@ -369,15 +401,31 @@ def cmd_run(args) -> int:
             with open(go_path, "w") as f:
                 f.write(str(os.getpid()))
 
-            child_exited = False
             limit_hit = False
-            exit_code = 0
 
             _stop_command = cast(Dict[str, Any], _cfg.stop_command_builder(watch_id))
             _limit_predicate, _set_stream_id = stream_counted_limit(
                 _cfg.limit_attr, _cfg.stream_id_key
             )
             _set_stream_id(watch_id)
+
+            stop_monitor = threading.Event()
+
+            def _monitor_child_exit() -> None:
+                while not stop_monitor.is_set():
+                    if _reap_child(blocking=False):
+                        finish_fn = getattr(streaming_client, "finish_stream", None)
+                        if callable(finish_fn):
+                            finish_fn()
+                        return
+                    stop_monitor.wait(0.01)
+
+            monitor_thread = threading.Thread(
+                target=_monitor_child_exit,
+                name=f"peeka-run-wait-{child_pid}",
+                daemon=True,
+            )
+            monitor_thread.start()
 
             try:
                 for observation in streaming_client.stream_observations():
@@ -387,56 +435,35 @@ def cmd_run(args) -> int:
                         if _limit_predicate(_limit_args, observation):
                             limit_hit = True
                             break
-
-                    # Check if child has exited
-                    try:
-                        pid, status = os.waitpid(child_pid, os.WNOHANG)
-                        if pid == child_pid:
-                            child_exited = True
-                            if os.WIFEXITED(status):
-                                exit_code = os.WEXITSTATUS(status)
-                            elif os.WIFSIGNALED(status):
-                                exit_code = 128 + os.WTERMSIG(status)
-                            break
-                    except ChildProcessError:
-                        child_exited = True
-                        exit_code = 1
-                        break
-
-                    time.sleep(0.01)
             finally:
+                stop_monitor.set()
+                monitor_thread.join(timeout=1.0)
                 if limit_hit:
                     try:
                         stop_client = StreamingAgentClient(socket_path)
-                        stop_client.connect()
-                        stop_client.send_command(_stop_command)
+                        if stop_client.connect().get("status") == "success":
+                            stop_client.send_command(_stop_command)
                         stop_client.disconnect()
                     except Exception:
                         pass
-                elif not child_exited:
-                    cleanup_and_exit()
+                try:
+                    streaming_client.disconnect()
+                except Exception:
+                    pass
 
-            if limit_hit:
-                if not child_exited:
-                    try:
-                        _, status = os.waitpid(child_pid, 0)
-                        if os.WIFEXITED(status):
-                            exit_code = os.WEXITSTATUS(status)
-                        elif os.WIFSIGNALED(status):
-                            exit_code = 128 + os.WTERMSIG(status)
-                    except ChildProcessError:
-                        pass
-                attacher.cleanup()
-            else:
-                cleanup_and_exit()
+            _reap_child(blocking=True)
+            _unlink_session_files()
+            attacher.cleanup()
             return exit_code
 
         except Exception as e:
             try:
-                os.kill(child_pid, signal.SIGKILL)
-                os.waitpid(child_pid, 0)
+                if not _reap_child(blocking=False):
+                    os.kill(child_pid, signal.SIGKILL)
             except Exception:
                 pass
+            _reap_child(blocking=True)
+            _unlink_session_files()
             OutputFormatter.error("run", error=str(e), file=sys.stderr)
             import traceback
 
