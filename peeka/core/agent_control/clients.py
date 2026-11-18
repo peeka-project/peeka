@@ -92,6 +92,8 @@ class AgentClientControlMixin:
                     f"Client session {client_session_id!r} not found",
                 )
 
+            self._get_consumer_registry().cleanup_for_client(client_session_id)
+
             return self._client_success({"closed": True, "client_session_id": client_session_id})
         except Exception as e:
             result = self._client_error("COMMAND_EXECUTION_ERROR", str(e))

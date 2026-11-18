@@ -56,9 +56,14 @@ class AgentConsumerControlMixin:
                 return self._consumer_error("UNSUPPORTED_CAPABILITY", str(exc))
 
             if client_session_id:
-                self._get_client_registry().add_result_consumer(
+                if not self._get_client_registry().add_result_consumer(
                     str(client_session_id), consumer.consumer_id
-                )
+                ):
+                    registry.remove(consumer.consumer_id)
+                    return self._consumer_error(
+                        "CLIENT_NOT_FOUND",
+                        f"Client session {client_session_id!r} not found",
+                    )
 
             return self._consumer_success(consumer_to_dict(consumer))
         except Exception as e:
@@ -163,6 +168,12 @@ class AgentConsumerControlMixin:
                 return self._consumer_error(
                     "CONSUMER_NOT_FOUND",
                     f"Consumer {consumer_id!r} not found",
+                )
+            consumer_status = drained.pop("consumer_status", None)
+            if consumer_status == "closed" and not drained.get("records"):
+                return self._consumer_error(
+                    "CONSUMER_CLOSED",
+                    f"Consumer {consumer_id!r} is closed",
                 )
             if drained.get("timed_out") and not drained.get("records"):
                 return self._consumer_error(

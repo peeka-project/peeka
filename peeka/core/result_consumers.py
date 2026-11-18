@@ -24,6 +24,7 @@ from typing import Dict
 from typing import List
 from typing import Literal
 from typing import Optional
+from typing import Tuple
 
 from peeka.core.jobs import prune_result_summary
 
@@ -105,6 +106,7 @@ class ResultConsumerRegistry:
 
     def __init__(self) -> None:
         self._lock: threading.Lock = threading.Lock()
+        self._condition: threading.Condition = threading.Condition(self._lock)
         self._consumers: Dict[str, ResultConsumer] = {}
         self._records: Dict[str, Deque[ConsumerRecord]] = {}
         self._next_sequences: Dict[str, int] = {}
@@ -188,6 +190,66 @@ class ResultConsumerRegistry:
                 consumers = [item for item in consumers if item.status == status]
             return list(consumers)
 
+    def _append_normalized_record_locked(
+        self,
+        consumer_id: str,
+        source_type: Literal["job", "probe"],
+        source_id: str,
+        record_type: RecordType,
+        normalized_payload: Dict[str, Any],
+        now: float,
+    ) -> Tuple[bool, bool]:
+        """Append a pre-normalized record while ``self._lock`` is held.
+
+        Returns:
+            A tuple ``(appended, state_changed)`` where ``state_changed`` is
+            True when a record was added or the consumer transitioned to failed.
+        """
+        consumer = self._consumers.get(consumer_id)
+        if consumer is None:
+            return False, False
+        if consumer.status in ("closed", "failed"):
+            return False, False
+
+        queue = self._records[consumer_id]
+        sequence = self._next_sequences[consumer_id]
+
+        if len(queue) >= consumer.max_buffer_size:
+            if consumer.backpressure_policy == "drop_newest":
+                consumer.dropped_count += 1
+                consumer.updated_at = now
+                consumer.buffer_size = len(queue)
+                return True, False
+            if consumer.backpressure_policy == "fail":
+                consumer.status = "failed"
+                consumer.updated_at = now
+                consumer.last_error = {
+                    "code": "CONSUMER_BACKPRESSURE",
+                    "message": "Consumer buffer reached maximum capacity",
+                }
+                consumer.buffer_size = len(queue)
+                return False, True
+
+            if queue:
+                queue.popleft()
+            consumer.dropped_count += 1
+
+        queue.append(
+            ConsumerRecord(
+                sequence=sequence,
+                emitted_at=now,
+                source_type=source_type,
+                source_id=source_id,
+                record_type=record_type,
+                payload=dict(normalized_payload),
+                schema_version=RESULT_CONSUMER_RECORD_SCHEMA_VERSION,
+            )
+        )
+        self._next_sequences[consumer_id] = sequence + 1
+        consumer.updated_at = now
+        consumer.buffer_size = len(queue)
+        return True, True
+
     def append_record(
         self,
         consumer_id: str,
@@ -198,52 +260,19 @@ class ResultConsumerRegistry:
     ) -> bool:
         """Append one record to a consumer according to its backpressure policy."""
         normalized_payload = _normalize_record_payload(payload)
+        now = time.time()
         with self._lock:
-            consumer = self._consumers.get(consumer_id)
-            if consumer is None:
-                return False
-            if consumer.status in ("closed", "failed"):
-                return False
-
-            queue = self._records[consumer_id]
-            sequence = self._next_sequences[consumer_id]
-            now = time.time()
-
-            if len(queue) >= consumer.max_buffer_size:
-                if consumer.backpressure_policy == "drop_newest":
-                    consumer.dropped_count += 1
-                    consumer.updated_at = now
-                    consumer.buffer_size = len(queue)
-                    return True
-                if consumer.backpressure_policy == "fail":
-                    consumer.status = "failed"
-                    consumer.updated_at = now
-                    consumer.last_error = {
-                        "code": "CONSUMER_BACKPRESSURE",
-                        "message": "Consumer buffer reached maximum capacity",
-                    }
-                    consumer.buffer_size = len(queue)
-                    return False
-
-                if queue:
-                    queue.popleft()
-                consumer.dropped_count += 1
-
-            queue.append(
-                ConsumerRecord(
-                    sequence=sequence,
-                    emitted_at=now,
-                    source_type=source_type,
-                    source_id=source_id,
-                    record_type=record_type,
-                    payload=normalized_payload,
-                    schema_version=RESULT_CONSUMER_RECORD_SCHEMA_VERSION,
-                )
+            appended, changed = self._append_normalized_record_locked(
+                consumer_id,
+                source_type=source_type,
+                source_id=source_id,
+                record_type=record_type,
+                normalized_payload=normalized_payload,
+                now=now,
             )
-            self._next_sequences[consumer_id] = sequence + 1
-            consumer.updated_at = now
-            consumer.buffer_size = len(queue)
-            return True
+            if changed:
+                self._condition.notify_all()
+            return appended
 
     def append_for_scope(
         self,
@@ -259,6 +288,10 @@ class ResultConsumerRegistry:
         - direct scope subscriptions (`scope_type == source_type` and same scope_id)
         - target-wide subscriptions (`scope_type == "target"` and scope_id == target_id)
         """
+        normalized_payload = _normalize_record_payload(payload)
+        now = time.time()
+        appended = 0
+        any_changed = False
         with self._lock:
             matching_ids = [
                 consumer.consumer_id
@@ -270,17 +303,21 @@ class ResultConsumerRegistry:
                     consumer.scope_type == "target" and consumer.scope_id == target_id
                 )
             ]
-
-        appended = 0
-        for consumer_id in matching_ids:
-            if self.append_record(
-                consumer_id,
-                source_type=source_type,
-                source_id=source_id,
-                record_type=record_type,
-                payload=payload,
-            ):
-                appended += 1
+            for consumer_id in matching_ids:
+                ok, changed = self._append_normalized_record_locked(
+                    consumer_id,
+                    source_type=source_type,
+                    source_id=source_id,
+                    record_type=record_type,
+                    normalized_payload=normalized_payload,
+                    now=now,
+                )
+                if ok:
+                    appended += 1
+                if changed:
+                    any_changed = True
+            if any_changed:
+                self._condition.notify_all()
         return appended
 
     def drain(
@@ -294,22 +331,22 @@ class ResultConsumerRegistry:
         if limit <= 0:
             raise ValueError("limit must be greater than zero")
 
-        timeout_deadline = time.time() + (max(timeout_ms, 0) / 1000.0)
-        timed_out = False
+        timeout_deadline = time.monotonic() + (max(timeout_ms, 0) / 1000.0)
 
-        while True:
-            with self._lock:
+        with self._lock:
+            while True:
                 consumer = self._consumers.get(consumer_id)
                 if consumer is None:
                     return None
 
                 queue = self._records[consumer_id]
-                consumer.status = "draining" if consumer.status == "active" else consumer.status
                 eligible = list(queue)
                 if after_sequence is not None:
                     eligible = [record for record in eligible if record.sequence > after_sequence]
 
-                if eligible or timeout_ms <= 0 or time.time() >= timeout_deadline:
+                now_mono = time.monotonic()
+                is_terminal = consumer.status in ("closed", "failed")
+                if eligible or is_terminal or timeout_ms <= 0 or now_mono >= timeout_deadline:
                     selected = eligible[:limit]
                     has_more = len(eligible) > len(selected)
                     now = time.time()
@@ -318,7 +355,12 @@ class ResultConsumerRegistry:
                     if consumer.status == "draining":
                         consumer.status = "active"
                     consumer.buffer_size = len(queue)
-                    timed_out = not bool(eligible) and timeout_ms > 0 and time.time() >= timeout_deadline
+                    timed_out = (
+                        not bool(eligible)
+                        and not is_terminal
+                        and timeout_ms > 0
+                        and now_mono >= timeout_deadline
+                    )
 
                     next_sequence = (
                         selected[-1].sequence
@@ -328,29 +370,32 @@ class ResultConsumerRegistry:
                         else 0
                     )
 
-                    return {
+                    result: Dict[str, Any] = {
                         "consumer_id": consumer_id,
                         "records": [asdict(record) for record in selected],
                         "next_sequence": next_sequence,
                         "has_more": has_more,
                         "timed_out": timed_out,
                     }
+                    if is_terminal:
+                        result["consumer_status"] = consumer.status
+                    return result
 
-                if consumer.status == "draining":
-                    consumer.status = "active"
-
-            time.sleep(0.01)
+                if consumer.status == "active":
+                    consumer.status = "draining"
+                remaining = timeout_deadline - now_mono
+                self._condition.wait(timeout=remaining)
 
     def close(self, consumer_id: str) -> bool:
-        """Mark a consumer as closed."""
+        """Mark a consumer as closed and wake any waiting drain calls."""
         with self._lock:
             consumer = self._consumers.get(consumer_id)
             if consumer is None:
                 return False
-            if consumer.status == "closed":
-                return True
-            consumer.status = "closed"
-            consumer.updated_at = time.time()
+            if consumer.status != "closed":
+                consumer.status = "closed"
+                consumer.updated_at = time.time()
+            self._condition.notify_all()
             return True
 
     def remove(self, consumer_id: str) -> Optional[ResultConsumer]:
@@ -359,21 +404,50 @@ class ResultConsumerRegistry:
             consumer = self._consumers.pop(consumer_id, None)
             if consumer is None:
                 return None
+            consumer.status = "closed"
+            consumer.updated_at = time.time()
             self._records.pop(consumer_id, None)
             self._next_sequences.pop(consumer_id, None)
+            self._condition.notify_all()
             return consumer
 
-    def cleanup(self, closed_only: bool = True) -> List[str]:
-        """Remove closed/failed consumers from the registry."""
+    def cleanup_for_client(self, client_session_id: str) -> List[str]:
+        """Close and remove all consumers owned by *client_session_id*."""
+        if not client_session_id:
+            return []
         removed_ids: List[str] = []
+        now = time.time()
         with self._lock:
             for consumer_id, consumer in list(self._consumers.items()):
-                if closed_only and consumer.status not in ("closed", "failed"):
+                if consumer.client_session_id != client_session_id:
                     continue
+                consumer.status = "closed"
+                consumer.updated_at = now
                 removed_ids.append(consumer_id)
                 del self._consumers[consumer_id]
                 del self._records[consumer_id]
                 del self._next_sequences[consumer_id]
+            if removed_ids:
+                self._condition.notify_all()
+        return removed_ids
+
+    def cleanup(self, closed_only: bool = True) -> List[str]:
+        """Remove closed/failed consumers from the registry."""
+        removed_ids: List[str] = []
+        now = time.time()
+        with self._lock:
+            for consumer_id, consumer in list(self._consumers.items()):
+                if closed_only and consumer.status not in ("closed", "failed"):
+                    continue
+                if consumer.status not in ("closed", "failed"):
+                    consumer.status = "closed"
+                    consumer.updated_at = now
+                removed_ids.append(consumer_id)
+                del self._consumers[consumer_id]
+                del self._records[consumer_id]
+                del self._next_sequences[consumer_id]
+            if removed_ids:
+                self._condition.notify_all()
         return removed_ids
 
 

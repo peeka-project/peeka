@@ -20,12 +20,14 @@ from dataclasses import asdict
 from dataclasses import dataclass
 from dataclasses import field
 from typing import Any
+from typing import Callable
 from typing import Deque
 from typing import Dict
 from typing import FrozenSet
 from typing import List
 from typing import Literal
 from typing import Optional
+from typing import Tuple
 
 
 PROBE_SCHEMA_VERSION = "1"
@@ -143,6 +145,10 @@ class ProbeRegistry:
         self._probes: Dict[str, ProbeRun] = {}
         self._recent_events: Dict[str, Deque[ObservationEvent]] = {}
         self._event_sequences: Dict[str, int] = {}
+        self._dispatch_locks: Dict[str, threading.Lock] = {}
+        self._pending_consumer_dispatches: Dict[
+            str, Dict[int, Tuple[str, str, Dict[str, Any]]]
+        ] = {}
 
     def create(
         self,
@@ -190,6 +196,8 @@ class ProbeRegistry:
             self._probes[probe.id] = probe
             self._recent_events[probe.id] = deque(maxlen=_RECENT_EVENT_LIMIT)
             self._event_sequences[probe.id] = 0
+            self._dispatch_locks[probe.id] = threading.Lock()
+            self._pending_consumer_dispatches[probe.id] = {}
         return probe
 
     def get(self, probe_id: str) -> Optional[ProbeRun]:
@@ -231,6 +239,8 @@ class ProbeRegistry:
         Returns:
             True if the transition was applied, otherwise False.
         """
+        dispatch_lock: Optional[threading.Lock] = None
+        should_flush = False
         with self._lock:
             probe = self._probes.get(probe_id)
             if probe is None:
@@ -246,12 +256,17 @@ class ProbeRegistry:
                 probe.started_at = now
             if new_status in TERMINAL_STATUSES:
                 probe.stopped_at = now
+                dispatch_lock = self._dispatch_locks.get(probe_id)
+                should_flush = True
 
             if error is not None and "last_error" not in fields:
                 fields["last_error"] = {"code": "", "message": error}
 
             self._apply_mutation_fields(probe, fields, now)
-            return True
+
+        if should_flush:
+            self._flush_consumer_dispatches(probe_id, dispatch_lock)
+        return True
 
     def update_summary(
         self,
@@ -263,7 +278,7 @@ class ProbeRegistry:
         """Update event counters and summary metadata for a probe run."""
         with self._lock:
             probe = self._probes.get(probe_id)
-            if probe is None:
+            if probe is None or probe.status in TERMINAL_STATUSES:
                 return False
             timestamp = time.time() if last_event_at is None else last_event_at
             probe.updated_at = timestamp
@@ -278,9 +293,10 @@ class ProbeRegistry:
         self, probe_id: str, payload: Dict[str, Any]
     ) -> Optional[ObservationEvent]:
         """Record one observation event for a probe run."""
+        dispatch_lock: Optional[threading.Lock] = None
         with self._lock:
             probe = self._probes.get(probe_id)
-            if probe is None:
+            if probe is None or probe.status in TERMINAL_STATUSES:
                 return None
 
             sequence = self._event_sequences.get(probe_id, 0)
@@ -302,27 +318,56 @@ class ProbeRegistry:
                 last_event_at=timestamp,
             )
 
-            try:
-                from peeka.core.agent import _get_consumer_registry
+            consumer_payload = {
+                "event_id": event.event_id,
+                "probe_id": event.probe_id,
+                "target_id": event.target_id,
+                "sequence": event.sequence,
+                "timestamp": event.timestamp,
+                "payload": event.payload,
+            }
+            pending = self._pending_consumer_dispatches.setdefault(probe_id, {})
+            pending[sequence] = (probe.target_id, probe_id, consumer_payload)
+            dispatch_lock = self._dispatch_locks.get(probe_id)
 
-                _ = _get_consumer_registry().append_for_scope(
-                    probe.target_id,
-                    source_type="probe",
-                    source_id=probe_id,
-                    record_type="observation",
-                    payload={
-                        "event_id": event.event_id,
-                        "probe_id": event.probe_id,
-                        "target_id": event.target_id,
-                        "sequence": event.sequence,
-                        "timestamp": event.timestamp,
-                        "payload": event.payload,
-                    },
-                )
-            except Exception:
-                pass
+        self._flush_consumer_dispatches(probe_id, dispatch_lock)
+        return event
 
-            return event
+    def _flush_consumer_dispatches(
+        self,
+        probe_id: str,
+        dispatch_lock: Optional[threading.Lock],
+    ) -> None:
+        """Deliver staged consumer events outside ``self._lock`` in sequence order."""
+        def _drain() -> None:
+            while True:
+                with self._lock:
+                    pending = self._pending_consumer_dispatches.get(probe_id)
+                    if not pending:
+                        return
+                    ordered_seqs = sorted(pending.keys())
+                    batch = [pending.pop(seq) for seq in ordered_seqs]
+
+                try:
+                    from peeka.core.agent import _get_consumer_registry
+
+                    consumer_registry = _get_consumer_registry()
+                    for target_id, source_id, consumer_payload in batch:
+                        _ = consumer_registry.append_for_scope(
+                            target_id,
+                            source_type="probe",
+                            source_id=source_id,
+                            record_type="observation",
+                            payload=consumer_payload,
+                        )
+                except Exception:
+                    pass
+
+        if dispatch_lock is not None:
+            with dispatch_lock:
+                _drain()
+        else:
+            _drain()
 
     def get_recent_events(self, probe_id: str, limit: int = 100) -> List[ObservationEvent]:
         """Return the most recent observation events for a probe run."""
@@ -428,6 +473,8 @@ class ProbeRegistry:
         del self._probes[probe_id]
         _ = self._recent_events.pop(probe_id, None)
         _ = self._event_sequences.pop(probe_id, None)
+        _ = self._dispatch_locks.pop(probe_id, None)
+        _ = self._pending_consumer_dispatches.pop(probe_id, None)
 
     def _build_event_id(self, probe_id: str, sequence: int) -> str:
         return "evt_{}_{}".format(probe_id[-6:], sequence)
@@ -480,6 +527,35 @@ class ProbeContext:
         self._pattern: Optional[str] = pattern
         self._config: Optional[Dict[str, Any]] = config
         self._probe: Optional[ProbeRun] = None
+        self._on_exit: Optional[Callable[["ProbeContext"], None]] = None
+        self._exit_lock: threading.Lock = threading.Lock()
+        self._exit_notified: bool = False
+
+    def set_on_exit(self, callback: Optional[Callable[["ProbeContext"], None]]) -> None:
+        """Register a callback invoked once when this context reaches a terminal state."""
+        should_invoke_now = False
+        with self._exit_lock:
+            self._on_exit = callback
+            if (
+                callback is not None
+                and not self._exit_notified
+                and self._probe is not None
+            ):
+                current = self._registry.get(self._probe.id)
+                if current is not None and current.status in TERMINAL_STATUSES:
+                    self._exit_notified = True
+                    should_invoke_now = True
+        if should_invoke_now and callback is not None:
+            callback(self)
+
+    def _notify_exit(self) -> None:
+        callback: Optional[Callable[["ProbeContext"], None]] = None
+        with self._exit_lock:
+            if not self._exit_notified and self._on_exit is not None:
+                self._exit_notified = True
+                callback = self._on_exit
+        if callback is not None:
+            callback(self)
 
     def __enter__(self) -> "ProbeContext":
         """Create probe and transition to active status."""
@@ -517,12 +593,13 @@ class ProbeContext:
                 error_code="COMMAND_EXECUTION_ERROR",
                 message=error_message,
             )
+            self._notify_exit()
             return None  # Do not suppress exception
 
         # Clean exit: transition to stopped if not already terminal
         # Idempotent: if already failed/stopped, set_status returns False but that's OK
-        if self._probe.status not in {"stopped", "failed"}:
-            _ = self._registry.set_status(self._probe.id, "stopped")
+        _ = self._registry.set_status(self._probe.id, "stopped")
+        self._notify_exit()
         return None
 
     def record_event(self, payload: Dict[str, Any]) -> Optional[ObservationEvent]:

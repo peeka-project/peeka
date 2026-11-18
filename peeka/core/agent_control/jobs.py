@@ -101,27 +101,54 @@ class AgentJobControlMixin:
                 )
 
             if job.category == "probe":
+                from peeka.core.probes import TERMINAL_STATUSES as PROBE_TERMINAL_STATUSES
+
                 probe = self._find_probe_by_job_id(job.id)
                 if probe is not None:
-                    stop_result = self._stop_probe_resources(probe.id)
-                    if stop_result.get("status") != "success":
-                        return self._job_error(
-                            "COMMAND_EXECUTION_ERROR",
-                            self._response_message(
-                                stop_result,
-                                "Failed to stop probe resources",
-                            ),
-                        )
-                    refreshed_probe = self.probe_registry.get(probe.id)
-                    if (
-                        refreshed_probe is not None
-                        and refreshed_probe.status not in {"stopped", "failed"}
-                    ):
-                        self.probe_registry.set_status(
-                            probe.id,
-                            "stopped",
-                            summary={"stop_result": stop_result},
-                        )
+                    stop_failed = False
+                    self._suppress_probe_job_finish(job.id)
+                    try:
+                        stop_result = self._stop_probe_resources(probe.id)
+                        if stop_result.get("status") != "success":
+                            stop_failed = True
+                            return self._job_error(
+                                "COMMAND_EXECUTION_ERROR",
+                                self._response_message(
+                                    stop_result,
+                                    "Failed to stop probe resources",
+                                ),
+                            )
+                        remaining_ref = self._find_probe_context_by_probe_id(probe.id)
+                        if remaining_ref is not None:
+                            self.stop_probe_context(remaining_ref[0])
+                        refreshed_probe = self.probe_registry.get(probe.id)
+                        if (
+                            refreshed_probe is not None
+                            and refreshed_probe.status not in PROBE_TERMINAL_STATUSES
+                        ):
+                            self.probe_registry.set_status(
+                                probe.id,
+                                "stopped",
+                                summary={"stop_result": stop_result},
+                            )
+                    finally:
+                        self._unsuppress_probe_job_finish(job.id)
+                        if stop_failed:
+                            refreshed_probe = self.probe_registry.get(probe.id)
+                            if (
+                                refreshed_probe is not None
+                                and refreshed_probe.status in PROBE_TERMINAL_STATUSES
+                            ):
+                                self._finish_probe_job(
+                                    probe.id,
+                                    "failed"
+                                    if refreshed_probe.status == "failed"
+                                    else "completed",
+                                    result_summary=dict(refreshed_probe.summary),
+                                    last_error=refreshed_probe.last_error
+                                    if refreshed_probe.status == "failed"
+                                    else None,
+                                )
 
                 success = self._job_registry().set_status(job_id, "interrupted")
                 if not success:
@@ -129,6 +156,22 @@ class AgentJobControlMixin:
                         "UNSUPPORTED_CAPABILITY",
                         f"Cannot transition from {job.status} to interrupted",
                     )
+
+                try:
+                    self._get_consumer_registry().append_for_scope(
+                        job.target_id,
+                        source_type="job",
+                        source_id=job.id,
+                        record_type="summary",
+                        payload={
+                            "job_id": job.id,
+                            "command_type": job.command_type,
+                            "action": job.action,
+                            "status": "interrupted",
+                        },
+                    )
+                except Exception:
+                    pass
 
                 if job.client_session_id:
                     client_registry = self._get_client_registry()

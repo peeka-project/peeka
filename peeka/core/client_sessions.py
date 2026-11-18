@@ -18,10 +18,13 @@ from dataclasses import asdict
 from dataclasses import dataclass
 from dataclasses import field
 from typing import Any
+from typing import Callable
 from typing import Dict
 from typing import List
 from typing import Literal
 from typing import Optional
+from typing import Set
+from typing import Tuple
 
 
 CLIENT_SCHEMA_VERSION = "1"
@@ -67,6 +70,7 @@ class ClientRegistry:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._clients: Dict[str, ClientSession] = {}
+        self._pending_foreground_jobs: Set[str] = set()
 
     def create(
         self,
@@ -133,6 +137,49 @@ class ClientRegistry:
                 return list(clients)
             return [client for client in clients if client.target_id == target_id]
 
+    def reserve_foreground_job(
+        self,
+        client_session_id: str,
+        job_id: str,
+        is_job_active: Optional[Callable[[str], bool]] = None,
+    ) -> Tuple[bool, Optional[str]]:
+        """Atomically reserve the foreground job slot for a client session.
+
+        Args:
+            client_session_id: Public client session identifier.
+            job_id: Proposed job identifier to reserve the slot with.
+            is_job_active: Optional predicate returning True when an existing
+                foreground job id is still active.
+
+        Returns:
+            Tuple ``(reserved, blocking_job_id)``. When the client is missing,
+            returns ``(False, None)``. When blocked by an active foreground job,
+            returns ``(False, existing_job_id)``.
+        """
+        with self._lock:
+            client = self._clients.get(client_session_id)
+            if client is None:
+                return False, None
+            existing_job_id = client.foreground_job_id
+            if existing_job_id:
+                still_active = (
+                    existing_job_id in self._pending_foreground_jobs
+                    or is_job_active is None
+                    or is_job_active(existing_job_id)
+                )
+                if still_active:
+                    return False, existing_job_id
+            client.foreground_job_id = job_id
+            self._pending_foreground_jobs.add(job_id)
+            client.last_access_at = time.time()
+            return True, None
+
+    def confirm_foreground_job(self, client_session_id: str, job_id: str) -> None:
+        """Mark a reserved foreground job as registered in the job registry."""
+        with self._lock:
+            _ = client_session_id
+            self._pending_foreground_jobs.discard(job_id)
+
     def set_foreground_job(self, client_session_id: str, job_id: str) -> bool:
         """Set the current foreground job for a client session.
 
@@ -148,6 +195,7 @@ class ClientRegistry:
             if client is None:
                 return False
             client.foreground_job_id = job_id
+            self._pending_foreground_jobs.discard(job_id)
             client.last_access_at = time.time()
             return True
 
@@ -165,6 +213,8 @@ class ClientRegistry:
             True if the client exists and was cleared, otherwise False.
         """
         with self._lock:
+            if expected_job_id is not None:
+                self._pending_foreground_jobs.discard(expected_job_id)
             client = self._clients.get(client_session_id)
             if client is None:
                 return False
@@ -173,6 +223,8 @@ class ClientRegistry:
                 and client.foreground_job_id != expected_job_id
             ):
                 return False
+            if client.foreground_job_id is not None:
+                self._pending_foreground_jobs.discard(client.foreground_job_id)
             client.foreground_job_id = None
             client.last_access_at = time.time()
             return True
@@ -187,9 +239,11 @@ class ClientRegistry:
             True if the client existed and was removed, otherwise False.
         """
         with self._lock:
-            if client_session_id not in self._clients:
+            client = self._clients.pop(client_session_id, None)
+            if client is None:
                 return False
-            del self._clients[client_session_id]
+            if client.foreground_job_id is not None:
+                self._pending_foreground_jobs.discard(client.foreground_job_id)
             return True
 
     def add_result_consumer(self, client_session_id: str, consumer_id: str) -> bool:

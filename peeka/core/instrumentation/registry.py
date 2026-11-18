@@ -848,7 +848,8 @@ class InjectorRegistryMixin:
             return False
 
         event = probe_context.record_event(observation)
-        if event is not None:
-            observation["event_id"] = event.event_id
-            observation["probe_id"] = event.probe_id
+        if event is None:
+            return probe_context.probe is None
+        observation["event_id"] = event.event_id
+        observation["probe_id"] = event.probe_id
         return True

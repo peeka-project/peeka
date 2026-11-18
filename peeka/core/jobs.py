@@ -133,6 +133,11 @@ class JobRegistry:
         self._lock: threading.Lock = threading.Lock()
         self._jobs: Dict[str, CommandJob] = {}
 
+    @staticmethod
+    def generate_job_id() -> str:
+        """Generate a unique public job identifier."""
+        return "job_" + uuid.uuid4().hex[:12]
+
     def create(
         self,
         target_id: str,
@@ -142,6 +147,7 @@ class JobRegistry:
         params: Optional[Dict[str, Any]] = None,
         category: JobCategory = "snapshot",
         foreground: bool = True,
+        job_id: Optional[str] = None,
     ) -> CommandJob:
         """Create and register a command job.
 
@@ -153,13 +159,14 @@ class JobRegistry:
             params: Optional parameter snapshot.
             category: Concurrency category for the command.
             foreground: Whether the job should be considered foreground.
+            job_id: Optional pre-allocated public job identifier.
 
         Returns:
             Newly created command job.
         """
         now = time.time()
         job = CommandJob(
-            id="job_" + uuid.uuid4().hex[:12],
+            id=job_id if job_id else self.generate_job_id(),
             target_id=target_id,
             client_session_id=client_session_id,
             command_type=command_type,

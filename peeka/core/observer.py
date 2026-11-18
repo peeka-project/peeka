@@ -99,15 +99,15 @@ class ObservationManager:
         """
         watch_id = observation.get("watch_id")
 
-        with self._stats_lock:
-            if watch_id and watch_id in self._watches:
-                watch_info = self._watches[watch_id]
-                watch_info["count"] += 1
-                watch_info["last_observation_time"] = observation.get("timestamp")
-                if not observation.get("success", True):
-                    watch_info["error_count"] += 1
-
         with self._lock:
+            if watch_id:
+                watch_info = self._watches.get(watch_id)
+                if watch_info is not None:
+                    watch_info["count"] += 1
+                    watch_info["last_observation_time"] = observation.get("timestamp")
+                    if not observation.get("success", True):
+                        watch_info["error_count"] += 1
+
             self._buffer.append(observation)
             subscribers = list(self._subscribers)
 
