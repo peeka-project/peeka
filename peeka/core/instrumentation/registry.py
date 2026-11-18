@@ -1,12 +1,18 @@
 """Instrumentation registry and reset helpers."""
 
 import fnmatch
-import inspect
 import logging
 import time as _time
 import uuid
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
+from peeka.core.instrumentation.target import (
+    inspect_descriptor,
+    read_target_binding,
+    replace_function,
+    restore_aliases_matching,
+    restore_target_attribute_from_root,
+)
 from peeka.core.probes import ProbeContext
 
 logger = logging.getLogger(__name__)
@@ -73,6 +79,141 @@ def retarget_wrapper_call(wrapper: Any, old_target: Any, new_target: Any) -> Non
                     pass
 
 
+def get_slot_chains(owner: Any) -> Dict[Tuple[int, str], Dict[str, Any]]:
+    """Return the shared slot-chain map stored on ``owner``."""
+    return owner.__dict__.setdefault("_slot_chains", {})
+
+
+def _merge_aliases(
+    target_entry: Dict[str, Any], extra_aliases: List[Dict[str, Any]]
+) -> None:
+    """Merge alias bindings into ``target_entry`` without duplicating slots."""
+    existing = target_entry.setdefault("aliases", [])
+    seen = {(id(alias["parent"]), alias["attr_name"]) for alias in existing}
+    for alias in extra_aliases:
+        key = (id(alias["parent"]), alias["attr_name"])
+        if key not in seen:
+            seen.add(key)
+            existing.append(alias)
+
+
+def prepare_slot_chain(
+    owner: Any, parent_obj: Any, attr_name: str, current_func: Any
+) -> Dict[str, Any]:
+    """Return the live chain for ``(parent_obj, attr_name)`` or start a new one."""
+    slot_key = (id(parent_obj), str(attr_name))
+    chains = get_slot_chains(owner)
+    existing = chains.get(slot_key)
+    if (
+        existing is not None
+        and existing["entries"]
+        and existing["entries"][-1]["wrapper"] is current_func
+    ):
+        return existing
+
+    descriptor_kind, raw_descriptor, defined_in_dict = inspect_descriptor(
+        parent_obj, attr_name
+    )
+    return {
+        "slot_key": slot_key,
+        "parent": parent_obj,
+        "attr_name": attr_name,
+        "root_original": current_func,
+        "root_descriptor_kind": descriptor_kind,
+        "root_raw_descriptor": raw_descriptor,
+        "root_defined_in_dict": defined_in_dict,
+        "entries": [],
+    }
+
+
+def commit_slot_chain_entry(
+    owner: Any,
+    chain: Dict[str, Any],
+    probe_id: str,
+    probe_owner: str,
+    wrapper: Any,
+    aliases: List[Dict[str, Any]],
+) -> None:
+    """Append a newly installed wrapper entry to ``chain``."""
+    get_slot_chains(owner)[chain["slot_key"]] = chain
+    chain["entries"].append(
+        {
+            "probe_id": probe_id,
+            "owner": probe_owner,
+            "wrapper": wrapper,
+            "aliases": list(aliases),
+        }
+    )
+
+
+def remove_chain_entry(
+    owner: Any,
+    chain: Dict[str, Any],
+    probe_id: str,
+    on_retarget: Optional[Callable[[Dict[str, Any], Any, Any], None]] = None,
+) -> Tuple[Any, Any]:
+    """Remove ``probe_id`` from ``chain`` and restore canonical/alias bindings.
+
+    Canonical attribute restoration runs before mutating ``chain["entries"]`` so
+    any failure leaves the chain intact for a subsequent retry.
+    """
+    entries: List[Dict[str, Any]] = chain["entries"]
+    idx = next(
+        (i for i, entry in enumerate(entries) if entry["probe_id"] == probe_id),
+        None,
+    )
+    if idx is None:
+        raise ValueError(f"Probe not found in wrapper chain: {probe_id}")
+
+    entry = entries[idx]
+    removed_wrapper = entry["wrapper"]
+    below = entries[idx - 1]["wrapper"] if idx > 0 else chain["root_original"]
+
+    if idx < len(entries) - 1:
+        above_entry = entries[idx + 1]
+        retarget_wrapper_call(above_entry["wrapper"], removed_wrapper, below)
+        if on_retarget is not None:
+            on_retarget(above_entry, removed_wrapper, below)
+        top_wrapper = entries[-1]["wrapper"]
+        restore_aliases_matching(entry["aliases"], (removed_wrapper,), top_wrapper)
+        _merge_aliases(entries[-1], entry["aliases"])
+        entries.pop(idx)
+        return removed_wrapper, below
+
+    if len(entries) > 1:
+        current_raw = read_target_binding(chain["parent"], chain["attr_name"])
+        if current_raw is removed_wrapper:
+            replace_function(
+                chain["parent"],
+                chain["attr_name"],
+                below,
+                descriptor_kind=chain["root_descriptor_kind"],
+            )
+        restore_aliases_matching(entry["aliases"], (removed_wrapper,), below)
+        _merge_aliases(entries[idx - 1], entry["aliases"])
+        entries.pop(idx)
+        return removed_wrapper, below
+
+    current_raw = read_target_binding(chain["parent"], chain["attr_name"])
+    if current_raw is removed_wrapper:
+        restore_target_attribute_from_root(
+            chain["parent"],
+            chain["attr_name"],
+            chain["root_original"],
+            chain["root_descriptor_kind"],
+            chain["root_raw_descriptor"],
+            chain["root_defined_in_dict"],
+        )
+    restore_aliases_matching(
+        entry["aliases"], (removed_wrapper,), chain["root_original"]
+    )
+    entries.pop(idx)
+    chains = get_slot_chains(owner)
+    if chains.get(chain["slot_key"]) is chain:
+        chains.pop(chain["slot_key"], None)
+    return removed_wrapper, chain["root_original"]
+
+
 class InjectorRegistryMixin:
     agent: Any = None
     instrumented: Dict[str, Dict[str, Any]] = {}
@@ -87,6 +228,33 @@ class InjectorRegistryMixin:
         def _restore_target_attribute(self, info: Dict[str, Any]) -> None: ...
 
         def _restore_aliases(self, info: Dict[str, Any]) -> None: ...
+
+    def _prepare_slot_chain(
+        self, parent_obj: Any, attr_name: str, current_func: Any
+    ) -> Dict[str, Any]:
+        return prepare_slot_chain(self, parent_obj, attr_name, current_func)
+
+    def _commit_slot_chain_entry(
+        self,
+        chain: Dict[str, Any],
+        probe_id: str,
+        probe_owner: str,
+        wrapper: Any,
+        aliases: List[Dict[str, Any]],
+    ) -> None:
+        commit_slot_chain_entry(self, chain, probe_id, probe_owner, wrapper, aliases)
+
+    def _retarget_injector_metadata(
+        self, above_entry: Dict[str, Any], old_wrapper: Any, new_target: Any
+    ) -> None:
+        if above_entry.get("owner") != "injector":
+            return
+        above_info = self.instrumented.get(above_entry["probe_id"])
+        if above_info is None:
+            return
+        for key in ("original", "previous_wrapper"):
+            if above_info.get(key) is old_wrapper:
+                above_info[key] = new_target
 
     def uninject(self, watch_id: str) -> Dict[str, Any]:
         """
@@ -105,18 +273,32 @@ class InjectorRegistryMixin:
             if watch_id not in self.instrumented:
                 raise ValueError(f"Watch not found: {watch_id}")
 
-            info = self.instrumented.pop(watch_id)
-
-            if "wrapper_group_key" in info:
-                self._restore_wrapper_stack(info)
+            info = self.instrumented[watch_id]
+            chain = info.get("_chain")
+            if chain is not None:
+                removed_wrapper, bypass_target = remove_chain_entry(
+                    self,
+                    chain,
+                    watch_id,
+                    on_retarget=self._retarget_injector_metadata,
+                )
+                self.instrumented.pop(watch_id, None)
             else:
-                # Restore original function
-                self._restore_target_attribute(info)
-                self._restore_aliases(info)
+                if "wrapper_group_key" in info:
+                    self._restore_wrapper_stack(info, exclude_watch_id=watch_id)
+                else:
+                    current_raw = read_target_binding(
+                        info["parent"], info["attr_name"]
+                    )
+                    if current_raw is info.get("wrapper"):
+                        self._restore_target_attribute(info)
+                    self._restore_aliases(info)
 
-            bypass_target = self._bypass_removed_wrapper(info)
+                self.instrumented.pop(watch_id, None)
+                removed_wrapper = info.get("wrapper")
+                bypass_target = self._bypass_removed_wrapper(info)
 
-        self._notify_wrapper_removed(info.get("wrapper"), bypass_target)
+        self._notify_wrapper_removed(removed_wrapper, bypass_target)
         return {
             "watch_id": watch_id,
             "pattern": info["pattern"],
@@ -129,44 +311,185 @@ class InjectorRegistryMixin:
 
         Returns:
             Number of observations removed
+
+        Raises:
+            Exception: If restoring one or more canonical attributes fails
+                (failed entries remain tracked in ``self.instrumented``).
         """
+        removed_notifications: List[Tuple[Any, Any]] = []
+        errors: List[Exception] = []
+        removed_count = 0
+
         with self._lock:
-            count = len(self.instrumented)
-            restored_wrapper_groups = set()
+            chain_groups: Dict[int, Tuple[Dict[str, Any], List[Tuple[str, Dict[str, Any]]]]] = {}
+            legacy_items: List[Tuple[str, Dict[str, Any]]] = []
 
             for watch_id, info in list(self.instrumented.items()):
-                try:
-                    if "wrapper_group_key" in info:
-                        group_key = info["wrapper_group_key"]
-                        if group_key in restored_wrapper_groups:
-                            continue
-                        self._restore_target_attribute(
-                            dict(info, original=info.get("root_original", info["original"]))
-                        )
-                        self._restore_watch_aliases(
-                            info,
-                            info.get("root_original", info["original"]),
-                            force=True,
-                        )
-                        restored_wrapper_groups.add(group_key)
-                        continue
+                chain = info.get("_chain")
+                if chain is not None:
+                    cid = id(chain)
+                    if cid not in chain_groups:
+                        chain_groups[cid] = (chain, [])
+                    chain_groups[cid][1].append((watch_id, info))
+                else:
+                    legacy_items.append((watch_id, info))
 
-                    self._restore_target_attribute(info)
-                    self._restore_aliases(info)
-                except Exception:
-                    logger.debug(
-                        "Best-effort restoration failed for %s", watch_id, exc_info=True
+            for chain, group_items in chain_groups.values():
+                injector_ids = {wid for wid, _ in group_items}
+                entries = chain["entries"]
+                remaining_entries = [
+                    e for e in entries if e["probe_id"] not in injector_ids
+                ]
+                removed_entries = [
+                    e for e in entries if e["probe_id"] in injector_ids
+                ]
+                removed_wrappers = [e["wrapper"] for e in removed_entries]
+                all_chain_wrappers = [e["wrapper"] for e in entries]
+                all_removed_aliases = [
+                    a for e in removed_entries for a in e.get("aliases", [])
+                ]
+
+                if not remaining_entries:
+                    current_raw = read_target_binding(
+                        chain["parent"], chain["attr_name"]
                     )
+                    if any(current_raw is w for w in all_chain_wrappers):
+                        try:
+                            restore_target_attribute_from_root(
+                                chain["parent"],
+                                chain["attr_name"],
+                                chain["root_original"],
+                                chain["root_descriptor_kind"],
+                                chain["root_raw_descriptor"],
+                                chain["root_defined_in_dict"],
+                            )
+                        except Exception as exc:
+                            errors.append(exc)
+                            continue
+                    restore_aliases_matching(
+                        all_removed_aliases,
+                        all_chain_wrappers,
+                        chain["root_original"],
+                    )
+                    chain["entries"] = []
+                    chains = get_slot_chains(self)
+                    if chains.get(chain["slot_key"]) is chain:
+                        chains.pop(chain["slot_key"], None)
+                    for wid, info in group_items:
+                        self.instrumented.pop(wid, None)
+                        removed_count += 1
+                        removed_notifications.append(
+                            (info.get("wrapper"), chain["root_original"])
+                        )
+                    continue
 
-            removed = [
-                (info.get("wrapper"), self._bypass_target_for(info))
-                for info in self.instrumented.values()
-            ]
-            self.instrumented.clear()
+                old_top = entries[-1]["wrapper"]
+                new_top = remaining_entries[-1]["wrapper"]
+                if new_top is not old_top:
+                    current_raw = read_target_binding(
+                        chain["parent"], chain["attr_name"]
+                    )
+                    if any(current_raw is w for w in removed_wrappers):
+                        try:
+                            replace_function(
+                                chain["parent"],
+                                chain["attr_name"],
+                                new_top,
+                                descriptor_kind=chain["root_descriptor_kind"],
+                            )
+                        except Exception as exc:
+                            errors.append(exc)
+                            continue
+                    restore_aliases_matching(
+                        all_removed_aliases, removed_wrappers, new_top
+                    )
+                _merge_aliases(remaining_entries[-1], all_removed_aliases)
 
-        for removed_wrapper, bypass_target in removed:
+                for rem_idx, rem_entry in enumerate(remaining_entries):
+                    desired_target = (
+                        remaining_entries[rem_idx - 1]["wrapper"]
+                        if rem_idx > 0
+                        else chain["root_original"]
+                    )
+                    curr_target = wrapper_call_target(rem_entry["wrapper"])
+                    if curr_target is not None and curr_target is not desired_target:
+                        retarget_wrapper_call(
+                            rem_entry["wrapper"], curr_target, desired_target
+                        )
+
+                chain["entries"] = remaining_entries
+                for wid, info in group_items:
+                    idx_in_old = next(
+                        (i for i, e in enumerate(entries) if e["probe_id"] == wid),
+                        -1,
+                    )
+                    bypass = (
+                        entries[idx_in_old - 1]["wrapper"]
+                        if idx_in_old > 0
+                        else chain["root_original"]
+                    )
+                    self.instrumented.pop(wid, None)
+                    removed_count += 1
+                    removed_notifications.append((info.get("wrapper"), bypass))
+
+            legacy_groups: Dict[Any, List[Tuple[str, Dict[str, Any]]]] = {}
+            legacy_singles: List[Tuple[str, Dict[str, Any]]] = []
+            for wid, info in legacy_items:
+                if "wrapper_group_key" in info:
+                    legacy_groups.setdefault(info["wrapper_group_key"], []).append(
+                        (wid, info)
+                    )
+                else:
+                    legacy_singles.append((wid, info))
+
+            for group_items in legacy_groups.values():
+                first_info = group_items[0][1]
+                group_wrappers = [info.get("wrapper") for _, info in group_items]
+                root_original = first_info.get("root_original", first_info["original"])
+                current_raw = read_target_binding(
+                    first_info["parent"], first_info["attr_name"]
+                )
+                if any(current_raw is w for w in group_wrappers):
+                    try:
+                        self._restore_target_attribute(
+                            dict(first_info, original=root_original)
+                        )
+                    except Exception as exc:
+                        errors.append(exc)
+                        continue
+                group_aliases = [
+                    a for _, info in group_items for a in info.get("aliases", [])
+                ]
+                restore_aliases_matching(group_aliases, group_wrappers, root_original)
+                for wid, info in group_items:
+                    bypass = self._bypass_target_for(info)
+                    self.instrumented.pop(wid, None)
+                    removed_count += 1
+                    removed_notifications.append((info.get("wrapper"), bypass))
+
+            for wid, info in legacy_singles:
+                current_raw = read_target_binding(info["parent"], info["attr_name"])
+                if current_raw is info.get("wrapper"):
+                    try:
+                        self._restore_target_attribute(info)
+                    except Exception as exc:
+                        errors.append(exc)
+                        continue
+                self._restore_aliases(info)
+                bypass = self._bypass_target_for(info)
+                self.instrumented.pop(wid, None)
+                removed_count += 1
+                removed_notifications.append((info.get("wrapper"), bypass))
+
+        for removed_wrapper, bypass_target in removed_notifications:
             self._notify_wrapper_removed(removed_wrapper, bypass_target)
-        return count
+
+        if errors:
+            if len(errors) == 1:
+                raise errors[0]
+            raise RuntimeError("; ".join(str(e) for e in errors))
+
+        return removed_count
 
     def cleanup_orphan_watches(self, now: Optional[float] = None) -> int:
         """Remove watch probes whose owner session stayed dead past grace.
@@ -358,33 +681,45 @@ class InjectorRegistryMixin:
         return f"watch_{uuid.uuid4().hex[:8]}"
 
     def _active_probe_infos_in_group(
-        self, group_key: Tuple[int, str]
+        self,
+        group_key: Tuple[int, str],
+        exclude_watch_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Return active probe infos that share one wrapped function slot."""
         return [
             info
-            for info in self.instrumented.values()
-            if info.get("wrapper_group_key") == group_key
+            for wid, info in self.instrumented.items()
+            if wid != exclude_watch_id and info.get("wrapper_group_key") == group_key
         ]
 
     def _restore_watch_wrapper(self, _watch_id: str, info: Dict[str, Any]) -> None:
         """Restore a watch wrapper only when its shared group permits it."""
         self._restore_wrapper_stack(info)
 
-    def _restore_wrapper_stack(self, info: Dict[str, Any]) -> None:
+    def _restore_wrapper_stack(
+        self,
+        info: Dict[str, Any],
+        exclude_watch_id: Optional[str] = None,
+    ) -> None:
         """Restore a probe wrapper only when its shared group permits it."""
         group_key = info["wrapper_group_key"]
-        remaining = self._active_probe_infos_in_group(group_key)
-        current = getattr(info["parent"], info["attr_name"], None)
-        if info.get("descriptor_kind") in ("staticmethod", "classmethod"):
-            raw = inspect.getattr_static(info["parent"], info["attr_name"])
-            current = raw.__func__ if isinstance(raw, (staticmethod, classmethod)) else raw
+        remaining = self._active_probe_infos_in_group(
+            group_key, exclude_watch_id=exclude_watch_id
+        )
+        current = read_target_binding(info["parent"], info["attr_name"])
         removed_wrapper = info.get("wrapper")
 
         if remaining:
             if current is removed_wrapper:
                 replacement = self._live_previous_probe_wrapper(info, remaining)
-                self._replace_function(info["parent"], info["attr_name"], replacement, descriptor_kind=info.get("descriptor_kind"))
+                self._replace_function(
+                    info["parent"],
+                    info["attr_name"],
+                    replacement,
+                    descriptor_kind=info.get(
+                        "root_descriptor_kind", info.get("descriptor_kind")
+                    ),
+                )
                 self._restore_watch_aliases(info, replacement)
             return
 
@@ -461,7 +796,7 @@ class InjectorRegistryMixin:
         remaining: List[Dict[str, Any]],
     ) -> Callable[..., Any]:
         """Return the nearest still-registered Peeka wrapper below a removed probe."""
-        live_wrappers = {active_info["wrapper"] for active_info in remaining}
+        live_wrappers = [active_info["wrapper"] for active_info in remaining]
         candidate = getattr(removed_info.get("wrapper"), "__wrapped__", None)
         visited = set()
 
@@ -472,9 +807,9 @@ class InjectorRegistryMixin:
             if candidate_id in visited:
                 break
             visited.add(candidate_id)
-            if candidate in live_wrappers:
+            if any(candidate is w for w in live_wrappers):
                 return candidate
-            break
+            candidate = getattr(candidate, "__wrapped__", None)
 
         return removed_info.get("root_original", removed_info["original"])
 

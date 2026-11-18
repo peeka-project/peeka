@@ -326,20 +326,20 @@ def test_concurrent_inject_is_atomic(monkeypatch, trace):
     entered = threading.Event()
     release = threading.Event()
     second_started = threading.Event()
-    second_resolved = threading.Event()
-    resolve = injector._resolve_target
+    second_committed = threading.Event()
+    read_binding = injector._read_target_binding
     calls = []
 
-    def blocking_resolve(pattern):
-        calls.append(pattern)
+    def blocking_commit_read(parent_obj, attr_name):
+        calls.append((parent_obj, attr_name))
         if len(calls) == 1:
             entered.set()
             assert release.wait(5)
         else:
-            second_resolved.set()
-        return resolve(pattern)
+            second_committed.set()
+        return read_binding(parent_obj, attr_name)
 
-    monkeypatch.setattr(injector, "_resolve_target", blocking_resolve)
+    monkeypatch.setattr(injector, "_read_target_binding", blocking_commit_read)
 
     def install(second=False):
         if second:
@@ -355,7 +355,7 @@ def test_concurrent_inject_is_atomic(monkeypatch, trace):
             second = pool.submit(install, True)
             assert second_started.wait(5)
             try:
-                assert not second_resolved.wait(0.1)
+                assert not second_committed.wait(0.1)
             finally:
                 release.set()
             ids = [first.result(timeout=5), second.result(timeout=5)]

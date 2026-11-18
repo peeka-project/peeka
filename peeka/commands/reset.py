@@ -117,6 +117,20 @@ class ResetCommand(BaseCommand):
         result: Dict[str, Any]
         try:
             result = cast(Dict[str, object], self.agent.injector.reset(pattern))
+            affected = result.get("affected")
+            if isinstance(affected, list):
+                for entry in affected:
+                    if isinstance(entry, dict) and "error" in entry:
+                        error_entry: Dict[str, Any] = {"error": str(entry["error"])}
+                        if "watch_id" in entry:
+                            error_entry["watch_id"] = entry["watch_id"]
+                        injector_errors.append(error_entry)
+            if (
+                result.get("status") == "error"
+                and "error" in result
+                and not injector_errors
+            ):
+                injector_errors.append({"error": str(result["error"])})
         except Exception as exc:
             injector_errors.append({"error": str(exc)})
             result = {"status": "error", "error": str(exc)}

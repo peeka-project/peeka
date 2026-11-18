@@ -63,6 +63,86 @@ class DecoratorInjector(
         if not hasattr(agent, "cleanup_orphan_watches"):
             setattr(agent, "cleanup_orphan_watches", self.cleanup_orphan_watches)
 
+    def _install_probe(
+        self,
+        pattern: str,
+        watch_id: str,
+        raw_config: Dict[str, Any],
+        build_wrapper: Callable[[Callable[..., Any], Dict[str, Any]], Callable[..., Any]],
+        extra_config: Optional[Callable[[Callable[..., Any], Dict[str, Any]], None]] = None,
+        extra_info: Optional[Callable[[Callable[..., Any], Dict[str, Any]], Dict[str, Any]]] = None,
+    ) -> str:
+        """Resolve target outside the lock, then verify binding and commit under lock."""
+        target_info = self._resolve_target(pattern)
+        if target_info is None:
+            raise ValueError(f"Cannot find target: {pattern}")
+
+        _, parent_obj, attr_name = target_info
+
+        with self._lock:
+            target_func = self._read_target_binding(parent_obj, attr_name)
+            if target_func is None:
+                raise ValueError(f"Cannot find target: {pattern}")
+
+            chain = self._prepare_slot_chain(parent_obj, attr_name, target_func)
+            descriptor_kind = chain["root_descriptor_kind"]
+            raw_descriptor = chain["root_raw_descriptor"]
+            defined_in_dict = chain["root_defined_in_dict"]
+            alias_bindings = self._find_module_aliases(
+                target_func, parent_obj, attr_name
+            )
+
+            is_instance_method = (
+                inspect.isclass(parent_obj) and descriptor_kind != "staticmethod"
+            )
+            config = dict(raw_config)
+            config["_is_instance_method"] = is_instance_method
+            if extra_config is not None:
+                extra_config(target_func, config)
+
+            wrapper = build_wrapper(target_func, config)
+            stored_config = {
+                key: value for key, value in config.items() if key != "_probe_context"
+            }
+
+            group_key: Tuple[int, str] = chain["slot_key"]
+            previous_wrapper = target_func if chain["entries"] else None
+
+            info: Dict[str, Any] = {
+                "descriptor_kind": descriptor_kind,
+                "raw_descriptor": raw_descriptor,
+                "defined_in_dict": defined_in_dict,
+                "root_descriptor_kind": descriptor_kind,
+                "root_raw_descriptor": raw_descriptor,
+                "root_defined_in_dict": defined_in_dict,
+                "pattern": pattern,
+                "original": target_func,
+                "wrapper": wrapper,
+                "parent": parent_obj,
+                "attr_name": attr_name,
+                "config": stored_config,
+                "count": 0,
+                "times_limit": config.get("times", -1),
+                "aliases": alias_bindings,
+                "root_original": chain["root_original"],
+                "previous_wrapper": previous_wrapper,
+                "wrapper_group_key": group_key,
+                "_chain": chain,
+            }
+            if extra_info is not None:
+                info.update(extra_info(target_func, config))
+
+            self._replace_function(
+                parent_obj, attr_name, wrapper, descriptor_kind=descriptor_kind
+            )
+            self._commit_slot_chain_entry(
+                chain, watch_id, "injector", wrapper, alias_bindings
+            )
+            self.instrumented[watch_id] = info
+            self._replace_aliases(alias_bindings, wrapper)
+
+            return watch_id
+
     def inject(self, pattern: str, watch_config: Dict[str, Any]) -> str:
         """
         Inject observation decorator into target function.
@@ -85,92 +165,33 @@ class DecoratorInjector(
         Raises:
             ValueError: If target function cannot be found
         """
-        with self._lock:
-            # Resolve target
-            target_info = self._resolve_target(pattern)
-            if target_info is None:
-                raise ValueError(f"Cannot find target: {pattern}")
+        watch_id = self._generate_watch_id()
 
-            target_func, parent_obj, attr_name = target_info
-            descriptor_kind, raw_descriptor, defined_in_dict = self._inspect_descriptor(
-                parent_obj, attr_name
-            )
-            alias_bindings = self._find_module_aliases(target_func, parent_obj, attr_name)
-            is_coroutine_function = inspect.iscoroutinefunction(target_func)
-
-            # Generate watch ID
-            watch_id = self._generate_watch_id()
-
-            # Detect if this is an instance method (parent is a class)
-            is_instance_method = (
-                inspect.isclass(parent_obj) and descriptor_kind != "staticmethod"
-            )
-            watch_config = dict(watch_config)
-            watch_config["_is_instance_method"] = is_instance_method
-
-            # Create wrapper
-            wrapper = self._create_wrapper(target_func, watch_id, watch_config)
-            stored_config = {
-                key: value for key, value in watch_config.items() if key != "_probe_context"
+        def _extra_info(target_func: Callable[..., Any], cfg: Dict[str, Any]) -> Dict[str, Any]:
+            extra: Dict[str, Any] = {
+                "is_coroutine_function": inspect.iscoroutinefunction(target_func),
+                "client_session_id": cfg.get("client_session_id"),
+                "watch_group_key": (id(None), ""),  # placeholder overwritten below
             }
-
-            # Store original function info for restoration
-            info = {
-                "descriptor_kind": descriptor_kind,
-                "raw_descriptor": raw_descriptor,
-                "defined_in_dict": defined_in_dict,
-                "root_descriptor_kind": descriptor_kind,
-                "root_raw_descriptor": raw_descriptor,
-                "root_defined_in_dict": defined_in_dict,
-                "pattern": pattern,
-                "original": target_func,
-                "wrapper": wrapper,
-                "parent": parent_obj,
-                "attr_name": attr_name,
-                "config": stored_config,
-                "count": 0,
-                "times_limit": watch_config.get("times", -1),
-                "is_coroutine_function": is_coroutine_function,
-                "aliases": alias_bindings,
-                "client_session_id": watch_config.get("client_session_id"),
-            }
-
-            session_id = info.get("client_session_id")
+            session_id = extra["client_session_id"]
             liveness_hook = getattr(self.agent, "is_client_session_live", None)
             if callable(liveness_hook) and not liveness_hook(session_id):
-                info["_orphan_start"] = _time.monotonic()
+                extra["_orphan_start"] = _time.monotonic()
+            extra.pop("watch_group_key", None)
+            return extra
 
-            shared_group = self._get_active_wrapper_info(target_func)
-            if shared_group is None:
-                group_key: Tuple[int, str] = (id(parent_obj), str(attr_name))
-                root_original = target_func
-                previous_wrapper = None
-            else:
-                group_key = shared_group.get(
-                    "wrapper_group_key", (id(parent_obj), str(attr_name))
-                )
-                root_original = shared_group.get(
-                    "root_original", shared_group["original"]
-                )
-                previous_wrapper = target_func
-            info.update(
-                {
-                    "root_original": root_original,
-                    "previous_wrapper": previous_wrapper,
-                    "wrapper_group_key": group_key,
-                    "watch_group_key": group_key,
-                }
-            )
-
-            self.instrumented[watch_id] = info
-
-            # Replace the function
-            self._replace_function(
-                parent_obj, attr_name, wrapper, descriptor_kind=descriptor_kind
-            )
-            self._replace_aliases(alias_bindings, wrapper)
-
-            return watch_id
+        result_id = self._install_probe(
+            pattern,
+            watch_id,
+            watch_config,
+            lambda target_func, cfg: self._create_wrapper(target_func, watch_id, cfg),
+            extra_info=_extra_info,
+        )
+        with self._lock:
+            info = self.instrumented.get(result_id)
+            if info is not None:
+                info["watch_group_key"] = info["wrapper_group_key"]
+        return result_id
 
     def _get_watch_wrapper_group(
         self, target_func: Callable[..., Any]
@@ -221,80 +242,22 @@ class DecoratorInjector(
         Raises:
             ValueError: If target function cannot be found
         """
-        with self._lock:
-            # Resolve target
-            target_info = self._resolve_target(pattern)
-            if target_info is None:
-                raise ValueError(f"Cannot find target: {pattern}")
+        watch_id = f"trace_{uuid.uuid4().hex[:8]}"
 
-            target_func, parent_obj, attr_name = target_info
-            descriptor_kind, raw_descriptor, defined_in_dict = self._inspect_descriptor(
-                parent_obj, attr_name
-            )
-            alias_bindings = self._find_module_aliases(target_func, parent_obj, attr_name)
-
-            # Generate watch ID
-            watch_id = f"trace_{uuid.uuid4().hex[:8]}"
-
-            # Detect if this is an instance method
-            is_instance_method = (
-                inspect.isclass(parent_obj) and descriptor_kind != "staticmethod"
-            )
-            trace_config = dict(trace_config)
-            trace_config["_is_instance_method"] = is_instance_method
-            trace_config["_is_coroutine_function"] = inspect.iscoroutinefunction(target_func)
+        def _extra_config(target_func: Callable[..., Any], cfg: Dict[str, Any]) -> None:
+            cfg["_is_coroutine_function"] = inspect.iscoroutinefunction(target_func)
             if force_backend is not None:
-                trace_config["_force_backend"] = force_backend
+                cfg["_force_backend"] = force_backend
 
-            # Create trace wrapper
-            wrapper = self._create_trace_wrapper(target_func, watch_id, trace_config)
-            stored_config = {
-                key: value for key, value in trace_config.items() if key != "_probe_context"
-            }
-
-            shared_group = self._get_active_wrapper_info(target_func)
-            if shared_group is None:
-                group_key = (id(parent_obj), str(attr_name))
-                root_original = target_func
-                previous_wrapper = None
-            else:
-                group_key = shared_group.get(
-                    "wrapper_group_key", (id(parent_obj), str(attr_name))
-                )
-                root_original = shared_group.get(
-                    "root_original", shared_group["original"]
-                )
-                previous_wrapper = target_func
-
-            # Store original function info for restoration
-            self.instrumented[watch_id] = {
-                "descriptor_kind": descriptor_kind,
-                "raw_descriptor": raw_descriptor,
-                "defined_in_dict": defined_in_dict,
-                "root_descriptor_kind": descriptor_kind,
-                "root_raw_descriptor": raw_descriptor,
-                "root_defined_in_dict": defined_in_dict,
-                "pattern": pattern,
-                "original": target_func,
-                "wrapper": wrapper,
-                "parent": parent_obj,
-                "attr_name": attr_name,
-                "config": stored_config,
-                "count": 0,
-                "times_limit": trace_config.get("times", -1),
-                "root_original": root_original,
-                "aliases": alias_bindings,
-                "previous_wrapper": previous_wrapper,
-                "wrapper_group_key": group_key,
-            }
-
-            # Replace the function
-            self._replace_function(
-                parent_obj, attr_name, wrapper, descriptor_kind=descriptor_kind
-            )
-            self._replace_aliases(alias_bindings, wrapper)
-
-            return watch_id
+        return self._install_probe(
+            pattern,
+            watch_id,
+            trace_config,
+            lambda target_func, cfg: self._create_trace_wrapper(
+                target_func, watch_id, cfg
+            ),
+            extra_config=_extra_config,
+        )
 
     def _create_wrapper(
         self, func: Callable[..., Any], watch_id: str, config: Dict[str, Any]

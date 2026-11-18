@@ -26,10 +26,26 @@ from typing import (
 )
 
 from peeka.commands.resource_owning import CleanupScope, ResourceOwningCommand
-from peeka.core.instrumentation.registry import retarget_wrapper_call, wrapper_call_target
+from peeka.core.instrumentation.registry import (
+    commit_slot_chain_entry,
+    prepare_slot_chain,
+    remove_chain_entry,
+    retarget_wrapper_call,
+    wrapper_call_target,
+)
+from peeka.core.instrumentation.target import (
+    find_module_aliases,
+    read_target_binding,
+    replace_aliases,
+    replace_function,
+    resolve_target,
+    restore_aliases_matching,
+)
 from peeka.core.monitor import MonitorManager
 from peeka.core.probes import ProbeContext
 from peeka.core.runtime import primitives as _rpl
+
+_logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from peeka.core.agent import PeekaAgent
@@ -167,6 +183,17 @@ class MonitorCommand(ResourceOwningCommand):
         with injector_lock:
             yield
 
+    def _chain_owner(self) -> Any:
+        """Return the shared slot-chain owner (injector when available, else self)."""
+        injector = getattr(self.agent, "injector", None)
+        if (
+            injector is not None
+            and hasattr(injector, "instrumented")
+            and hasattr(injector, "_lock")
+        ):
+            return injector
+        return self
+
     def _start_monitor(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Start monitoring a function pattern."""
         self.validate_params(params, ["pattern"])
@@ -175,35 +202,52 @@ class MonitorCommand(ResourceOwningCommand):
         cycle = params.get("cycle", 60)
         cycles = params.get("cycles", -1)
 
-        # Resolve target function
+        # Resolve target outside locks to avoid import-time lock reentrancy.
         target_info = self._resolve_target(pattern)
         if target_info is None:
             return {"status": "error", "error": f"Cannot find target: {pattern}"}
 
-        target_func, parent_obj, attr_name = target_info  # pyright: ignore[reportGeneralTypeIssues]
-
-        alias_bindings: List[Dict[str, Any]] = []
-        injector = getattr(self.agent, "injector", None)
-        find_aliases = getattr(injector, "_find_module_aliases", None)
-        if callable(find_aliases):
-            alias_bindings = cast(
-                List[Dict[str, Any]], find_aliases(target_func, parent_obj, attr_name)
-            )
-
+        _, parent_obj, attr_name = target_info  # pyright: ignore[reportGeneralTypeIssues]
         watch_id = f"monitor_{uuid.uuid4().hex[:8]}"
 
-        wrapper = self._create_monitor_wrapper(target_func, watch_id)
-        owned_root_original = self._known_peeka_root_for_wrapper(target_func)
+        with self._injector_lock(), self._lock:
+            target_func = read_target_binding(parent_obj, attr_name)
+            if target_func is None:
+                return {"status": "error", "error": f"Cannot find target: {pattern}"}
 
-        # Start monitoring
-        self.manager.start_monitor(watch_id)
+            chain_owner = self._chain_owner()
+            chain = prepare_slot_chain(chain_owner, parent_obj, attr_name, target_func)
+            descriptor_kind = chain["root_descriptor_kind"]
+            owned_root_original = chain["root_original"] if chain["entries"] else None
 
-        with self._lock:
-            # Store monitor info
+            injector = getattr(self.agent, "injector", None)
+            find_aliases = getattr(injector, "_find_module_aliases", None)
+            if callable(find_aliases):
+                alias_bindings = cast(
+                    List[Dict[str, Any]], find_aliases(target_func, parent_obj, attr_name)
+                )
+            else:
+                alias_bindings = find_module_aliases(target_func, parent_obj, attr_name)
+
+            wrapper = self._create_monitor_wrapper(target_func, watch_id)
+            self._replace_function(
+                parent_obj,
+                attr_name,
+                wrapper,
+                descriptor_kind=descriptor_kind,
+            )
+
+            commit_slot_chain_entry(
+                chain_owner, chain, watch_id, "monitor", wrapper, alias_bindings
+            )
+            self.manager.start_monitor(watch_id)
+
+            stop_event = _rpl.create_event()
             self._monitors[watch_id] = {
                 "pattern": pattern,
                 "original": target_func,
                 "owned_root_original": owned_root_original,
+                "descriptor_kind": descriptor_kind,
                 "wrapper": wrapper,
                 "parent": parent_obj,
                 "attr_name": attr_name,
@@ -213,27 +257,21 @@ class MonitorCommand(ResourceOwningCommand):
                 "cycle_count": 0,
                 "client_session_id": params.get("client_session_id"),
                 "job_id": params.get("job_id"),
-                "stop_event": None,
+                "stop_event": stop_event,
                 "timer_thread": None,
+                "_chain_owner": chain_owner,
+                "_chain": chain,
             }
 
-            self._replace_function(parent_obj, attr_name, wrapper)  # type: ignore[arg-type]
-            for alias in alias_bindings:
-                try:
-                    setattr(alias["parent"], alias["attr_name"], wrapper)
-                except Exception:
-                    pass
+            replace_aliases(alias_bindings, wrapper)
 
             # Start periodic output timer (native RPL primitives so the timer
             # never blocks on gevent/eventlet-patched threading objects).
-            stop_event = _rpl.create_event()
             timer_thread = _NativeThreadHandle(
                 self._periodic_output_loop,
                 (watch_id, cycle, cycles, stop_event),
                 name=f"peeka-monitor-{watch_id}",
             )
-
-            self._monitors[watch_id]["stop_event"] = stop_event
             self._monitors[watch_id]["timer_thread"] = timer_thread
 
         return {
@@ -319,6 +357,55 @@ class MonitorCommand(ResourceOwningCommand):
         """Retarget a live Peeka wrapper that directly called a removed wrapper."""
         retarget_wrapper_call(wrapper, old_target, new_target)
 
+    def _auto_stop_expired_monitor(self, watch_id: str) -> None:
+        """Uninject a monitor automatically once its cycles limit expires."""
+        try:
+            result = self._stop_monitor({"monitor_id": watch_id})
+            if result.get("status") != "success":
+                _logger.debug(
+                    "[peeka Monitor] auto-stop after cycles limit for %s: %s",
+                    watch_id,
+                    result.get("error"),
+                )
+        except Exception:
+            _logger.debug(
+                "[peeka Monitor] auto-stop failed for %s",
+                watch_id,
+                exc_info=True,
+            )
+
+    def _retarget_after_monitor_removal(
+        self,
+        above_entry: Dict[str, Any],
+        old_wrapper: Any,
+        new_target: Any,
+        root_original: Any,
+    ) -> None:
+        """Keep metadata of the probe above a removed monitor in sync."""
+        owner = above_entry.get("owner")
+        probe_id = above_entry["probe_id"]
+        if owner == "monitor":
+            above_mon = self._monitors.get(probe_id)
+            if above_mon is None:
+                return
+            if above_mon.get("original") is old_wrapper:
+                above_mon["original"] = new_target
+            if above_mon.get("owned_root_original") is old_wrapper:
+                above_mon["owned_root_original"] = root_original
+            return
+
+        if owner == "injector":
+            injector = getattr(self.agent, "injector", None)
+            instrumented = getattr(injector, "instrumented", None)
+            if not isinstance(instrumented, dict):
+                return
+            above_probe = instrumented.get(probe_id)
+            if above_probe is None:
+                return
+            for key in ("original", "previous_wrapper"):
+                if above_probe.get(key) is old_wrapper:
+                    above_probe[key] = new_target
+
     def _periodic_output_loop(
         self, watch_id: str, cycle: int, cycles: int, stop_event: Any
     ) -> None:
@@ -327,17 +414,19 @@ class MonitorCommand(ResourceOwningCommand):
             self._periodic_output_loop_legacy(watch_id, cycle, cycles, stop_event)
             return
 
-        monitor_info = self._monitors.get(watch_id)
-        pattern = None
-        client_session_id = None
-        job_id = None
-        if monitor_info is not None:
-            pattern = monitor_info.get("pattern")
-            client_session_id = monitor_info.get("client_session_id")
-            job_id = monitor_info.get("job_id")
+        with self._lock:
+            monitor_info = self._monitors.get(watch_id)
+            pattern = monitor_info.get("pattern") if monitor_info is not None else None
+            client_session_id = (
+                monitor_info.get("client_session_id")
+                if monitor_info is not None
+                else None
+            )
+            job_id = monitor_info.get("job_id") if monitor_info is not None else None
 
         probe_config = {"cycle": cycle, "cycles": cycles}
         cycle_count = 0
+        cycles_exhausted = False
 
         with ProbeContext(
             self.agent.probe_registry,
@@ -381,17 +470,22 @@ class MonitorCommand(ResourceOwningCommand):
                         with self._lock:
                             if watch_id in self._monitors:
                                 current_stop_event = self._monitors[watch_id]["stop_event"]
-                                if current_stop_event:
+                                if current_stop_event and not current_stop_event.is_set():
                                     current_stop_event.set()
+                                    cycles_exhausted = True
                         break
             finally:
                 self.agent.untrack_probe_context(watch_id)
+
+        if cycles_exhausted:
+            self._auto_stop_expired_monitor(watch_id)
 
     def _periodic_output_loop_legacy(
         self, watch_id: str, cycle: int, cycles: int, stop_event: Any
     ) -> None:
         """Legacy best-effort monitor loop for agents without ProbeRegistry."""
         cycle_count = 0
+        cycles_exhausted = False
 
         while True:
             if stop_event.wait(timeout=cycle):
@@ -419,9 +513,13 @@ class MonitorCommand(ResourceOwningCommand):
                 with self._lock:
                     if watch_id in self._monitors:
                         current_stop_event = self._monitors[watch_id]["stop_event"]
-                        if current_stop_event:
+                        if current_stop_event and not current_stop_event.is_set():
                             current_stop_event.set()
+                            cycles_exhausted = True
                 break
+
+        if cycles_exhausted:
+            self._auto_stop_expired_monitor(watch_id)
 
     def _stop_monitor(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Stop monitoring and return final statistics."""
@@ -439,107 +537,138 @@ class MonitorCommand(ResourceOwningCommand):
             if stop_event:
                 stop_event.set()
 
+        is_self_thread = (
+            timer_thread is not None
+            and getattr(timer_thread, "ident", None) == _rpl.get_ident()
+        )
         timer_thread_alive = False
-        if timer_thread:
+        if timer_thread and not is_self_thread:
             timer_thread.join(timeout=2)
             timer_thread_alive = timer_thread.is_alive()
 
         with self._injector_lock(), self._lock:
             if self._monitors.get(watch_id) is not monitor_info:
                 return {"status": "error", "error": f"Monitor not found: {watch_id}"}
-            self._monitors.pop(watch_id)
-            injector = getattr(self.agent, "injector", None)
-            instrumented = getattr(injector, "instrumented", {})
 
-            active_monitor_wrappers = set()
-            for active_monitor in self._monitors.values():
-                active_monitor_wrappers.add(active_monitor.get("wrapper"))
-
-            active_injector_wrappers = set()
-            if isinstance(instrumented, dict):
-                for active_probe in instrumented.values():
-                    active_injector_wrappers.add(active_probe.get("wrapper"))
-
-            all_live_wrappers = active_injector_wrappers | active_monitor_wrappers
-
-            lower_live = self._nearest_lower_live_wrapper(
-                monitor_info["wrapper"], all_live_wrappers
-            )
-            if lower_live is not None:
-                replacement = lower_live
-            else:
-                original = monitor_info["original"]
-                if original in all_live_wrappers:
-                    replacement = original
-                else:
-                    owned_root_original = monitor_info.get("owned_root_original")
-                    if (
-                        owned_root_original is not None
-                        and owned_root_original not in all_live_wrappers
-                    ):
-                        replacement = owned_root_original
-                    else:
-                        replacement = original
-
-            for active_monitor in self._monitors.values():
-                if active_monitor.get("original") is monitor_info["wrapper"]:
-                    self._retarget_wrapper_func(
-                        active_monitor.get("wrapper"),
-                        monitor_info["wrapper"],
-                        replacement,
-                    )
-                    active_monitor["original"] = replacement
-                    if active_monitor.get("owned_root_original") is None:
-                        active_monitor["owned_root_original"] = monitor_info.get(
-                            "owned_root_original"
-                        )
-                if active_monitor.get("owned_root_original") is monitor_info[
-                    "wrapper"
-                ]:
-                    active_monitor["owned_root_original"] = (
-                        monitor_info.get("owned_root_original")
-                        or monitor_info["original"]
-                    )
-
-            if isinstance(instrumented, dict):
-                for active_probe in instrumented.values():
-                    for key in ("original", "previous_wrapper", "root_original"):
-                        if active_probe.get(key) is monitor_info["wrapper"]:
-                            if (
-                                key == "root_original"
-                                and monitor_info["original"] is active_probe.get("wrapper")
-                            ):
-                                continue
-                            if key == "root_original":
-                                active_probe[key] = (
-                                    monitor_info.get("owned_root_original")
-                                    or replacement
-                                )
-                            else:
-                                self._retarget_wrapper_func(
-                                    active_probe.get("wrapper"),
-                                    monitor_info["wrapper"],
-                                    replacement,
-                                )
-                                active_probe[key] = replacement
-
-            try:
-                current = getattr(monitor_info["parent"], monitor_info["attr_name"])
-                if current is monitor_info["wrapper"]:
-                    self._replace_function(
-                        monitor_info["parent"],
-                        monitor_info["attr_name"],
-                        replacement,
-                    )
-            except Exception:
-                pass
-
-            for alias in monitor_info.get("aliases", []):
+            chain = monitor_info.get("_chain")
+            chain_owner = monitor_info.get("_chain_owner")
+            if chain is not None and chain_owner is not None:
+                root_original = chain["root_original"]
                 try:
-                    if getattr(alias["parent"], alias["attr_name"], None) is monitor_info["wrapper"]:
-                        setattr(alias["parent"], alias["attr_name"], replacement)
-                except Exception:
-                    pass
+                    remove_chain_entry(
+                        chain_owner,
+                        chain,
+                        watch_id,
+                        on_retarget=lambda above, old_w, new_t: (
+                            self._retarget_after_monitor_removal(
+                                above, old_w, new_t, root_original
+                            )
+                        ),
+                    )
+                except Exception as exc:
+                    return {"status": "error", "error": str(exc)}
+            else:
+                injector = getattr(self.agent, "injector", None)
+                instrumented = getattr(injector, "instrumented", {})
+
+                active_monitor_wrappers: Set[Any] = set()
+                for mid, active_monitor in self._monitors.items():
+                    if mid != watch_id:
+                        active_monitor_wrappers.add(active_monitor.get("wrapper"))
+
+                active_injector_wrappers: Set[Any] = set()
+                if isinstance(instrumented, dict):
+                    for active_probe in instrumented.values():
+                        active_injector_wrappers.add(active_probe.get("wrapper"))
+
+                all_live_wrappers = active_injector_wrappers | active_monitor_wrappers
+
+                lower_live = self._nearest_lower_live_wrapper(
+                    monitor_info["wrapper"], all_live_wrappers
+                )
+                if lower_live is not None:
+                    replacement = lower_live
+                else:
+                    original = monitor_info["original"]
+                    if original in all_live_wrappers:
+                        replacement = original
+                    else:
+                        owned_root_original = monitor_info.get("owned_root_original")
+                        if (
+                            owned_root_original is not None
+                            and owned_root_original not in all_live_wrappers
+                        ):
+                            replacement = owned_root_original
+                        else:
+                            replacement = original
+
+                current = read_target_binding(
+                    monitor_info["parent"], monitor_info["attr_name"]
+                )
+                if current is monitor_info["wrapper"]:
+                    try:
+                        self._replace_function(
+                            monitor_info["parent"],
+                            monitor_info["attr_name"],
+                            replacement,
+                            descriptor_kind=monitor_info.get("descriptor_kind"),
+                        )
+                    except Exception as exc:
+                        return {"status": "error", "error": str(exc)}
+
+                for mid, active_monitor in self._monitors.items():
+                    if mid == watch_id:
+                        continue
+                    if active_monitor.get("original") is monitor_info["wrapper"]:
+                        self._retarget_wrapper_func(
+                            active_monitor.get("wrapper"),
+                            monitor_info["wrapper"],
+                            replacement,
+                        )
+                        active_monitor["original"] = replacement
+                        if active_monitor.get("owned_root_original") is None:
+                            active_monitor["owned_root_original"] = monitor_info.get(
+                                "owned_root_original"
+                            )
+                    if (
+                        active_monitor.get("owned_root_original")
+                        is monitor_info["wrapper"]
+                    ):
+                        active_monitor["owned_root_original"] = (
+                            monitor_info.get("owned_root_original")
+                            or monitor_info["original"]
+                        )
+
+                if isinstance(instrumented, dict):
+                    for active_probe in instrumented.values():
+                        for key in ("original", "previous_wrapper", "root_original"):
+                            if active_probe.get(key) is monitor_info["wrapper"]:
+                                if (
+                                    key == "root_original"
+                                    and monitor_info["original"]
+                                    is active_probe.get("wrapper")
+                                ):
+                                    continue
+                                if key == "root_original":
+                                    active_probe[key] = (
+                                        monitor_info.get("owned_root_original")
+                                        or replacement
+                                    )
+                                else:
+                                    self._retarget_wrapper_func(
+                                        active_probe.get("wrapper"),
+                                        monitor_info["wrapper"],
+                                        replacement,
+                                    )
+                                    active_probe[key] = replacement
+
+                restore_aliases_matching(
+                    monitor_info.get("aliases", []),
+                    (monitor_info.get("wrapper"),),
+                    replacement,
+                )
+
+            self._monitors.pop(watch_id, None)
 
         # Get final statistics
         if timer_thread_alive:
@@ -586,6 +715,11 @@ class MonitorCommand(ResourceOwningCommand):
                     stopped.append(monitor_id)
                 else:
                     error_message = cast(str, result.get("error", "Unknown error"))
+                    with self._lock:
+                        still_tracked = monitor_id in self._monitors
+                    if not still_tracked and "Monitor not found" in error_message:
+                        skipped.append(monitor_id)
+                        continue
                     logger.error(
                         "[peeka Monitor] stop_active_resources failed for %s (%s): %s",
                         monitor_id,
@@ -670,53 +804,16 @@ class MonitorCommand(ResourceOwningCommand):
         injector = getattr(self.agent, "injector", None)
         injector_resolve = getattr(injector, "_resolve_target", None)
         if callable(injector_resolve):
-            target_info = cast(
-                Tuple[Any, Any, Any], injector_resolve(pattern)
-            )
-            if target_info is not None:
-                return target_info
+            return cast(Optional[Tuple[Any, Any, Any]], injector_resolve(pattern))
 
-        import importlib
-        import sys
+        return resolve_target(pattern)
 
-        parts = pattern.split(".")
-        if len(parts) < 2:
-            return None
-
-        # Try progressively shorter module prefixes
-        for i in range(len(parts) - 1, 0, -1):
-            module_name = ".".join(parts[:i])
-            attrs = parts[i:]
-
-            # Try to get module from sys.modules first (already imported)
-            module = sys.modules.get(module_name)
-
-            if module is None:
-                # Try to import it
-                try:
-                    module = importlib.import_module(module_name)
-                except (ImportError, ModuleNotFoundError):
-                    continue
-
-            # Navigate to the target
-            obj = module
-            parent = None
-            attr_name = None
-
-            for j, attr in enumerate(attrs):
-                parent = obj
-                attr_name = attr
-                try:
-                    obj = getattr(obj, attr)
-                except AttributeError:
-                    obj = None
-                    break
-
-            if obj is not None and callable(obj):
-                return (obj, parent, attr_name)
-
-        return None
-
-    def _replace_function(self, parent, attr_name, new_func) -> None:
+    def _replace_function(
+        self,
+        parent: Any,
+        attr_name: str,
+        new_func: Any,
+        descriptor_kind: Optional[str] = None,
+    ) -> None:
         """Replace a function/method on its parent object."""
-        setattr(parent, attr_name, new_func)
+        replace_function(parent, attr_name, new_func, descriptor_kind=descriptor_kind)
