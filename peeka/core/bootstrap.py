@@ -196,6 +196,5 @@ else:
 #  Step 5: Execute user script as __main__                           #
 # ------------------------------------------------------------------ #
 
-sys.argv = [script_path] + script_args
 module.__name__ = "__main__"
 _run_statements(_late_statements, module.__dict__, _flags)

@@ -121,7 +121,7 @@ class AttachReadinessMixin:
             "True" if suppress_startup_messages else "False",
         )
 
-        peeka_root = str(_attach_module().Path(__file__).parent.parent.parent.resolve())
+        peeka_root = str(_attach_module().Path(__file__).resolve().parents[3])
         path_bootstrap = f"import sys; sys.path.insert(0, {peeka_root!r}) if {peeka_root!r} not in sys.path else None\n"
         module_cleanup = (
             "def _cleanup_peeka_modules():\n"
