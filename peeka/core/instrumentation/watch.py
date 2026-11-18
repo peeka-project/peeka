@@ -44,8 +44,34 @@ def build_runtime_meta() -> Optional[Dict[str, Any]]:
 
 
 def _format_func_name(func: Callable[..., Any]) -> str:
-    qualname = getattr(func, "__qualname__", getattr(func, "__name__", repr(func)))
-    return f"{func.__module__}.{qualname}"
+    try:
+        qualname = getattr(func, "__qualname__", None) or getattr(
+            func, "__name__", None
+        )
+        module = getattr(func, "__module__", None)
+        if qualname and module:
+            return f"{module}.{qualname}"
+        if qualname:
+            return str(qualname)
+        return repr(func)
+    except Exception:
+        return "<unknown>"
+
+
+def _format_exception_message(exc: BaseException) -> str:
+    """Format an exception message without letting broken __str__/__repr__ escape."""
+    try:
+        exc_type = type(exc).__name__
+    except Exception:
+        exc_type = "Exception"
+    try:
+        detail = str(exc)
+    except Exception:
+        try:
+            detail = repr(exc)
+        except Exception:
+            detail = "<unprintable exception>"
+    return f"{exc_type}: {detail}"
 
 
 def _extract_callback(entry: Any) -> Optional[Any]:
@@ -66,7 +92,10 @@ def _callback_matches_shield(callback: Any) -> bool:
     if "shield" in callback_name and "_inner_done_callback" in callback_name:
         return True
 
-    callback_repr = repr(callback)
+    try:
+        callback_repr = repr(callback)
+    except Exception:
+        callback_repr = ""
     if "shield" in callback_repr and "_inner_done_callback" in callback_repr:
         return True
 
@@ -122,28 +151,31 @@ def _waiter_uses_executor(waiter: Any) -> bool:
 
 
 def _detect_coroutine_marker(coro_obj: Optional[Any]) -> Optional[str]:
-    current_task = asyncio.current_task()
-    if current_task is not None:
-        callbacks = getattr(current_task, "_callbacks", None)
-        if callbacks:
-            for entry in callbacks:
-                callback = _extract_callback(entry)
-                if callback is not None and _callback_matches_shield(callback):
-                    return "shield"
+    try:
+        current_task = asyncio.current_task()
+        if current_task is not None:
+            callbacks = getattr(current_task, "_callbacks", None)
+            if callbacks:
+                for entry in callbacks:
+                    callback = _extract_callback(entry)
+                    if callback is not None and _callback_matches_shield(callback):
+                        return "shield"
 
-    if coro_obj is not None:
-        frame = getattr(coro_obj, "cr_frame", None)
-        if frame is not None and _has_concurrent_future(frame.f_locals):
+        if coro_obj is not None:
+            frame = getattr(coro_obj, "cr_frame", None)
+            if frame is not None and _has_concurrent_future(frame.f_locals):
+                return "executor"
+
+            code_obj = getattr(coro_obj, "cr_code", None)
+            if code_obj is not None and "run_in_executor" in code_obj.co_names:
+                return "executor"
+
+        if current_task is not None and _waiter_uses_executor(
+            getattr(current_task, "_fut_waiter", None)
+        ):
             return "executor"
-
-        code_obj = getattr(coro_obj, "cr_code", None)
-        if code_obj is not None and "run_in_executor" in code_obj.co_names:
-            return "executor"
-
-    if current_task is not None and _waiter_uses_executor(
-        getattr(current_task, "_fut_waiter", None)
-    ):
-        return "executor"
+    except Exception:
+        return None
 
     return None
 
@@ -160,20 +192,29 @@ class ExecutionProfile:
         self.func_name = func_name
         self.mode = mode
         self.include_marker = include_marker
-        self.start_wall = _rpl.perf_counter()
+        try:
+            self.start_wall = _rpl.perf_counter()
+        except Exception:
+            self.start_wall = time.perf_counter()
         self.start_cpu = None
         self.start_context_switches = None
         self.emitted = False
 
         if sys.platform != "win32" and resource is not None:
-            start_usage = resource.getrusage(resource.RUSAGE_SELF)
-            self.start_cpu = start_usage.ru_utime + start_usage.ru_stime
-            self.start_context_switches = (
-                start_usage.ru_nvcsw + start_usage.ru_nivcsw
-            )
+            try:
+                start_usage = resource.getrusage(resource.RUSAGE_SELF)
+                self.start_cpu = start_usage.ru_utime + start_usage.ru_stime
+                self.start_context_switches = (
+                    start_usage.ru_nvcsw + start_usage.ru_nivcsw
+                )
+            except Exception:
+                pass
 
     def elapsed_ms(self) -> float:
-        return (_rpl.perf_counter() - self.start_wall) * 1000
+        try:
+            return (_rpl.perf_counter() - self.start_wall) * 1000
+        except Exception:
+            return 0.0
 
     def emit(
         self,
@@ -186,39 +227,50 @@ class ExecutionProfile:
             return
         self.emitted = True
 
-        wall_cost = _rpl.perf_counter() - self.start_wall
-        cpu_cost = None
-        context_switches = None
-        if sys.platform != "win32" and resource is not None:
-            end_usage = resource.getrusage(resource.RUSAGE_SELF)
-            end_cpu = end_usage.ru_utime + end_usage.ru_stime
-            if self.start_cpu is not None:
-                cpu_cost = end_cpu - self.start_cpu
-            if self.start_context_switches is not None:
-                context_switches = (
-                    end_usage.ru_nvcsw
-                    + end_usage.ru_nivcsw
-                    - self.start_context_switches
-                )
+        try:
+            try:
+                wall_cost = _rpl.perf_counter() - self.start_wall
+            except Exception:
+                wall_cost = 0.0
+            cpu_cost = None
+            context_switches = None
+            if sys.platform != "win32" and resource is not None:
+                try:
+                    end_usage = resource.getrusage(resource.RUSAGE_SELF)
+                    end_cpu = end_usage.ru_utime + end_usage.ru_stime
+                    if self.start_cpu is not None:
+                        cpu_cost = end_cpu - self.start_cpu
+                    if self.start_context_switches is not None:
+                        context_switches = (
+                            end_usage.ru_nvcsw
+                            + end_usage.ru_nivcsw
+                            - self.start_context_switches
+                        )
+                except Exception:
+                    pass
 
-        profile = {
-            "type": "execution_profile",
-            "func_name": self.func_name,
-            "mode": self.mode,
-            "scheduler": "asyncio",
-            "yields": yields,
-            "wall_cost": wall_cost,
-            "cpu_cost": cpu_cost,
-            "context_switches": context_switches,
-            "termination": termination,
-        }
-        if self.include_marker:
-            profile["marker"] = marker
-        if error_msg is not None:
-            profile["error"] = error_msg
-        self.last_profile = profile
-        if self.emit_stdout:
-            print(json.dumps(profile), flush=True)
+            profile = {
+                "type": "execution_profile",
+                "func_name": self.func_name,
+                "mode": self.mode,
+                "scheduler": "asyncio",
+                "yields": yields,
+                "wall_cost": wall_cost,
+                "cpu_cost": cpu_cost,
+                "context_switches": context_switches,
+                "termination": termination,
+            }
+            if self.include_marker:
+                profile["marker"] = marker
+            if error_msg is not None:
+                profile["error"] = error_msg
+            self.last_profile = profile
+            if self.emit_stdout:
+                print(json.dumps(profile), flush=True)
+        except Exception:
+            logger.debug(
+                "Failed to emit execution profile for %s", self.func_name, exc_info=True
+            )
 
 
 class CallObserver:
@@ -239,7 +291,7 @@ class CallObserver:
 
     def should_observe(self, duration_cost: Optional[float] = None) -> bool:
         safe_evaluator = self.factory.safe_evaluator
-        if not safe_evaluator:
+        if safe_evaluator is None:
             return True
         try:
             local_vars = {
@@ -260,6 +312,12 @@ class CallObserver:
         except Exception:
             return False
 
+    def _safe_format_value(self, value: Any, depth: int) -> Any:
+        try:
+            return self.factory.injector._format_value(value, depth)
+        except Exception:
+            return "<unformattable>"
+
     def send_observation(
         self,
         location: str,
@@ -269,54 +327,63 @@ class CallObserver:
     ) -> None:
         factory = self.factory
         injector = factory.injector
-        with injector._lock:
-            info = injector.instrumented.get(factory.watch_id)
-            if info:
-                info["count"] += 1
-
-        observation = {
-            "watch_id": factory.watch_id,
-            "timestamp": time.time(),
-            "location": location,
-            "func_name": _format_func_name(factory.func),
-            "params": injector._format_value(self.user_args, factory.depth),
-            "kwargs": injector._format_value(self.kwargs, factory.depth),
-            "target": injector._format_value(self.target_self, factory.depth)
-            if self.target_self
-            else None,
-            "returnObj": injector._format_value(result_val, factory.depth)
-            if result_val is not None
-            else None,
-            "success": error_msg is None,
-            "throwExp": error_msg,
-            "cost": round(duration_ms, 3),
-            "thread_id": threading.get_ident(),
-            "thread_name": threading.current_thread().name,
-        }
-
-        runtime_meta = build_runtime_meta()
-        observation["runtime_meta"] = runtime_meta
-
-        stack_depth = factory.config.get("stack_depth")
-        if stack_depth is not None and location == "AtEnter":
-            stack_frames = inspect.stack()[2 : 2 + stack_depth]
-            observation["stack"] = [
-                {
-                    "filename": frame.filename,
-                    "lineno": frame.lineno,
-                    "function": frame.function,
-                    "code_context": frame.code_context[0].strip()
-                    if frame.code_context
-                    else None,
-                }
-                for frame in stack_frames
-            ]
-            observation["data"] = {"stack_trace": observation["stack"]}
-
-        if not injector._record_probe_event(factory.config, observation):
-            return
-
         try:
+            with injector._lock:
+                info = injector.instrumented.get(factory.watch_id)
+                if info is not None:
+                    info["count"] += 1
+
+            observation: Dict[str, Any] = {
+                "watch_id": factory.watch_id,
+                "timestamp": time.time(),
+                "location": location,
+                "func_name": _format_func_name(factory.func),
+                "params": self._safe_format_value(self.user_args, factory.depth),
+                "kwargs": self._safe_format_value(self.kwargs, factory.depth),
+                # Never coerce target_self to bool (unsafe before __init__ runs).
+                "target": self._safe_format_value(self.target_self, factory.depth)
+                if self.target_self is not None
+                else None,
+                "returnObj": self._safe_format_value(result_val, factory.depth)
+                if result_val is not None
+                else None,
+                "success": error_msg is None,
+                "throwExp": error_msg,
+                "cost": round(duration_ms, 3),
+                "thread_id": threading.get_ident(),
+                "thread_name": threading.current_thread().name,
+            }
+
+            try:
+                runtime_meta = build_runtime_meta()
+            except Exception:
+                runtime_meta = None
+            observation["runtime_meta"] = runtime_meta
+
+            stack_depth = factory.config.get("stack_depth")
+            if stack_depth is not None and location == "AtEnter":
+                try:
+                    stack_frames = inspect.stack()[2 : 2 + stack_depth]
+                    observation["stack"] = [
+                        {
+                            "filename": frame.filename,
+                            "lineno": frame.lineno,
+                            "function": frame.function,
+                            "code_context": frame.code_context[0].strip()
+                            if frame.code_context
+                            else None,
+                        }
+                        for frame in stack_frames
+                    ]
+                    observation["data"] = {"stack_trace": observation["stack"]}
+                except Exception:
+                    logger.debug(
+                        "Failed to capture stack for %s", factory.watch_id, exc_info=True
+                    )
+
+            if not injector._record_probe_event(factory.config, observation):
+                return
+
             injector.agent._send_observation(observation)
         except Exception:
             logger.debug(
@@ -360,12 +427,9 @@ class WatchWrapperFactory:
         self.safe_evaluator = self._build_safe_evaluator()
 
     def create(self) -> Callable[..., Any]:
-        unwrapped = inspect.unwrap(
-            self.func, stop=lambda f: not hasattr(f, "__wrapped__")
-        )
-        if inspect.isasyncgenfunction(unwrapped):
+        if inspect.isasyncgenfunction(self.func):
             return self._create_async_generator_wrapper()
-        if inspect.iscoroutinefunction(unwrapped):
+        if inspect.iscoroutinefunction(self.func):
             return self._create_coroutine_wrapper()
         return self._create_sync_wrapper()
 
@@ -401,129 +465,250 @@ class WatchWrapperFactory:
 
         return CallObserver(self, args, kwargs)
 
+    def _safe_prepare_call(
+        self, args: Any, kwargs: Dict[str, Any]
+    ) -> Optional[CallObserver]:
+        try:
+            return self._prepare_call(args, kwargs)
+        except Exception:
+            logger.debug(
+                "Failed to prepare observation for %s", self.watch_id, exc_info=True
+            )
+            return None
+
+    def _safe_emit_before(self, observer: CallObserver) -> None:
+        try:
+            if self.before and observer.should_observe():
+                observer.send_observation("AtEnter")
+        except Exception:
+            logger.debug(
+                "Failed before-observation for %s", self.watch_id, exc_info=True
+            )
+
+    def _safe_create_profile(
+        self, func_name: str, mode: str, include_marker: bool = False
+    ) -> Optional[ExecutionProfile]:
+        try:
+            return ExecutionProfile(
+                func_name,
+                mode,
+                include_marker=include_marker,
+                emit_stdout=bool(self.config.get("emit_execution_profile_stdout", False)),
+            )
+        except Exception:
+            logger.debug(
+                "Failed to create execution profile for %s", self.watch_id, exc_info=True
+            )
+            return None
+
+    def _safe_perf_counter(self) -> float:
+        try:
+            return _rpl.perf_counter()
+        except Exception:
+            return time.perf_counter()
+
+    def _safe_elapsed_ms(self, start_time: float) -> float:
+        try:
+            return (self._safe_perf_counter() - start_time) * 1000
+        except Exception:
+            return 0.0
+
+    def _safe_profile_elapsed_ms(
+        self, profile: Optional[ExecutionProfile], start_time: float
+    ) -> float:
+        if profile is not None:
+            try:
+                return profile.elapsed_ms()
+            except Exception:
+                pass
+        return self._safe_elapsed_ms(start_time)
+
+    def _safe_emit_profile(
+        self,
+        profile: Optional[ExecutionProfile],
+        termination: str,
+        yields: Optional[int],
+        marker: Optional[str] = None,
+        error_msg: Optional[str] = None,
+    ) -> None:
+        if profile is None:
+            return
+        try:
+            profile.emit(
+                termination,
+                yields=yields,
+                marker=marker,
+                error_msg=error_msg,
+            )
+        except Exception:
+            logger.debug(
+                "Failed to emit execution profile for %s", self.watch_id, exc_info=True
+            )
+
+    def _safe_detect_marker(self, coro_obj: Optional[Any]) -> Optional[str]:
+        try:
+            return _detect_coroutine_marker(coro_obj)
+        except Exception:
+            return None
+
     def _send_success(
         self, observer: CallObserver, result: Any, duration_ms: float
     ) -> None:
-        if self.on_success and observer.should_observe(duration_ms):
-            observer.send_observation("AtExit", result_val=result, duration_ms=duration_ms)
-        elif (
-            self.on_finish
-            and not self.on_success
-            and observer.should_observe(duration_ms)
-        ):
-            observer.send_observation("AtExit", result_val=result, duration_ms=duration_ms)
+        try:
+            if self.on_success and observer.should_observe(duration_ms):
+                observer.send_observation("AtExit", result_val=result, duration_ms=duration_ms)
+            elif (
+                self.on_finish
+                and not self.on_success
+                and observer.should_observe(duration_ms)
+            ):
+                observer.send_observation("AtExit", result_val=result, duration_ms=duration_ms)
+        except Exception:
+            logger.debug(
+                "Failed success observation for %s", self.watch_id, exc_info=True
+            )
 
     def _send_exception(
         self, observer: CallObserver, error: str, duration_ms: float
     ) -> None:
-        if self.on_exception and observer.should_observe(duration_ms):
-            observer.send_observation(
-                "AtExceptionExit", error_msg=error, duration_ms=duration_ms
+        try:
+            if self.on_exception and observer.should_observe(duration_ms):
+                observer.send_observation(
+                    "AtExceptionExit", error_msg=error, duration_ms=duration_ms
+                )
+            elif (
+                self.on_finish
+                and not self.on_exception
+                and observer.should_observe(duration_ms)
+            ):
+                observer.send_observation(
+                    "AtExceptionExit", error_msg=error, duration_ms=duration_ms
+                )
+        except Exception:
+            logger.debug(
+                "Failed exception observation for %s", self.watch_id, exc_info=True
             )
-        elif (
-            self.on_finish
-            and not self.on_exception
-            and observer.should_observe(duration_ms)
-        ):
-            observer.send_observation(
-                "AtExceptionExit", error_msg=error, duration_ms=duration_ms
-            )
+
+    def _safe_emit_exception(
+        self, observer: CallObserver, exc: BaseException, duration_ms: float
+    ) -> None:
+        if isinstance(exc, asyncio.CancelledError):
+            self._send_exception(observer, "CancelledError", duration_ms)
+        elif isinstance(exc, Exception):
+            self._send_exception(observer, _format_exception_message(exc), duration_ms)
 
     def _create_async_generator_wrapper(self) -> Callable[..., Any]:
         func = self.func
 
         @wraps(func)
-        def async_generator_wrapper(*args: Any, **kwargs: Any) -> Any:
-            observer = self._prepare_call(args, kwargs)
-            if observer is None:
-                return func(*args, **kwargs)
-
-            if self.before and observer.should_observe():
-                observer.send_observation("AtEnter")
-
-            profile = ExecutionProfile(
-                _format_func_name(func), "async_generator",
-                emit_stdout=bool(self.config.get("emit_execution_profile_stdout", False)),
-            )
-            yield_count = 0
-            try:
+        async def async_generator_wrapper(*args: Any, **kwargs: Any) -> Any:
+            observer = self._safe_prepare_call(args, kwargs)
+            profile: Optional[ExecutionProfile] = None
+            if observer is not None:
+                self._safe_emit_before(observer)
+                profile = self._safe_create_profile(
+                    _format_func_name(func), "async_generator"
+                )
+                start_time = self._safe_perf_counter()
+                try:
+                    async_gen = func(*args, **kwargs)
+                except BaseException as e:
+                    duration_ms = self._safe_profile_elapsed_ms(profile, start_time)
+                    if isinstance(e, asyncio.CancelledError):
+                        self._safe_emit_profile(
+                            profile, "cancelled", yields=0, error_msg="CancelledError"
+                        )
+                        self._safe_emit_exception(observer, e, duration_ms)
+                    elif isinstance(e, Exception):
+                        self._safe_emit_profile(
+                            profile,
+                            "errored",
+                            yields=0,
+                            error_msg=_format_exception_message(e),
+                        )
+                        self._safe_emit_exception(observer, e, duration_ms)
+                    raise
+                self._send_success(observer, async_gen, 0.0)
+            else:
                 async_gen = func(*args, **kwargs)
-            except Exception as e:
-                error = f"{type(e).__name__}: {str(e)}"
-                profile.emit("errored", yields=yield_count, error_msg=error)
-                self._send_exception(observer, error, profile.elapsed_ms())
-                raise
 
-            self._send_success(observer, async_gen, 0.0)
-
-            class AsyncGeneratorProxy:
-                def __aiter__(self):
-                    return self
-
-                async def __anext__(self):
-                    nonlocal yield_count
+            yield_count = 0
+            closed = False
+            try:
+                step = async_gen.__anext__()
+                while True:
                     try:
-                        value = await async_gen.__anext__()
-                        yield_count += 1
-                        return value
+                        value = await step
                     except StopAsyncIteration:
-                        profile.emit("exhausted", yields=yield_count)
-                        raise
-                    except Exception as e:
-                        profile.emit(
-                            "errored",
+                        closed = True
+                        self._safe_emit_profile(
+                            profile, "exhausted", yields=yield_count
+                        )
+                        return
+                    except asyncio.CancelledError:
+                        closed = True
+                        self._safe_emit_profile(
+                            profile,
+                            "cancelled",
                             yields=yield_count,
-                            error_msg=f"{type(e).__name__}: {str(e)}",
+                            error_msg="CancelledError",
                         )
                         raise
+                    except BaseException as e:
+                        closed = True
+                        if isinstance(e, Exception):
+                            self._safe_emit_profile(
+                                profile,
+                                "errored",
+                                yields=yield_count,
+                                error_msg=_format_exception_message(e),
+                            )
+                        raise
 
-                async def asend(self, value):
-                    nonlocal yield_count
+                    yield_count += 1
                     try:
-                        result = await async_gen.asend(value)
-                        yield_count += 1
-                        return result
-                    except StopAsyncIteration:
-                        profile.emit("exhausted", yields=yield_count)
-                        raise
-                    except Exception as e:
-                        profile.emit(
-                            "errored",
-                            yields=yield_count,
-                            error_msg=f"{type(e).__name__}: {str(e)}",
+                        sent = yield value
+                    except GeneratorExit:
+                        closed = True
+                        try:
+                            aclose = getattr(async_gen, "aclose", None)
+                            if callable(aclose):
+                                await aclose()
+                        except BaseException as e:
+                            if isinstance(e, asyncio.CancelledError):
+                                self._safe_emit_profile(
+                                    profile,
+                                    "cancelled",
+                                    yields=yield_count,
+                                    error_msg="CancelledError",
+                                )
+                            elif isinstance(e, Exception):
+                                self._safe_emit_profile(
+                                    profile,
+                                    "errored",
+                                    yields=yield_count,
+                                    error_msg=_format_exception_message(e),
+                                )
+                            raise
+                        self._safe_emit_profile(
+                            profile, "closed", yields=yield_count
                         )
                         raise
-
-                async def athrow(self, *throw_args):
-                    nonlocal yield_count
+                    except BaseException as exc:
+                        step = async_gen.athrow(exc)
+                    else:
+                        if sent is None:
+                            step = async_gen.__anext__()
+                        else:
+                            step = async_gen.asend(sent)
+            finally:
+                if not closed:
                     try:
-                        result = await async_gen.athrow(*throw_args)
-                        yield_count += 1
-                        return result
-                    except StopAsyncIteration:
-                        profile.emit("exhausted", yields=yield_count)
-                        raise
-                    except Exception as e:
-                        profile.emit(
-                            "errored",
-                            yields=yield_count,
-                            error_msg=f"{type(e).__name__}: {str(e)}",
-                        )
-                        raise
-
-                async def aclose(self):
-                    try:
-                        await async_gen.aclose()
-                        profile.emit("closed", yields=yield_count)
-                    except Exception as e:
-                        profile.emit(
-                            "errored",
-                            yields=yield_count,
-                            error_msg=f"{type(e).__name__}: {str(e)}",
-                        )
-                        raise
-
-            return AsyncGeneratorProxy()
+                        aclose = getattr(async_gen, "aclose", None)
+                        if callable(aclose):
+                            await aclose()
+                    except Exception:
+                        pass
 
         return async_generator_wrapper
 
@@ -532,50 +717,53 @@ class WatchWrapperFactory:
 
         @wraps(func)
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-            observer = self._prepare_call(args, kwargs)
+            observer = self._safe_prepare_call(args, kwargs)
             if observer is None:
                 return await func(*args, **kwargs)
 
-            if self.before and observer.should_observe():
-                observer.send_observation("AtEnter")
+            self._safe_emit_before(observer)
 
-            profile = ExecutionProfile(
-                _format_func_name(func), "coroutine", include_marker=True,
-                emit_stdout=bool(self.config.get("emit_execution_profile_stdout", False)),
+            profile = self._safe_create_profile(
+                _format_func_name(func), "coroutine", include_marker=True
             )
+            start_time = self._safe_perf_counter()
             coroutine_obj = None
             try:
                 coroutine_obj = func(*args, **kwargs)
                 result = await coroutine_obj
-                duration_ms = profile.elapsed_ms()
-                profile.emit(
-                    "returned",
-                    yields=None,
-                    marker=_detect_coroutine_marker(coroutine_obj),
-                )
-                self._send_success(observer, result, duration_ms)
-                return result
-            except asyncio.CancelledError:
-                duration_ms = profile.elapsed_ms()
-                profile.emit(
+            except asyncio.CancelledError as e:
+                duration_ms = self._safe_profile_elapsed_ms(profile, start_time)
+                self._safe_emit_profile(
+                    profile,
                     "cancelled",
                     yields=None,
-                    marker=_detect_coroutine_marker(coroutine_obj),
+                    marker=self._safe_detect_marker(coroutine_obj),
                     error_msg="CancelledError",
                 )
-                self._send_exception(observer, "CancelledError", duration_ms)
+                self._safe_emit_exception(observer, e, duration_ms)
                 raise
-            except Exception as e:
-                duration_ms = profile.elapsed_ms()
-                error = f"{type(e).__name__}: {str(e)}"
-                profile.emit(
-                    "errored",
-                    yields=None,
-                    marker=_detect_coroutine_marker(coroutine_obj),
-                    error_msg=error,
-                )
-                self._send_exception(observer, error, duration_ms)
+            except BaseException as e:
+                if isinstance(e, Exception):
+                    duration_ms = self._safe_profile_elapsed_ms(profile, start_time)
+                    self._safe_emit_profile(
+                        profile,
+                        "errored",
+                        yields=None,
+                        marker=self._safe_detect_marker(coroutine_obj),
+                        error_msg=_format_exception_message(e),
+                    )
+                    self._safe_emit_exception(observer, e, duration_ms)
                 raise
+
+            duration_ms = self._safe_profile_elapsed_ms(profile, start_time)
+            self._safe_emit_profile(
+                profile,
+                "returned",
+                yields=None,
+                marker=self._safe_detect_marker(coroutine_obj),
+            )
+            self._send_success(observer, result, duration_ms)
+            return result
 
         return async_wrapper
 
@@ -584,23 +772,23 @@ class WatchWrapperFactory:
 
         @wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
-            observer = self._prepare_call(args, kwargs)
+            observer = self._safe_prepare_call(args, kwargs)
             if observer is None:
                 return func(*args, **kwargs)
 
-            if self.before and observer.should_observe():
-                observer.send_observation("AtEnter")
+            self._safe_emit_before(observer)
 
-            start_time = time.perf_counter()
+            start_time = self._safe_perf_counter()
             try:
                 result = func(*args, **kwargs)
-                duration_ms = (time.perf_counter() - start_time) * 1000
-                self._send_success(observer, result, duration_ms)
-                return result
-            except Exception as e:
-                duration_ms = (time.perf_counter() - start_time) * 1000
-                error = f"{type(e).__name__}: {str(e)}"
-                self._send_exception(observer, error, duration_ms)
+            except BaseException as e:
+                if isinstance(e, (Exception, asyncio.CancelledError)):
+                    duration_ms = self._safe_elapsed_ms(start_time)
+                    self._safe_emit_exception(observer, e, duration_ms)
                 raise
+
+            duration_ms = self._safe_elapsed_ms(start_time)
+            self._send_success(observer, result, duration_ms)
+            return result
 
         return wrapper
