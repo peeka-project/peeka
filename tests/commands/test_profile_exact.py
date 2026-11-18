@@ -27,13 +27,34 @@ class TestExactProfileSampler:
 
         assert set(result) == {"available", "reason", "backend_name"}
         assert isinstance(result["available"], bool)
-        if hasattr(threading, "setprofile_all_threads"):
+        if sys.version_info >= (3, 12) and hasattr(sys, "monitoring"):
             assert result["available"] is True
-            assert result["backend_name"] == "setprofile_all_threads"
+            assert result["reason"] is None
+            assert result["backend_name"] == "sys_monitoring"
         else:
             assert result["available"] is False
-            assert result["backend_name"] == "setprofile"
-            assert result["reason"] == "exact profiling requires threading.setprofile_all_threads"
+            assert result["backend_name"] is None
+            assert "sys.monitoring" in str(result["reason"])
+
+    def test_start_refuses_when_monitoring_unsupported_and_leaves_no_hook(
+        self, monkeypatch, registry
+    ):
+        from peeka.core.profile.exact import ExactProfileSampler
+
+        monkeypatch.delattr(sys, "monitoring", raising=False)
+        profile_id = registry.start(ProfileConfig(backend="exact"))
+        sampler = ExactProfileSampler(profile_id, registry)
+
+        cap = sampler.check_capability()
+        assert cap["available"] is False
+        assert cap["backend_name"] is None
+        assert "sys.monitoring" in str(cap["reason"])
+
+        with pytest.raises(RuntimeError, match="sys.monitoring"):
+            sampler.start()
+
+        assert sampler.active is False
+        assert sys.getprofile() is None
 
     def test_check_capability_refuses_gevent_patched_runtime(self, monkeypatch, registry):
         from peeka.core.profile.exact import ExactProfileSampler
@@ -131,8 +152,8 @@ class TestExactProfileSampler:
         assert calls == [profile_id]
 
     @pytest.mark.skipif(
-        not hasattr(threading, "setprofile_all_threads"),
-        reason="thread-wide exact profiling requires threading.setprofile_all_threads",
+        sys.version_info < (3, 12) or not hasattr(sys, "monitoring"),
+        reason="thread-wide exact profiling requires sys.monitoring (Python 3.12+)",
     )
     def test_start_installs_profiler_in_existing_worker_thread(self, registry):
         from peeka.core.profile.exact import ExactProfileSampler
@@ -159,6 +180,8 @@ class TestExactProfileSampler:
         sampler = ExactProfileSampler(profile_id, registry, max_events=1000)
         try:
             sampler.start()
+            assert sampler._backend_name == "sys_monitoring"
+            assert sampler.active is True
             proceed.set()
             assert finished.wait(timeout=1.0)
 
@@ -180,6 +203,44 @@ class TestExactProfileSampler:
             thread.join(timeout=1.0)
 
         assert captured is True
+        assert sampler.active is False
+        session = registry.snapshot(profile_id)
+        assert session.samples
+        assert all(sample.lane == "exact" for sample in session.samples)
+        assert all(sys.monitoring.get_tool(tid) != "peeka-exact" for tid in range(6))
+
+    @pytest.mark.skipif(
+        sys.version_info < (3, 12) or not hasattr(sys, "monitoring"),
+        reason="real sys.monitoring overflow test requires Python 3.12+",
+    )
+    def test_real_monitoring_overflow_stops_and_frees_tool_id(self, registry):
+        from peeka.core.profile.exact import ExactProfileSampler
+
+        stopped: List[str] = []
+        profile_id = registry.start(ProfileConfig(backend="exact", max_samples=10))
+        sampler = ExactProfileSampler(
+            profile_id, registry, max_events=2, on_stop=stopped.append
+        )
+
+        def tracked_work() -> int:
+            return 1
+
+        sampler.start()
+        try:
+            for _ in range(10):
+                tracked_work()
+        finally:
+            sampler.stop()
+
+        session = registry.snapshot(profile_id)
+        assert sampler.overflow is True
+        assert sampler.active is False
+        assert session.status == "stopped"
+        assert session.summary is not None
+        assert session.summary.overflow is True
+        assert len(session.samples) == 2
+        assert stopped == [profile_id]
+        assert all(sys.monitoring.get_tool(tid) != "peeka-exact" for tid in range(6))
 
 
 @pytest.fixture(autouse=True)
@@ -624,8 +685,8 @@ class TestProfileCommandExactBackend:
         next_command.execute({"action": "stop", "profile_id": next_result["profile_id"]})
 
     @pytest.mark.skipif(
-        not hasattr(threading, "setprofile_all_threads"),
-        reason="thread-wide exact profiling requires threading.setprofile_all_threads",
+        sys.version_info < (3, 12) or not hasattr(sys, "monitoring"),
+        reason="thread-wide exact profiling requires sys.monitoring (Python 3.12+)",
     )
     def test_duration_expiry_stops_exact_session_and_clears_state(self):
         from peeka.commands.profile import ProfileCommand
@@ -657,6 +718,7 @@ class TestProfileCommandExactBackend:
             assert command._exact_sampler is None
             assert command._exact_profile_id is None
             assert command._exact_stop_timer is None
+            assert all(sys.monitoring.get_tool(tid) != "peeka-exact" for tid in range(6))
 
             second_result = command.execute(
                 {"action": "start", "backend": "exact", "experimental": True, "max_events": 1000}
@@ -664,6 +726,10 @@ class TestProfileCommandExactBackend:
             assert second_result["status"] == "success"
         finally:
             command.stop_active_resources(pattern=None, reason="test teardown")
+            if hasattr(sys, "monitoring"):
+                assert all(
+                    sys.monitoring.get_tool(tid) != "peeka-exact" for tid in range(6)
+                )
 
 
 class _InertSampler:

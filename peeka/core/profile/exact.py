@@ -31,7 +31,15 @@ class ExactProfileSampler:
         self._lock = _rpl.allocate_lock()
         self._active = False
         self._cancelled = False
+        self._installing = False
+        self._install_thread_id: Optional[int] = None
+        self._install_done: Optional[Any] = None
+        self._releasing = False
+        self._release_thread_id: Optional[int] = None
+        self._release_done: Optional[Any] = None
         self._overflow = False
+        self._overflow_stopped = False
+        self._accepted_events = 0
         self._dropped_events = 0
         self._backend_name: Optional[str] = None
         self._monitoring_tool_id: Optional[int] = None
@@ -58,56 +66,39 @@ class ExactProfileSampler:
                 "backend_name": None,
             }
 
-        if self._monitoring_supported():
-            if self._find_free_monitoring_tool_id() is not None:
-                return {
-                    "available": True,
-                    "reason": None,
-                    "backend_name": "sys_monitoring",
-                }
-            if self._has_other_threads() or not hasattr(
-                threading, "setprofile_all_threads"
-            ):
-                return {
-                    "available": False,
-                    "reason": (
-                        "cannot protect existing thread profilers without an "
-                        "available sys.monitoring tool id"
-                    ),
-                    "backend_name": None,
-                }
+        if not self._monitoring_supported():
+            # Thread-local sys.setprofile cannot be cleared by stop() from
+            # another thread (such as a duration timer or RPC stop), and
+            # setprofile_all_threads clobbers existing thread profilers.
             return {
-                "available": True,
-                "reason": None,
-                "backend_name": "setprofile",
+                "available": False,
+                "reason": (
+                    "exact profiling requires sys.monitoring (Python 3.12+) to "
+                    "protect existing thread profilers and clear hooks across threads"
+                ),
+                "backend_name": None,
             }
 
-        if hasattr(threading, "setprofile_all_threads"):
-            if self._has_other_threads():
-                return {
-                    "available": False,
-                    "reason": (
-                        "cannot protect existing thread profilers with "
-                        "setprofile_all_threads"
-                    ),
-                    "backend_name": None,
-                }
+        if self._find_free_monitoring_tool_id() is not None:
             return {
                 "available": True,
                 "reason": None,
-                "backend_name": "setprofile",
+                "backend_name": "sys_monitoring",
             }
 
         return {
             "available": False,
-            "reason": "exact profiling requires threading.setprofile_all_threads",
-            "backend_name": "setprofile",
+            "reason": (
+                "cannot protect existing thread profilers without an "
+                "available sys.monitoring tool id"
+            ),
+            "backend_name": None,
         }
 
     def start(self) -> None:
         """Install the exact profile hook."""
         with self._lock:
-            if self._cancelled:
+            if self._cancelled or self._active or self._installing:
                 return
 
         capability = self.check_capability()
@@ -115,76 +106,156 @@ class ExactProfileSampler:
             raise RuntimeError(str(capability["reason"]))
 
         backend_name = capability["backend_name"]
-        if backend_name == "sys_monitoring":
-            self._start_monitoring()
-            return
+        if backend_name != "sys_monitoring":
+            raise RuntimeError(
+                str(capability["reason"] or "exact profiling requires sys.monitoring")
+            )
 
-        with self._lock:
-            if self._cancelled:
-                return
-            if sys.getprofile() is not None or self._threading_profile() is not None:
-                raise RuntimeError("another profiler is already installed")
-            if self._has_other_threads():
-                raise RuntimeError(
-                    "cannot protect existing thread profilers on concurrent threads"
-                )
-            self._backend_name = "setprofile"
-            self._active = True
-            sys.setprofile(self._on_event)
+        self._start_monitoring()
 
     def _start_monitoring(self) -> None:
         monitoring = sys.monitoring
-        tool_id = self._claim_monitoring_tool_id()
-        if tool_id is None:
-            raise RuntimeError(
-                "cannot protect existing thread profilers without an available "
-                "sys.monitoring tool id"
-            )
-
         events = monitoring.events
+        install_done = _rpl.create_event()
+        current_tid = _rpl.get_ident()
+        tool_id: Optional[int] = None
+
+        with self._lock:
+            if self._cancelled or self._active or self._installing:
+                return
+            self._installing = True
+            self._install_thread_id = current_tid
+            self._install_done = install_done
+
         try:
+            tool_id = self._claim_monitoring_tool_id()
+            if tool_id is None:
+                raise RuntimeError(
+                    "cannot protect existing thread profilers without an available "
+                    "sys.monitoring tool id"
+                )
+
             with self._lock:
                 if self._cancelled:
-                    self._release_monitoring_tool_id(tool_id)
-                    return
-                self._backend_name = "sys_monitoring"
-                self._monitoring_tool_id = tool_id
-                self._active = True
+                    self._active = False
+                    self._monitoring_tool_id = None
+                    self._backend_name = None
+                    cancelled_early = True
+                else:
+                    self._backend_name = "sys_monitoring"
+                    self._monitoring_tool_id = tool_id
+                    cancelled_early = False
+            if cancelled_early:
+                self._release_monitoring_tool_id(tool_id)
+                tool_id = None
+                return
 
             monitoring.register_callback(
                 tool_id, events.PY_START, self._on_monitoring_start
             )
-            monitoring.set_events(tool_id, events.PY_START)
+
             with self._lock:
-                cancelled = self._cancelled
-            if cancelled:
-                self.stop()
+                if self._cancelled:
+                    self._active = False
+                    self._monitoring_tool_id = None
+                    self._backend_name = None
+                    cancelled_mid = True
+                else:
+                    # Publish _active right before enabling events without
+                    # holding _lock across set_events so synchronous or
+                    # cross-thread overflow callbacks cannot self-deadlock.
+                    self._active = True
+                    cancelled_mid = False
+            if cancelled_mid:
+                self._release_monitoring_tool_id(tool_id)
+                tool_id = None
+                return
+
+            monitoring.set_events(tool_id, events.PY_START)
+
+            with self._lock:
+                cancelled_after = self._cancelled
+                if cancelled_after:
+                    self._active = False
+                    if self._monitoring_tool_id == tool_id:
+                        self._monitoring_tool_id = None
+            if cancelled_after:
+                self._release_monitoring_tool_id(tool_id)
+                tool_id = None
+                return
         except Exception:
             with self._lock:
-                if self._monitoring_tool_id == tool_id:
-                    self._monitoring_tool_id = None
                 self._active = False
-            self._release_monitoring_tool_id(tool_id)
+                if tool_id is not None and self._monitoring_tool_id == tool_id:
+                    self._monitoring_tool_id = None
+                if self._backend_name == "sys_monitoring":
+                    self._backend_name = None
+            if tool_id is not None:
+                self._release_monitoring_tool_id(tool_id)
+                tool_id = None
             raise
+        finally:
+            with self._lock:
+                self._installing = False
+                self._install_thread_id = None
+                if self._install_done is install_done:
+                    self._install_done = None
+            install_done.set()
 
     def stop(self) -> None:
         """Remove the exact profile hook."""
+        current_tid = _rpl.get_ident()
+        release_done_to_wait: Optional[Any] = None
+        release_done_to_signal: Optional[Any] = None
+
         with self._lock:
             self._cancelled = True
-            was_active = self._active
             self._active = False
-            tool_id = self._monitoring_tool_id
-            self._monitoring_tool_id = None
-            backend_name = self._backend_name
+            if self._installing:
+                if self._install_thread_id == current_tid:
+                    # Re-entrant stop from the installing thread (e.g. callback
+                    # during set_events): let _start_monitoring roll back.
+                    return
+                install_done = self._install_done
+                tool_id = None
+            else:
+                install_done = None
+                tool_id = self._monitoring_tool_id
+                self._monitoring_tool_id = None
+                if tool_id is not None:
+                    release_done_to_signal = _rpl.create_event()
+                    self._releasing = True
+                    self._release_thread_id = current_tid
+                    self._release_done = release_done_to_signal
+                elif self._releasing and self._release_thread_id != current_tid:
+                    release_done_to_wait = self._release_done
 
-        if tool_id is not None:
-            self._release_monitoring_tool_id(tool_id)
-        elif was_active and backend_name == "setprofile":
-            if sys.getprofile() == self._on_event:
-                sys.setprofile(None)
-        elif was_active and backend_name == "setprofile_all_threads":
-            threading.setprofile(None)
-            threading.setprofile_all_threads(None)
+        if install_done is not None:
+            install_done.wait()
+            with self._lock:
+                tool_id = self._monitoring_tool_id
+                self._monitoring_tool_id = None
+                self._active = False
+                if tool_id is not None:
+                    release_done_to_signal = _rpl.create_event()
+                    self._releasing = True
+                    self._release_thread_id = current_tid
+                    self._release_done = release_done_to_signal
+                elif self._releasing and self._release_thread_id != current_tid:
+                    release_done_to_wait = self._release_done
+
+        if tool_id is not None and release_done_to_signal is not None:
+            try:
+                self._release_monitoring_tool_id(tool_id)
+            finally:
+                with self._lock:
+                    self._releasing = False
+                    self._release_thread_id = None
+                    if self._release_done is release_done_to_signal:
+                        self._release_done = None
+                release_done_to_signal.set()
+        elif release_done_to_wait is not None:
+            release_done_to_wait.wait()
 
     def _on_monitoring_start(self, code: Any, instruction_offset: int) -> None:  # noqa: ARG002
         """Bridge sys.monitoring PY_START callbacks into ``_on_event``."""
@@ -206,20 +277,31 @@ class ExactProfileSampler:
             return
         if self._is_peeka_frame(frame):
             return
-        if self._overflow:
-            self._dropped_events += 1
-            return
-        if self._cancelled:
-            return
+        with self._lock:
+            if self._overflow:
+                self._dropped_events += 1
+                return
+            if self._cancelled:
+                return
+            if self._accepted_events >= self.max_events:
+                self._overflow = True
+                self._dropped_events += 1
+                return
+            self._accepted_events += 1
+            accepted = self._accepted_events
 
         self._callback_state.active = True
         try:
             count = self.registry.add_sample(self.profile_id, self._build_sample(frame))
             if count < 0:
                 return
-            if count >= self.max_events:
-                self._overflow = True
-                self._stop_for_overflow()
+            if count >= self.max_events or accepted >= self.max_events:
+                with self._lock:
+                    self._overflow = True
+                    should_stop = not self._overflow_stopped
+                    self._overflow_stopped = True
+                if should_stop:
+                    self._stop_for_overflow()
         finally:
             self._callback_state.active = False
 
@@ -231,11 +313,13 @@ class ExactProfileSampler:
     def _stop_for_overflow(self) -> None:
         """Uninstall hooks and finalize the registry session after max_events."""
         self.stop()
+        with self._lock:
+            dropped_events = self._dropped_events
         try:
             _ = self.registry.stop(
                 self.profile_id,
                 overflow=True,
-                dropped_events=self._dropped_events,
+                dropped_events=dropped_events,
             )
         except KeyError:
             return
