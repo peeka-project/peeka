@@ -423,6 +423,7 @@ class PeekaAgent(
     # Seconds a log broadcast may wait on one client before evicting it.
     _LOG_SEND_TIMEOUT = 1.0
     _STOP_DRAIN_TIMEOUT = 0.15
+    _STOP_OBSERVATION_DRAIN_TIMEOUT = 0.3
     _STOP_CONCURRENT_WAIT_TIMEOUT = 5.0
     _RESET_DRAIN_TIMEOUT = 0.05
     _START_RESET_WAIT_TIMEOUT = 1.0
@@ -500,6 +501,7 @@ class PeekaAgent(
         self._observation_queue_lock = _rpl.allocate_lock()
         self._observation_sequence = 0
         self._observation_flush_event = _rpl.create_event()
+        self._flush_lock = _rpl.allocate_lock()
         self._flush_thread_running = False
         self._flush_thread_id: Optional[int] = None
         self._mutation_lock = _rpl.allocate_rlock()  # DOMAIN: mixed (command orchestration)
@@ -1437,15 +1439,31 @@ class PeekaAgent(
             self._observation_queue_flushers.pop(conn, None)
         return connection_count
 
+    def _get_flush_lock(self) -> Any:
+        """Return the lock serializing observation queue flush passes."""
+        lock = getattr(self, "_flush_lock", None)
+        if lock is None:
+            lock = _rpl.allocate_lock()
+            self._flush_lock = lock
+        return lock
+
     def _start_flush_thread(self) -> None:
         """Start the observation queue flush worker on a native thread."""
         if self._flush_thread_id is not None:
             return
+        if getattr(self, "_stopping", False) or getattr(self, "_stopped", False):
+            return
+        self._get_flush_lock()
         self._flush_thread_running = True
-        thread_id = _rpl.start_thread(
-            self._flush_loop,
-            name="peeka-observation-flusher",
-        )
+        try:
+            thread_id = _rpl.start_thread(
+                self._flush_loop,
+                name="peeka-observation-flusher",
+            )
+        except Exception:
+            self._flush_thread_running = False
+            self._flush_thread_id = None
+            return
         self._flush_thread_id = thread_id
         with self._observation_queue_lock:
             for conn in self._observation_queues:
@@ -1453,11 +1471,20 @@ class PeekaAgent(
 
     def _flush_loop(self) -> None:
         """Flush queued observations to stream sockets until the agent stops."""
+        flush_lock = self._get_flush_lock()
         while self._flush_thread_running:
             try:
                 self._observation_flush_event.wait(timeout=0.05)
                 self._observation_flush_event.clear()
-                self._flush_all_connections()
+                if not self._flush_thread_running:
+                    break
+                while self._flush_thread_running:
+                    with flush_lock:
+                        if not self._flush_thread_running:
+                            break
+                        has_more = self._flush_all_connections()
+                    if not has_more:
+                        break
             except Exception:
                 self._emit_log(
                     "ERROR",
@@ -1465,18 +1492,65 @@ class PeekaAgent(
                     traceback.format_exc(),
                 )
 
-    def _flush_all_connections(self) -> None:
-        """Drain pending observation batches for all stream connections."""
+    @staticmethod
+    def _close_connection_quietly(conn: Any) -> None:
+        """Best-effort shutdown and close for a client socket or mock."""
+        try:
+            conn.shutdown(socket.SHUT_RDWR)
+        except Exception:
+            pass
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    def _flush_all_connections(
+        self,
+        *,
+        send_timeout: float = 0.1,
+        skip_conns: Optional[Set[Any]] = None,
+    ) -> bool:
+        """Drain pending observation batches for all stream connections.
+
+        Returns:
+            True when any remaining stream connection still has queued items.
+        """
         dead_connections = []
         with self._observation_queue_lock:
-            conn_list = list(self._observation_queues.keys())
+            conn_list = [
+                conn
+                for conn in self._observation_queues.keys()
+                if skip_conns is None or conn not in skip_conns
+            ]
 
         for conn in conn_list:
-            if not self._flush_connection(conn):
+            ok = (
+                self._flush_connection(conn)
+                if send_timeout == 0.1
+                else self._flush_connection(conn, send_timeout=send_timeout)
+            )
+            if not ok:
                 dead_connections.append(conn)
 
+        is_stopping = bool(getattr(self, "_stopping", False))
+        detaching_connections = set(
+            getattr(self, "_detaching_connections", ()) or ()
+        )
         for conn in dead_connections:
-            self._evict_client_connection(conn)
+            if skip_conns is not None:
+                skip_conns.add(conn)
+            if is_stopping:
+                if conn not in detaching_connections:
+                    self._close_connection_quietly(conn)
+            else:
+                self._evict_client_connection(conn)
+
+        with self._observation_queue_lock:
+            return any(
+                len(queue) > 0
+                for conn, queue in self._observation_queues.items()
+                if skip_conns is None or conn not in skip_conns
+            )
 
     def _encode_observation_frame(self, observation: Any) -> Optional[bytes]:
         """Encode one queued observation as an OBS frame."""
@@ -1490,7 +1564,9 @@ class PeekaAgent(
             return None
         return b"OBS:" + len(payload).to_bytes(4, "big") + payload
 
-    def _flush_connection(self, conn: socket.socket) -> bool:
+    def _flush_connection(
+        self, conn: socket.socket, send_timeout: float = 0.1
+    ) -> bool:
         """Flush a bounded batch for one connection; return False if dead."""
         max_batch_count = 64
         max_batch_bytes = 256 * 1024
@@ -1550,8 +1626,18 @@ class PeekaAgent(
         if not frames:
             return True
 
-        if not self._send_observation_frames_with_timeout(conn, bytes(frames)):
-            self._record_slow_client_eviction(conn)
+        send_ok = (
+            self._send_observation_frames_with_timeout(conn, bytes(frames))
+            if send_timeout == 0.1
+            else self._send_observation_frames_with_timeout(
+                conn, bytes(frames), timeout=send_timeout
+            )
+        )
+        if not send_ok:
+            if getattr(self, "_stopping", False):
+                self._record_drain_dropped(conn, encoded_count)
+            else:
+                self._record_slow_client_eviction(conn)
             return False
 
         with self._observation_queue_lock:
@@ -1559,6 +1645,18 @@ class PeekaAgent(
             if stats is not None:
                 stats["delivered"] += encoded_count
         return True
+
+    def _record_drain_dropped(self, conn: Any, count: int) -> None:
+        """Record observations that could not be drained before stop timeout."""
+        if count <= 0:
+            return
+        with self._observation_queue_lock:
+            stats = self._observation_queue_stats.get(conn)
+            if stats is not None:
+                stats["drain_dropped"] = stats.get("drain_dropped", 0) + count
+                stats["drain_dropped_count"] = (
+                    stats.get("drain_dropped_count", 0) + count
+                )
 
     def _record_slow_client_eviction(self, conn: socket.socket) -> None:
         """Increment slow-client eviction counters for a stream connection."""
@@ -1596,7 +1694,10 @@ class PeekaAgent(
                     write_lock.release()
                 done.set()
 
-        _rpl.start_thread(_worker, name="peeka-observation-send-fallback")
+        try:
+            _rpl.start_thread(_worker, name="peeka-observation-send-fallback")
+        except Exception:
+            return False
         if not done.wait(timeout=timeout):
             return False
         return result["ok"]
@@ -1959,6 +2060,76 @@ class PeekaAgent(
                     if tok.cmd_id in self._inflight_commands:
                         tok.cancelled_by_stop = True
 
+    def _drain_observation_queues_for_stop(self, timeout: float = 0.3) -> None:
+        """Synchronously drain pending and in-flight observation batches within a bound."""
+        deadline = _rpl.perf_counter() + max(0.0, timeout)
+        flush_lock = self._get_flush_lock()
+        remaining = max(0.0, deadline - _rpl.perf_counter())
+        if remaining > 0:
+            acquired = bool(flush_lock.acquire(True, remaining))
+        else:
+            acquired = bool(flush_lock.acquire(False))
+
+        failed_conns: Set[Any] = set()
+        if acquired:
+            try:
+                while _rpl.perf_counter() < deadline:
+                    remaining = deadline - _rpl.perf_counter()
+                    if remaining <= 0:
+                        break
+                    per_conn_timeout = min(0.1, remaining)
+                    has_more = self._flush_all_connections(
+                        send_timeout=per_conn_timeout,
+                        skip_conns=failed_conns,
+                    )
+                    if not has_more:
+                        break
+            finally:
+                flush_lock.release()
+
+        with self._observation_queue_lock:
+            for conn, queue in list(self._observation_queues.items()):
+                remaining_items = len(queue)
+                if remaining_items <= 0:
+                    continue
+                stats = self._observation_queue_stats.get(conn)
+                if stats is not None:
+                    stats["drain_dropped"] = (
+                        stats.get("drain_dropped", 0) + remaining_items
+                    )
+                    stats["drain_dropped_count"] = (
+                        stats.get("drain_dropped_count", 0) + remaining_items
+                    )
+                queue.clear()
+
+    def _close_remaining_client_connections(self) -> None:
+        """Close non-detaching client connections kept open for observation draining."""
+        conn_lock = getattr(self, "_connections_lock", None)
+        if conn_lock is not None:
+            with conn_lock:
+                connections = list(getattr(self, "_client_connections", ()))
+                detaching_connections = set(
+                    getattr(self, "_detaching_connections", ()) or ()
+                )
+        else:
+            connections = list(getattr(self, "_client_connections", ()))
+            detaching_connections = set(
+                getattr(self, "_detaching_connections", ()) or ()
+            )
+        queue_lock = getattr(self, "_observation_queue_lock", None)
+        if queue_lock is not None:
+            with queue_lock:
+                connections += list(getattr(self, "_observation_queues", {}))
+        else:
+            connections += list(getattr(self, "_observation_queues", {}))
+
+        seen: Set[Any] = set()
+        for conn in connections:
+            if conn in seen or conn in detaching_connections:
+                continue
+            seen.add(conn)
+            self._close_connection_quietly(conn)
+
     def stop(self, timeout: Optional[float] = None) -> bool:
         """Stop the agent and clean up all resources once.
 
@@ -2023,29 +2194,10 @@ class PeekaAgent(
             )
 
             self._signal_observation_queue_drain()
-
-            drain_deadline = _time.monotonic() + 0.3
-            while _time.monotonic() < drain_deadline:
-                with self._observation_queue_lock:
-                    total_queued = sum(
-                        len(queue) for queue in self._observation_queues.values()
-                    )
-                if total_queued == 0:
-                    break
-                _time.sleep(0.01)
-
-            with self._observation_queue_lock:
-                for conn, queue in list(self._observation_queues.items()):
-                    remaining = len(queue)
-                    if remaining <= 0:
-                        continue
-                    stats = self._observation_queue_stats.get(conn)
-                    if stats is not None:
-                        stats["drain_dropped"] = stats.get("drain_dropped", 0) + remaining
-                        stats["drain_dropped_count"] = (
-                            stats.get("drain_dropped_count", 0) + remaining
-                        )
-                    queue.clear()
+            self._drain_observation_queues_for_stop(
+                timeout=getattr(self, "_STOP_OBSERVATION_DRAIN_TIMEOUT", 0.3)
+            )
+            self._close_remaining_client_connections()
             if self.server:
                 try:
                     self.server.close()

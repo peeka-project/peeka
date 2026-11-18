@@ -702,3 +702,154 @@ class TestObservationQueueLifecycle:
         agent.stop()
 
         assert lifecycle_events == ["uninject_all", "drain_signal"]
+
+    def test_stop_delivers_queued_frames_to_socket_before_closing(self) -> None:
+        agent = _make_agent()
+        server_sock, client_sock = socket.socketpair()
+
+        try:
+            agent._register_client_connection(server_sock, kind="stream")
+            queue = _observation_queues(agent)[server_sock]
+            for index in range(3):
+                queue.append(_make_obs_frame(f"evt_stop_deliver_{index}"))
+
+            agent.stop()
+
+            received = _recv_obs_until(client_sock, expected_count=3, timeout=1.0)
+            assert [obs["event_id"] for obs in received] == [
+                "evt_stop_deliver_0",
+                "evt_stop_deliver_1",
+                "evt_stop_deliver_2",
+            ]
+            # Socket must reach clean EOF after queued frames are drained.
+            client_sock.settimeout(0.5)
+            assert client_sock.recv(1024) == b""
+        finally:
+            agent._unregister_client_connection(server_sock)
+            server_sock.close()
+            client_sock.close()
+
+    def test_stop_waits_for_inflight_flush_worker_before_closing_socket(self) -> None:
+        agent = _make_agent()
+        server_sock, client_sock = socket.socketpair()
+        entered_send = threading.Event()
+        release_send = threading.Event()
+        orig_send = agent._send_observation_frames_with_timeout
+
+        def gated_send(
+            conn: socket.socket, frames: bytes, timeout: float = 0.1
+        ) -> bool:
+            entered_send.set()
+            assert release_send.wait(timeout=2.0)
+            return orig_send(conn, frames, timeout=timeout)
+
+        agent._send_observation_frames_with_timeout = gated_send  # type: ignore[method-assign]
+        stop_finished = threading.Event()
+
+        try:
+            agent._register_client_connection(server_sock, kind="stream")
+            agent._send_observation({"event_id": "evt_inflight_1", "probe_id": "prb_q"})
+            agent._send_observation({"event_id": "evt_inflight_2", "probe_id": "prb_q"})
+
+            assert entered_send.wait(timeout=2.0)
+            # Queue has already been popped by the flush worker while send is in flight.
+            assert _observation_queues(agent)[server_sock].empty()
+
+            stop_thread = threading.Thread(
+                target=lambda: (agent.stop(), stop_finished.set()),
+                daemon=True,
+            )
+            stop_thread.start()
+
+            # stop() must wait for the in-flight batch rather than closing early.
+            assert not stop_finished.wait(timeout=0.05)
+
+            release_send.set()
+            stop_thread.join(timeout=2.0)
+            assert stop_finished.is_set()
+
+            received = _recv_obs_until(client_sock, expected_count=2, timeout=1.0)
+            assert [obs["event_id"] for obs in received] == [
+                "evt_inflight_1",
+                "evt_inflight_2",
+            ]
+        finally:
+            release_send.set()
+            agent._unregister_client_connection(server_sock)
+            server_sock.close()
+            client_sock.close()
+
+    def test_stop_drains_synchronously_when_native_threads_unavailable(
+        self, monkeypatch
+    ) -> None:
+        agent = _make_agent()
+        server_sock, client_sock = socket.socketpair()
+
+        def fail_start_thread(*args: Any, **kwargs: Any) -> int:
+            raise RuntimeError("can't create new thread at interpreter shutdown")
+
+        monkeypatch.setattr(agent_module._rpl, "start_thread", fail_start_thread)
+
+        try:
+            # Register while native thread creation fails (simulating shutdown/atexit).
+            agent._register_client_connection(server_sock, kind="stream")
+            assert agent._flush_thread_id is None
+            assert agent._flush_thread_running is False
+
+            # Exceed max_batch_count (64) to verify multi-batch synchronous drain.
+            for index in range(70):
+                agent._send_observation(
+                    {"event_id": f"evt_sync_drain_{index}", "probe_id": "prb_q"}
+                )
+
+            agent.stop()
+
+            received = _recv_obs_until(client_sock, expected_count=70, timeout=1.0)
+            assert len(received) == 70
+            assert received[0]["event_id"] == "evt_sync_drain_0"
+            assert received[-1]["event_id"] == "evt_sync_drain_69"
+        finally:
+            agent._unregister_client_connection(server_sock)
+            server_sock.close()
+            client_sock.close()
+
+    def test_stop_drains_fast_client_even_when_peer_client_stalled(self) -> None:
+        agent = _make_agent()
+        entered_send = threading.Event()
+        release_send = threading.Event()
+        stalled_conn = cast(
+            socket.socket,
+            cast(object, _BlockingObservationConnection(entered_send, release_send)),
+        )
+        fast_server, fast_client = socket.socketpair()
+
+        try:
+            agent._register_client_connection(stalled_conn, kind="stream")
+            agent._register_client_connection(fast_server, kind="stream")
+            queues = _observation_queues(agent)
+            stats = _observation_queue_stats(agent)
+
+            for index in range(5):
+                queues[stalled_conn].put_nowait(_make_obs_frame(f"evt_stalled_{index}"))
+            for index in range(3):
+                queues[fast_server].put_nowait(_make_obs_frame(f"evt_fast_{index}"))
+
+            started_at = time.monotonic()
+            agent.stop()
+            elapsed = time.monotonic() - started_at
+
+            assert elapsed <= STOP_DRAIN_BOUND_SECONDS
+            assert _drain_dropped_count(stats[stalled_conn]) == 5
+            received = _recv_obs_until(fast_client, expected_count=3, timeout=1.0)
+            assert [obs["event_id"] for obs in received] == [
+                "evt_fast_0",
+                "evt_fast_1",
+                "evt_fast_2",
+            ]
+        finally:
+            release_send.set()
+            agent._unregister_client_connection(stalled_conn)
+            agent._unregister_client_connection(fast_server)
+            cast(Any, stalled_conn).close()
+            fast_server.close()
+            fast_client.close()

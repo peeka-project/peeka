@@ -60,27 +60,37 @@ def shutdown_agent_resources(
             step_errors[step_name] = str(exc)
             return None
 
-    # Wake blocked socket readers before potentially lengthy cleanup.
+    # Wake blocked non-stream socket readers before potentially lengthy cleanup.
+    # Stream connections (and queued observation sockets) must stay open until
+    # PeekaAgent.stop() finishes draining pending observations.
     lock = getattr(agent, "_connections_lock", None)
     if lock is not None:
         with lock:
             connections = list(getattr(agent, "_client_connections", ()))
+            connection_kinds = dict(
+                getattr(agent, "_client_connection_kinds", {}) or {}
+            )
             detaching_connections = set(
                 getattr(agent, "_detaching_connections", ()) or ()
             )
     else:
         connections = list(getattr(agent, "_client_connections", ()))
+        connection_kinds = dict(
+            getattr(agent, "_client_connection_kinds", {}) or {}
+        )
         detaching_connections = set(
             getattr(agent, "_detaching_connections", ()) or ()
         )
     queue_lock = getattr(agent, "_observation_queue_lock", None)
     if queue_lock is not None:
         with queue_lock:
-            connections += list(getattr(agent, "_observation_queues", {}))
+            stream_connections = set(getattr(agent, "_observation_queues", {}))
     else:
-        connections += list(getattr(agent, "_observation_queues", {}))
+        stream_connections = set(getattr(agent, "_observation_queues", {}))
     for conn in connections:
         if conn in detaching_connections:
+            continue
+        if conn in stream_connections or connection_kinds.get(conn) == "stream":
             continue
         try:
             conn.shutdown(socket.SHUT_RDWR)
