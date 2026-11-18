@@ -12,7 +12,7 @@ import socket
 import threading
 import uuid
 from pathlib import Path
-from typing import Any, Callable, Dict, Generator, Optional
+from typing import Any, Callable, Dict, Generator, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +35,40 @@ def _build_client_info(
     if client_info:
         info.update(client_info)
     return info
+
+
+def _uncertain_rpc_error(reason: str) -> Dict[str, Any]:
+    """Build an error response for an RPC whose request was already sent."""
+    detail = (
+        f"{reason}; request was already sent, mutation outcome is uncertain, "
+        "and command was not retried"
+    )
+    return {
+        "status": "error",
+        "error_code": "TRANSPORT_ERROR",
+        "error": detail,
+        "message": detail,
+        "outcome_uncertain": True,
+        "retried": False,
+        "hint": (
+            "The command may already have taken effect on the agent; "
+            "inspect state before retrying manually."
+        ),
+    }
+
+
+def _close_socket_quietly(sock: Optional[socket.socket]) -> None:
+    """Best-effort shutdown and close for a client socket or mock."""
+    if sock is None:
+        return
+    try:
+        sock.shutdown(socket.SHUT_RDWR)
+    except Exception:
+        pass
+    try:
+        sock.close()
+    except Exception:
+        pass
 
 
 class AgentClient:
@@ -86,12 +120,14 @@ class AgentClient:
                 "hint": "Ensure the target process is running and attach succeeded.",
             }
 
+        send_attempted = False
         try:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
                 sock.settimeout(self.timeout)
                 sock.connect(self.socket_path)
 
                 payload = json.dumps(self._attach_client_info(command)).encode("utf-8")
+                send_attempted = True
                 sock.sendall(len(payload).to_bytes(4, "big"))
                 sock.sendall(payload)
 
@@ -105,10 +141,17 @@ class AgentClient:
                     if not data:
                         raise TimeoutError("No response payload received")
 
-                return json.loads(data.decode("utf-8"))
+                result = json.loads(data.decode("utf-8"))
+                if not isinstance(result, dict):
+                    raise ValueError(
+                        f"Expected JSON object response, got {type(result).__name__}"
+                    )
+                return result
 
         except Exception as exc:
             logger.debug("Command failed on %s: %s", self.socket_path, exc)
+            if send_attempted:
+                return _uncertain_rpc_error(str(exc))
             return {
                 "status": "error",
                 "error": str(exc),
@@ -178,6 +221,13 @@ class StreamingAgentClient:
         # partial frames. Never held while yielding to the caller.
         # Signal handlers may disconnect on the same thread during recv().
         self._stream_read_lock = threading.RLock()
+        # Protects tiny non-blocking state transitions (``_sock``,
+        # ``_connection_generation``, ``_stop_event``); never held across I/O
+        # or activity callbacks. Lock order: _send_lock -> _stream_read_lock -> _state_lock.
+        self._state_lock = threading.RLock()
+        self._connection_generation = 0
+        self._last_recv_error: Optional[str] = None
+        self._active_rpc: Optional[Tuple[socket.socket, int]] = None
         self._activity_reporter = activity_reporter
         self._client_info = _build_client_info(client_info, "cli")
         self._identify_on_connect = client_info is not None
@@ -216,27 +266,101 @@ class StreamingAgentClient:
         return payload
 
     @contextmanager
-    def _temporary_rpc_timeout(self) -> Generator[None, None, None]:
+    def _temporary_rpc_timeout(
+        self, sock: Optional[socket.socket] = None
+    ) -> Generator[None, None, None]:
         """Temporarily widen socket timeout while awaiting an RPC response."""
-        if self._sock is None:
+        target_sock = sock if sock is not None else self._sock
+        if target_sock is None:
             yield
             return
 
-        previous_timeout = self._sock.gettimeout()
-        self._sock.settimeout(self.rpc_timeout)
+        previous_timeout = target_sock.gettimeout()
+        target_sock.settimeout(self.rpc_timeout)
         try:
             yield
         finally:
-            if self._sock is not None:
-                self._sock.settimeout(previous_timeout)
+            try:
+                if self._sock is target_sock:
+                    target_sock.settimeout(previous_timeout)
+            except OSError:
+                pass
 
-    def _identify_connection(self) -> Dict[str, Any]:
+    def _invalidate_connection_with_generation(
+        self,
+        expected_sock: Optional[socket.socket] = None,
+        expected_generation: Optional[int] = None,
+    ) -> Tuple[bool, int]:
+        """Close active socket if it matches and return ``(had_socket, new_generation)``."""
+        with self._state_lock:
+            if expected_sock is not None and self._sock is not expected_sock:
+                return False, self._connection_generation
+            if (
+                expected_generation is not None
+                and self._connection_generation != expected_generation
+            ):
+                return False, self._connection_generation
+            sock = self._sock
+            had_socket = sock is not None
+            self._sock = None
+            self._connection_generation += 1
+            invalidated_gen = self._connection_generation
+            self._stop_event.set()
+
+        _close_socket_quietly(sock)
+        with self._stream_read_lock:
+            with self._state_lock:
+                if self._connection_generation == invalidated_gen:
+                    self._buffer = b""
+        return had_socket, invalidated_gen
+
+    def _invalidate_connection(
+        self,
+        expected_sock: Optional[socket.socket] = None,
+        expected_generation: Optional[int] = None,
+    ) -> bool:
+        """Close the active socket and advance connection generation if it matches."""
+        had_socket, _ = self._invalidate_connection_with_generation(
+            expected_sock=expected_sock,
+            expected_generation=expected_generation,
+        )
+        return had_socket
+
+    def _identify_connection(
+        self,
+        expected_sock: Optional[socket.socket] = None,
+        expected_gen: Optional[int] = None,
+    ) -> Dict[str, Any]:
         """Send a lightweight identity frame for stream-only connections."""
-        return self.send_command({"type": "client", "action": "hello"})
+        if expected_sock is None or expected_gen is None:
+            return self.send_command({"type": "client", "action": "hello"})
+
+        command: Dict[str, Any] = {"type": "client", "action": "hello"}
+        summary = self._summarize_command(command)
+        pending_activity: Optional[Tuple[str, str]] = None
+
+        with self._send_lock:
+            with self._state_lock:
+                if (
+                    self._sock is not expected_sock
+                    or self._connection_generation != expected_gen
+                ):
+                    return {
+                        "status": "error",
+                        "error": "Disconnected during connect",
+                    }
+            result, pending_activity = self._send_command_locked(
+                expected_sock, expected_gen, command, summary
+            )
+
+        if pending_activity is not None:
+            self._report_activity(pending_activity[0], pending_activity[1])
+        return result
 
     def connect(self) -> Dict[str, Any]:
         """Connect to the agent socket."""
         if not Path(self.socket_path).exists():
+            self._invalidate_connection()
             result = {
                 "status": "error",
                 "error": f"Agent socket not found: {self.socket_path}",
@@ -244,44 +368,173 @@ class StreamingAgentClient:
             self._report_activity("ERROR", f"connect failed: {result['error']}")
             return result
 
+        _, attempt_gen = self._invalidate_connection_with_generation()
+        sock: Optional[socket.socket] = None
+        published_gen: Optional[int] = None
         try:
-            self._sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            self._sock.settimeout(self.timeout if self.timeout else 1.0)
-            self._sock.connect(self.socket_path)
-            self._stop_event.clear()
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock.settimeout(self.timeout if self.timeout else 1.0)
+            sock.connect(self.socket_path)
+            with self._stream_read_lock:
+                with self._state_lock:
+                    if self._connection_generation != attempt_gen:
+                        stale = True
+                    else:
+                        self._sock = sock
+                        self._connection_generation += 1
+                        published_gen = self._connection_generation
+                        self._stop_event.clear()
+                        self._buffer = b""
+                        stale = False
+
+            if stale:
+                _close_socket_quietly(sock)
+                error = "Disconnected during connect"
+                self._report_activity("ERROR", f"connect failed: {error}")
+                return {"status": "error", "error": error}
+
             if self._identify_on_connect:
-                hello_result = self._identify_connection()
+                assert published_gen is not None
+                hello_result = self._identify_connection(sock, published_gen)
                 if hello_result.get("status") != "success":
-                    self.disconnect()
+                    self._invalidate_connection(
+                        expected_sock=sock, expected_generation=published_gen
+                    )
+                    _close_socket_quietly(sock)
                     error = hello_result.get("error", "client identification failed")
                     self._report_activity("ERROR", f"connect failed: {error}")
                     return {"status": "error", "error": error}
+                with self._state_lock:
+                    still_owns = (
+                        self._sock is sock
+                        and self._connection_generation == published_gen
+                    )
+                if not still_owns:
+                    _close_socket_quietly(sock)
+                    error = "Disconnected during connect"
+                    self._report_activity("ERROR", f"connect failed: {error}")
+                    return {"status": "error", "error": error}
+
             self._report_activity("INFO", "connected")
             return {"status": "success"}
         except Exception as e:
             logger.debug("Connection to %s failed: %s", self.socket_path, e)
-            self._sock = None
+            _close_socket_quietly(sock)
+            if published_gen is not None:
+                self._invalidate_connection(
+                    expected_sock=sock, expected_generation=published_gen
+                )
+            else:
+                self._invalidate_connection(expected_generation=attempt_gen)
             self._report_activity("ERROR", f"connect failed: {e}")
             return {"status": "error", "error": str(e)}
 
     def disconnect(self) -> None:
         """Close the connection and signal streaming loops to stop."""
-        had_socket = self._sock is not None
-        self._stop_event.set()
-        if self._sock:
-            try:
-                self._sock.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
-            try:
-                self._sock.close()
-            except Exception:
-                pass
-            self._sock = None
-        with self._stream_read_lock:
-            self._buffer = b""
-        if had_socket:
+        if self._invalidate_connection():
             self._report_activity("INFO", "disconnected")
+
+    def _fail_post_send_rpc(
+        self,
+        sock: socket.socket,
+        conn_gen: int,
+        summary: str,
+        reason: str,
+    ) -> Tuple[Dict[str, Any], Tuple[str, str]]:
+        """Invalidate a desynchronized connection and build an uncertain-outcome error."""
+        self._invalidate_connection(expected_sock=sock, expected_generation=conn_gen)
+        result = _uncertain_rpc_error(reason)
+        return result, ("ERROR", f"{summary} failed: {result['error']}")
+
+    def _no_response_reason(self) -> str:
+        """Describe why a response header read yielded no bytes."""
+        if self._last_recv_error == "timeout":
+            return "No response received (timed out)"
+        if self._last_recv_error == "eof":
+            return "No response received (connection closed by peer)"
+        return "No response received"
+
+    def _send_command_locked(
+        self,
+        sock: socket.socket,
+        conn_gen: int,
+        command: Dict[str, Any],
+        summary: str,
+    ) -> Tuple[Dict[str, Any], Optional[Tuple[str, str]]]:
+        """Execute one serialized RPC while holding ``_send_lock``."""
+        try:
+            payload = json.dumps(self._attach_client_info(command)).encode("utf-8")
+        except Exception as e:
+            logger.debug("send_command serialization error: %s", e)
+            return {"status": "error", "error": str(e)}, ("ERROR", f"{summary} failed: {e}")
+
+        try:
+            self._active_rpc = (sock, conn_gen)
+            sock.sendall(len(payload).to_bytes(4, "big"))
+            sock.sendall(payload)
+
+            with self._temporary_rpc_timeout(sock):
+                # Drain any OBS frames that arrived before the response
+                self._drain_obs_frames()
+
+                length_bytes = self._recv_exact(4)
+                if not length_bytes:
+                    return self._fail_post_send_rpc(
+                        sock, conn_gen, summary, self._no_response_reason()
+                    )
+
+                # After _recv_exact we may have read more data into _buffer.
+                # If the 4 bytes we got look like the OBS or LOG prefix, drain and retry.
+                while length_bytes == self.OBS_PREFIX or length_bytes == self.LOG_PREFIX:
+                    obs_len_bytes = self._recv_exact(4)
+                    if not obs_len_bytes:
+                        return self._fail_post_send_rpc(
+                            sock, conn_gen, summary, "Truncated frame"
+                        )
+                    obs_len = int.from_bytes(obs_len_bytes, "big")
+                    if obs_len > 0:
+                        obs_data = self._recv_exact(obs_len)
+                        if not obs_data:
+                            return self._fail_post_send_rpc(
+                                sock, conn_gen, summary, "Truncated payload"
+                            )
+                    self._drain_obs_frames()
+                    length_bytes = self._recv_exact(4)
+                    if not length_bytes:
+                        return self._fail_post_send_rpc(
+                            sock, conn_gen, summary, self._no_response_reason()
+                        )
+
+                length = int.from_bytes(length_bytes, "big")
+                data = self._recv_exact(length)
+                if not data:
+                    return self._fail_post_send_rpc(
+                        sock, conn_gen, summary, "Incomplete response"
+                    )
+
+            try:
+                result = json.loads(data.decode("utf-8"))
+                if not isinstance(result, dict):
+                    raise ValueError(
+                        f"Expected JSON object response, got {type(result).__name__}"
+                    )
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as e:
+                return self._fail_post_send_rpc(
+                    sock, conn_gen, summary, f"Invalid response payload ({e})"
+                )
+
+            if result.get("status") == "error":
+                return result, (
+                    "ERROR",
+                    f"{summary} failed: {result.get('error', 'unknown error')}",
+                )
+            return result, None
+
+        except Exception as e:
+            logger.debug("send_command error: %s", e)
+            return self._fail_post_send_rpc(sock, conn_gen, summary, str(e))
+        finally:
+            self._active_rpc = None
 
     def send_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
         """Send a command and receive the immediate response.
@@ -294,125 +547,139 @@ class StreamingAgentClient:
 
         A lock serialises concurrent callers (e.g. Textual worker threads
         issuing commands and completions simultaneously) so that only one
-        send/receive cycle uses the socket at a time.
+        send/receive cycle uses the socket at a time.  If an RPC fails after
+        sending (timeout, truncation, parse error, or socket error), the
+        connection is invalidated rather than reused or retried so subsequent
+        calls never consume a delayed/stale reply.
         """
         summary = self._summarize_command(command)
-        if not self._sock:
-            self._report_activity("ERROR", f"{summary} failed: not connected")
-            return {"status": "error", "error": "Not connected"}
+        pending_activity: Optional[Tuple[str, str]] = None
 
         with self._send_lock:
-            try:
-                payload = json.dumps(self._attach_client_info(command)).encode("utf-8")
-                self._sock.sendall(len(payload).to_bytes(4, "big"))
-                self._sock.sendall(payload)
+            with self._state_lock:
+                sock = self._sock
+                conn_gen = self._connection_generation
 
-                with self._temporary_rpc_timeout():
-                    # Drain any OBS frames that arrived before the response
-                    self._drain_obs_frames()
+            if sock is None:
+                pending_activity = ("ERROR", f"{summary} failed: not connected")
+                result = {"status": "error", "error": "Not connected"}
+            else:
+                result, pending_activity = self._send_command_locked(
+                    sock, conn_gen, command, summary
+                )
 
-                    length_bytes = self._recv_exact(4)
-                    if not length_bytes:
-                        self._report_activity(
-                            "ERROR", f"{summary} failed: no response received"
-                        )
-                        return {"status": "error", "error": "No response received"}
+        if pending_activity is not None:
+            self._report_activity(pending_activity[0], pending_activity[1])
+        return result
 
-                    # After _recv_exact we may have read more data into _buffer.
-                    # If the 4 bytes we got look like the OBS or LOG prefix, drain and retry.
-                    while length_bytes == self.OBS_PREFIX or length_bytes == self.LOG_PREFIX:
-                        # We just consumed the prefix — read & discard the payload
-                        obs_len_bytes = self._recv_exact(4)
-                        if not obs_len_bytes:
-                            self._report_activity("ERROR", f"{summary} failed: truncated frame")
-                            return {"status": "error", "error": "Truncated frame"}
-                        obs_len = int.from_bytes(obs_len_bytes, "big")
-                        obs_data = self._recv_exact(obs_len)
-                        if not obs_data:
-                            self._report_activity(
-                                "ERROR", f"{summary} failed: truncated payload"
-                            )
-                            return {"status": "error", "error": "Truncated payload"}
-                        # Try reading the next 4 bytes (hopefully the real response)
-                        self._drain_obs_frames()
-                        length_bytes = self._recv_exact(4)
-                        if not length_bytes:
-                            self._report_activity(
-                                "ERROR", f"{summary} failed: no response received"
-                            )
-                            return {"status": "error", "error": "No response received"}
-
-                    length = int.from_bytes(length_bytes, "big")
-                    data = self._recv_exact(length)
-                    if not data:
-                        result = {"status": "error", "error": "Incomplete response"}
-                        self._report_activity(
-                            "ERROR", f"{summary} failed: incomplete response"
-                        )
-                        return result
-
-                result = json.loads(data.decode("utf-8"))
-                if result.get("status") == "error":
-                    self._report_activity(
-                        "ERROR",
-                        f"{summary} failed: {result.get('error', 'unknown error')}",
-                    )
-                return result
-
-            except Exception as e:
-                logger.debug("send_command error: %s", e)
-                self._report_activity("ERROR", f"{summary} failed: {e}")
-                return {"status": "error", "error": str(e)}
+    def _drain_buffered_observations(self) -> List[Dict[str, Any]]:
+        """Extract all complete observation frames currently in ``_buffer``."""
+        frames: List[Dict[str, Any]] = []
+        while True:
+            obs = self._extract_observation()
+            if obs is None:
+                break
+            frames.append(obs)
+        return frames
 
     def stream_observations(self) -> Generator[Dict[str, Any], None, None]:
         """
         Yield observations as they arrive from the agent.
 
         This generator blocks waiting for observations. Use with a timeout
-        or run in a separate thread. Exits when connection closes or on error.
+        or run in a separate thread. Exits when connection closes, reconnects
+        to a new generation, or encounters an error.
         """
-        if not self._sock:
-            return
+        with self._state_lock:
+            if not self._sock:
+                return
+            reader_gen = self._connection_generation
 
-        while not self._stop_event.is_set():
-            # Read and parse under the lock, but yield outside of it so a
-            # slow consumer never blocks other users of the socket/buffer.
-            pending = []
+        while True:
+            # Read and parse under the lock, but yield and report activity
+            # outside of it so a slow consumer or callback never blocks other
+            # users of the socket/buffer.
+            pending: List[Dict[str, Any]] = []
             should_break = False
+            pending_activity: Optional[Tuple[str, str]] = None
             try:
                 with self._stream_read_lock:
-                    sock = self._sock
-                    if sock is None:
-                        break
-                    chunk = sock.recv(4096)
-                    if not chunk:
-                        if not self._stop_event.is_set():
-                            self._report_activity(
-                                "WARNING", "observation stream closed by peer"
-                            )
-                        should_break = True
-                    else:
-                        self._buffer += chunk
-                        while True:
-                            obs = self._extract_observation()
-                            if obs is None:
-                                break
-                            pending.append(obs)
+                    with self._state_lock:
+                        if (
+                            self._stop_event.is_set()
+                            or self._connection_generation != reader_gen
+                            or self._sock is None
+                        ):
+                            should_break = True
+                        sock = self._sock
+
+                    if not should_break:
+                        # Parse any trailing complete frames already buffered
+                        # (e.g. read ahead by send_command) before blocking/EOF on recv.
+                        pending = self._drain_buffered_observations()
+
+                    if not should_break and not pending:
+                        assert sock is not None
+                        chunk = sock.recv(4096)
+                        if not chunk:
+                            with self._state_lock:
+                                same_gen = (
+                                    not self._stop_event.is_set()
+                                    and self._connection_generation == reader_gen
+                                )
+                            if same_gen:
+                                pending_activity = (
+                                    "WARNING",
+                                    "observation stream closed by peer",
+                                )
+                            should_break = True
+                        else:
+                            with self._state_lock:
+                                if (
+                                    self._stop_event.is_set()
+                                    or self._connection_generation != reader_gen
+                                ):
+                                    should_break = True
+                                else:
+                                    self._buffer += chunk
+                            if not should_break:
+                                pending = self._drain_buffered_observations()
             except socket.timeout:
                 continue
             except OSError as e:
-                if not self._stop_event.is_set():
-                    self._report_activity("WARNING", f"observation stream error: {e}")
-                break
+                with self._state_lock:
+                    same_gen = (
+                        not self._stop_event.is_set()
+                        and self._connection_generation == reader_gen
+                    )
+                if same_gen:
+                    pending_activity = ("WARNING", f"observation stream error: {e}")
+                should_break = True
             except Exception:
-                if not self._stop_event.is_set():
-                    self._report_activity(
-                        "WARNING", "observation stream crashed unexpectedly"
+                with self._state_lock:
+                    same_gen = (
+                        not self._stop_event.is_set()
+                        and self._connection_generation == reader_gen
+                    )
+                if same_gen:
+                    pending_activity = (
+                        "WARNING",
+                        "observation stream crashed unexpectedly",
                     )
                 logger.debug("Unexpected error in stream_observations", exc_info=True)
-                break
+                should_break = True
+
+            if pending_activity is not None:
+                self._report_activity(pending_activity[0], pending_activity[1])
 
             for obs in pending:
+                with self._state_lock:
+                    if (
+                        self._stop_event.is_set()
+                        or self._connection_generation != reader_gen
+                    ):
+                        should_break = True
+                        break
                 yield obs
 
             if should_break:
@@ -473,34 +740,78 @@ class StreamingAgentClient:
         broadcasts that arrived before the command response.  Only already-
         buffered data is considered — we never block waiting for more.
         """
-        while self._buffer.startswith(self.OBS_PREFIX) or self._buffer.startswith(self.LOG_PREFIX):
-            header_size = self.PREFIX_LEN + 4  # Prefix + 4-byte length
-            if len(self._buffer) < header_size:
-                break  # incomplete header — leave it for the next recv
-            obs_len = int.from_bytes(
-                self._buffer[self.PREFIX_LEN:header_size], "big"
-            )
-            total_size = header_size + obs_len
-            if len(self._buffer) < total_size:
-                break  # incomplete payload — leave it
-            self._buffer = self._buffer[total_size:]
+        active_rpc = self._active_rpc
+        with self._state_lock:
+            if active_rpc is not None:
+                pinned_sock, pinned_gen = active_rpc
+                if (
+                    self._connection_generation != pinned_gen
+                    or self._sock is not pinned_sock
+                ):
+                    return
+            while self._buffer.startswith(self.OBS_PREFIX) or self._buffer.startswith(
+                self.LOG_PREFIX
+            ):
+                header_size = self.PREFIX_LEN + 4  # Prefix + 4-byte length
+                if len(self._buffer) < header_size:
+                    break  # incomplete header — leave it for the next recv
+                obs_len = int.from_bytes(
+                    self._buffer[self.PREFIX_LEN:header_size], "big"
+                )
+                total_size = header_size + obs_len
+                if len(self._buffer) < total_size:
+                    break  # incomplete payload — leave it
+                self._buffer = self._buffer[total_size:]
 
-    def _recv_exact(self, size: int) -> bytes:
-        """Receive exactly ``size`` bytes, using buffer first."""
-        while len(self._buffer) < size:
-            if not self._sock:
-                return b""
-            try:
-                chunk = self._sock.recv(4096)
-                if not chunk:
-                    return b""
-                self._buffer += chunk
-            except socket.timeout:
-                return b""
-
+    def _consume_buffer(self, size: int) -> bytes:
+        """Pop ``size`` bytes from the front of ``_buffer``."""
         result = self._buffer[:size]
         self._buffer = self._buffer[size:]
         return result
+
+    def _recv_exact(self, size: int) -> bytes:
+        """Receive exactly ``size`` bytes, using buffer first."""
+        self._last_recv_error = None
+        active_rpc = self._active_rpc
+
+        while True:
+            if active_rpc is not None:
+                pinned_sock, pinned_gen = active_rpc
+                with self._state_lock:
+                    if (
+                        self._connection_generation != pinned_gen
+                        or self._sock is not pinned_sock
+                    ):
+                        self._last_recv_error = "disconnected"
+                        return b""
+                    if len(self._buffer) >= size:
+                        return self._consume_buffer(size)
+                sock: Optional[socket.socket] = pinned_sock
+            else:
+                if len(self._buffer) >= size:
+                    return self._consume_buffer(size)
+                sock = self._sock
+                if sock is None:
+                    self._last_recv_error = "disconnected"
+                    return b""
+
+            try:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    self._last_recv_error = "eof"
+                    return b""
+                if active_rpc is not None:
+                    _, pinned_gen = active_rpc
+                    with self._state_lock:
+                        if self._connection_generation != pinned_gen:
+                            self._last_recv_error = "disconnected"
+                            return b""
+                        self._buffer += chunk
+                else:
+                    self._buffer += chunk
+            except socket.timeout:
+                self._last_recv_error = "timeout"
+                return b""
 
     def __enter__(self) -> "StreamingAgentClient":
         self.connect()
