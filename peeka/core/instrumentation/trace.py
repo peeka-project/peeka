@@ -66,6 +66,7 @@ def _sanitize_call_tree_node(node: Dict[str, Any]) -> Dict[str, Any]:
     - ``_result``: raw return value (may be non-serialisable or very large)
     - ``_exception``: raw exception object (not JSON-serialisable)
     - ``_code``: code object reference from sys.monitoring backend
+    - ``_downgraded_backend`` / ``_downgrade_reason``: internal downgrade flags
 
     The ``_exception`` field is converted to a serialisable
     ``{"type": ..., "message": ...}`` dict stored under ``exception``.
@@ -82,6 +83,8 @@ def _sanitize_call_tree_node(node: Dict[str, Any]) -> Dict[str, Any]:
     sanitized = dict(node)
     sanitized.pop("_result", None)
     sanitized.pop("_code", None)
+    sanitized.pop("_downgraded_backend", None)
+    sanitized.pop("_downgrade_reason", None)
     exc = sanitized.pop("_exception", None)
     if exc is not None:
         sanitized["exception"] = {
@@ -220,6 +223,12 @@ class InjectorTraceMixin:
             # Sanitize call_tree root node before building observation
             # (strips _result / _exception / _code that must not be serialised).
             # The original call_tree is preserved unchanged for the return/raise below.
+            runtime_downgraded_backend = (
+                call_tree[0].get("_downgraded_backend") if call_tree else None
+            )
+            runtime_downgrade_reason = (
+                call_tree[0].get("_downgrade_reason") if call_tree else None
+            )
             sanitized_root = _sanitize_call_tree_node(call_tree[0]) if call_tree else None
             direct_callees = (
                 sanitized_root.get("direct_callees", []) if sanitized_root is not None else []
@@ -228,19 +237,31 @@ class InjectorTraceMixin:
             runtime_meta = None
             # Report the gevent downgrade whenever the non-monitoring path ran
             # wrapper-only under gevent: explicit settrace, auto backend on
-            # Python < 3.12 (implicitly settrace), or a pre-patched startup.
+            # Python < 3.12 (implicitly settrace), or a pre-patched startup;
+            # or when sys.monitoring slots were exhausted under gevent.
             dynamic_settrace_downgrade = (
                 effective_backend == BACKEND_WRAPPER_ONLY
                 and not use_monitoring
                 and _is_gevent_patched_now()
             )
-            if dynamic_settrace_downgrade:
+            monitoring_slot_downgrade = runtime_downgraded_backend == BACKEND_WRAPPER_ONLY
+            if dynamic_settrace_downgrade or monitoring_slot_downgrade:
+                downgrade_reason = (
+                    runtime_downgrade_reason
+                    if monitoring_slot_downgrade and runtime_downgrade_reason
+                    else "gevent_patched_runtime"
+                )
+                downgraded_backend = (
+                    runtime_downgraded_backend
+                    if monitoring_slot_downgrade
+                    else effective_backend
+                )
                 runtime_meta = {
                     "trace": {
                         "startup_backend": force_backend if force_backend else "auto",
-                        "effective_backend": effective_backend,
+                        "effective_backend": downgraded_backend,
                         "downgraded": True,
-                        "downgrade_reason": "gevent_patched_runtime",
+                        "downgrade_reason": downgrade_reason,
                         "gevent_patched_now": True,
                     }
                 }
