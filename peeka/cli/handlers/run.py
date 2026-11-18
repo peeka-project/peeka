@@ -11,7 +11,7 @@ import time
 import types
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 from peeka.cli.parsers.observe import build_monitor_run_parser
 from peeka.cli.parsers.observe import build_stack_run_parser
@@ -19,11 +19,52 @@ from peeka.cli.parsers.observe import build_trace_run_parser
 from peeka.cli.parsers.observe import build_watch_run_parser
 from peeka.core.probes import ProbeContext
 from peeka.cli.parsers.runtime import build_top_run_parser
+from peeka.cli.streaming import should_emit_observation
 from peeka.cli.streaming import stream_counted_limit
 from peeka.cli.streaming_config import STREAMING_COMMANDS
+from peeka.cli.streaming_config import StreamingCommandConfig
 from peeka.core.attach import ProcessAttacher
 from peeka.core.client import StreamingAgentClient
 from peeka.core.output import OutputFormatter
+
+
+_RUN_PARSER_BUILDERS = {
+    "watch": build_watch_run_parser,
+    "trace": build_trace_run_parser,
+    "stack": build_stack_run_parser,
+    "monitor": build_monitor_run_parser,
+    "top": build_top_run_parser,
+}
+
+
+def _parse_run_args(
+    command_type: str, command_parts: List[str]
+) -> Optional[argparse.Namespace]:
+    """Parse CLI args for a `run -- <command>` invocation."""
+    parser_builder = _RUN_PARSER_BUILDERS.get(command_type)
+    if parser_builder is None:
+        return None
+
+    parts = command_parts
+    if parts and parts[0] == command_type:
+        parts = parts[1:]
+
+    parser = argparse.ArgumentParser(prog=f"peeka-cli run ... -- {command_type}")
+    if command_type in ProbeContext.streaming_types() or command_type == "monitor":
+        if not parts:
+            return None
+        pattern = parts[0]
+        remaining = parts[1:]
+        parser_builder(parser)
+        parsed = parser.parse_args(remaining)
+        parsed.pattern = pattern
+        return parsed
+
+    if command_type == "top":
+        parser_builder(parser)
+        return parser.parse_args(parts)
+
+    return None
 
 
 def _build_run_command(
@@ -33,52 +74,16 @@ def _build_run_command(
     Build command dict from command parts for supported streaming commands.
     Supports: watch, trace, stack, monitor, top
     """
-    # We reuse the existing parsers by creating a tiny subparser just for this
-    # This ensures consistency with existing command parsing
-    parser = argparse.ArgumentParser(prog=f"peeka-cli run ... -- {command_type}")
-
-    command: Dict[str, Any] = {"type": command_type, "action": "start"}
-    parser_builders = {
-        "watch": build_watch_run_parser,
-        "trace": build_trace_run_parser,
-        "stack": build_stack_run_parser,
-        "monitor": build_monitor_run_parser,
-        "top": build_top_run_parser,
-    }
-
-    parser_builder = parser_builders.get(command_type)
-    if parser_builder is None:
+    parsed = _parse_run_args(command_type, command_parts)
+    if parsed is None:
         return None
 
-    parts = command_parts
-    if parts and parts[0] == command_type:
-        parts = parts[1:]
-
-    if command_type in ProbeContext.streaming_types():
-        if not parts:
-            return None
-        command["pattern"] = parts[0]
-        remaining = parts[1:]
-        parser_builder(parser)
-
-        parsed = parser.parse_args(remaining)
+    command: Dict[str, Any] = {"type": command_type, "action": "start"}
+    if command_type in ProbeContext.streaming_types() or command_type == "monitor":
         command.update(vars(parsed))
         return command
 
-    elif command_type == "monitor":
-        if not parts:
-            return None
-        command["pattern"] = parts[0]
-        remaining = parts[1:]
-        parser_builder(parser)
-        parsed = parser.parse_args(remaining)
-        command.update(vars(parsed))
-        return command
-
-    elif command_type == "top":
-        remaining = parts
-        parser_builder(parser)
-        parsed = parser.parse_args(remaining)
+    if command_type == "top":
         command["interval"] = parsed.interval
         command["cycles"] = parsed.cycles
         command["sort"] = parsed.sort
@@ -87,9 +92,30 @@ def _build_run_command(
         command["stream"] = True
         return command
 
-    else:
-        # Unsupported command
+    return None
+
+
+def _prepare_run_command(
+    command_type: str,
+    command_parts: List[str],
+    client_session_id: Optional[str] = None,
+) -> Optional[Tuple[StreamingCommandConfig, Dict[str, Any], types.SimpleNamespace]]:
+    """Reuse STREAMING_COMMANDS config to build the start command and local limit."""
+    cfg = STREAMING_COMMANDS.get(command_type)
+    if cfg is None:
         return None
+    parsed = _parse_run_args(command_type, command_parts)
+    if parsed is None:
+        return None
+
+    effective_client = client_session_id or getattr(parsed, "client", None) or ""
+    command = cfg.command_builder(parsed, str(effective_client))
+    if not effective_client:
+        command.pop("client_session_id", None)
+
+    limit_value = getattr(parsed, cfg.limit_attr, -1)
+    limit_args = types.SimpleNamespace(**{cfg.limit_attr: limit_value})
+    return cfg, command, limit_args
 
 
 def cmd_run(args) -> int:
@@ -307,9 +333,9 @@ def cmd_run(args) -> int:
                 return 1
 
             command_type = command_parts[0]
-            command = _build_run_command(command_type, command_parts)
+            prepared = _prepare_run_command(command_type, command_parts)
 
-            if command is None:
+            if prepared is None:
                 _supported = "/".join(sorted(ProbeContext.managed_types()))
                 OutputFormatter.error(
                     "run",
@@ -319,6 +345,7 @@ def cmd_run(args) -> int:
                 cleanup_and_exit()
                 return 1
 
+            _cfg, command, _limit_args = prepared
             response = streaming_client.send_command(command)
 
             if response.get("status") != "success":
@@ -330,9 +357,7 @@ def cmd_run(args) -> int:
                 cleanup_and_exit()
                 return 1
 
-            watch_id = response.get(
-                "watch_id", response.get("monitor_id", response.get("top_id"))
-            )
+            watch_id = response.get(_cfg.response_id_key)
             OutputFormatter.event(
                 f"{command_type}_started",
                 data={f"{command_type}_id": watch_id, "command": command_parts},
@@ -348,23 +373,20 @@ def cmd_run(args) -> int:
             limit_hit = False
             exit_code = 0
 
-            _cfg = STREAMING_COMMANDS[command_type]
             _stop_command = cast(Dict[str, Any], _cfg.stop_command_builder(watch_id))
             _limit_predicate, _set_stream_id = stream_counted_limit(
                 _cfg.limit_attr, _cfg.stream_id_key
-            )
-            _limit_args = types.SimpleNamespace(
-                **{_cfg.limit_attr: command.get(_cfg.limit_attr, -1)}
             )
             _set_stream_id(watch_id)
 
             try:
                 for observation in streaming_client.stream_observations():
-                    print(json.dumps(observation), file=output_dest, flush=True)
+                    if should_emit_observation(observation, watch_id, _cfg.stream_id_key):
+                        print(json.dumps(observation), file=output_dest, flush=True)
 
-                    if _limit_predicate(_limit_args, observation):
-                        limit_hit = True
-                        break
+                        if _limit_predicate(_limit_args, observation):
+                            limit_hit = True
+                            break
 
                     # Check if child has exited
                     try:

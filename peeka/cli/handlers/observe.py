@@ -53,6 +53,7 @@ def _run_streaming_command(
     limit_reached: LimitPredicate,
     allow_explicit_client: bool = False,
     exception_status: int = 1,
+    stream_id_key: Optional[str] = None,
 ) -> int:
     return run_streaming_command(
         args,
@@ -70,6 +71,7 @@ def _run_streaming_command(
         output_formatter=OutputFormatter,
         allow_explicit_client=allow_explicit_client,
         exception_status=exception_status,
+        stream_id_key=stream_id_key,
     )
 
 
@@ -103,6 +105,7 @@ def _run_configured_streaming_command(
         limit_reached=limit_predicate,
         allow_explicit_client=config.allow_explicit_client,
         exception_status=config.exception_status,
+        stream_id_key=config.stream_id_key,
     )
 
 

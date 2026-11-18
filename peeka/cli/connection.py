@@ -4,18 +4,11 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 import peeka.cli.sessions as cli_sessions
+from peeka.cli.sessions import TargetResolutionError
 from peeka.core.client import StreamingAgentClient
 from peeka.core.output import OutputFormatter
 from peeka.core.targets import discover_targets
 from peeka.core.targets import get_target
-
-
-class TargetResolutionError(ValueError):
-    """Raised when a target-scoped CLI command cannot resolve its target."""
-
-    def __init__(self, error_code: str, message: str) -> None:
-        super().__init__(message)
-        self.error_code = error_code
 
 
 def _check_agent_for_target(

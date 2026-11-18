@@ -55,6 +55,25 @@ def observation_count_limit(args: Any, observation: Dict[str, Any]) -> bool:
     return times > 0 and int(observation.get("count", 0)) >= times
 
 
+def should_emit_observation(
+    observation: Dict[str, Any],
+    stream_id: Optional[str],
+    stream_id_key: Optional[str],
+) -> bool:
+    """Return True if a streamed frame should be printed for this subscription.
+
+    Filters out agent log frames (`type == "log"`) and, when ``stream_id``
+    and ``stream_id_key`` are present, observations belonging to other probes.
+    """
+    if isinstance(observation, dict):
+        obs_type = observation.get("type")
+        if isinstance(obs_type, str) and obs_type.lower() == "log":
+            return False
+        if stream_id and stream_id_key:
+            return observation.get(stream_id_key) == stream_id
+    return True
+
+
 def _client_session_context(
     socket_path: str,
     args: Any,
@@ -106,12 +125,17 @@ def run_streaming_command(
     output_formatter: Any = OutputFormatter,
     allow_explicit_client: bool = False,
     exception_status: int = 1,
+    stream_id_key: Optional[str] = None,
 ) -> int:
     """Run a start/stream/cleanup CLI command against the attached agent."""
     try:
         socket_path, _ = check_agent_attached()
     except ValueError as e:
-        output_formatter.error(command_name, error=str(e))
+        error_code = getattr(e, "error_code", None)
+        if error_code:
+            output_formatter.error(command_name, error=str(e), error_code=error_code)
+        else:
+            output_formatter.error(command_name, error=str(e))
         return 1
 
     streaming_client: Optional[Any] = None
@@ -163,6 +187,8 @@ def run_streaming_command(
 
             try:
                 for observation in client.stream_observations():
+                    if not should_emit_observation(observation, stream_id, stream_id_key):
+                        continue
                     print(json.dumps(observation))
                     sys.stdout.flush()
                     if limit_reached(args, observation):
