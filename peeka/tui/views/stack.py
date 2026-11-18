@@ -37,6 +37,9 @@ class StackView(Container):
         self._socket_path: Optional[str] = None
         self._completion_source: Optional[CompletionSource] = None
         self._workers: Dict[str, Worker] = {}
+        # Single shared reader that fans observations out to every stack watch.
+        self._stream_worker: Optional[Worker] = None
+        self._stack_patterns: Dict[str, str] = {}
         self._stack_counts: Dict[str, int] = {}
         self._stack_cache: Dict[str, List[dict]] = {}
         self._capture_seq: int = 0
@@ -198,12 +201,20 @@ class StackView(Container):
         for worker in self._workers.values():
             if worker:
                 worker.cancel()
+        self._cancel_stream_worker()
         if self._stream_client:
             self._stream_client.disconnect()
             self._stream_client = None
 
+    def _cancel_stream_worker(self) -> None:
+        """Cancel the shared stream reader (if any) and forget it."""
+        worker = self._stream_worker
+        self._stream_worker = None
+        if worker is not None:
+            worker.cancel()
+
     def cleanup_for_exit(self) -> None:
-        """Stop all stack traces and reset instrumented functions before TUI exit."""
+        """Stop all stack traces by ID before TUI exit."""
         if not self._client:
             return
 
@@ -222,33 +233,12 @@ class StackView(Container):
             except Exception:
                 pass
 
-        try:
-            reset_response = self._client.send_command(
-                {
-                    "type": "reset",
-                    "action": "reset",
-                    "pattern": "*",
-                }
-            )
-            cleanup_summary = (
-                reset_response.get("cleanup_summary", {}) if isinstance(reset_response, dict) else {}
-            )
-            cleanup_errors = (
-                cleanup_summary.get("resource_owners", {}).get("errors", [])
-                + cleanup_summary.get("probe_contexts", {}).get("errors", [])
-                + cleanup_summary.get("injector", {}).get("errors", [])
-            )
-            if cleanup_errors:
-                logging.getLogger(__name__).warning(
-                    "[peeka TUI] reset cleanup errors for %s: %s", "*", cleanup_errors
-                )
-        except Exception:
-            pass
-
         self._workers.clear()
+        self._stack_patterns.clear()
         self._stack_counts.clear()
         self._stack_cache.clear()
         self._capture_seq = 0
+        self._cancel_stream_worker()
         if self._stream_client:
             self._stream_client.disconnect()
             self._stream_client = None
@@ -312,16 +302,25 @@ class StackView(Container):
         watch_id = response.get("watch_id", "")
 
         self._stack_counts[watch_id] = 0
+        self._stack_patterns[watch_id] = pattern
 
-        worker = self.run_worker(
-            lambda: self._stream_stacks(watch_id, pattern), thread=True, exclusive=False
-        )
-        self._workers[watch_id] = worker
+        # One shared reader serves every stack trace; competing readers on the
+        # same stream socket would each drop the other probes' observations.
+        stream_worker = self._stream_worker
+        if stream_worker is None or getattr(stream_worker, "is_finished", False):
+            stream_worker = self.run_worker(
+                lambda: self._stream_stacks(), thread=True, exclusive=False
+            )
+            self._stream_worker = stream_worker
+        self._workers[watch_id] = stream_worker
 
         self.app.notify(f"Stack trace started: {pattern}", severity="information")
 
-    def _stream_stacks(self, watch_id: str, pattern: str):
-        stream = self._ensure_stream_client() or self._client
+    def _stream_stacks(
+        self, watch_id: Optional[str] = None, pattern: Optional[str] = None
+    ) -> None:
+        """Shared reader: fan stack observations out to every active watch."""
+        stream = self._ensure_stream_client()
         if not stream:
             return
 
@@ -331,15 +330,34 @@ class StackView(Container):
             if worker.is_cancelled:
                 break
 
-            obs_watch_id = observation.get("watch_id", "")
-            if obs_watch_id != watch_id:
+            obs_type = observation.get("type")
+            if isinstance(obs_type, str) and obs_type.lower() == "log":
                 continue
 
-            count = observation.get("count", 0)
+            obs_watch_id = observation.get("watch_id", "")
+            if not obs_watch_id or obs_watch_id not in self._workers:
+                continue
+
+            if "stack" not in observation:
+                continue
+
+            next_count = self._stack_counts.get(obs_watch_id, 0) + 1
+            obs_count = observation.get("count")
+            count = (
+                obs_count
+                if isinstance(obs_count, int) and obs_count > 0
+                else next_count
+            )
+            self._stack_counts[obs_watch_id] = count
             stack_frames = observation.get("stack", [])
+            resolved_pattern = self._stack_patterns.get(obs_watch_id, pattern or "")
 
             self.app.call_from_thread(
-                self._update_stack_ui, watch_id, count, stack_frames, pattern
+                self._update_stack_ui,
+                obs_watch_id,
+                count,
+                stack_frames,
+                resolved_pattern,
             )
 
     def _update_stack_ui(
@@ -377,6 +395,9 @@ class StackView(Container):
             self.app.notify("No active stack traces", severity="information")
             return
 
+        # Every stack watch shares one reader; cancel it once, up front.
+        self._cancel_stream_worker()
+
         for watch_id, worker in list(self._workers.items()):
             if worker:
                 worker.cancel()
@@ -390,18 +411,11 @@ class StackView(Container):
                         thread=True,
                     )
                     await stop_worker.wait()
-
-                    reset_worker = self.run_worker(
-                        lambda: self._client.send_command(
-                            {"type": "reset", "action": "reset", "pattern": "*"}
-                        ),
-                        thread=True,
-                    )
-                    await reset_worker.wait()
             except Exception:
                 pass
 
         self._workers.clear()
+        self._stack_patterns.clear()
         self._stack_counts.clear()
         self._close_idle_stream_client()
 

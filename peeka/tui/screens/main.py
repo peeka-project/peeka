@@ -461,7 +461,15 @@ class MainScreen(Screen):
         return False
 
     def _cleanup_all_views(self) -> None:
-        for view_cls in (WatchView, TraceView, StackView, MonitorView):
+        for view_cls in (
+            WatchView,
+            TraceView,
+            StackView,
+            MonitorView,
+            TopView,
+            ProfileView,
+            TimelineView,
+        ):
             try:
                 self.query_one(view_cls).cleanup_for_exit()
             except Exception:

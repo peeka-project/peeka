@@ -1,6 +1,7 @@
 """Top view for function-level sampling profiler."""
 
 import logging
+import threading
 import time
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
@@ -32,10 +33,12 @@ class TopView(Container):
         self.pid = pid
         self._client: Optional["StreamingAgentClient"] = None
         self._own_client: Optional["StreamingAgentClient"] = None
+        self._client_lock = threading.Lock()
         self._socket_path: Optional[str] = None
         self._top_id: Optional[str] = None
         self._is_profiling = False
         self._refresh_worker: Optional[Worker] = None
+        self._command_worker: Optional[Worker] = None
         self._log = logging.getLogger(__name__)
 
     def compose(self):
@@ -70,25 +73,48 @@ class TopView(Container):
         try:
             from peeka.core.client import StreamingAgentClient
 
-            self._own_client = StreamingAgentClient(
+            try:
+                app = self.app
+            except Exception:
+                app = None
+
+            client = StreamingAgentClient(
                 self._socket_path,
-                activity_reporter=make_activity_reporter(self.app, "top-data"),
-                client_info=make_client_info(self.app, "top-data"),
+                activity_reporter=make_activity_reporter(app, "top-data"),
+                client_info=make_client_info(app, "top-data"),
             )
-            result = self._own_client.connect()
-            if result.get("status") != "success":
+            result = client.connect()
+            if result.get("status") == "success":
+                self._own_client = client
+            else:
                 self._log.warning(
                     "Top dedicated client failed: %s", result.get("error")
                 )
+                try:
+                    client.disconnect()
+                except Exception:
+                    pass
                 self._own_client = None
         except Exception as e:
             self._log.warning("Top dedicated client error: %s", e)
             self._own_client = None
 
-    def _ensure_own_client(self) -> None:
+    def _ensure_own_client(self) -> Optional["StreamingAgentClient"]:
         """Lazily create dedicated client on first use."""
-        if self._own_client is None:
-            self._connect_own_client()
+        with self._client_lock:
+            if self._own_client is None:
+                self._connect_own_client()
+            return self._own_client or self._client
+
+    def _disconnect_own_client(self) -> None:
+        """Disconnect and clear the dedicated client if present."""
+        with self._client_lock:
+            if self._own_client is not None:
+                try:
+                    self._own_client.disconnect()
+                except Exception:
+                    pass
+                self._own_client = None
 
     async def on_mount(self) -> None:
         """Initialize when view is mounted."""
@@ -122,60 +148,122 @@ class TopView(Container):
         except Exception:
             pass  # Widgets may not be mounted yet
 
+    def _set_header_text(self, text: str) -> None:
+        """Update the top view header text on the UI thread."""
+        header = self.query_one("#top-header", Static)
+        header.update(text)
+
     def _start_profiling(self) -> None:
-        """Start the profiler and refresh worker."""
-        self._ensure_own_client()
-        client = self._own_client or self._client
-        if not client:
+        """Start the profiler and refresh worker without blocking the UI thread."""
+        if not self._client and not self._own_client and not self._socket_path:
+            return
+        if self._command_worker:
+            self._command_worker.cancel()
+        self._command_worker = self.run_worker(
+            self._start_profiling_worker,
+            thread=True,
+            exclusive=True,
+            group="top-commands",
+        )
+
+    def _start_profiling_worker(self) -> None:
+        """Send top start command on a worker thread."""
+        worker = get_current_worker()
+        client = self._ensure_own_client()
+        if not client or worker.is_cancelled:
             return
         try:
             response = client.send_command(
                 {"type": "top", "action": "start", "stream": False}
             )
+            if worker.is_cancelled:
+                return
             if response.get("status") == "success":
-                self._top_id = response.get("top_id")
-                self._is_profiling = True
-                self._start_refresh_worker()
-                self._update_button_states()
-                header = self.query_one("#top-header", Static)
-                header.update("Profiling... | Samples: 0 | Interval: 10.0ms")
+                top_id = response.get("top_id")
+
+                def _apply_started() -> None:
+                    self._top_id = top_id
+                    self._is_profiling = True
+                    self._start_refresh_worker()
+                    self._update_button_states()
+                    self._set_header_text(
+                        "Profiling... | Samples: 0 | Interval: 10.0ms"
+                    )
+
+                self.app.call_from_thread(_apply_started)
             else:
-                header = self.query_one("#top-header", Static)
                 error = response.get("error", "Unknown error")
-                header.update(f"Error starting profiler: {error}")
+                self.app.call_from_thread(
+                    self._set_header_text, f"Error starting profiler: {error}"
+                )
         except Exception as e:
-            header = self.query_one("#top-header", Static)
-            header.update(f"Error starting profiler: {e}")
+            if not worker.is_cancelled:
+                try:
+                    self.app.call_from_thread(
+                        self._set_header_text, f"Error starting profiler: {e}"
+                    )
+                except Exception:
+                    pass
 
     def _stop_profiling(self) -> None:
-        """Stop the profiler and refresh worker."""
+        """Stop the profiler and refresh worker without blocking the UI thread."""
         # Cancel refresh worker first
         if self._refresh_worker:
             self._refresh_worker.cancel()
             self._refresh_worker = None
 
+        if not (self._own_client or self._client):
+            return
+        if self._command_worker:
+            self._command_worker.cancel()
+        self._command_worker = self.run_worker(
+            self._stop_profiling_worker,
+            thread=True,
+            exclusive=True,
+            group="top-commands",
+        )
+
+    def _stop_profiling_worker(self) -> None:
+        """Send top stop command on a worker thread."""
+        worker = get_current_worker()
         client = self._own_client or self._client
-        if not client:
+        if not client or worker.is_cancelled:
             return
         try:
             response = client.send_command({"type": "top", "action": "stop"})
+            if worker.is_cancelled:
+                return
             if response.get("status") == "success":
-                self._is_profiling = False
-                self._top_id = None
-                self._update_button_states()
-                header = self.query_one("#top-header", Static)
-                header.update("Top View - Stopped")
-                self.app.notify("Profiler stopped", severity="information")
+
+                def _apply_stopped() -> None:
+                    self._is_profiling = False
+                    self._top_id = None
+                    self._update_button_states()
+                    self._set_header_text("Top View - Stopped")
+                    self.app.notify("Profiler stopped", severity="information")
+
+                self.app.call_from_thread(_apply_stopped)
             else:
                 error = response.get("error", "Unknown error")
-                self.app.notify(f"Stop failed: {error}", severity="error")
+                self.app.call_from_thread(
+                    self.app.notify, f"Stop failed: {error}", severity="error"
+                )
         except Exception as e:
-            self.app.notify(f"Stop error: {e}", severity="error")
+            if not worker.is_cancelled:
+                try:
+                    self.app.call_from_thread(
+                        self.app.notify, f"Stop error: {e}", severity="error"
+                    )
+                except Exception:
+                    pass
 
     def _start_refresh_worker(self) -> None:
         """Start background refresh worker."""
         self._refresh_worker = self.run_worker(
-            self._periodic_refresh, thread=True, exclusive=True
+            self._periodic_refresh,
+            thread=True,
+            exclusive=True,
+            group="top-refresh",
         )
 
     def _periodic_refresh(self) -> None:
@@ -246,26 +334,57 @@ class TopView(Container):
         if not client or not self._is_profiling:
             self.app.notify("Profiler not running", severity="warning")
             return
+        if self._command_worker:
+            self._command_worker.cancel()
+        self._command_worker = self.run_worker(
+            self._reset_stats_worker,
+            thread=True,
+            exclusive=True,
+            group="top-commands",
+        )
+
+    def _reset_stats_worker(self) -> None:
+        """Send top reset command on a worker thread."""
+        worker = get_current_worker()
+        client = self._own_client or self._client
+        if not client or not self._is_profiling or worker.is_cancelled:
+            return
         try:
             response = client.send_command({"type": "top", "action": "reset"})
+            if worker.is_cancelled:
+                return
             if response.get("status") == "success":
-                self.app.notify("Statistics reset", severity="information")
-                # Clear table immediately for visual feedback
-                table = self.query_one("#top-table", DataTable)
-                table.clear()
-                header = self.query_one("#top-header", Static)
-                header.update("Profiling... | Samples: 0 | Stats reset")
+
+                def _apply_reset() -> None:
+                    self.app.notify("Statistics reset", severity="information")
+                    table = self.query_one("#top-table", DataTable)
+                    table.clear()
+                    self._set_header_text("Profiling... | Samples: 0 | Stats reset")
+
+                self.app.call_from_thread(_apply_reset)
             else:
                 error = response.get("error", "Unknown error")
-                self.app.notify(f"Reset failed: {error}", severity="error")
+                self.app.call_from_thread(
+                    self.app.notify, f"Reset failed: {error}", severity="error"
+                )
         except Exception as e:
-            self.app.notify(f"Reset error: {e}", severity="error")
+            if not worker.is_cancelled:
+                try:
+                    self.app.call_from_thread(
+                        self.app.notify, f"Reset error: {e}", severity="error"
+                    )
+                except Exception:
+                    pass
 
     def on_unmount(self) -> None:
         """Cleanup when view is unmounted."""
+        if self._command_worker:
+            self._command_worker.cancel()
+            self._command_worker = None
         # Cancel refresh worker
         if self._refresh_worker:
             self._refresh_worker.cancel()
+            self._refresh_worker = None
 
         # Stop profiling
         client = self._own_client or self._client
@@ -279,6 +398,8 @@ class TopView(Container):
                 self._top_id = None
 
         # Disconnect dedicated client
-        if self._own_client:
-            self._own_client.disconnect()
-            self._own_client = None
+        self._disconnect_own_client()
+
+    def cleanup_for_exit(self) -> None:
+        """Cleanup profiling state and dedicated connection on exit."""
+        self.on_unmount()

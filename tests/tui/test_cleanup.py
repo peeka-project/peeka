@@ -2,15 +2,13 @@
 
 Verifies that watch, trace, stack, and monitor views properly:
 - Cancel active workers
-- Send stop commands for each active watch/trace/monitor
-- Send reset commands to restore instrumented functions (watch/trace/stack)
+- Send stop commands by ID for each active watch/trace/stack/monitor (no reset)
 - Clear internal tracking state
 - Disconnect stream clients
 """
 
 import pytest
 from unittest.mock import MagicMock
-from typing import Any, Dict, List, Optional
 
 from peeka.tui.app import PeekaApp
 from peeka.tui.screens.main import MainScreen
@@ -21,12 +19,12 @@ from peeka.tui.views.monitor import MonitorView
 
 
 class TestWatchViewCleanup:
-    """Test WatchView.cleanup_for_exit() sends stop+reset and clears state."""
+    """Test WatchView.cleanup_for_exit() sends stop by ID (no reset) and clears state."""
 
     @pytest.mark.asyncio
     @pytest.mark.tui
-    async def test_cleanup_sends_stop_and_reset(self, mock_client_factory):
-        """cleanup_for_exit sends stop for each watch_id and reset for each pattern."""
+    async def test_cleanup_sends_stop_by_id_without_reset(self, mock_client_factory):
+        """cleanup_for_exit sends stop for each watch_id and does NOT send reset."""
         client = mock_client_factory(
             responses={
                 "watch": {"status": "success", "watch_id": "w1"},
@@ -78,13 +76,11 @@ class TestWatchViewCleanup:
             stop_ids = {cmd["watch_id"] for cmd in stop_cmds}
             assert stop_ids == {"w1", "w2"}
 
-            # Verify reset commands sent for each pattern
+            # Verify NO reset commands sent
             reset_cmds = [
                 cmd for cmd in client.commands_received if cmd.get("type") == "reset"
             ]
-            assert len(reset_cmds) == 2
-            reset_patterns = {cmd["pattern"] for cmd in reset_cmds}
-            assert reset_patterns == {"module.func1", "module.func2"}
+            assert len(reset_cmds) == 0
 
             # Verify state cleared
             assert len(watch_view._active_watches) == 0
@@ -209,12 +205,12 @@ class TestWatchViewCleanup:
 
 
 class TestTraceViewCleanup:
-    """Test TraceView.cleanup_for_exit() sends stop+reset and clears state."""
+    """Test TraceView.cleanup_for_exit() sends stop by ID (no reset) and clears state."""
 
     @pytest.mark.asyncio
     @pytest.mark.tui
-    async def test_cleanup_sends_stop_and_reset(self, mock_client_factory):
-        """cleanup_for_exit sends stop for each trace_id and reset for each pattern."""
+    async def test_cleanup_sends_stop_by_id_without_reset(self, mock_client_factory):
+        """cleanup_for_exit sends stop for each trace_id and does NOT send reset."""
         client = mock_client_factory(
             responses={
                 "trace": {"status": "success"},
@@ -261,13 +257,11 @@ class TestTraceViewCleanup:
             stop_ids = {cmd["watch_id"] for cmd in stop_cmds}
             assert stop_ids == {"t1", "t2"}
 
-            # Reset commands
+            # NO reset commands
             reset_cmds = [
                 cmd for cmd in client.commands_received if cmd.get("type") == "reset"
             ]
-            assert len(reset_cmds) == 2
-            reset_patterns = {cmd["pattern"] for cmd in reset_cmds}
-            assert reset_patterns == {"module.handler", "module.process"}
+            assert len(reset_cmds) == 0
 
             # State cleared
             assert len(trace_view._active_traces) == 0
@@ -354,12 +348,12 @@ class TestTraceViewCleanup:
 
 
 class TestStackViewCleanup:
-    """Test StackView.cleanup_for_exit() sends stop+global reset and clears state."""
+    """Test StackView.cleanup_for_exit() sends stop by ID (no reset) and clears state."""
 
     @pytest.mark.asyncio
     @pytest.mark.tui
-    async def test_cleanup_sends_stop_and_global_reset(self, mock_client_factory):
-        """cleanup_for_exit sends stop for each watch_id and a global reset '*'."""
+    async def test_cleanup_sends_stop_by_id_without_reset(self, mock_client_factory):
+        """cleanup_for_exit sends stop for each watch_id and does NOT send reset."""
         client = mock_client_factory(
             responses={
                 "stack": {"status": "success"},
@@ -404,12 +398,11 @@ class TestStackViewCleanup:
             stop_ids = {cmd["watch_id"] for cmd in stop_cmds}
             assert stop_ids == {"s1", "s2"}
 
-            # Single global reset with pattern "*"
+            # NO reset commands
             reset_cmds = [
                 cmd for cmd in client.commands_received if cmd.get("type") == "reset"
             ]
-            assert len(reset_cmds) == 1
-            assert reset_cmds[0]["pattern"] == "*"
+            assert len(reset_cmds) == 0
 
             # State cleared
             assert len(stack_view._workers) == 0

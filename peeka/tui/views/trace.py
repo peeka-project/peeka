@@ -15,7 +15,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Button, DataTable, Input, Static, Tree
-from textual.worker import get_current_worker
+from textual.worker import Worker, get_current_worker
 
 from peeka.tui.activity import make_activity_reporter, make_client_info
 from peeka.tui.completion import CompletionSource
@@ -75,6 +75,8 @@ class TraceView(Container):
         self._client: Optional["StreamingAgentClient"] = None
         self._stream_client: Optional["StreamingAgentClient"] = None
         self._stream_client_lock: threading.Lock = threading.Lock()
+        # Single shared reader that fans observations out to every trace.
+        self._stream_worker: Optional[Worker] = None
         self._socket_path: Optional[str] = None
         self._observations: Deque[Dict[str, Any]] = deque(maxlen=self.MAX_OBSERVATIONS)
         self._observations_by_pattern: Dict[str, List[Dict[str, Any]]] = {}
@@ -313,12 +315,20 @@ class TraceView(Container):
             worker = trace_info.get("worker")
             if worker:
                 worker.cancel()
+        self._cancel_stream_worker()
         if self._stream_client:
             self._stream_client.disconnect()
             self._stream_client = None
 
+    def _cancel_stream_worker(self) -> None:
+        """Cancel the shared stream reader (if any) and forget it."""
+        worker = self._stream_worker
+        self._stream_worker = None
+        if worker is not None:
+            worker.cancel()
+
     def cleanup_for_exit(self) -> None:
-        """Stop all traces and reset instrumented functions before TUI exit."""
+        """Stop all traces by ID before TUI exit."""
         if not self._client:
             return
 
@@ -338,32 +348,8 @@ class TraceView(Container):
             except Exception:
                 pass
 
-            pattern = trace_info.get("pattern")
-            if pattern:
-                try:
-                    reset_response = self._client.send_command(
-                        {
-                            "type": "reset",
-                            "action": "reset",
-                            "pattern": pattern,
-                        }
-                    )
-                    cleanup_summary = (
-                        reset_response.get("cleanup_summary", {}) if isinstance(reset_response, dict) else {}
-                    )
-                    cleanup_errors = (
-                        cleanup_summary.get("resource_owners", {}).get("errors", [])
-                        + cleanup_summary.get("probe_contexts", {}).get("errors", [])
-                        + cleanup_summary.get("injector", {}).get("errors", [])
-                    )
-                    if cleanup_errors:
-                        logging.getLogger(__name__).warning(
-                            "[peeka TUI] reset cleanup errors for %s: %s", pattern, cleanup_errors
-                        )
-                except Exception:
-                    pass
-
         self._active_traces.clear()
+        self._cancel_stream_worker()
         if self._stream_client:
             self._stream_client.disconnect()
             self._stream_client = None
@@ -764,12 +750,17 @@ class TraceView(Container):
             except Exception:
                 pass
 
-        worker = self.run_worker(
-            lambda: self._stream_trace_observations(watch_id, pattern),
-            thread=True,
-            exclusive=False,
-        )
-        self._active_traces[watch_id]["worker"] = worker
+        # One shared reader serves every trace; competing readers on the same
+        # stream socket would each drop the other traces' observations.
+        stream_worker = self._stream_worker
+        if stream_worker is None or getattr(stream_worker, "is_finished", False):
+            stream_worker = self.run_worker(
+                lambda: self._stream_trace_observations(),
+                thread=True,
+                exclusive=False,
+            )
+            self._stream_worker = stream_worker
+        self._active_traces[watch_id]["worker"] = stream_worker
 
         self.app.notify(
             f"Tracing: {pattern} (min_duration={min_duration_ms}ms)",
@@ -781,36 +772,39 @@ class TraceView(Container):
         self.query_one("#trace-min-duration", Input).value = ""
         self.query_one("#trace-condition", Input).value = ""
 
-    def _stream_trace_observations(self, watch_id: str, pattern: str):
-        """Stream trace observations in background thread."""
-        stream = self._ensure_stream_client() or self._client
+    def _stream_trace_observations(
+        self, watch_id: Optional[str] = None, pattern: Optional[str] = None
+    ) -> None:
+        """Shared reader: fan trace observations out to every active trace."""
+        stream = self._ensure_stream_client()
         if not stream:
             return
 
         worker = get_current_worker()
-        local_count = 0
 
         for observation in stream.stream_observations():
             if worker.is_cancelled:
                 break
 
+            obs_type = observation.get("type")
+            if isinstance(obs_type, str) and obs_type.lower() == "log":
+                continue
+
             obs_watch_id = observation.get("watch_id")
-            if obs_watch_id != watch_id:
+            info = self._active_traces.get(obs_watch_id) if obs_watch_id else None
+            if info is None:
                 continue
 
             # Skip non-trace observations (no call_tree)
             if "call_tree" not in observation:
                 continue
 
-            local_count += 1
-            count = local_count
-
-            if watch_id in self._active_traces:
-                self._active_traces[watch_id]["count"] = count
+            info["count"] = info.get("count", 0) + 1
+            count = info["count"]
 
             self.app.call_from_thread(
                 self._add_trace_observation,
-                watch_id,
+                obs_watch_id,
                 count,
                 observation,
             )
@@ -876,6 +870,9 @@ class TraceView(Container):
 
         stopped_count = 0
 
+        # Every trace shares one reader; cancel it once, up front.
+        self._cancel_stream_worker()
+
         client = self._client
         for watch_id, trace_info in list(self._active_traces.items()):
             stream_worker = trace_info.get("worker")
@@ -897,18 +894,6 @@ class TraceView(Container):
 
                 pattern = trace_info.get("pattern")
                 if pattern:
-                    reset_worker = self.run_worker(
-                        lambda pat=pattern: client.send_command(  # type: ignore[union-attr]
-                            {
-                                "type": "reset",
-                                "action": "reset",
-                                "pattern": pat,
-                            }
-                        ),
-                        thread=True,
-                    )
-                    await reset_worker.wait()
-
                     obs_table = self.query_one("#trace-obs-table", DataTable)
                     try:
                         obs_table.update_cell(pattern, "Status", "Stopped")

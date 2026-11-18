@@ -36,6 +36,9 @@ class MonitorView(Container):
         self._socket_path: Optional[str] = None
         self._completion_source: Optional[CompletionSource] = None
         self._workers: Dict[str, Worker] = {}
+        # Single shared reader that fans observations out to every active monitor.
+        self._stream_worker: Optional[Worker] = None
+        self._monitor_patterns: Dict[str, str] = {}
         self._log = logging.getLogger(__name__)
 
     def set_client(self, client: "StreamingAgentClient") -> None:
@@ -214,20 +217,29 @@ class MonitorView(Container):
 
         watch_id = response.get("watch_id", "")
 
+        self._monitor_patterns[watch_id] = pattern
         table = self.query_one("#stats-table", DataTable)
         table.add_row(pattern, "0", "0", "0", "0.0", "0.0", "0.0", "0.0", key=watch_id)
 
-        worker = self.run_worker(
-            lambda: self._stream_stats(watch_id, pattern), thread=True, exclusive=False
-        )
-        self._workers[watch_id] = worker
+        # One shared reader serves every monitor; competing readers on the same
+        # stream socket would each drop the other probes' observations.
+        stream_worker = self._stream_worker
+        if stream_worker is None or getattr(stream_worker, "is_finished", False):
+            stream_worker = self.run_worker(
+                lambda: self._stream_stats(), thread=True, exclusive=False
+            )
+            self._stream_worker = stream_worker
+        self._workers[watch_id] = stream_worker
 
         self.app.notify(
             f"Monitoring started: {pattern} (every {interval}s)", severity="information"
         )
 
-    def _stream_stats(self, watch_id: str, pattern: str):
-        stream = self._ensure_stream_client() or self._client
+    def _stream_stats(
+        self, watch_id: Optional[str] = None, pattern: Optional[str] = None
+    ) -> None:
+        """Shared reader: fan monitor stats out to every active monitor."""
+        stream = self._ensure_stream_client()
         if not stream:
             return
 
@@ -237,10 +249,18 @@ class MonitorView(Container):
             if worker.is_cancelled:
                 break
 
-            obs_watch_id = observation.get("watch_id", "")
-            if obs_watch_id != watch_id:
+            obs_type = observation.get("type")
+            if isinstance(obs_type, str) and obs_type.lower() == "log":
                 continue
 
+            obs_watch_id = observation.get("watch_id") or observation.get("monitor_id")
+            if not obs_watch_id or obs_watch_id not in self._workers:
+                continue
+
+            if "total" not in observation:
+                continue
+
+            resolved_pattern = self._monitor_patterns.get(obs_watch_id, pattern or "")
             total = observation.get("total", 0)
             success = observation.get("success", 0)
             fail = observation.get("fail", 0)
@@ -251,8 +271,8 @@ class MonitorView(Container):
 
             self.app.call_from_thread(
                 self._update_stats_ui,
-                watch_id,
-                pattern,
+                obs_watch_id,
+                resolved_pattern,
                 total,
                 success,
                 fail,
@@ -287,10 +307,20 @@ class MonitorView(Container):
         except Exception:
             pass
 
+    def _cancel_stream_worker(self) -> None:
+        """Cancel the shared stream reader (if any) and forget it."""
+        worker = self._stream_worker
+        self._stream_worker = None
+        if worker is not None:
+            worker.cancel()
+
     async def _stop_all_monitors(self) -> None:
         if not self._workers:
             self.app.notify("No active monitors", severity="information")
             return
+
+        # Every monitor shares one reader; cancel it once, up front.
+        self._cancel_stream_worker()
 
         for watch_id, worker in list(self._workers.items()):
             if worker:
@@ -309,6 +339,7 @@ class MonitorView(Container):
                 pass
 
         self._workers.clear()
+        self._monitor_patterns.clear()
         self._close_idle_stream_client()
 
         table = self.query_one("#stats-table", DataTable)
@@ -321,6 +352,7 @@ class MonitorView(Container):
         for worker in self._workers.values():
             if worker:
                 worker.cancel()
+        self._cancel_stream_worker()
         if self._stream_client:
             self._stream_client.disconnect()
             self._stream_client = None
@@ -346,6 +378,8 @@ class MonitorView(Container):
                 pass
 
         self._workers.clear()
+        self._monitor_patterns.clear()
+        self._cancel_stream_worker()
         if self._stream_client:
             self._stream_client.disconnect()
             self._stream_client = None

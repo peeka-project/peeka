@@ -43,16 +43,16 @@ def _short_repr(value: Any, max_len: int = 35) -> str:
     return s
 
 
-def _format_args_summary(params: Any, kwargs: Any, has_target: bool) -> str:
+def _format_args_summary(params: Any, kwargs: Any, has_target: bool = False) -> str:
     """Format function args as a short summary string."""
     parts = []
 
     if isinstance(params, (list, tuple)):
-        # Skip 'self' (first arg) if this is an instance method
-        start = 1 if has_target and len(params) > 0 else 0
-        for arg in params[start : start + 3]:
+        # Core watch instrumentation already strips 'self'/'cls' into 'target'
+        # before constructing 'params', so params starts at index 0.
+        for arg in params[:3]:
             parts.append(_short_repr(arg, 25))
-        remaining = len(params) - start - 3
+        remaining = len(params) - 3
         if remaining > 0:
             parts.append(f"…+{remaining}")
 
@@ -384,7 +384,7 @@ class WatchView(Container):
             worker.cancel()
 
     def cleanup_for_exit(self) -> None:
-        """Stop all watches and reset instrumented functions before TUI exit."""
+        """Stop all watches by ID before TUI exit."""
         if not self._client:
             return
 
@@ -403,31 +403,6 @@ class WatchView(Container):
                 )
             except Exception:
                 pass
-
-            pattern = watch_info.get("pattern")
-            if pattern:
-                try:
-                    reset_response = self._client.send_command(
-                        {
-                            "type": "reset",
-                            "action": "reset",
-                            "pattern": pattern,
-                        }
-                    )
-                    cleanup_summary = (
-                        reset_response.get("cleanup_summary", {}) if isinstance(reset_response, dict) else {}
-                    )
-                    cleanup_errors = (
-                        cleanup_summary.get("resource_owners", {}).get("errors", [])
-                        + cleanup_summary.get("probe_contexts", {}).get("errors", [])
-                        + cleanup_summary.get("injector", {}).get("errors", [])
-                    )
-                    if cleanup_errors:
-                        logging.getLogger(__name__).warning(
-                            "[peeka TUI] reset cleanup errors for %s: %s", pattern, cleanup_errors
-                        )
-                except Exception:
-                    pass
 
         self._active_watches.clear()
         self._cancel_stream_worker()
@@ -505,21 +480,17 @@ class WatchView(Container):
             _populate_value_node(self_node, target)
             self_node.expand()
 
-        # Params
+        # Params (core already moves 'self'/'cls' into 'target')
         params = observation.get("params", [])
         if params:
-            display_params = (
-                params[1:] if target is not None and len(params) > 0 else params
-            )
-            if display_params:
-                args_node = tree.root.add(f"args ({len(display_params)})")
-                for i, p in enumerate(display_params):
-                    if isinstance(p, (dict, list, tuple)):
-                        child = args_node.add(f"[{i}]")
-                        _populate_value_node(child, p)
-                    else:
-                        args_node.add_leaf(f"[{i}]: {_format_leaf(p)}")
-                args_node.expand()
+            args_node = tree.root.add(f"args ({len(params)})")
+            for i, p in enumerate(params):
+                if isinstance(p, (dict, list, tuple)):
+                    child = args_node.add(f"[{i}]")
+                    _populate_value_node(child, p)
+                else:
+                    args_node.add_leaf(f"[{i}]: {_format_leaf(p)}")
+            args_node.expand()
 
         # Kwargs
         kwargs = observation.get("kwargs", {})
@@ -683,7 +654,7 @@ class WatchView(Container):
             watch_id: Unused; kept for backward compatibility.
             pattern: Unused; kept for backward compatibility.
         """
-        stream = self._ensure_stream_client() or self._client
+        stream = self._ensure_stream_client()
         if not stream:
             return
 
@@ -692,6 +663,10 @@ class WatchView(Container):
         for observation in stream.stream_observations():
             if worker.is_cancelled:
                 break
+
+            obs_type = observation.get("type")
+            if isinstance(obs_type, str) and obs_type.lower() == "log":
+                continue
 
             obs_watch_id = observation.get("watch_id")
             info = self._active_watches.get(obs_watch_id) if obs_watch_id else None
@@ -816,20 +791,6 @@ class WatchView(Container):
                     thread=True,
                 )
                 await stop_worker.wait()
-
-                pattern = watch_info.get("pattern")
-                if pattern:
-                    reset_worker = self.run_worker(
-                        lambda pat=pattern: self._client.send_command(
-                            {
-                                "type": "reset",
-                                "action": "reset",
-                                "pattern": pat,
-                            }
-                        ),
-                        thread=True,
-                    )
-                    await reset_worker.wait()
 
                 stopped_count += 1
             except Exception:
