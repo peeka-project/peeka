@@ -125,12 +125,34 @@ def _schedule_signal_restore_on_main_thread(
     return False
 
 
+_GENERATION_CORE_PACKAGE = sys.modules.get("peeka.core")
+_CANONICAL_AGENT_MODULE: Any = (
+    sys.modules.get("peeka.core.agent")
+    if __name__ == "peeka.core.agent"
+    else None
+)
+
+
 def _canonical_agent_module():
-    """Return the importable agent module shared by injected scripts."""
+    """Return the importable agent module bound to this generation."""
+    global _CANONICAL_AGENT_MODULE
+    if _CANONICAL_AGENT_MODULE is not None:
+        return _CANONICAL_AGENT_MODULE
+
+    core_pkg = _GENERATION_CORE_PACKAGE
+    if core_pkg is not None:
+        module = getattr(core_pkg, "agent", None)
+        if module is not None:
+            _CANONICAL_AGENT_MODULE = module
+            return module
+        if sys.modules.get("peeka.core") is not core_pkg:
+            return None
+
     module = sys.modules.get("peeka.core.agent")
     if module is None:
         import importlib
         module = importlib.import_module("peeka.core.agent")
+    _CANONICAL_AGENT_MODULE = module
     return module
 
 
@@ -152,7 +174,9 @@ _MAX_COMMAND_FRAME_BYTES = 16 * 1024 * 1024
 def _get_client_registry():
     """Lazily initialize and return the global client registry singleton."""
     if __name__ != "peeka.core.agent":
-        return _canonical_agent_module()._get_client_registry()
+        canonical = _canonical_agent_module()
+        if canonical is not None:
+            return canonical._get_client_registry()
     global _client_registry
     if _client_registry is None:
         from peeka.core.client_sessions import ClientRegistry
@@ -163,7 +187,9 @@ def _get_client_registry():
 def _get_consumer_registry():
     """Lazily initialize and return the global result consumer registry singleton."""
     if __name__ != "peeka.core.agent":
-        return _canonical_agent_module()._get_consumer_registry()
+        canonical = _canonical_agent_module()
+        if canonical is not None:
+            return canonical._get_consumer_registry()
     global _consumer_registry
     if _consumer_registry is None:
         from peeka.core.result_consumers import ResultConsumerRegistry
@@ -174,7 +200,9 @@ def _get_consumer_registry():
 def _get_dx_case_registry():
     """Lazily initialize and return the global DX case registry singleton."""
     if __name__ != "peeka.core.agent":
-        return _canonical_agent_module()._get_dx_case_registry()
+        canonical = _canonical_agent_module()
+        if canonical is not None:
+            return canonical._get_dx_case_registry()
     global _dx_case_registry
     if _dx_case_registry is None:
         from peeka.core.dx_cases import DXCaseRegistry

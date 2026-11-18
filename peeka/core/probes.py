@@ -12,6 +12,7 @@ Probe status state machine:
     failed: probe terminated with an error and will not emit more events.
 """
 
+import sys
 import threading
 import time
 import uuid
@@ -140,7 +141,10 @@ class ObservationEvent:
 class ProbeRegistry:
     """Thread-safe in-memory registry for probe runs and recent events."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        consumer_registry_provider: Optional[Callable[[], Any]] = None,
+    ) -> None:
         self._lock: threading.Lock = threading.Lock()
         self._probes: Dict[str, ProbeRun] = {}
         self._recent_events: Dict[str, Deque[ObservationEvent]] = {}
@@ -149,6 +153,19 @@ class ProbeRegistry:
         self._pending_consumer_dispatches: Dict[
             str, Dict[int, Tuple[str, str, Dict[str, Any]]]
         ] = {}
+        self._consumer_registry_provider: Optional[Callable[[], Any]] = (
+            consumer_registry_provider
+        )
+        self._agent_module: Any = (
+            None
+            if consumer_registry_provider is not None
+            else sys.modules.get("peeka.core.agent")
+        )
+        self._core_module: Any = (
+            None
+            if consumer_registry_provider is not None
+            else sys.modules.get("peeka.core")
+        )
 
     def create(
         self,
@@ -333,6 +350,30 @@ class ProbeRegistry:
         self._flush_consumer_dispatches(probe_id, dispatch_lock)
         return event
 
+    def _resolve_consumer_registry(self) -> Optional[Any]:
+        """Resolve the result consumer registry bound to this generation."""
+        if self._consumer_registry_provider is not None:
+            return self._consumer_registry_provider()
+
+        agent_module = self._agent_module
+        if agent_module is None and self._core_module is not None:
+            agent_module = getattr(self._core_module, "agent", None)
+            if (
+                agent_module is None
+                and sys.modules.get("peeka.core") is self._core_module
+            ):
+                agent_module = sys.modules.get("peeka.core.agent")
+            if agent_module is not None:
+                self._agent_module = agent_module
+
+        if agent_module is None:
+            return None
+
+        getter = getattr(agent_module, "_get_consumer_registry", None)
+        if not callable(getter):
+            return None
+        return getter()
+
     def _flush_consumer_dispatches(
         self,
         probe_id: str,
@@ -349,9 +390,9 @@ class ProbeRegistry:
                     batch = [pending.pop(seq) for seq in ordered_seqs]
 
                 try:
-                    from peeka.core.agent import _get_consumer_registry
-
-                    consumer_registry = _get_consumer_registry()
+                    consumer_registry = self._resolve_consumer_registry()
+                    if consumer_registry is None:
+                        continue
                     for target_id, source_id, consumer_payload in batch:
                         _ = consumer_registry.append_for_scope(
                             target_id,
