@@ -371,13 +371,14 @@ def test_sigterm_handler_chains_previous() -> None:
     try:
         _os_module.kill = _fake_kill
 
-        # Subtest 1: callable prev — forwarded, no os.kill
+        # Subtest 1: callable prev — forwarded, no os.kill, async cleanup completes
         kill_calls.clear()
         mock_handler = _MockCallable()
         agent._prev_sigterm_handler = mock_handler
         agent._handle_sigterm(15, None)
         assert mock_handler.calls == [(15, None)]
         assert kill_calls == []
+        assert agent.stop(timeout=2.0) is True
 
         # Subtest 2: SIG_DFL — must call os.kill(pid, 15)
         kill_calls.clear()
@@ -397,6 +398,7 @@ def test_sigterm_handler_chains_previous() -> None:
         agent._handle_sigterm(15, None)
         assert kill_calls == [(_os_module.getpid(), 15)]
     finally:
+        agent.stop(timeout=2.0)
         _os_module.kill = _real_kill
         try:
             signal.signal(signal.SIGTERM, pre_test_sigterm)

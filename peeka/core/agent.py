@@ -425,6 +425,7 @@ class PeekaAgent(
     _STOP_DRAIN_TIMEOUT = 0.15
     _STOP_OBSERVATION_DRAIN_TIMEOUT = 0.3
     _STOP_CONCURRENT_WAIT_TIMEOUT = 5.0
+    _SIGNAL_STOP_WATCHDOG_TIMEOUT = 1.0
     _RESET_DRAIN_TIMEOUT = 0.05
     _START_RESET_WAIT_TIMEOUT = 1.0
     _DETACH_RESPONSE_TIMEOUT = 2.0
@@ -553,134 +554,252 @@ class PeekaAgent(
         self._prev_threading_excepthook: Any = None
         self._peeka_excepthook_ref: Any = None
         self._threading_excepthook_ref: Any = None
+        self._signal_cleanup_worker_active: bool = False
+        self._fatal_watchdog_active: bool = False
+        self._pending_fatal_signal: Optional[int] = None
         atexit.register(self.stop)
         self._install_exit_hooks()
         self._last_seen_at = _time.time()
 
+    @staticmethod
+    def _exit_signal_specs() -> List[Tuple[int, str, str, str]]:
+        """Return (signum, handler_attr, prev_attr, ref_attr) tuples for exit signals."""
+        specs: List[Tuple[int, str, str, str]] = [
+            (
+                signal.SIGTERM,
+                "_handle_sigterm",
+                "_prev_sigterm_handler",
+                "_sigterm_handler_ref",
+            ),
+            (
+                signal.SIGINT,
+                "_handle_sigint",
+                "_prev_sigint_handler",
+                "_sigint_handler_ref",
+            ),
+        ]
+        sighup = getattr(signal, "SIGHUP", None)
+        if sighup is not None:
+            specs.append(
+                (
+                    sighup,
+                    "_handle_sighup",
+                    "_prev_sighup_handler",
+                    "_sighup_handler_ref",
+                )
+            )
+        return specs
+
+    def _install_signal_hook(
+        self,
+        signum: int,
+        handler_attr: str,
+        prev_attr: str,
+        ref_attr: str,
+    ) -> None:
+        """Install one exit signal hook while preserving SIG_IGN and existing installs."""
+        existing_ref = getattr(self, ref_attr, None)
+        try:
+            current = signal.getsignal(signum)
+        except (ValueError, OSError):
+            return
+        if existing_ref is not None and current is existing_ref:
+            return
+        if current is signal.SIG_IGN:
+            setattr(self, prev_attr, signal.SIG_IGN)
+            setattr(self, ref_attr, None)
+            return
+        handler_ref = getattr(self, handler_attr)
+        try:
+            prev = signal.signal(signum, handler_ref)
+        except (ValueError, OSError):
+            setattr(self, prev_attr, None)
+            setattr(self, ref_attr, None)
+            return
+        setattr(self, prev_attr, prev)
+        setattr(self, ref_attr, handler_ref)
+
     def _install_exit_hooks(self) -> None:
-        self._prev_sigint_handler = None
-        self._prev_sighup_handler = None
-        self._prev_threading_excepthook = None
-        self._threading_excepthook_ref = None
         if threading.current_thread() is threading.main_thread():
-            try:
-                self._sigterm_handler_ref = self._handle_sigterm
-                self._prev_sigterm_handler = signal.signal(signal.SIGTERM, self._sigterm_handler_ref)
-            except (ValueError, OSError):
-                self._prev_sigterm_handler = None
-            try:
-                self._sigint_handler_ref = self._handle_sigint
-                self._prev_sigint_handler = signal.signal(signal.SIGINT, self._sigint_handler_ref)
-            except (ValueError, OSError):
-                self._prev_sigint_handler = None
-                self._sigint_handler_ref = None
-            _sighup = getattr(signal, "SIGHUP", None)
-            if _sighup is not None:
-                try:
-                    self._sighup_handler_ref = self._handle_sighup
-                    self._prev_sighup_handler = signal.signal(_sighup, self._sighup_handler_ref)
-                except (ValueError, OSError):
-                    self._prev_sighup_handler = None
-                    self._sighup_handler_ref = None
-        self._prev_excepthook = sys.excepthook
+            for signum, handler_attr, prev_attr, ref_attr in self._exit_signal_specs():
+                self._install_signal_hook(signum, handler_attr, prev_attr, ref_attr)
+
         _self_ref = self
+        existing_excepthook_ref = getattr(self, "_peeka_excepthook_ref", None)
+        if (
+            existing_excepthook_ref is None
+            or sys.excepthook is not existing_excepthook_ref
+        ):
+            self._prev_excepthook = sys.excepthook
 
-        def _peeka_excepthook(exc_type: Any, exc_value: Any, exc_tb: Any) -> None:
-            try:
-                if _self_ref._prev_excepthook is not None:
-                    _self_ref._prev_excepthook(exc_type, exc_value, exc_tb)
-            finally:
+            def _peeka_excepthook(exc_type: Any, exc_value: Any, exc_tb: Any) -> None:
                 try:
-                    _self_ref.stop()
-                except Exception:
-                    pass
-
-        sys.excepthook = _peeka_excepthook
-        self._peeka_excepthook_ref = _peeka_excepthook
-
-        # threading.excepthook — chained (Python 3.8+)
-        if hasattr(threading, "excepthook"):
-            _self_ref = self
-            _prev_threading_hook = threading.excepthook
-
-            def _peeka_threading_excepthook(args: Any) -> None:
-                try:
-                    if _prev_threading_hook is not None:
-                        _prev_threading_hook(args)
+                    if _self_ref._prev_excepthook is not None:
+                        _self_ref._prev_excepthook(exc_type, exc_value, exc_tb)
                 finally:
                     try:
                         _self_ref.stop()
                     except Exception:
                         pass
 
-            threading.excepthook = _peeka_threading_excepthook
-            self._prev_threading_excepthook = _prev_threading_hook
-            self._threading_excepthook_ref = _peeka_threading_excepthook
+            sys.excepthook = _peeka_excepthook
+            self._peeka_excepthook_ref = _peeka_excepthook
 
-    def _handle_sigterm(self, signum: int, frame: Any) -> None:
-        prev = self._prev_sigterm_handler
-        try:
-            signal.signal(signum, prev if prev is not None else signal.SIG_DFL)
-        except (ValueError, OSError):
-            pass
-        try:
-            self.stop()
-        except Exception:
-            pass
-        if prev is signal.SIG_IGN:
-            return
-        if callable(prev) and prev is not signal.SIG_DFL:
-            try:
-                prev(signum, frame)
-            except SystemExit:
-                raise
-            except Exception:
-                pass
-            return
-        os.kill(os.getpid(), signum)
+        # threading.excepthook — chained (Python 3.8+)
+        if hasattr(threading, "excepthook"):
+            existing_thread_hook_ref = getattr(self, "_threading_excepthook_ref", None)
+            if (
+                existing_thread_hook_ref is None
+                or threading.excepthook is not existing_thread_hook_ref
+            ):
+                _prev_threading_hook = threading.excepthook
 
-    def _handle_sigint(self, signum: int, frame: Any) -> None:
-        prev = self._prev_sigint_handler
-        try:
-            signal.signal(signum, prev if prev is not None else signal.SIG_DFL)
-        except (ValueError, OSError):
-            pass
-        try:
-            self.stop()
-        except Exception:
-            pass
-        if prev is signal.SIG_IGN:
-            return
-        if callable(prev) and prev is not signal.SIG_DFL:
-            try:
-                prev(signum, frame)
-            except Exception:
-                pass
-            return
-        raise KeyboardInterrupt
+                def _peeka_threading_excepthook(args: Any) -> None:
+                    try:
+                        if _prev_threading_hook is not None:
+                            _prev_threading_hook(args)
+                    finally:
+                        try:
+                            _self_ref.stop()
+                        except Exception:
+                            pass
 
-    def _handle_sighup(self, signum: int, frame: Any) -> None:
-        prev = self._prev_sighup_handler
-        try:
-            signal.signal(signum, prev if prev is not None else signal.SIG_DFL)
-        except (ValueError, OSError):
-            pass
-        try:
-            self.stop()
-        except Exception:
-            pass
-        if prev is signal.SIG_IGN:
-            return
-        if callable(prev) and prev is not signal.SIG_DFL:
-            try:
-                prev(signum, frame)
-            except Exception:
-                pass
-            return
+                threading.excepthook = _peeka_threading_excepthook
+                self._prev_threading_excepthook = _prev_threading_hook
+                self._threading_excepthook_ref = _peeka_threading_excepthook
+
+    def _deliver_pending_fatal_signal(self, signum: int) -> None:
+        """Deliver a pending SIG_DFL terminating signal and clear it if os.kill returns."""
         try:
             os.kill(os.getpid(), signum)
         except OSError:
             pass
+        if getattr(self, "_pending_fatal_signal", None) == signum:
+            self._pending_fatal_signal = None
+
+    def _start_fatal_signal_watchdog(self) -> None:
+        """Start a bounded watchdog so SIG_DFL termination never hangs on a locked main thread."""
+        if getattr(self, "_fatal_watchdog_active", False):
+            return
+        timeout = float(getattr(self, "_SIGNAL_STOP_WATCHDOG_TIMEOUT", 1.0))
+
+        def _watchdog() -> None:
+            try:
+                done_event = self._get_stop_done_event()
+                completed = bool(done_event.wait(timeout=max(0.0, timeout)))
+                if not completed:
+                    pending_sig = getattr(self, "_pending_fatal_signal", None)
+                    if pending_sig is not None:
+                        self._deliver_pending_fatal_signal(pending_sig)
+            except Exception:
+                pass
+            finally:
+                self._fatal_watchdog_active = False
+
+        try:
+            self._fatal_watchdog_active = True
+            _rpl.start_thread(_watchdog, name="peeka-signal-watchdog")
+        except Exception:
+            self._fatal_watchdog_active = False
+
+    def _schedule_signal_cleanup(self, fatal_signum: Optional[int]) -> bool:
+        """Schedule agent.stop() off the interrupted signal thread without acquiring Peeka locks."""
+        if fatal_signum is not None:
+            self._pending_fatal_signal = fatal_signum
+            self._start_fatal_signal_watchdog()
+
+        if getattr(self, "_signal_cleanup_worker_active", False):
+            return True
+
+        def _cleanup_worker() -> None:
+            try:
+                self.stop()
+            except Exception:
+                pass
+            finally:
+                self._signal_cleanup_worker_active = False
+                pending_sig = getattr(self, "_pending_fatal_signal", None)
+                if pending_sig is not None:
+                    self._deliver_pending_fatal_signal(pending_sig)
+
+        try:
+            self._signal_cleanup_worker_active = True
+            _rpl.start_thread(_cleanup_worker, name="peeka-signal-stop")
+            return True
+        except Exception:
+            self._signal_cleanup_worker_active = False
+            return False
+
+    def _handle_exit_signal(
+        self,
+        signum: int,
+        frame: Any,
+        prev_attr: str,
+        ref_attr: str,
+    ) -> None:
+        """Handle SIGTERM/SIGINT/SIGHUP without acquiring Peeka locks on the signal thread."""
+        prev = getattr(self, prev_attr, None)
+        expected_ref = getattr(self, ref_attr, None)
+        if expected_ref is not None and prev is expected_ref:
+            prev = signal.SIG_DFL
+
+        restore_target = prev if prev is not None else signal.SIG_DFL
+        try:
+            if expected_ref is None or signal.getsignal(signum) is expected_ref:
+                signal.signal(signum, restore_target)
+        except (ValueError, OSError):
+            pass
+
+        if prev is signal.SIG_IGN:
+            return
+
+        done_event = getattr(self, "_stop_done_event", None)
+        cleanup_done = bool(
+            getattr(self, "_stopped", False)
+            and done_event is not None
+            and done_event.is_set()
+        )
+        is_callable_prev = callable(prev) and prev is not signal.SIG_DFL
+        is_sigint_none = signum == signal.SIGINT and prev is None
+
+        if cleanup_done:
+            if is_callable_prev:
+                prev(signum, frame)
+                return
+            if is_sigint_none:
+                raise KeyboardInterrupt
+            try:
+                os.kill(os.getpid(), signum)
+            except OSError:
+                pass
+            return
+
+        if is_callable_prev or is_sigint_none:
+            self._schedule_signal_cleanup(fatal_signum=None)
+            if is_callable_prev:
+                prev(signum, frame)
+                return
+            raise KeyboardInterrupt
+
+        self._pending_fatal_signal = signum
+        dispatched = self._schedule_signal_cleanup(fatal_signum=signum)
+        if not dispatched:
+            self._deliver_pending_fatal_signal(signum)
+
+    def _handle_sigterm(self, signum: int, frame: Any) -> None:
+        self._handle_exit_signal(
+            signum, frame, "_prev_sigterm_handler", "_sigterm_handler_ref"
+        )
+
+    def _handle_sigint(self, signum: int, frame: Any) -> None:
+        self._handle_exit_signal(
+            signum, frame, "_prev_sigint_handler", "_sigint_handler_ref"
+        )
+
+    def _handle_sighup(self, signum: int, frame: Any) -> None:
+        self._handle_exit_signal(
+            signum, frame, "_prev_sighup_handler", "_sighup_handler_ref"
+        )
 
     # ------------------------------------------------------------------ #
     #  Lazy command handler loading & command gate                       #
@@ -2150,6 +2269,12 @@ class PeekaAgent(
             and done_event is not None
             and done_event.is_set()
         ):
+            pending_sig = getattr(self, "_pending_fatal_signal", None)
+            if (
+                pending_sig is not None
+                and threading.current_thread() is threading.main_thread()
+            ):
+                self._deliver_pending_fatal_signal(pending_sig)
             return True
 
         stop_lock = getattr(self, "_stop_lock", None)
@@ -2162,6 +2287,12 @@ class PeekaAgent(
             done_event = self._get_stop_done_event()
             if getattr(self, "_stopped", False):
                 if done_event.is_set():
+                    pending_sig = getattr(self, "_pending_fatal_signal", None)
+                    if (
+                        pending_sig is not None
+                        and threading.current_thread() is threading.main_thread()
+                    ):
+                        self._deliver_pending_fatal_signal(pending_sig)
                     return True
                 owner_tid = getattr(self, "_stop_owner_tid", None)
                 if owner_tid == current_tid:
@@ -2181,7 +2312,15 @@ class PeekaAgent(
             )
             wait_timeout = max(0.0, float(wait_timeout))
             completed = bool(done_event.wait(timeout=wait_timeout))
-            return completed or bool(done_event.is_set())
+            finished = completed or bool(done_event.is_set())
+            if finished:
+                pending_sig = getattr(self, "_pending_fatal_signal", None)
+                if (
+                    pending_sig is not None
+                    and threading.current_thread() is threading.main_thread()
+                ):
+                    self._deliver_pending_fatal_signal(pending_sig)
+            return finished
 
         try:
             self.running = False
@@ -2215,59 +2354,49 @@ class PeekaAgent(
                 for k in keys_to_remove:
                     del agents[k]
 
-            try:
-                atexit.unregister(self.stop)
-            except Exception:
-                pass
             self._uninstall_exit_hooks()
+            if getattr(self, "_pending_fatal_signal", None) is None:
+                try:
+                    atexit.unregister(self.stop)
+                except Exception:
+                    pass
         finally:
             with stop_lock:
                 self._stop_owner_tid = None
                 done_event.set()
+        pending_sig = getattr(self, "_pending_fatal_signal", None)
+        if (
+            pending_sig is not None
+            and threading.current_thread() is threading.main_thread()
+        ):
+            self._deliver_pending_fatal_signal(pending_sig)
         return True
 
     def _uninstall_exit_hooks(self) -> None:
-        prev_sigterm_handler = getattr(self, "_prev_sigterm_handler", None)
-        sigterm_handler_ref = getattr(self, "_sigterm_handler_ref", None)
-        prev_sigint_handler = getattr(self, "_prev_sigint_handler", None)
-        sigint_handler_ref = getattr(self, "_sigint_handler_ref", None)
-        prev_sighup_handler = getattr(self, "_prev_sighup_handler", None)
-        sighup_handler_ref = getattr(self, "_sighup_handler_ref", None)
-        prev_excepthook = getattr(self, "_prev_excepthook", None)
-        peeka_excepthook_ref = getattr(self, "_peeka_excepthook_ref", None)
-        if threading.current_thread() is threading.main_thread():
-            try:
-                _restore_signal_handler_if_current(
-                    signal.SIGTERM, prev_sigterm_handler, sigterm_handler_ref
-                )
-            except (ValueError, OSError):
-                pass
-            try:
-                _restore_signal_handler_if_current(
-                    signal.SIGINT, prev_sigint_handler, sigint_handler_ref
-                )
-            except (ValueError, OSError):
-                pass
-        else:
-            _schedule_signal_restore_on_main_thread(
-                signal.SIGTERM, prev_sigterm_handler, sigterm_handler_ref
-            )
-            _schedule_signal_restore_on_main_thread(
-                signal.SIGINT, prev_sigint_handler, sigint_handler_ref
-            )
-        _sighup = getattr(signal, "SIGHUP", None)
-        if _sighup is not None:
-            if threading.current_thread() is threading.main_thread():
+        is_main = threading.current_thread() is threading.main_thread()
+        for signum, _handler_attr, prev_attr, ref_attr in self._exit_signal_specs():
+            prev_handler = getattr(self, prev_attr, None)
+            handler_ref = getattr(self, ref_attr, None)
+            if prev_handler is None or handler_ref is None:
+                continue
+            if is_main:
                 try:
                     _restore_signal_handler_if_current(
-                        _sighup, prev_sighup_handler, sighup_handler_ref
+                        signum, prev_handler, handler_ref
                     )
                 except (ValueError, OSError):
                     pass
             else:
+                try:
+                    if signal.getsignal(signum) is not handler_ref:
+                        continue
+                except (ValueError, OSError):
+                    pass
                 _schedule_signal_restore_on_main_thread(
-                    _sighup, prev_sighup_handler, sighup_handler_ref
+                    signum, prev_handler, handler_ref
                 )
+        prev_excepthook = getattr(self, "_prev_excepthook", None)
+        peeka_excepthook_ref = getattr(self, "_peeka_excepthook_ref", None)
         if (
             prev_excepthook is not None
             and peeka_excepthook_ref is not None
