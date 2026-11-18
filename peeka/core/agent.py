@@ -1959,11 +1959,27 @@ class PeekaAgent(
                     if tok.cmd_id in self._inflight_commands:
                         tok.cancelled_by_stop = True
 
-    def stop(self) -> None:
+    def stop(self, timeout: Optional[float] = None) -> bool:
+        """Stop the agent and clean up all resources once.
+
+        Args:
+            timeout: Optional maximum seconds to wait if another thread is
+                already running cleanup. Defaults to
+                ``_STOP_CONCURRENT_WAIT_TIMEOUT``.
+
+        Returns:
+            True when cleanup has truly completed; False when cleanup is still
+            in progress (either because waiting for an active stop owner timed
+            out or because stop() was reentered on the active owner thread).
+        """
         current_tid = _rpl.get_ident()
-        done_event = self._get_stop_done_event()
-        if getattr(self, "_stopped", False) and done_event.is_set():
-            return
+        done_event = getattr(self, "_stop_done_event", None)
+        if (
+            getattr(self, "_stopped", False)
+            and done_event is not None
+            and done_event.is_set()
+        ):
+            return True
 
         stop_lock = getattr(self, "_stop_lock", None)
         if stop_lock is None:
@@ -1972,9 +1988,16 @@ class PeekaAgent(
 
         wait_for_owner = False
         with stop_lock:
+            done_event = self._get_stop_done_event()
             if getattr(self, "_stopped", False):
-                if getattr(self, "_stop_owner_tid", None) == current_tid:
-                    return
+                if done_event.is_set():
+                    return True
+                owner_tid = getattr(self, "_stop_owner_tid", None)
+                if owner_tid == current_tid:
+                    return False
+                if owner_tid is None:
+                    # _stopped was set externally without an active stop() owner.
+                    return True
                 wait_for_owner = True
             else:
                 self._stopped = True
@@ -1982,8 +2005,12 @@ class PeekaAgent(
                 self._stop_owner_tid = current_tid
 
         if wait_for_owner:
-            done_event.wait(timeout=self._STOP_CONCURRENT_WAIT_TIMEOUT)
-            return
+            wait_timeout = (
+                self._STOP_CONCURRENT_WAIT_TIMEOUT if timeout is None else timeout
+            )
+            wait_timeout = max(0.0, float(wait_timeout))
+            completed = bool(done_event.wait(timeout=wait_timeout))
+            return completed or bool(done_event.is_set())
 
         try:
             self.running = False
@@ -2042,8 +2069,10 @@ class PeekaAgent(
                 pass
             self._uninstall_exit_hooks()
         finally:
-            self._stop_owner_tid = None
-            done_event.set()
+            with stop_lock:
+                self._stop_owner_tid = None
+                done_event.set()
+        return True
 
     def _uninstall_exit_hooks(self) -> None:
         prev_sigterm_handler = getattr(self, "_prev_sigterm_handler", None)
@@ -2136,13 +2165,20 @@ def _init_agent(
             old_agents = list(agents.values())
             for old_agent in old_agents:
                 try:
-                    old_agent.stop()
-                    summary = getattr(old_agent, "_last_cleanup_summary", {})
-                    msg = (
-                        f"[peeka Agent] Stopped previous agent: {old_agent.session_id}"
-                        f" cleanup={summary}"
-                    )
-                    old_agent._emit_log("INFO", msg)
+                    stopped = old_agent.stop()
+                    if stopped is False:
+                        msg = (
+                            f"[peeka Agent] Timed out waiting for previous agent "
+                            f"to finish stopping: {old_agent.session_id}"
+                        )
+                        old_agent._emit_log("WARNING", msg)
+                    else:
+                        summary = getattr(old_agent, "_last_cleanup_summary", {})
+                        msg = (
+                            f"[peeka Agent] Stopped previous agent: {old_agent.session_id}"
+                            f" cleanup={summary}"
+                        )
+                        old_agent._emit_log("INFO", msg)
                 except Exception:
                     pass
             agents.clear()

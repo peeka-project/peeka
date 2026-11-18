@@ -35,7 +35,20 @@ class DetachCommand(BaseCommand):
     def execute(self, params: Dict[str, Any]) -> Dict[str, Any]:
         try:
             attached_pid = self.agent.attached_pid
-            self.agent.stop()
+            stopped = self.agent.stop()
+            if stopped is False:
+                message = (
+                    f"Timed out waiting for cleanup while detaching from process "
+                    f"{attached_pid}; cleanup is still in progress"
+                )
+                return {
+                    "status": "error",
+                    "error_code": "STOP_TIMEOUT",
+                    "message": message,
+                    "error": f"STOP_TIMEOUT: {message}",
+                    "pid": attached_pid,
+                    "cleanup_in_progress": True,
+                }
             cleanup_summary = getattr(self.agent, "_last_cleanup_summary", {})
 
             return {

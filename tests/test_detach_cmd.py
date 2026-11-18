@@ -234,3 +234,31 @@ class TestDetachProbeContextCleanup:
         result = DetachCommand(cast(Any, _FakeAgent())).execute({})
         assert result["status"] == "success"
         assert "stop" in call_order
+
+    def test_detach_returns_error_when_agent_stop_returns_false(self):
+        class _TimedOutAgent:
+            attached_pid = 12345
+            _last_cleanup_summary: dict = {}
+
+            def stop(self) -> bool:
+                return False
+
+        result = DetachCommand(cast(Any, _TimedOutAgent())).execute({})
+        assert result["status"] == "error"
+        assert result["error_code"] == "STOP_TIMEOUT"
+        assert result["cleanup_in_progress"] is True
+        assert result["pid"] == 12345
+        assert "cleanup_summary" not in result
+
+    def test_detach_returns_success_when_agent_stop_returns_true(self):
+        class _CompletedAgent:
+            attached_pid = 12345
+            _last_cleanup_summary = {"steps_run": ["stop_resource_owners"]}
+
+            def stop(self) -> bool:
+                return True
+
+        result = DetachCommand(cast(Any, _CompletedAgent())).execute({})
+        assert result["status"] == "success"
+        assert result["pid"] == 12345
+        assert result["cleanup_summary"] == {"steps_run": ["stop_resource_owners"]}

@@ -21,6 +21,7 @@ from unittest.mock import patch
 
 import pytest
 
+from peeka.commands.detach import DetachCommand
 from peeka.commands.logger import LoggerCommand
 from peeka.commands.memory import MemoryCommand
 from peeka.commands.resource_owning import CleanupScope, ResourceOwningCommand
@@ -253,6 +254,118 @@ class TestStopInflightAndConcurrency:
             release_shutdown.set()
             _cleanup_agent_logs(agent)
 
+    def test_concurrent_stop_timeout_returns_false_and_subsequent_wait_succeeds(
+        self,
+    ) -> None:
+        agent = _make_agent()
+        agent._STOP_CONCURRENT_WAIT_TIMEOUT = 0.02
+        shutdown_entered = threading.Event()
+        release_shutdown = threading.Event()
+        cleanup_finished = threading.Event()
+        waiter_entered = threading.Event()
+        shutdown_calls: List[int] = []
+        orig_shutdown = agent_module.shutdown_agent_resources
+        orig_wait = agent._stop_done_event.wait
+
+        def gated_shutdown(
+            ag: Any, logger: Any, probe_types: List[str]
+        ) -> Dict[str, Any]:
+            shutdown_calls.append(1)
+            shutdown_entered.set()
+            assert release_shutdown.wait(timeout=5.0)
+            try:
+                return orig_shutdown(ag, logger, probe_types)
+            finally:
+                cleanup_finished.set()
+
+        def tracked_wait(timeout: Optional[float] = None) -> bool:
+            if timeout is not None and timeout >= 1.0:
+                waiter_entered.set()
+            return bool(orig_wait(timeout=timeout))
+
+        owner_results: List[bool] = []
+        second_wait_results: List[bool] = []
+        try:
+            with patch.object(
+                agent_module, "shutdown_agent_resources", gated_shutdown
+            ), patch.object(agent._stop_done_event, "wait", tracked_wait):
+                t1 = threading.Thread(
+                    target=lambda: owner_results.append(agent.stop())
+                )
+                t1.start()
+                assert shutdown_entered.wait(timeout=3.0)
+
+                # First concurrent stop times out while owner cleanup is still running.
+                assert agent.stop() is False
+                assert not cleanup_finished.is_set()
+                assert len(shutdown_calls) == 1
+
+                # Calling stop() again while still cleaning up times out again without re-running cleanup.
+                assert agent.stop(timeout=0.01) is False
+                assert not cleanup_finished.is_set()
+                assert len(shutdown_calls) == 1
+
+                # Calling stop() again with enough budget waits for owner and confirms completion.
+                t2 = threading.Thread(
+                    target=lambda: second_wait_results.append(agent.stop(timeout=3.0))
+                )
+                t2.start()
+                assert waiter_entered.wait(timeout=3.0)
+                assert not cleanup_finished.is_set()
+                assert second_wait_results == []
+
+                release_shutdown.set()
+                t1.join(timeout=4.0)
+                t2.join(timeout=4.0)
+
+            assert not t1.is_alive()
+            assert not t2.is_alive()
+            assert cleanup_finished.is_set()
+            assert owner_results == [True]
+            assert second_wait_results == [True]
+            # Calling stop() after completion returns True immediately and never re-runs cleanup.
+            assert agent.stop() is True
+            assert len(shutdown_calls) == 1
+        finally:
+            release_shutdown.set()
+            _cleanup_agent_logs(agent)
+
+    def test_same_thread_reentrant_stop_does_not_deadlock_and_runs_cleanup_once(
+        self,
+    ) -> None:
+        agent = _make_agent()
+        shutdown_calls: List[int] = []
+        reentrant_stop_results: List[bool] = []
+        reentrant_detach_results: List[Dict[str, Any]] = []
+        orig_shutdown = agent_module.shutdown_agent_resources
+
+        def reentrant_shutdown(
+            ag: Any, logger: Any, probe_types: List[str]
+        ) -> Dict[str, Any]:
+            shutdown_calls.append(1)
+            reentrant_stop_results.append(ag.stop())
+            reentrant_stop_results.append(ag.stop(timeout=1.0))
+            reentrant_detach_results.append(DetachCommand(ag).execute({}))
+            return orig_shutdown(ag, logger, probe_types)
+
+        try:
+            with patch.object(
+                agent_module, "shutdown_agent_resources", reentrant_shutdown
+            ):
+                assert agent.stop() is True
+
+            assert reentrant_stop_results == [False, False]
+            assert len(reentrant_detach_results) == 1
+            assert reentrant_detach_results[0]["status"] == "error"
+            assert reentrant_detach_results[0]["error_code"] == "STOP_TIMEOUT"
+            assert reentrant_detach_results[0]["cleanup_in_progress"] is True
+            assert len(shutdown_calls) == 1
+            # Subsequent post-completion calls report True and succeed without re-running cleanup.
+            assert agent.stop() is True
+            assert len(shutdown_calls) == 1
+        finally:
+            _cleanup_agent_logs(agent)
+
 
 class TestDetachBoundedFinalReply:
     def test_detach_rpc_receives_success_reply_and_closes_other_clients(self) -> None:
@@ -287,6 +400,121 @@ class TestDetachBoundedFinalReply:
         finally:
             other_client.disconnect()
             detach_client.disconnect()
+            agent.stop()
+            _cleanup_agent_logs(agent)
+
+    def test_detach_does_not_confirm_completion_while_stop_is_still_cleaning_up(
+        self,
+    ) -> None:
+        agent = _make_agent()
+        agent._STOP_CONCURRENT_WAIT_TIMEOUT = 0.02
+        assert agent.start()
+
+        shutdown_entered = threading.Event()
+        release_shutdown = threading.Event()
+        cleanup_finished = threading.Event()
+        detach_entered_stop = threading.Event()
+        release_detach_stop = threading.Event()
+        shutdown_calls: List[int] = []
+        orig_shutdown = agent_module.shutdown_agent_resources
+        orig_stop = agent.stop
+
+        def gated_shutdown(
+            ag: Any, logger: Any, probe_types: List[str]
+        ) -> Dict[str, Any]:
+            shutdown_calls.append(1)
+            shutdown_entered.set()
+            assert release_shutdown.wait(timeout=5.0)
+            try:
+                return orig_shutdown(ag, logger, probe_types)
+            finally:
+                cleanup_finished.set()
+
+        def tracked_stop(timeout: Optional[float] = None) -> bool:
+            if threading.current_thread().name == "detach-rpc-caller":
+                detach_entered_stop.set()
+                assert release_detach_stop.wait(timeout=5.0)
+            return orig_stop(timeout=timeout)
+
+        owner_results: List[bool] = []
+        rpc_results: List[Dict[str, Any]] = []
+        detach_client = StreamingAgentClient(agent.sock_path, rpc_timeout=3.0)
+        late_client = StreamingAgentClient(agent.sock_path, rpc_timeout=3.0)
+        try:
+            assert detach_client.connect()["status"] == "success"
+            assert late_client.connect()["status"] == "success"
+
+            with patch.object(
+                agent_module, "shutdown_agent_resources", gated_shutdown
+            ), patch.object(agent, "stop", tracked_stop):
+                # Trigger RPC detach so its connection is marked detaching before
+                # t1 enters stop(), then pause it right before calling agent.stop().
+                orig_execute = DetachCommand.execute
+
+                def named_detach_execute(
+                    cmd_self: DetachCommand, params: Dict[str, Any]
+                ) -> Dict[str, Any]:
+                    threading.current_thread().name = "detach-rpc-caller"
+                    return orig_execute(cmd_self, params)
+
+                with patch.object(DetachCommand, "execute", named_detach_execute):
+                    rpc_thread = threading.Thread(
+                        target=lambda: rpc_results.append(
+                            detach_client.send_command({"type": "detach"})
+                        )
+                    )
+                    rpc_thread.start()
+                    assert detach_entered_stop.wait(timeout=3.0)
+
+                    t1 = threading.Thread(
+                        target=lambda: owner_results.append(orig_stop())
+                    )
+                    t1.start()
+                    assert shutdown_entered.wait(timeout=3.0)
+
+                    # Release the concurrent RPC detach while t1 owns cleanup; it must
+                    # time out and reply with STOP_TIMEOUT rather than false success.
+                    release_detach_stop.set()
+                    rpc_thread.join(timeout=4.0)
+                    assert not rpc_thread.is_alive()
+                    assert len(rpc_results) == 1
+                    rpc_reply = rpc_results[0]
+                    assert rpc_reply["status"] == "error"
+                    assert rpc_reply["error_code"] == "STOP_TIMEOUT"
+                    assert rpc_reply["cleanup_in_progress"] is True
+                    assert "cleanup_summary" not in rpc_reply
+                    assert not cleanup_finished.is_set()
+                    assert len(shutdown_calls) == 1
+
+                    # A late RPC detach client also never receives false success.
+                    late_reply = late_client.send_command({"type": "detach"})
+                    assert late_reply["status"] == "error"
+
+                    # Direct DetachCommand call while cleanup is still running refuses false success.
+                    direct_reply = DetachCommand(agent).execute({})
+                    assert direct_reply["status"] == "error"
+                    assert direct_reply["error_code"] == "STOP_TIMEOUT"
+                    assert direct_reply["cleanup_in_progress"] is True
+                    assert "cleanup_summary" not in direct_reply
+                    assert len(shutdown_calls) == 1
+
+                    release_shutdown.set()
+                    t1.join(timeout=4.0)
+
+            assert not t1.is_alive()
+            assert cleanup_finished.is_set()
+            assert owner_results == [True]
+
+            # Once cleanup truly completes, detach confirms completion with cleanup_summary.
+            final_reply = DetachCommand(agent).execute({})
+            assert final_reply["status"] == "success"
+            assert final_reply["cleanup_summary"]["steps_run"]
+            assert len(shutdown_calls) == 1
+        finally:
+            release_detach_stop.set()
+            release_shutdown.set()
+            detach_client.disconnect()
+            late_client.disconnect()
             agent.stop()
             _cleanup_agent_logs(agent)
 
