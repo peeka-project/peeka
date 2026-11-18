@@ -22,7 +22,8 @@ def wrapper_call_target(wrapper: Any) -> Any:
     """Return the callable a Peeka wrapper delegates to, or None.
 
     Peeka wrappers (watch/stack/trace/monitor) capture their target either in a
-    closure cell named ``func`` or on a factory object held in a ``self`` cell.
+    closure cell named ``func``, on a factory object held in a ``self`` cell, or
+    via a ``*wrapper_ref`` single-element list cell holding ``wrapper``.
     Only call this on wrappers known to be Peeka-owned.
     """
     closure = getattr(wrapper, "__closure__", None)
@@ -30,6 +31,7 @@ def wrapper_call_target(wrapper: Any) -> Any:
     if closure is None or code is None:
         return None
     factory_func = None
+    ref_func = None
     for name, cell in zip(code.co_freevars, closure):
         try:
             cell_value = cell.cell_contents
@@ -39,7 +41,16 @@ def wrapper_call_target(wrapper: Any) -> Any:
             return cell_value
         if name == "self":
             factory_func = getattr(cell_value, "func", None)
-    return factory_func
+        elif (
+            name.endswith("wrapper_ref")
+            and isinstance(cell_value, list)
+            and len(cell_value) == 1
+            and cell_value[0] is wrapper
+        ):
+            ref_func = getattr(wrapper, "__wrapped__", None)
+    if factory_func is not None:
+        return factory_func
+    return ref_func
 
 
 def retarget_wrapper_call(wrapper: Any, old_target: Any, new_target: Any) -> None:

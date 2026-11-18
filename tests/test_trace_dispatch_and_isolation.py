@@ -805,3 +805,27 @@ class TestParentChildProbeTransparency:
             ]
         finally:
             injector.uninject_all()
+
+    @pytest.mark.parametrize("backend", [BACKEND_SETTRACE, BACKEND_SYS_MONITORING])
+    def test_async_parent_records_watched_child(self, monkeypatch, backend):
+        if backend == BACKEND_SYS_MONITORING and not hasattr(sys, "monitoring"):
+            pytest.skip("requires sys.monitoring")
+
+        mod = _build_exec_module(
+            monkeypatch,
+            "test_trace_async_watched_child",
+            "async def child(): return 3\nasync def parent(): return await child()\n",
+        )
+        agent = MockAgent()
+        injector = DecoratorInjector(agent)
+        try:
+            child_id = injector.inject(f"{mod.__name__}.child", {})
+            parent_id = injector.inject_trace(f"{mod.__name__}.parent", {}, force_backend=backend)
+            assert asyncio.run(mod.parent()) == 3
+            observations = {obs["watch_id"]: obs for obs in agent._observations}
+            assert observations[child_id]["returnObj"] == 3
+            assert [node["function"] for node in observations[parent_id]["call_tree"]] == [
+                f"{mod.__name__}.child"
+            ]
+        finally:
+            injector.uninject_all()

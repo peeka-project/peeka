@@ -7,10 +7,13 @@ import time
 from collections import defaultdict
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
+from peeka.core.instrumentation.registry import wrapper_call_target
 from peeka.core.runtime import primitives as _rpl
 from peeka.core.runtime.compat import BACKEND_WRAPPER_ONLY
 
 
+_DYNAMIC_WATCH_FILENAME_PREFIX = "<peeka-watch:"
+_DYNAMIC_WATCH_WRAPPER_SUFFIX = "pk_wrapper"
 _PEEKA_PACKAGE_DIR = (
     os.path.realpath(
         os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -30,6 +33,7 @@ _WRAPPER_DISPATCH_SPECS: Dict[str, Tuple[str, ...]] = {
     ),
     os.path.join(_INSTRUMENTATION_DIR, "watch.py"): (
         "wrapper",
+        "_run_coroutine",
         "async_wrapper",
         "generator_wrapper",
         "async_generator_wrapper",
@@ -40,6 +44,23 @@ _RESOLVED_FILE_CACHE: Dict[str, str] = {}
 _INTERNAL_FILE_CACHE: Dict[str, bool] = {}
 _WRAPPER_DISPATCH_CACHE: Dict[Tuple[str, str], bool] = {}
 _SENTINEL = object()
+
+
+def _is_dynamic_watch_filename(filename: str) -> bool:
+    """Return True if *filename* belongs to a compiled Peeka watch wrapper."""
+    return filename.startswith(_DYNAMIC_WATCH_FILENAME_PREFIX) and filename.endswith(
+        ">"
+    )
+
+
+def _is_dynamic_watch_wrapper_name(co_name: str) -> bool:
+    """Return True if *co_name* matches watch.py's ``_+pk_wrapper`` convention."""
+    suffix = _DYNAMIC_WATCH_WRAPPER_SUFFIX
+    return (
+        co_name.endswith(suffix)
+        and len(co_name) > len(suffix)
+        and set(co_name[: -len(suffix)]) == {"_"}
+    )
 
 
 def _resolve_filename(filename: str) -> str:
@@ -57,7 +78,11 @@ def _resolve_filename(filename: str) -> str:
 def _is_peeka_internal_code(code: Any) -> bool:
     """Return True if *code* belongs to the Peeka package internals."""
     filename = getattr(code, "co_filename", "")
-    if not filename or filename.startswith("<"):
+    if not filename:
+        return False
+    if _is_dynamic_watch_filename(filename):
+        return True
+    if filename.startswith("<"):
         return False
     cached = _INTERNAL_FILE_CACHE.get(filename)
     if cached is not None:
@@ -72,9 +97,13 @@ def _is_peeka_internal_code(code: Any) -> bool:
 def _is_peeka_wrapper_dispatch_code(code: Any) -> bool:
     """Return True if *code* is a transparent Peeka probe wrapper/dispatcher."""
     filename = getattr(code, "co_filename", "")
-    if not filename or filename.startswith("<"):
+    if not filename:
         return False
     co_name = getattr(code, "co_name", "")
+    if _is_dynamic_watch_filename(filename):
+        return _is_dynamic_watch_wrapper_name(co_name)
+    if filename.startswith("<"):
+        return False
     key = (filename, co_name)
     cached = _WRAPPER_DISPATCH_CACHE.get(key)
     if cached is not None:
@@ -109,7 +138,7 @@ def _unwrap_peeka_wrappers(func: Any) -> Any:
         code = getattr(current, "__code__", None)
         if code is None or not _is_peeka_wrapper_dispatch_code(code):
             break
-        nxt = getattr(current, "__wrapped__", None)
+        nxt = wrapper_call_target(current)
         if nxt is None or id(nxt) in seen:
             break
         seen.add(id(nxt))
