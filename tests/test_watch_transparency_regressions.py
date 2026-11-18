@@ -607,8 +607,12 @@ class TestAsyncSignatureAndCallTimeValidation:
             injector.inject("watch_wraps_partial_sig_mod.partial_gen", {})
 
             assert inspect.iscoroutinefunction(mod.wrapped_core)
+            assert inspect.signature(mod.wrapped_core) == inspect.signature(core)
+            assert inspect.signature(
+                mod.wrapped_core, follow_wrapped=False
+            ) == inspect.signature(wrapped_core, follow_wrapped=False)
             with pytest.raises(TypeError):
-                mod.wrapped_core(x=1)
+                await mod.wrapped_core(x=1)
             assert await mod.wrapped_core(4) == 18
 
             assert not inspect.iscoroutinefunction(mod.schedule_core)
@@ -777,16 +781,291 @@ class TestAsyncSignatureAndCallTimeValidation:
                 force_backend=BACKEND_WRAPPER_ONLY,
             )
             w3 = injector.inject("watch_stacked_async_mod.coro", {})
+            assert inspect.signature(mod.coro) == inspect.signature(coro)
             with pytest.raises(TypeError):
-                mod.coro(a=1)
+                await mod.coro(a=1)
             assert await mod.coro(20) == 23
             injector.uninject(t1)
             assert wrapper_call_target(mod.coro) is coro
+            assert inspect.signature(mod.coro) == inspect.signature(coro)
             with pytest.raises(TypeError):
-                mod.coro(a=1)
+                await mod.coro(a=1)
             assert await mod.coro(20) == 23
             injector.uninject(w3)
             assert mod.coro is coro
+
+            # 5. Watch + Trace on coroutine (watch installed first)
+            w4 = injector.inject("watch_stacked_async_mod.coro", {})
+            t2 = injector.inject_trace(
+                "watch_stacked_async_mod.coro",
+                {"times": -1},
+                force_backend=BACKEND_WRAPPER_ONLY,
+            )
+            with pytest.raises(TypeError):
+                await mod.coro(a=1)
+            assert await mod.coro(20) == 23
+            injector.uninject(t2)
+            with pytest.raises(TypeError):
+                mod.coro(a=1)
+            assert await mod.coro(20) == 23
+            injector.uninject(w4)
+            assert mod.coro is coro
+        finally:
+            injector.uninject_all()
+            sys.modules.pop(mod.__name__, None)
+
+    @pytest.mark.asyncio
+    async def test_wraps_and_custom_signature_preserve_real_call_semantics_and_metadata(self) -> None:
+        agent = _MockAgent()
+        injector = DecoratorInjector(agent)
+
+        async def target(x: int = 2) -> int:
+            """Target docstring."""
+            return x
+
+        @functools.wraps(target)
+        async def wrapper(*args: Any, **kwargs: Any) -> Tuple[Tuple[Any, ...], Dict[str, Any]]:
+            return args, kwargs
+
+        async def mismatched_adapter(a: int, b: int = 10) -> Tuple[int, int]:
+            return (a, b)
+
+        mismatched_adapter.__wrapped__ = target  # type: ignore[attr-defined]
+
+        async def target_gen(x: int = 2) -> Any:
+            """Target gen docstring."""
+            yield x
+
+        @functools.wraps(target_gen)
+        async def gen_wrapper(*args: Any, **kwargs: Any) -> Any:
+            yield (args, kwargs)
+
+        async def sig_loose(*args: Any, **kwargs: Any) -> Tuple[Tuple[Any, ...], Dict[str, Any]]:
+            return args, kwargs
+
+        sig_loose.__signature__ = inspect.signature(target)  # type: ignore[attr-defined]
+
+        async def sig_strict(a: int, /, b: int = 2) -> int:
+            return a + b
+
+        sig_strict.__signature__ = inspect.signature(wrapper, follow_wrapped=False)  # type: ignore[attr-defined]
+
+        async def sig_loose_gen(*args: Any, **kwargs: Any) -> Any:
+            yield (args, kwargs)
+
+        sig_loose_gen.__signature__ = inspect.signature(target_gen)  # type: ignore[attr-defined]
+
+        partial_wrapped = functools.partial(wrapper, 1)
+        partial_sig = functools.partial(sig_loose, 1)
+
+        expected_wrapper_sig = inspect.signature(wrapper)
+        expected_wrapper_raw_sig = inspect.signature(wrapper, follow_wrapped=False)
+        expected_gen_sig = inspect.signature(gen_wrapper)
+        expected_gen_raw_sig = inspect.signature(gen_wrapper, follow_wrapped=False)
+        expected_loose_sig = inspect.signature(sig_loose)
+        expected_strict_sig = inspect.signature(sig_strict)
+
+        mod = _install_temp_module(
+            "watch_wraps_real_semantics_mod",
+            wrapper=wrapper,
+            mismatched_adapter=mismatched_adapter,
+            gen_wrapper=gen_wrapper,
+            sig_loose=sig_loose,
+            sig_strict=sig_strict,
+            sig_loose_gen=sig_loose_gen,
+            partial_wrapped=partial_wrapped,
+            partial_sig=partial_sig,
+        )
+        try:
+            w1 = injector.inject("watch_wraps_real_semantics_mod.wrapper", {})
+            w2 = injector.inject("watch_wraps_real_semantics_mod.wrapper", {})
+            injector.inject("watch_wraps_real_semantics_mod.mismatched_adapter", {})
+            injector.inject("watch_wraps_real_semantics_mod.gen_wrapper", {})
+            injector.inject("watch_wraps_real_semantics_mod.sig_loose", {})
+            injector.inject("watch_wraps_real_semantics_mod.sig_strict", {})
+            injector.inject("watch_wraps_real_semantics_mod.sig_loose_gen", {})
+            injector.inject("watch_wraps_real_semantics_mod.partial_wrapped", {})
+            injector.inject("watch_wraps_real_semantics_mod.partial_sig", {})
+
+            # 1. @functools.wraps(target) around async (*args, **kwargs):
+            #    preserves real binding, metadata, native coroutine type, and stacked watch.
+            assert inspect.iscoroutinefunction(mod.wrapper)
+            coro_obj = mod.wrapper(x=7)
+            assert isinstance(coro_obj, types.CoroutineType)
+            assert await coro_obj == ((), {"x": 7})
+            assert await mod.wrapper(extra=5) == ((), {"extra": 5})
+            assert mod.wrapper.__name__ == target.__name__
+            assert mod.wrapper.__doc__ == target.__doc__
+            assert mod.wrapper.__annotations__ == target.__annotations__
+            assert inspect.signature(mod.wrapper) == expected_wrapper_sig
+            assert inspect.signature(mod.wrapper, follow_wrapped=False) == expected_wrapper_raw_sig
+            assert [o["watch_id"] for o in agent.observations[-2:]] == [w1, w2]
+
+            # Uninject inner watch from stacked wrapper; outer watch keeps real semantics.
+            agent.observations.clear()
+            injector.uninject(w1)
+            assert wrapper_call_target(mod.wrapper) is wrapper
+            assert await mod.wrapper(x=7) == ((), {"x": 7})
+            assert await mod.wrapper(extra=5) == ((), {"extra": 5})
+            assert [o["watch_id"] for o in agent.observations] == [w2, w2]
+            injector.uninject(w2)
+            assert mod.wrapper is wrapper
+
+            # 2. __wrapped__ pointing to target with a different concrete signature.
+            assert await mod.mismatched_adapter(3) == (3, 10)
+            with pytest.raises(TypeError):
+                mod.mismatched_adapter(x=7)
+            assert inspect.signature(mod.mismatched_adapter) == inspect.signature(target)
+            assert inspect.signature(mod.mismatched_adapter, follow_wrapped=False) == inspect.signature(
+                mismatched_adapter, follow_wrapped=False
+            )
+
+            # 3. @functools.wraps(target_gen) around async generator (*args, **kwargs).
+            assert inspect.isasyncgenfunction(mod.gen_wrapper)
+            gen_obj = mod.gen_wrapper(x=7)
+            assert isinstance(gen_obj, types.AsyncGeneratorType)
+            assert [item async for item in gen_obj] == [((), {"x": 7})]
+            assert [item async for item in mod.gen_wrapper(extra=5)] == [((), {"extra": 5})]
+            assert inspect.signature(mod.gen_wrapper) == expected_gen_sig
+            assert inspect.signature(mod.gen_wrapper, follow_wrapped=False) == expected_gen_raw_sig
+
+            # 4. User __signature__ is preserved as metadata, never enforced as call constraint.
+            assert inspect.signature(mod.sig_loose) == expected_loose_sig
+            assert inspect.signature(mod.sig_loose, follow_wrapped=False) == expected_loose_sig
+            assert await mod.sig_loose(x=7) == ((), {"x": 7})
+            assert await mod.sig_loose(extra=5) == ((), {"extra": 5})
+
+            assert inspect.signature(mod.sig_strict) == expected_strict_sig
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always", RuntimeWarning)
+                with pytest.raises(TypeError):
+                    mod.sig_strict(a=1)
+            assert [w for w in caught if "was never awaited" in str(w.message)] == []
+            assert await mod.sig_strict(10) == 12
+
+            assert [item async for item in mod.sig_loose_gen(x=7)] == [((), {"x": 7})]
+            assert [item async for item in mod.sig_loose_gen(extra=5)] == [((), {"extra": 5})]
+            assert inspect.signature(mod.sig_loose_gen) == inspect.signature(target_gen)
+
+            # 5. functools.partial over @wraps / __signature__ callables.
+            assert await mod.partial_wrapped(x=7) == ((1,), {"x": 7})
+            assert await mod.partial_wrapped(extra=5) == ((1,), {"extra": 5})
+            assert await mod.partial_sig(x=7) == ((1,), {"x": 7})
+            assert await mod.partial_sig(extra=5) == ((1,), {"extra": 5})
+        finally:
+            injector.uninject_all()
+            sys.modules.pop(mod.__name__, None)
+
+    @pytest.mark.asyncio
+    async def test_async_generator_parameter_names_cannot_shadow_builtin_exceptions(self) -> None:
+        agent = _MockAgent()
+        injector = DecoratorInjector(agent)
+        events: List[str] = []
+
+        async def shadowed_agen(
+            StopAsyncIteration: int = 1,
+            BaseException: int = 2,
+            GeneratorExit: int = 3,
+            _pk_StopAsyncIteration: int = 4,
+            func: str = "f",
+            self: str = "s",
+            *,
+            fail: bool = False,
+        ) -> Any:
+            try:
+                try:
+                    yield (
+                        StopAsyncIteration,
+                        BaseException,
+                        GeneratorExit,
+                        _pk_StopAsyncIteration,
+                        func,
+                        self,
+                    )
+                except ValueError as err:
+                    yield f"caught:{err}"
+                if fail:
+                    raise RuntimeError("inner boom")
+                yield "done"
+            finally:
+                events.append("finalized")
+
+        mod = _install_temp_module("watch_shadowed_builtin_exc_mod", shadowed_agen=shadowed_agen)
+        try:
+            w1 = injector.inject("watch_shadowed_builtin_exc_mod.shadowed_agen", {})
+            w2 = injector.inject("watch_shadowed_builtin_exc_mod.shadowed_agen", {})
+
+            assert inspect.isasyncgenfunction(mod.shadowed_agen)
+
+            # 1. Normal exhaustion (StopAsyncIteration)
+            gen1 = mod.shadowed_agen(10, 20, 30, 40, func="fn", self="me")
+            assert isinstance(gen1, types.AsyncGeneratorType)
+            assert [item async for item in gen1] == [
+                (10, 20, 30, 40, "fn", "me"),
+                "done",
+            ]
+            assert events == ["finalized"]
+
+            # 2. Early aclose (GeneratorExit)
+            events.clear()
+            gen2 = mod.shadowed_agen()
+            assert await gen2.__anext__() == (1, 2, 3, 4, "f", "s")
+            await gen2.aclose()
+            assert events == ["finalized"]
+
+            # 3. athrow (BaseException in yield try/except)
+            events.clear()
+            gen3 = mod.shadowed_agen()
+            assert await gen3.__anext__() == (1, 2, 3, 4, "f", "s")
+            assert await gen3.athrow(ValueError("oops")) == "caught:oops"
+            assert await gen3.__anext__() == "done"
+            with pytest.raises(StopAsyncIteration):
+                await gen3.__anext__()
+            assert events == ["finalized"]
+
+            # 4. Inner exception (BaseException in await step try/except)
+            events.clear()
+            gen4 = mod.shadowed_agen(fail=True)
+            assert await gen4.__anext__() == (1, 2, 3, 4, "f", "s")
+            with pytest.raises(RuntimeError, match="inner boom"):
+                await gen4.__anext__()
+            assert events == ["finalized"]
+
+            # 5. Uninject inner stacked watch and verify outer continues cleanly.
+            events.clear()
+            injector.uninject(w1)
+            assert mod.shadowed_agen.__wrapped__ is shadowed_agen
+            gen5 = mod.shadowed_agen(7)
+            assert [item async for item in gen5] == [(7, 2, 3, 4, "f", "s"), "done"]
+            assert events == ["finalized"]
+            injector.uninject(w2)
+            assert mod.shadowed_agen is shadowed_agen
+        finally:
+            injector.uninject_all()
+            sys.modules.pop(mod.__name__, None)
+
+    @pytest.mark.asyncio
+    async def test_async_generator_shadowing_builtins_without_func_self_retargets(self) -> None:
+        agent = _MockAgent()
+        injector = DecoratorInjector(agent)
+
+        async def shadowed_only(
+            StopAsyncIteration: int = 11,
+            BaseException: int = 22,
+            GeneratorExit: int = 33,
+        ) -> Any:
+            yield (StopAsyncIteration, BaseException, GeneratorExit)
+
+        mod = _install_temp_module("watch_shadowed_only_mod", shadowed_only=shadowed_only)
+        try:
+            w1 = injector.inject("watch_shadowed_only_mod.shadowed_only", {})
+            w2 = injector.inject("watch_shadowed_only_mod.shadowed_only", {})
+            assert [item async for item in mod.shadowed_only()] == [(11, 22, 33)]
+            injector.uninject(w1)
+            assert wrapper_call_target(mod.shadowed_only) is shadowed_only
+            assert [item async for item in mod.shadowed_only(1, 2, 3)] == [(1, 2, 3)]
+            injector.uninject(w2)
+            assert mod.shadowed_only is shadowed_only
         finally:
             injector.uninject_all()
             sys.modules.pop(mod.__name__, None)

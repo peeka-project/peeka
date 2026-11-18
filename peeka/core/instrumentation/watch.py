@@ -2,6 +2,7 @@
 
 import asyncio
 import concurrent.futures
+import functools
 import inspect
 import json
 import keyword
@@ -9,6 +10,7 @@ import logging
 import sys
 import threading
 import time
+import types
 from functools import wraps
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Tuple
 
@@ -82,13 +84,185 @@ def _choose_internal_prefix(param_names: Set[str]) -> str:
     return prefix
 
 
+_PARTIAL_PLACEHOLDER = getattr(functools, "Placeholder", object())
+
+
+def _extract_function_signature(func: types.FunctionType) -> inspect.Signature:
+    """Build a function's real call-time Signature from code and defaults."""
+    code = func.__code__
+    posonly_count = getattr(code, "co_posonlyargcount", 0)
+    arg_count = code.co_argcount
+    kwonly_count = code.co_kwonlyargcount
+    varnames = code.co_varnames
+    defaults = func.__defaults__ or ()
+    kwdefaults = func.__kwdefaults__ or {}
+
+    parameters: List[inspect.Parameter] = []
+    first_default_idx = arg_count - len(defaults)
+
+    for idx in range(arg_count):
+        kind = (
+            inspect.Parameter.POSITIONAL_ONLY
+            if idx < posonly_count
+            else inspect.Parameter.POSITIONAL_OR_KEYWORD
+        )
+        default = (
+            defaults[idx - first_default_idx]
+            if idx >= first_default_idx
+            else inspect.Parameter.empty
+        )
+        parameters.append(inspect.Parameter(varnames[idx], kind, default=default))
+
+    if code.co_flags & inspect.CO_VARARGS:
+        parameters.append(
+            inspect.Parameter(
+                varnames[arg_count + kwonly_count],
+                inspect.Parameter.VAR_POSITIONAL,
+            )
+        )
+
+    for idx in range(arg_count, arg_count + kwonly_count):
+        name = varnames[idx]
+        default = kwdefaults[name] if name in kwdefaults else inspect.Parameter.empty
+        parameters.append(
+            inspect.Parameter(name, inspect.Parameter.KEYWORD_ONLY, default=default)
+        )
+
+    if code.co_flags & inspect.CO_VARKEYWORDS:
+        varkw_idx = (
+            arg_count
+            + kwonly_count
+            + (1 if (code.co_flags & inspect.CO_VARARGS) else 0)
+        )
+        parameters.append(
+            inspect.Parameter(varnames[varkw_idx], inspect.Parameter.VAR_KEYWORD)
+        )
+
+    return inspect.Signature(parameters)
+
+
+def _bind_leading_positional(
+    sig: inspect.Signature, count: int
+) -> Optional[inspect.Signature]:
+    """Bind ``count`` leading positional parameters for a bound method."""
+    params = list(sig.parameters.values())
+    remaining = count
+    while remaining > 0:
+        if not params:
+            return None
+        first = params[0]
+        if first.kind in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        ):
+            params.pop(0)
+            remaining -= 1
+        elif first.kind == inspect.Parameter.VAR_POSITIONAL:
+            break
+        else:
+            return None
+    return inspect.Signature(params)
+
+
+def _apply_partial_signature(
+    sig: inspect.Signature, partial_obj: functools.partial
+) -> Optional[inspect.Signature]:
+    """Apply ``functools.partial`` args/keywords onto a runtime signature."""
+    partial_args = partial_obj.args or ()
+    partial_keywords = partial_obj.keywords or {}
+    try:
+        bound = sig.bind_partial(*partial_args, **partial_keywords)
+    except TypeError:
+        return None
+
+    new_params: Dict[str, inspect.Parameter] = dict(sig.parameters)
+    transform_to_kwonly = False
+
+    for param_name, param in sig.parameters.items():
+        if param_name in bound.arguments:
+            arg_value = bound.arguments[param_name]
+            if param.kind == inspect.Parameter.POSITIONAL_ONLY:
+                if arg_value is _PARTIAL_PLACEHOLDER:
+                    new_params[param_name] = param.replace(
+                        default=inspect.Parameter.empty
+                    )
+                else:
+                    new_params.pop(param_name)
+                continue
+            if param.kind == inspect.Parameter.POSITIONAL_OR_KEYWORD:
+                if param_name in partial_keywords:
+                    transform_to_kwonly = True
+                    new_params[param_name] = param.replace(default=arg_value)
+                elif arg_value is _PARTIAL_PLACEHOLDER:
+                    new_params[param_name] = param.replace(
+                        kind=inspect.Parameter.POSITIONAL_ONLY,
+                        default=inspect.Parameter.empty,
+                    )
+                    continue
+                else:
+                    new_params.pop(param_name)
+                    continue
+            if param.kind == inspect.Parameter.KEYWORD_ONLY:
+                new_params[param_name] = param.replace(default=arg_value)
+
+        if transform_to_kwonly:
+            if param.kind == inspect.Parameter.POSITIONAL_OR_KEYWORD:
+                new_params[param_name] = new_params[param_name].replace(
+                    kind=inspect.Parameter.KEYWORD_ONLY
+                )
+            elif param.kind == inspect.Parameter.VAR_POSITIONAL:
+                new_params.pop(param_name)
+
+    return inspect.Signature(new_params.values())
+
+
+def _extract_runtime_signature(
+    func: Callable[..., Any],
+    _seen: Optional[Set[int]] = None,
+) -> Optional[inspect.Signature]:
+    """Return a callable's real call-time Signature without following __wrapped__ or __signature__."""
+    seen = _seen if _seen is not None else set()
+    obj_id = id(func)
+    if obj_id in seen:
+        return None
+    seen.add(obj_id)
+
+    if isinstance(func, types.FunctionType):
+        return _extract_function_signature(func)
+
+    if isinstance(func, types.MethodType):
+        inner_sig = _extract_runtime_signature(func.__func__, seen)
+        if inner_sig is None:
+            return None
+        return _bind_leading_positional(inner_sig, 1)
+
+    if isinstance(func, functools.partial):
+        inner_sig = _extract_runtime_signature(func.func, seen)
+        if inner_sig is None:
+            return None
+        return _apply_partial_signature(inner_sig, func)
+
+    call_attr = getattr(func, "__call__", None)
+    if isinstance(
+        call_attr, (types.FunctionType, types.MethodType, functools.partial)
+    ):
+        return _extract_runtime_signature(call_attr, seen)
+
+    if hasattr(func, "__signature__"):
+        return None
+
+    try:
+        return inspect.signature(func, follow_wrapped=False)
+    except (ValueError, TypeError):
+        return None
+
+
 def _build_signature_spec(
     func: Callable[..., Any],
 ) -> Optional[Tuple[Set[str], str, str, str, Dict[str, Any]]]:
     """Extract a compile-safe parameter list, forwarding expressions, and defaults."""
-    try:
-        sig = inspect.signature(func)
-    except (ValueError, TypeError):
+    sig = _extract_runtime_signature(func)
+    if sig is None:
         return None
 
     params = list(sig.parameters.values())
@@ -807,6 +981,7 @@ class WatchWrapperFactory:
         wrapper_name = f"{prefix}wrapper"
         builder_name = f"{prefix}make"
 
+        exec_ns = dict(defaults_ns)
         if mode == "coroutine":
             helper_arg: Any = self._run_coroutine
             source = (
@@ -822,6 +997,12 @@ class WatchWrapperFactory:
             val = f"{prefix}val"
             sent = f"{prefix}sent"
             exc = f"{prefix}exc"
+            stop_async_iter = f"{prefix}StopAsyncIteration"
+            base_exc = f"{prefix}BaseException"
+            gen_exit = f"{prefix}GeneratorExit"
+            exec_ns[stop_async_iter] = StopAsyncIteration
+            exec_ns[base_exc] = BaseException
+            exec_ns[gen_exit] = GeneratorExit
             source = (
                 f"def {builder_name}({target_param}, {helper_param}):\n"
                 f"    async def {wrapper_name}({params_decl}):\n"
@@ -831,24 +1012,24 @@ class WatchWrapperFactory:
                 f"            while True:\n"
                 f"                try:\n"
                 f"                    {val} = await {step}\n"
-                f"                except StopAsyncIteration:\n"
+                f"                except {stop_async_iter}:\n"
                 f"                    {s}.finish_exhausted()\n"
                 f"                    return\n"
-                f"                except BaseException as {exc}:\n"
+                f"                except {base_exc} as {exc}:\n"
                 f"                    {s}.finish_error({exc})\n"
                 f"                    raise\n"
                 f"                {s}.record_yield()\n"
                 f"                try:\n"
                 f"                    {sent} = yield {val}\n"
-                f"                except GeneratorExit:\n"
+                f"                except {gen_exit}:\n"
                 f"                    try:\n"
                 f"                        await {s}.close()\n"
-                f"                    except BaseException as {exc}:\n"
+                f"                    except {base_exc} as {exc}:\n"
                 f"                        {s}.finish_error({exc})\n"
                 f"                        raise\n"
                 f"                    {s}.finish_closed()\n"
                 f"                    raise\n"
-                f"                except BaseException as {exc}:\n"
+                f"                except {base_exc} as {exc}:\n"
                 f"                    {step} = {s}.throw_step({exc})\n"
                 f"                else:\n"
                 f"                    {step} = {s}.next_step({sent})\n"
@@ -857,7 +1038,6 @@ class WatchWrapperFactory:
                 f"    return {wrapper_name}\n"
             )
 
-        exec_ns = dict(defaults_ns)
         try:
             code = compile(source, f"<peeka-watch:{_format_func_name(func)}>", "exec")
         except SyntaxError:
