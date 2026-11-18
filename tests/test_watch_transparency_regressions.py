@@ -6,13 +6,16 @@ import functools
 import inspect
 import sys
 import types
-from typing import Any, Dict, List
+import warnings
+from typing import Any, Dict, List, Tuple
 
 import pytest
 
 import peeka.core.instrumentation.watch as watch_module
 from peeka.core.injector import DecoratorInjector
+from peeka.core.instrumentation.registry import wrapper_call_target
 from peeka.core.probes import ProbeContext, ProbeRegistry
+from peeka.core.runtime.compat import BACKEND_WRAPPER_ONLY
 
 
 class _MockAgent:
@@ -386,16 +389,25 @@ class TestSyncTaskSchedulingAndAsyncProtocol:
 
             assert inspect.isasyncgenfunction(mod.stream)
 
-            # 1. Native type, ag_* attributes, asend, athrow, and normal exhaustion
+            # 1. Native type, ag_* attributes matching uninstrumented generator,
+            #    asend, athrow, and normal exhaustion
+            native_gen = stream()
+            expected_ag_attrs = [
+                attr for attr in dir(native_gen) if attr.startswith("ag_")
+            ]
+            await native_gen.aclose()
+            assert {"ag_running", "ag_code", "ag_frame", "ag_await"}.issubset(
+                expected_ag_attrs
+            )
+
             gen = mod.stream()
             assert inspect.isasyncgen(gen)
             assert isinstance(gen, types.AsyncGeneratorType)
             assert isinstance(gen, collections.abc.AsyncGenerator)
-            assert hasattr(gen, "ag_running")
-            assert hasattr(gen, "ag_suspended")
-            assert hasattr(gen, "ag_code")
-            assert hasattr(gen, "ag_frame")
-            assert hasattr(gen, "ag_await")
+            missing_ag_attrs = [
+                attr for attr in expected_ag_attrs if not hasattr(gen, attr)
+            ]
+            assert missing_ag_attrs == []
 
             assert await gen.__anext__() == "first"
             assert await gen.asend("ping") == "second:ping"
@@ -452,5 +464,394 @@ class TestSyncTaskSchedulingAndAsyncProtocol:
             asyncio.run(run_partial())
             assert finalized == ["finalized"]
         finally:
+            injector.uninject_all()
+            sys.modules.pop(mod.__name__, None)
+
+
+class TestAsyncSignatureAndCallTimeValidation:
+    """Async wrappers must validate public signatures at call time across Python 3.8-3.14."""
+
+    @pytest.mark.asyncio
+    async def test_coroutine_invalid_arguments_raise_typeerror_at_call_time(self) -> None:
+        agent = _MockAgent()
+        injector = DecoratorInjector(agent)
+        sentinel = object()
+
+        async def compute(
+            pos_only: int,
+            opt_pos: Any = sentinel,
+            /,
+            normal: int = 10,
+            *args: Any,
+            kw_only: str,
+            kw_default: str = "ok",
+            **kwargs: Any,
+        ) -> Tuple[Any, ...]:
+            await asyncio.sleep(0)
+            return (pos_only, opt_pos, normal, args, kw_only, kw_default, kwargs)
+
+        expected_sig = inspect.signature(compute)
+        mod = _install_temp_module("watch_coro_sig_mod", compute=compute)
+        try:
+            injector.inject("watch_coro_sig_mod.compute", {"before": True, "finish": True})
+
+            assert inspect.iscoroutinefunction(mod.compute)
+            assert inspect.signature(mod.compute) == expected_sig
+            assert inspect.signature(mod.compute, follow_wrapped=False) == expected_sig
+
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always", RuntimeWarning)
+                with pytest.raises(TypeError):
+                    mod.compute()
+                with pytest.raises(TypeError):
+                    mod.compute(pos_only=1, kw_only="x")
+                with pytest.raises(TypeError):
+                    mod.compute(1)
+                with pytest.raises(TypeError):
+                    mod.compute(1, 2, 3, normal=4, kw_only="x")
+
+            unawaited = [
+                w for w in caught if "was never awaited" in str(w.message)
+            ]
+            assert unawaited == []
+            assert agent.observations == []
+
+            res = await mod.compute(1, kw_only="req", pos_only="kw_shadow")
+            assert res == (1, sentinel, 10, (), "req", "ok", {"pos_only": "kw_shadow"})
+
+            res2 = await mod.compute(1, "custom", 20, "extra1", "extra2", kw_only="k", kw_default="v")
+            assert res2 == (1, "custom", 20, ("extra1", "extra2"), "k", "v", {})
+        finally:
+            injector.uninject_all()
+            sys.modules.pop(mod.__name__, None)
+
+    @pytest.mark.asyncio
+    async def test_async_generator_invalid_arguments_raise_typeerror_at_call_time(self) -> None:
+        agent = _MockAgent()
+        injector = DecoratorInjector(agent)
+        sentinel = object()
+
+        async def generate(
+            pos_only: int,
+            opt_pos: Any = sentinel,
+            /,
+            normal: int = 10,
+            *args: Any,
+            kw_only: str,
+            **kwargs: Any,
+        ) -> Any:
+            yield (pos_only, opt_pos, normal, args, kw_only, kwargs)
+
+        expected_sig = inspect.signature(generate)
+        mod = _install_temp_module("watch_agen_sig_mod", generate=generate)
+        try:
+            injector.inject("watch_agen_sig_mod.generate", {})
+
+            assert inspect.isasyncgenfunction(mod.generate)
+            assert inspect.signature(mod.generate) == expected_sig
+            assert inspect.signature(mod.generate, follow_wrapped=False) == expected_sig
+
+            with pytest.raises(TypeError):
+                mod.generate()
+            with pytest.raises(TypeError):
+                mod.generate(pos_only=1, kw_only="x")
+            with pytest.raises(TypeError):
+                mod.generate(1)
+            with pytest.raises(TypeError):
+                mod.generate(1, 2, 3, normal=4, kw_only="x")
+
+            gen = mod.generate(7, kw_only="hit", pos_only="shadow")
+            assert inspect.isasyncgen(gen)
+            assert await gen.__anext__() == (7, sentinel, 10, (), "hit", {"pos_only": "shadow"})
+            with pytest.raises(StopAsyncIteration):
+                await gen.__anext__()
+        finally:
+            injector.uninject_all()
+            sys.modules.pop(mod.__name__, None)
+
+    @pytest.mark.asyncio
+    async def test_public_signature_preserved_through_wraps_partial_and_task_decorator(self) -> None:
+        agent = _MockAgent()
+        injector = DecoratorInjector(agent)
+
+        async def core(x: int, /, y: int = 2, *, scale: int = 3) -> int:
+            await asyncio.sleep(0)
+            return (x + y) * scale
+
+        @functools.wraps(core)
+        async def wrapped_core(*args: Any, **kwargs: Any) -> int:
+            return await core(*args, **kwargs)
+
+        @functools.wraps(core)
+        def schedule_core(x: int, /, y: int = 2, *, scale: int = 3) -> asyncio.Task:
+            return asyncio.create_task(core(x, y, scale=scale))
+
+        partial_core = functools.partial(core, 10)
+
+        async def core_gen(x: int, /, y: int = 2) -> Any:
+            yield x + y
+
+        partial_gen = functools.partial(core_gen, 10)
+
+        mod = _install_temp_module(
+            "watch_wraps_partial_sig_mod",
+            wrapped_core=wrapped_core,
+            schedule_core=schedule_core,
+            partial_core=partial_core,
+            partial_gen=partial_gen,
+        )
+        try:
+            injector.inject("watch_wraps_partial_sig_mod.wrapped_core", {})
+            injector.inject("watch_wraps_partial_sig_mod.schedule_core", {})
+            injector.inject("watch_wraps_partial_sig_mod.partial_core", {})
+            injector.inject("watch_wraps_partial_sig_mod.partial_gen", {})
+
+            assert inspect.iscoroutinefunction(mod.wrapped_core)
+            with pytest.raises(TypeError):
+                mod.wrapped_core(x=1)
+            assert await mod.wrapped_core(4) == 18
+
+            assert not inspect.iscoroutinefunction(mod.schedule_core)
+            with pytest.raises(TypeError):
+                mod.schedule_core()
+            task = mod.schedule_core(4)
+            assert isinstance(task, asyncio.Task)
+            assert await task == 18
+
+            assert inspect.iscoroutinefunction(mod.partial_core)
+            with pytest.raises(TypeError):
+                mod.partial_core(1, 2)
+            assert await mod.partial_core(5, scale=2) == 30
+
+            assert inspect.isasyncgenfunction(mod.partial_gen)
+            with pytest.raises(TypeError):
+                mod.partial_gen(1, 2)
+            gen = mod.partial_gen(5)
+            assert await gen.__anext__() == 15
+            await gen.aclose()
+        finally:
+            injector.uninject_all()
+            sys.modules.pop(mod.__name__, None)
+
+    @pytest.mark.asyncio
+    async def test_parameter_name_collisions_and_instance_methods(self) -> None:
+        agent = _MockAgent()
+        injector = DecoratorInjector(agent)
+
+        class Service:
+            def __init__(self, base: int) -> None:
+                self.base = base
+
+            async def fetch(self, item: int, /, *, limit: int = 5) -> int:
+                return self.base + item + limit
+
+            async def invoke(self, func: Any, x: int = 1) -> Any:
+                return (self.base, func, x)
+
+        async def apply(func: Any, x: int = 2) -> Any:
+            return (func, x)
+
+        async def colliding(
+            args: int,
+            kwargs: int,
+            state: int,
+            step: int,
+            value: int,
+            sent: int,
+            exc: int,
+            _pk_s: int = 7,
+        ) -> Tuple[int, ...]:
+            yield (args, kwargs, state, step, value, sent, exc, _pk_s)
+
+        mod = _install_temp_module(
+            "watch_collision_mod",
+            Service=Service,
+            apply=apply,
+            colliding=colliding,
+        )
+        try:
+            injector.inject("watch_collision_mod.Service.fetch", {})
+            injector.inject("watch_collision_mod.Service.invoke", {})
+            injector.inject("watch_collision_mod.apply", {})
+            injector.inject("watch_collision_mod.colliding", {})
+
+            svc = mod.Service(100)
+            with pytest.raises(TypeError):
+                svc.fetch()
+            with pytest.raises(TypeError):
+                svc.fetch(item=1)
+            assert await svc.fetch(10) == 115
+
+            with pytest.raises(TypeError):
+                svc.invoke()
+            assert await svc.invoke("cb", 3) == (100, "cb", 3)
+
+            with pytest.raises(TypeError):
+                mod.apply()
+            assert await mod.apply("fn") == ("fn", 2)
+
+            with pytest.raises(TypeError):
+                mod.colliding(1, 2)
+            gen = mod.colliding(1, 2, 3, 4, 5, 6, 7)
+            assert await gen.__anext__() == (1, 2, 3, 4, 5, 6, 7, 7)
+            await gen.aclose()
+        finally:
+            injector.uninject_all()
+            sys.modules.pop(mod.__name__, None)
+
+    @pytest.mark.asyncio
+    async def test_stacked_wrappers_preserve_call_time_validation_and_retarget_cleanly(self) -> None:
+        agent = _MockAgent()
+        injector = DecoratorInjector(agent)
+
+        async def coro(a: int, /, b: int = 1, *, c: int = 2) -> int:
+            return a + b + c
+
+        async def agen(a: int, /, b: int = 1) -> Any:
+            yield a + b
+
+        async def apply(func: Any, x: int = 5) -> Tuple[Any, int]:
+            return (func, x)
+
+        mod = _install_temp_module(
+            "watch_stacked_async_mod",
+            coro=coro,
+            agen=agen,
+            apply=apply,
+        )
+        try:
+            # 1. Watch + Watch on coroutine
+            w1 = injector.inject("watch_stacked_async_mod.coro", {})
+            w2 = injector.inject("watch_stacked_async_mod.coro", {})
+            with pytest.raises(TypeError):
+                mod.coro(a=1)
+            assert await mod.coro(10) == 13
+            assert [o["watch_id"] for o in agent.observations[-2:]] == [w1, w2]
+
+            agent.observations.clear()
+            injector.uninject(w1)
+            assert wrapper_call_target(mod.coro) is coro
+            with pytest.raises(TypeError):
+                mod.coro(a=1)
+            assert await mod.coro(10) == 13
+            assert [o["watch_id"] for o in agent.observations] == [w2]
+            injector.uninject(w2)
+            assert mod.coro is coro
+
+            # 2. Watch + Watch on async generator
+            g1 = injector.inject("watch_stacked_async_mod.agen", {})
+            g2 = injector.inject("watch_stacked_async_mod.agen", {})
+            with pytest.raises(TypeError):
+                mod.agen(a=1)
+            gen = mod.agen(5)
+            assert await gen.__anext__() == 6
+            await gen.aclose()
+
+            agent.observations.clear()
+            injector.uninject(g1)
+            assert wrapper_call_target(mod.agen) is agen
+            with pytest.raises(TypeError):
+                mod.agen(a=1)
+            gen2 = mod.agen(6)
+            assert await gen2.__anext__() == 7
+            await gen2.aclose()
+            assert [o["watch_id"] for o in agent.observations] == [g2]
+            injector.uninject(g2)
+            assert mod.agen is agen
+
+            # 3. Watch + Watch when parameter is named `func` (uses `self` cell)
+            f1 = injector.inject("watch_stacked_async_mod.apply", {})
+            f2 = injector.inject("watch_stacked_async_mod.apply", {})
+            agent.observations.clear()
+            injector.uninject(f1)
+            assert wrapper_call_target(mod.apply) is apply
+            assert await mod.apply("ok") == ("ok", 5)
+            assert [o["watch_id"] for o in agent.observations] == [f2]
+            injector.uninject(f2)
+            assert mod.apply is apply
+
+            # 4. Trace + Watch on coroutine
+            t1 = injector.inject_trace(
+                "watch_stacked_async_mod.coro",
+                {"times": -1},
+                force_backend=BACKEND_WRAPPER_ONLY,
+            )
+            w3 = injector.inject("watch_stacked_async_mod.coro", {})
+            with pytest.raises(TypeError):
+                mod.coro(a=1)
+            assert await mod.coro(20) == 23
+            injector.uninject(t1)
+            assert wrapper_call_target(mod.coro) is coro
+            with pytest.raises(TypeError):
+                mod.coro(a=1)
+            assert await mod.coro(20) == 23
+            injector.uninject(w3)
+            assert mod.coro is coro
+        finally:
+            injector.uninject_all()
+            sys.modules.pop(mod.__name__, None)
+
+    @pytest.mark.asyncio
+    async def test_async_generator_isolates_observation_failures(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        agent = _MockAgent(fail_send=True)
+        injector = DecoratorInjector(agent)
+        biz_exc = _UnprintableBusinessError("agen biz")
+
+        async def stream_ok(x: int) -> Any:
+            yield x
+            yield x + 1
+
+        async def stream_err(x: int) -> Any:
+            yield x
+            raise biz_exc
+
+        mod = _install_temp_module(
+            "watch_agen_iso_mod",
+            stream_ok=stream_ok,
+            stream_err=stream_err,
+        )
+        registry = ProbeRegistry()
+        ctx = ProbeContext(
+            registry, target_id="t", client_session_id="c", job_id="j", type="watch"
+        )
+        ctx.__enter__()
+        monkeypatch.setattr(
+            ctx,
+            "record_event",
+            lambda _obs: (_ for _ in ()).throw(RuntimeError("probe boom")),
+        )
+        monkeypatch.setattr(
+            watch_module,
+            "build_runtime_meta",
+            lambda: (_ for _ in ()).throw(RuntimeError("meta boom")),
+        )
+        monkeypatch.setattr(
+            watch_module.ExecutionProfile,
+            "emit",
+            lambda *_a, **_kw: (_ for _ in ()).throw(OSError("broken pipe")),
+        )
+
+        try:
+            injector.inject(
+                "watch_agen_iso_mod.stream_ok",
+                {"before": True, "finish": True, "emit_execution_profile_stdout": True, "_probe_context": ctx},
+            )
+            injector.inject(
+                "watch_agen_iso_mod.stream_err",
+                {"before": True, "finish": True, "emit_execution_profile_stdout": True, "_probe_context": ctx},
+            )
+
+            items = [item async for item in mod.stream_ok(10)]
+            assert items == [10, 11]
+
+            gen = mod.stream_err(5)
+            assert await gen.__anext__() == 5
+            with pytest.raises(_UnprintableBusinessError) as exc_info:
+                await gen.__anext__()
+            assert exc_info.value is biz_exc
+        finally:
+            ctx.__exit__(None, None, None)
             injector.uninject_all()
             sys.modules.pop(mod.__name__, None)
