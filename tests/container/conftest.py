@@ -61,7 +61,6 @@ def gdb_container(gdb_image):
             init=True,
         ) as container
     ):
-        container.start()
         ensure_injector_built_in_container(container)
         yield container
 
@@ -78,7 +77,6 @@ def py38_container(py38_image):
             init=True,
         ) as container
     ):
-        container.start()
         ensure_injector_built_in_container(container)
         yield container
 
@@ -95,7 +93,6 @@ def py314_container(py314_image):
             init=True,
         ) as container
     ):
-        container.start()
         yield container
 
 
