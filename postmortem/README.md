@@ -1,6 +1,6 @@
 # Postmortem 索引
 
-生成日期：2026-11-18
+生成日期：2026-11-20
 
 ## 话题列表
 
@@ -11,7 +11,7 @@
 | [003](./003-tui-autocomplete.md) | TUI 自动补全：缓存、触发、光标、`__main__` | SEV-2 | tui | 5 | 2026-03-05 |
 | [004](./004-streaming-client-concurrency.md) | StreamingAgentClient 并发与 BrokenPipe | SEV-1 | core | 10 | 2026-11-18 |
 | [005](./005-tui-threading-and-lifecycle.md) | TUI 线程模型、主线程阻塞与关机生命周期 | SEV-1 | tui | 9 | 2026-06-23 |
-| [006](./006-attach-and-agent-lifecycle.md) | 进程 Attach 就绪探测与 Agent 生命周期 | SEV-0 | core | 13 | 2026-11-18 |
+| [006](./006-attach-and-agent-lifecycle.md) | 进程 Attach 就绪探测与 Agent 生命周期 | SEV-0 | core | 15 | 2026-11-20 |
 | [007](./007-gdb-injection-and-python38.md) | GDB 注入路径与 Python 3.8 兼容性 | SEV-1 | core | 4 | 2026-03-24 |
 | [008](./008-injector-and-tracing.md) | DecoratorInjector 实例方法、`__main__` 解析与 trace 调用树 | SEV-1 | core, commands | 8 | 2026-11-18 |
 | [009](./009-cli-commands-and-payloads.md) | CLI 命令分发、参数键与 JSONL payload 契约漂移 | SEV-1 | cli, core | 10 | 2026-11-17 |
@@ -25,14 +25,14 @@
 | [017](./017-rpl-primitives-rollout.md) | Runtime Primitives Layer (RPL) 的引入与稳定化 | SEV-1 | core | 5 | 2026-11-08 |
 | [018](./018-watch-stacking-and-orphans.md) | Watch 嵌套堆叠与孤立清理 | SEV-1 | core | 5 | 2026-11-08 |
 | [019](./019-trace-sanitization-and-gevent.md) | Trace 数据清理与 Gevent 检测 | SEV-1 | core, commands | 3 | 2026-11-07 |
-| [020](./020-agent-observation-queue.md) | Agent 观测队列与序列化性能 | SEV-1 | core | 2 | 2026-06-13 |
+| [020](./020-agent-observation-queue.md) | Agent 观测队列与序列化性能 | SEV-1 | core | 3 | 2026-11-20 |
 | [021](./021-process-discovery-and-runtime-environment.md) | 进程发现与运行时环境适应性 | SEV-2 | core, runtime | 1 | 2026-06-24 |
 | [022](./022-release-pipeline-and-wheels.md) | 发布流水线、wheel 构建矩阵与工具版本漂移 | SEV-1 | ci, packaging | 2 | 2026-11-09 |
 
 ## 统计
 
 - **话题总数**：22
-- **事故总次数**：119
+- **事故总次数**：122
 - **按最高严重级别**：SEV-0: 3, SEV-1: 14, SEV-2: 4, SEV-3: 1, SEV-4: 0
 - **按组件**：
   - core: 9 个话题（004, 006, 007, 008, 014, 017, 018, 019, 020, 021）
@@ -54,10 +54,23 @@
   - Resource Management: 话题 006
   - Environment Assumption / Missing Fallback: 话题 021
   - Dependency Issue: 话题 017, 022
-- **最近一次分析范围**：`v0.1.21..v0.1.22`
-- **分析的 fix 提交总数**：9
-- **入选事故组块数**：6
-- **跳过/合并的 fix 提交数**：3（2 个 follow-up 合并、1 个 reference-only）
+- **最近一次分析范围**：`v0.1.22..v0.1.23`
+- **分析的 fix 提交总数**：20
+- **本次新增事故组块数**：3
+
+## v0.1.23 候选筛选说明
+
+| 修复提交 | 归属与筛选依据 |
+|---|---|
+| 82629c0、7605b84 | 006 #14、#15 分别记录退出信号重入和跨代投递。 |
+| 3e435b6、63eefd5 | 合并为 020 #3，记录短脚本从 Agent 到 CLI 的尾帧交付。 |
+| 9c60625、b27968b、235ec6a、654f3b4、440d424 | 008 #7、#8 已记录调用树归属、异步调用协议和格式化隔离。 |
+| 490fb8e、2bbee72 | 004 #9、#10 覆盖单 reader 和失步连接；TUI 另有视图隔离回归。 |
+| 0f75d99、e2a6589、3cc7c04 | 006 #13 记录启动和清理门控；并发 stop 可见性属于同一生命周期。 |
+| 083263d、3b24740 | ADR 0005 和 exact 所有权回归已记录采样器互斥、安装撤销和安全拒绝。 |
+| 58b8d7b、ab8f2b0 | 018 和控制面回归覆盖按所有者撤销及终态事件提交。 |
+| ca954aa | 009 的路由契约新增多目标歧义回归。 |
+| d2f48fd | 测试夹具重复启动容器，未涉及发布包的运行行为。 |
 
 ## v0.1.22 候选筛选说明
 
@@ -92,6 +105,9 @@
 
 | 日期 | 话题 | 事故 | 变更说明 |
 |------|------|------|----------|
+| 2026-11-20 | [006](./006-attach-and-agent-lifecycle.md) | #14 | 退出信号打断持锁线程时清理自锁（v0.1.23） |
+| 2026-11-20 | [006](./006-attach-and-agent-lifecycle.md) | #15 | 重新附加后旧事件进入新消费者（v0.1.23） |
+| 2026-11-20 | [020](./020-agent-observation-queue.md) | #3 | 短脚本关闭流连接时丢失尾帧（v0.1.23） |
 | 2026-11-17 | [004](./004-streaming-client-concurrency.md) | #9 | v0.1.22：多 watch 分发和信号重入 |
 | 2026-11-17 | [006](./006-attach-and-agent-lifecycle.md) | #11-12 | v0.1.22：registry 身份、连接关闭和 PID 隔离 |
 | 2026-11-17 | [008](./008-injector-and-tracing.md) | #5-6 | v0.1.22：描述符和异步追踪语义 |
